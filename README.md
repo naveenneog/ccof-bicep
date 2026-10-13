@@ -94,6 +94,57 @@ pwsh -File infra/quickstart/Grant-SyncGraphPermissions.ps1
 Then the deployer sets `syncTimerEnabled = true` in the parameters file and runs the wrapper with
 `-Only 3`. The grant script's closing message says `-From 3`, which also reruns steps 4 and 5.
 
+## Deploy from Azure Cloud Shell
+
+Azure Cloud Shell has PowerShell 7, the Azure CLI, git and Node.js 24
+([Cloud Shell image](https://github.com/Azure/CloudShell/blob/master/linux/base.Dockerfile)), so the
+whole deployment runs there, signed in as the Cloud Shell user. Use a session with a storage account:
+an ephemeral session loses its files, including the filled form and the wrapper's state file, when it
+ends ([Ephemeral sessions](https://learn.microsoft.com/azure/cloud-shell/get-started/ephemeral)).
+
+In the Azure portal, open Cloud Shell in PowerShell mode:
+
+```powershell
+git clone https://github.com/naveenneog/ccof-bicep.git
+cd ccof-bicep
+# Cloud Shell sets NODE_ENV=production, so a plain npm ci would leave out the TypeScript compiler (step 2).
+npm ci --ignore-scripts --include=dev
+# The form: every customer decision is marked REPLACE. The copy is git-ignored (.env.*).
+cp infra/quickstart/customer-form.bicepparam infra/quickstart/.env.customer.bicepparam
+# The runner VM's SSH public key (the VM has no public IP; the deployment never uses SSH).
+ssh-keygen -t rsa -b 4096 -f $HOME/.ssh/ccof-runner -N ''
+Get-Content $HOME/.ssh/ccof-runner.pub
+code infra/quickstart/.env.customer.bicepparam
+```
+
+`code` opens the Cloud Shell editor. Fill every `REPLACE` value, paste the public key into
+`runner.sshPublicKey`, and save. Then, from the repository root:
+
+```powershell
+az account set --subscription <subscription id>
+pwsh -File infra/quickstart/Deploy-Quickstart.ps1 -ParametersPath infra/quickstart/.env.customer.bicepparam -WhatIfOnly
+pwsh -File infra/quickstart/Deploy-Quickstart.ps1 -ParametersPath infra/quickstart/.env.customer.bicepparam
+```
+
+- `pwsh -File` starts the script in the current folder. Called directly inside the session, the
+  wrapper would resolve the relative `-ParametersPath` against the folder where the session started:
+  `cd` (Set-Location) does not change the process working directory that
+  `[System.IO.Path]::GetFullPath` uses (`Deploy-Quickstart.ps1`, last lines).
+- The `-WhatIfOnly` run lists every value that is wrong or still `REPLACE` (step 1 reads the APIM, the
+  app registrations and the groups back), then previews the deployment (step 3) and ends with
+  `what_if_only`.
+- Cloud Shell ends a session after 20 minutes without interactive activity
+  ([Cloud Shell overview](https://learn.microsoft.com/azure/cloud-shell/overview)); step 3 can take
+  longer. A deployment that ARM has accepted continues in Azure, visible under the resource group's
+  **Deployments**. After it shows Succeeded or Failed, the same command resumes at the first step not
+  completed.
+- The filled file stays in the Cloud Shell storage. It holds the customer's tenant, subscription and
+  object ids: it stays out of git and out of public repositories.
+- Step 8 writes `infra/quickstart/.generated/client-config.json` for the developer machines; Cloud
+  Shell's **Manage files** > **Download** copies it out.
+- The Privileged Role Administrator can run `Grant-SyncGraphPermissions.ps1` in Cloud Shell as well,
+  after activating the role and signing in again with `az login`.
+
 ## Developer machines
 
 `scripts/client/Set-ClaudeCodeGateway.ps1` configures Claude Code on a workstation for the gateway
@@ -112,3 +163,5 @@ the token helper in `client/`, and the support path for 401, 403 and 429 answers
   (`infra/sync/Invoke-SnapshotApply.ps1`) is not part of the export, and the runner VM has no
   Node.js. Use `application-permission` with the post-deployment Graph grant.
 - The repository has no license file yet.
+- The Cloud Shell path is written from the Cloud Shell image contents and Microsoft Learn; it has not
+  been run end to end in Cloud Shell yet.
