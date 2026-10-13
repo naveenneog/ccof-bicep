@@ -25,10 +25,11 @@ param addressSpace string
 @description('NSG name for the APIM subnet (answers network.create.apimNsgName).')
 param apimNsgName string
 
-@description('Subnets: apim, privateEndpoints, functions, each { name, prefix }; runner { name, prefix } or null.')
+@description('Subnets: apim, privateEndpoints, functions, each { name, prefix }; runner { name, prefix }, null or absent.')
 param subnets object
 
-var runnerSubnets = subnets.runner == null ? [] : [
+// .? reads an absent runner as null: a caller may omit it, and a null-valued property is not relied on.
+var runnerSubnets = subnets.?runner == null ? [] : [
   {
     name: subnets.runner.name
     properties: { addressPrefix: subnets.runner.prefix }
@@ -121,6 +122,6 @@ output vnetId string = vnet.id
 output apimSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.apim.name)
 output privateEndpointSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.privateEndpoints.name)
 output functionsSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.functions.name)
-output runnerSubnetId string = subnets.runner == null ? '' : resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.runner.name)
+output runnerSubnetId string = subnets.?runner == null ? '' : resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.runner.name)
 output cosmosDnsZoneId string = dnsZones[0].id
 output blobDnsZoneId string = dnsZones[1].id
