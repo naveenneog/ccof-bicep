@@ -1,0 +1,4 @@
+Gateway
+| summarize samples = count(), failures = countif(ResponseCode == 429)
+| where samples >= _minimumSamples
+| project value = 10000.0 * failures / samples

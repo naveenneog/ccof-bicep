@@ -1,0 +1,236 @@
+{
+  "$schema": "./stage-roles.schema.json",
+  "schemaVersion": 1,
+  "kind": "ccof.stage-roles",
+  "description": "The deployment stages in Stage-map order (docs/DEPLOYMENT-STAGES.md, Stage map), as data for scripts/Get-DeploymentPlan.ps1: the checkpoint records that complete each stage, the records it reads, the roles and scopes it needs, its blockers, its read-only probes, and its command or handoff. Placeholders: ${answers.<path>}, ${d1.<key>} (stage-D1 outputs) and ${item.<field>} (the row: a project or backend entry, step, answersPath, checkpointPath, outputDirectory, onboardingAnswersPath, steps, and revision from stage-D2:policy). Each role in anyOf is named by the line its requirement cites, except Owner (ownerAccepted).",
+  "ownerAccepted": {
+    "text": "Owner grants full access to manage all resources, including the ability to assign roles in Azure RBAC, so a requirement may list it beyond its cited source.",
+    "source": "https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/privileged",
+    "retrieved": "2026-10-12"
+  },
+  "stages": [
+    {
+      "id": "D0", "mapRow": 1, "title": "D0 Decisions",
+      "form": "scripts/Stage0-AvailabilityDecisions.ps1",
+      "performer": "Deploying administrator",
+      "records": ["stage-D0"], "reads": [],
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "/subscriptions/${answers.target.subscriptionId}", "anyOf": ["Reader", "Contributor", "Owner"], "heldBy": "Deploying administrator", "purpose": "region checks", "source": "scripts/Stage0-AvailabilityDecisions.ps1:207" }
+      ],
+      "discovery": [
+        { "kind": "checkpoint-file", "suffix": ".d0-availability.json", "label": "D0 availability export" },
+        { "kind": "answers-section", "anyOf": ["availability", "availabilityFile"], "label": "availability decisions in the answers" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage0-AvailabilityDecisions.ps1 -AnswersFile <D0 answers, docs/HA-DECISIONS.md section 7> -CheckpointPath ${item.checkpointPath} -DiscoverOnly",
+      "handoff": "The deploying administrator runs D0 with Reader on the subscription: -DiscoverOnly first, then without it to record the decisions.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:13", "scripts/Stage0-AvailabilityDecisions.ps1:10"]
+    },
+    {
+      "id": "D1", "mapRow": 2, "title": "D1 Prerequisite resources",
+      "form": "docs/PREREQUISITES-WORKBOOK.md, infra/prereqs/*.bicep, scripts/Record-Prerequisites.ps1",
+      "performer": "Infrastructure teams",
+      "records": ["stage-D1"], "reads": [], "answersStage": "D1",
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "/subscriptions/${answers.target.subscriptionId}/resourceGroups/${answers.target.resourceGroup.name}", "anyOf": ["Contributor", "Owner"], "heldBy": "Infrastructure team", "purpose": "create the prerequisite resources", "source": "docs/DEPLOYMENT-STAGES.md:14" },
+        { "kind": "entra-directory", "scope": "/", "anyOf": ["Application Administrator", "Cloud Application Administrator"], "tenantSetting": "allowedToCreateApps", "heldBy": "Entra application administrator", "purpose": "the app registrations", "source": "docs/DEPLOYMENT-GUIDE.md:77" }
+      ],
+      "discovery": [ { "kind": "d1-record" } ],
+      "command": "pwsh -NoProfile -File scripts/Record-Prerequisites.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath}",
+      "handoff": "The infrastructure team creates the resources from docs/PREREQUISITES-WORKBOOK.md, then runs Record-Prerequisites.ps1 -Action Record.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:14", "scripts/Record-Prerequisites.ps1:17"]
+    },
+    {
+      "id": "D2", "mapRow": 3, "title": "D2 Schema and apps",
+      "form": "scripts/Stage-D2-DeploySchemaAndApps.ps1",
+      "performer": "Platform deployer",
+      "steps": ["schema", "settings", "resolver-auth", "apim", "diagnostics", "workbook"],
+      "records": ["stage-D2:${item.step}"], "reads": ["stage-D1"], "answersStage": "D2",
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "/subscriptions/${answers.target.subscriptionId}/resourceGroups/${answers.target.resourceGroup.name}", "anyOf": ["Contributor", "Owner"], "heldBy": "Platform deployer", "purpose": "deploy the schema, settings, API and diagnostics", "source": "docs/DEPLOYMENT-STAGES.md:15" }
+      ],
+      "discovery": [
+        { "kind": "d2-plan" },
+        { "kind": "arm-get", "step": "apim", "label": "API ${answers.apim.apiId}", "url": "${d1.apim.id}/apis/${answers.apim.apiId}?api-version=2024-05-01" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage-D2-DeploySchemaAndApps.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath}",
+      "commandSteps": "pwsh -NoProfile -File scripts/Stage-D2-DeploySchemaAndApps.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath} -Steps ${item.steps}",
+      "handoff": "The platform deployer runs D2 with Contributor on the resource group: -Action Plan, then -Action Apply.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:15", "docs/DEPLOYMENT-STAGES.md:24", "scripts/Core.D2Stage.psm1:20"]
+    },
+    {
+      "id": "D3", "mapRow": 4, "title": "D3 Permissions",
+      "form": "scripts/Stage-D3-GrantPermissions.ps1",
+      "performer": "Access team",
+      "records": ["stage-D3"], "reads": ["stage-D1", "stage-D2:schema"], "answersStage": "D3",
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "/subscriptions/${answers.target.subscriptionId}/resourceGroups/${answers.target.resourceGroup.name}", "anyOf": ["Role Based Access Control Administrator", "User Access Administrator", "Owner"], "heldBy": "Access team", "purpose": "Azure role assignments (Microsoft.Authorization/roleAssignments/write; Owner includes it)", "source": "docs/DEPLOYMENT-STAGES.md:16" },
+        { "kind": "azure-rbac", "scope": "${d1.cosmos.id}", "anyOf": ["Contributor", "Owner"], "heldBy": "Access team", "purpose": "Cosmos data-plane assignments (sqlRoleAssignments/write)", "source": "docs/DEPLOYMENT-STAGES.md:16" },
+        { "kind": "entra-directory", "scope": "/", "anyOf": ["Privileged Role Administrator", "Global Administrator"], "when": "answers.sync.mode == application-permission", "blocking": false, "heldBy": "Entra privileged administrator", "purpose": "the Microsoft Graph application permission; without it D3 records the item pending and prints docs/DEPLOYMENT-GUIDE.md Step 7", "source": "scripts/Core.PermissionsApply.psm1:18" }
+      ],
+      "discovery": [
+        { "kind": "d3-plan" },
+        { "kind": "graph-app-role", "when": "answers.sync.mode == application-permission", "label": "sync identity holds Graph ${answers.sync.graphPermission.permission}", "principal": "${d1.apps.sync.principalId}", "appRoleId": "${answers.sync.graphPermission.appRoleId}" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage-D3-GrantPermissions.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath}",
+      "handoff": "The access team runs D3: -Action Plan, review it, then -Action Apply -PlanDigest <first 12 characters of the digest shown>.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:16", "scripts/Stage-D3-GrantPermissions.ps1:21"]
+    },
+    {
+      "id": "D2-resumed", "mapRow": 5, "title": "D2, resumed",
+      "form": "scripts/Stage-D2-DeploySchemaAndApps.ps1",
+      "performer": "Platform deployer",
+      "steps": ["code", "policy", "smoke"],
+      "records": ["stage-D2:${item.step}"], "reads": ["stage-D1", "stage-D3"], "answersStage": "D2",
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "/subscriptions/${answers.target.subscriptionId}/resourceGroups/${answers.target.resourceGroup.name}", "anyOf": ["Contributor", "Owner"], "heldBy": "Platform deployer", "purpose": "deploy code and the policy revision", "source": "docs/DEPLOYMENT-STAGES.md:15" }
+      ],
+      "discovery": [
+        { "kind": "d2-plan" },
+        { "kind": "arm-get", "step": "code", "count": true, "label": "resolver functions", "url": "${d1.apps.resolver.functionAppId}/functions?api-version=2024-04-01" },
+        { "kind": "arm-get", "step": "code", "count": true, "label": "sync functions", "url": "${d1.apps.sync.functionAppId}/functions?api-version=2024-04-01" },
+        { "kind": "arm-get", "step": "code", "count": true, "label": "reconciler functions", "url": "${d1.apps.reconciler.functionAppId}/functions?api-version=2024-04-01" },
+        { "kind": "api-revisions", "step": "policy", "api": "${d1.apim.id}/apis/${answers.apim.apiId}" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage-D2-DeploySchemaAndApps.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath}",
+      "commandSteps": "pwsh -NoProfile -File scripts/Stage-D2-DeploySchemaAndApps.ps1 -Action Plan -AnswersPath ${item.answersPath} -CheckpointPath ${item.checkpointPath} -Steps ${item.steps}",
+      "handoff": "The platform deployer runs D2 again after D3: -Action Plan, then -Action Apply.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:17", "docs/DEPLOYMENT-STAGES.md:26"]
+    },
+    {
+      "id": "S1", "mapRow": 6, "title": "D4 Groups (onboarding Stage 1)",
+      "form": "scripts/Stage1-CreateClassificationGroups.ps1",
+      "performer": "Onboarding operator",
+      "forEach": "answers.onboarding.projects", "itemKey": "projectId", "onboardingStage": "1",
+      "records": ["stage-1-groups:${item.projectId}"], "reads": ["stage-D1"],
+      "requirements": [
+        { "kind": "entra-directory", "scope": "/", "anyOf": ["Groups Administrator", "Global Administrator"], "tenantSetting": "allowedToCreateSecurityGroups", "heldBy": "Onboarding operator (Groups Administrator when users cannot create security groups)", "purpose": "create the classification groups", "source": "scripts/Stage1-CreateClassificationGroups.ps1:47" }
+      ],
+      "discovery": [
+        { "kind": "recorded-groups", "record": "stage-1-groups:${item.projectId}" },
+        { "kind": "onboarding-discover" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage1-CreateClassificationGroups.ps1 -AnswersFile ${item.onboardingAnswersPath} -CheckpointPath ${item.checkpointPath} -DiscoverOnly",
+      "handoff": "The onboarding operator runs Stage 1 (docs/ONBOARDING.md, Exact coordinator commands, section 1).",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:18", "docs/ONBOARDING.md:279"]
+    },
+    {
+      "id": "S2", "mapRow": 7, "title": "Onboarding Stage 2 (backend)",
+      "form": "scripts/Stage2-RegisterBackend.ps1",
+      "performer": "Backend owner, per designated subscription",
+      "forEach": "answers.backends", "itemKey": "id", "onboardingStage": "2",
+      "itemDerive": [ { "name": "designatedSubscriptionId", "from": "foundryAccountResourceId", "segment": 2 } ],
+      "records": ["stage-2-backend:${item.id}"], "reads": ["stage-D2:apim"],
+      "requirements": [
+        { "kind": "azure-rbac", "when": "item.backendMode == second-tenant", "scope": "${d1.apim.id}", "anyOf": ["Reader", "Contributor", "Owner", "API Management Service Reader Role", "API Management Service Contributor"], "heldBy": "Backend owner", "purpose": "read the second-tenant backend and its credential reference", "source": "scripts/Stage2-RegisterBackend.ps1:33" },
+        { "kind": "azure-rbac", "when": "item.backendMode == managed-identity", "scope": "${d1.apim.id}", "anyOf": ["Contributor", "Owner", "API Management Service Contributor"], "heldBy": "Backend owner", "purpose": "create the APIM backend", "source": "scripts/Stage2-RegisterBackend.ps1:70" },
+        { "kind": "azure-rbac", "when": "item.backendMode == managed-identity", "scope": "${item.foundryAccountResourceId}", "anyOf": ["Reader", "Contributor", "Owner"], "heldBy": "Backend owner", "purpose": "read the Foundry account", "source": "scripts/Stage2-RegisterBackend.ps1:71" },
+        { "kind": "azure-rbac", "when": "item.backendMode == managed-identity", "scope": "/subscriptions/${item.designatedSubscriptionId}", "anyOf": ["Reader", "Contributor", "Owner", "Cost Management Reader"], "heldBy": "Backend owner", "purpose": "cost visibility of the designated subscription", "source": "scripts/Stage2-RegisterBackend.ps1:72" },
+        { "kind": "azure-rbac", "when": "item.backendMode == managed-identity", "scope": "${d1.apps.reconciler.functionAppId}", "anyOf": ["Reader", "Contributor", "Owner"], "heldBy": "Backend owner", "purpose": "read the reconciler identity", "source": "scripts/Stage2-RegisterBackend.ps1:73" }
+      ],
+      "blockers": [
+        { "id": "D-7", "when": "item.backendMode == managed-identity", "text": "D-7 (PENDING, owner): no Stage 2 writer of the backend registry document and no D3 grant for one; a managed-identity backend gets 503 backend_not_configured", "source": "docs/status/WP-CORE-RUN.md:61" }
+      ],
+      "discovery": [
+        { "kind": "arm-get", "label": "APIM backend ${item.id}", "url": "${d1.apim.id}/backends/${item.id}?api-version=2024-05-01" },
+        { "kind": "onboarding-discover" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage2-RegisterBackend.ps1 -AnswersFile ${item.onboardingAnswersPath} -CheckpointPath ${item.checkpointPath} -DiscoverOnly",
+      "handoff": "The backend owner of the designated subscription runs Stage 2 (docs/ONBOARDING.md, Stage 2).",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:19", "docs/ONBOARDING.md:121"]
+    },
+    {
+      "id": "S3-preflight", "mapRow": 8, "title": "Onboarding Stage 3 preflight (project)",
+      "form": "scripts/Stage3-RegisterProject.ps1 -PublicPreflight",
+      "performer": "Onboarding operator",
+      "forEach": "answers.onboarding.projects", "itemKey": "projectId", "onboardingStage": "3",
+      "records": ["stage-3-preflight:${item.projectId}"], "reads": ["stage-D1"],
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "${d1.apim.id}", "anyOf": ["Reader", "Contributor", "Owner", "API Management Service Reader Role", "API Management Service Contributor"], "heldBy": "Onboarding operator", "purpose": "read the backend and the groups for the dependency plan", "source": "scripts/Stage3-RegisterProject.ps1:43" }
+      ],
+      "discovery": [
+        { "kind": "record", "record": "stage-3-preflight:${item.projectId}", "fields": ["planDigest", "validUntil"] },
+        { "kind": "onboarding-discover" }
+      ],
+      "command": "pwsh -NoProfile -File scripts/Stage3-RegisterProject.ps1 -AnswersFile ${item.onboardingAnswersPath} -CheckpointPath ${item.checkpointPath} -PublicPreflight -DiscoverOnly",
+      "handoff": "The onboarding operator runs the Stage 3 preflight (docs/ONBOARDING.md, Exact coordinator commands, section 2).",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:20", "docs/ONBOARDING.md:326"]
+    },
+    {
+      "id": "S3-apply", "mapRow": 8, "title": "Onboarding Stage 3 apply (private runner)",
+      "form": "scripts/Stage3-RegisterProject.ps1 on the private runner",
+      "performer": "Onboarding operator, through the private runner",
+      "forEach": "answers.onboarding.projects", "itemKey": "projectId",
+      "records": ["stage-3-project:${item.projectId}"], "reads": ["stage-D1", "stage-D2:schema", "stage-D3"],
+      "performedBy": { "principals": "${answers.permissions.privateRunnerPrincipalIds}", "heldBy": "The private runner inside the VNet (answers.permissions.privateRunnerPrincipalIds)", "source": "docs/ONBOARDING.md:404" },
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "${d1.cosmos.id}", "anyOf": ["Reader", "Contributor", "Owner"], "heldBy": "The private runner's identity (answers.permissions.privateRunnerPrincipalIds)", "purpose": "read the registry account", "source": "scripts/Stage3-RegisterProject.ps1:61" },
+        { "kind": "cosmos-data", "scope": "${d1.cosmos.id}/dbs/${answers.names.cosmosDatabase}/colls/projects", "anyOf": ["Cosmos Onboarding Writer"], "heldBy": "The private runner's identity (answers.permissions.privateRunnerPrincipalIds)", "purpose": "create the project document from inside the VNet", "source": "scripts/Stage3-RegisterProject.ps1:63" }
+      ],
+      "discovery": [
+        { "kind": "note", "text": "The project document is in the private registry, which this machine does not read; the runner's checkpoint is the authoritative Stage 3 record (docs/ONBOARDING.md:496)" }
+      ],
+      "command": "pwsh -NoProfile -File '<remote.workDirectory>/code/<reviewed commit>/scripts/runner/run-private.ps1' -Mode probe -WorkDirectory '<remote.workDirectory>'   (on the private runner, through Run Command: scripts/Invoke-Stage3PrivateRunner.ps1 -Part code sends it, -Part probe runs it, -Part apply -Confirmed applies; docs/ONBOARDING.md, Exact coordinator commands, section 4)",
+      "handoff": "The private runner's identity holds the Cosmos data role: the onboarding operator runs the apply through the runner with scripts/Invoke-Stage3PrivateRunner.ps1 from the reviewed checkout (docs/ONBOARDING.md, Exact coordinator commands, sections 4 and 5), then copies the runner's record back.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:20", "docs/ONBOARDING.md:404", "docs/ONBOARDING.md:494"]
+    },
+    {
+      "id": "S4", "mapRow": null, "title": "Onboarding Stage 4 (APIM key issuance)",
+      "form": "not built",
+      "performer": "Onboarding operator",
+      "records": [], "reads": [],
+      "requirements": [],
+      "blockers": [
+        { "id": "stage-4-shelved", "text": "Stage 4 is shelved and not in the Stage map: the pilot selects the project with a header checked against membership (C-1), not per-project keys", "source": "docs/status/WP-ONB.md:5" }
+      ],
+      "discovery": [],
+      "command": "none",
+      "handoff": "No action: Stage 4 is shelved (docs/status/WP-ONB.md:5; ADR-0006, Proposed).",
+      "sources": ["docs/CHECKPOINT-SETUP.md:50", "docs/status/WP-ONB.md:5"]
+    },
+    {
+      "id": "S5", "mapRow": 9, "title": "Onboarding Stage 5 (budget enforcement switch)",
+      "form": "budget enforcement switch",
+      "performer": "Coordinator or platform deployer",
+      "records": ["stage-5"], "reads": [],
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "${d1.apps.resolver.functionAppId}", "anyOf": ["Website Contributor", "Contributor", "Owner"], "heldBy": "Coordinator or platform deployer", "purpose": "write the resolver's budget mode", "source": "scripts/Set-ResolverBudgetStalenessPolicy.ps1:191" }
+      ],
+      "blockers": [
+        { "id": "stage-5-not-built", "text": "no script writes stage-5 yet (Stage 5 remains follow-up); the switch is scripts/Set-ResolverBudgetStalenessPolicy.ps1 once the reconciler's state is fresh for every member", "source": "docs/status/WP-ONB.md:5" }
+      ],
+      "discovery": [
+        { "kind": "record", "record": "resolver-budget-staleness-policy:${answers.names.apps.resolver.functionApp}", "fields": [] }
+      ],
+      "command": "none",
+      "handoff": "The coordinator switches the budget mode with scripts/Set-ResolverBudgetStalenessPolicy.ps1 -BudgetEnforcement budget-state (docs/status/WP-RES.md:595) once the conditions of docs/status/WP-REC.md:405 hold.",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:21", "docs/status/WP-REC.md:405"]
+    },
+    {
+      "id": "D5", "mapRow": 10, "title": "D5 Private networking",
+      "form": "workbook and scripts (not built)",
+      "performer": "The customer's network team",
+      "records": [], "reads": ["stage-D1"],
+      "requirements": [],
+      "blockers": [
+        { "id": "D5-not-built", "text": "D5 is day-2 work of WP-NET and has no workbook, script or record yet", "source": "docs/DEPLOYMENT-STAGES.md:22" }
+      ],
+      "discovery": [],
+      "command": "none",
+      "handoff": "No action yet: D5 is WP-NET's day-2 package (docs/PILOT.md:279).",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:22", "docs/PILOT.md:294"]
+    },
+    {
+      "id": "gateway-promotion", "mapRow": null, "title": "Gateway revision promotion",
+      "form": "infra/gateway/Deploy-GatewayRevision.ps1 -MakeCurrent",
+      "performer": "Coordinator or platform owner",
+      "records": ["stage-D2:policy"], "completion": "revision-current", "reads": ["stage-D2:policy"],
+      "requirements": [
+        { "kind": "azure-rbac", "scope": "${d1.apim.id}", "anyOf": ["API Management Service Contributor", "Contributor", "Owner"], "heldBy": "Coordinator or platform owner", "purpose": "make the tested revision current", "source": "docs/DEPLOYMENT-GUIDE.md:133" }
+      ],
+      "discovery": [ { "kind": "api-revisions", "api": "${d1.apim.id}/apis/${answers.apim.apiId}" } ],
+      "command": "pwsh -NoProfile -File infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath ${item.outputDirectory}/gateway/${answers.gateway.configurationId}.json -MakeCurrent -Revision ${item.revision} -ReleaseNote '<smoke result>'",
+      "handoff": "The coordinator or platform owner makes the smoke-tested revision current (config/core.answers.schema.json:272, gateway.promoteAfterSmoke false).",
+      "sources": ["docs/DEPLOYMENT-STAGES.md:219", "infra/gateway/Deploy-GatewayRevision.ps1:19"]
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.screenshot-steps",
+  "package": "WP-WB",
+  "workbook": {
+    "resourceId": "${d1.workbook.id}",
+    "displayName": "${answers.workbook.displayName}",
+    "workspaceId": "${d1.workspace.id}"
+  },
+  "rules": {
+    "readOnly": true,
+    "neverClick": ["Edit", "Save", "Save As", "Delete", "Pin", "Share", "Export to Excel"],
+    "redact": ["person", "personId", "scopeId", "gatewayRequestId", "subscription and tenant ids", "signed-in account name"],
+    "viewerRoles": ["Workbook Reader on ${d1.workbook.id}", "Log Analytics Reader on ${d1.workspace.id}"]
+  },
+  "steps": [
+    {
+      "id": "WB-D1-1",
+      "stage": "D1",
+      "page": "resource",
+      "portalPath": "Azure portal > Resource groups > ${d1.target.resourceGroup} > ${answers.workbook.displayName} (type Azure Workbook) > Overview; then Settings > Tags",
+      "mustShow": ["Resource type Azure Workbook, its location and resource group", "Tags ccof-rate-card, ccof-ledger and ccof-answers (content digests) after D2"],
+      "items": [],
+      "titles": [],
+      "parameterLabels": [],
+      "dataState": "Before D2 the workbook shows only the text 'This workbook resource is ready for D2'."
+    },
+    {
+      "id": "WB-D2-1",
+      "stage": "D2",
+      "page": "selectors",
+      "portalPath": "Azure portal > Resource groups > ${d1.target.resourceGroup} > ${answers.workbook.displayName} > Open workbook",
+      "mustShow": ["The intro text with the rate card version and source dates", "The parameter bar with its three selectors", "A second shot with the Period list open: Current calendar month, Previous calendar month, Custom range"],
+      "items": ["intro", "period"],
+      "titles": [],
+      "parameterLabels": ["Period (UTC)", "Custom range (used only in Custom mode)", "Project id (* = all observed projects)"],
+      "dataState": "Any."
+    },
+    {
+      "id": "WB-D2-2",
+      "stage": "D2",
+      "page": "usage",
+      "portalPath": "The open workbook > scroll to 'Coverage and observed delivery lag', then 'Usage', then 'Model mix'",
+      "mustShow": ["Coverage: observedRequests, partialRequests, unpricedRequests, unattributedRequests, noUsageRequests, reportState", "Usage per project, classification group and person with knownListCcu, listCcu and completeness", "Model mix"],
+      "items": ["health", "usage", "model-mix"],
+      "titles": ["Coverage and observed delivery lag", "Usage · project → classification group → person (Entra object id)", "Model mix · request counts and known list-price cost"],
+      "parameterLabels": [],
+      "dataState": "Attributed rows need the gateway trace (WP-GW revision current); best after live E2E step 7."
+    },
+    {
+      "id": "WB-D2-3",
+      "stage": "D2",
+      "page": "budgets",
+      "portalPath": "The open workbook > scroll to 'Budget versus spend'",
+      "mustShow": ["Budget and spend in CCU and USD per person and per classification group, budgetState, snapshotState, computedAt and validUntil", "Before any budget event: the message 'No matching observations. This is not evidence of zero usage or a zero budget.'", "Reconciler runs: the latest run per outcome with latestAgeSeconds, statesWritten and maxIngestionDelaySeconds"],
+      "items": ["budget-help", "budgets", "runs-help", "reconciler-runs"],
+      "titles": ["Budget versus spend · per person and per classification group", "Reconciler runs · latest run per outcome"],
+      "parameterLabels": [],
+      "dataState": "Rows appear after onboarding Stage 3 registers projects and the reconciler writes ccof.reconciler.budget.v1 lines; best after live E2E step 11."
+    },
+    {
+      "id": "WB-D2-4",
+      "stage": "D2",
+      "page": "export",
+      "portalPath": "The open workbook > scroll to 'Chargeback · project and selected period' > the grid's Export to Excel control (hover only)",
+      "mustShow": ["The chargeback grid with periodStart, periodEnd, knownListCcu, listCcu, completeness, rateCardVersion and truncated", "The Export to Excel control visible, not clicked"],
+      "items": ["chargeback-help", "chargeback"],
+      "titles": ["Chargeback · project and selected period"],
+      "parameterLabels": [],
+      "dataState": "Any; the export carries the period, completeness and rate-card provenance."
+    },
+    {
+      "id": "WB-D2-5",
+      "stage": "D2",
+      "page": "unpriced",
+      "portalPath": "The open workbook > scroll to 'Unpriced, partial or unattributed usage'",
+      "mustShow": ["pricingStatus and pricingReason per request, with the person and gatewayRequestId columns redacted"],
+      "items": ["unpriced-help", "unpriced"],
+      "titles": ["Unpriced, partial or unattributed usage"],
+      "parameterLabels": [],
+      "dataState": "Optional. Shows why amounts are partial or missing."
+    }
+  ]
+}

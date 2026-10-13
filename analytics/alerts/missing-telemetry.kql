@@ -1,0 +1,3 @@
+Gateway
+| summarize lastSeen = max(TimeGenerated)
+| project value = iff(isnull(lastSeen), toreal(_windowMinutes), datetime_diff("second", now(), lastSeen) / 60.0)

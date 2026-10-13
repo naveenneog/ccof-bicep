@@ -1,0 +1,59 @@
+let KnownModels = toscalar(RateCard | summarize make_set(modelKey));
+// No model ran: refused before any backend call (WP-TEL usageSource), or input and output measured
+// zero with no known cache tokens (WP-REC src/reconciler/price-rows.ts). Counted in health, never priced.
+let LedgerRows = Ledger
+| extend noUsage = usageSource == "no-backend-call"
+    or (inputTokens == 0 and inputTokensKnown and outputTokens == 0 and outputTokensKnown
+      and coalesce(cacheWrite5mTokens, 0) == 0 and coalesce(cacheWrite1hTokens, 0) == 0
+      and coalesce(cacheReadTokens, 0) == 0);
+let NoUsage = toscalar(LedgerRows | where noUsage
+    | summarize bag_pack("refused", countif(usageSource == "no-backend-call"), "zeroTokens", countif(usageSource != "no-backend-call")));
+let PricedUsage = LedgerRows
+| where not(noUsage)
+| extend normalizedModel = replace_regex(tolower(model), @"[^a-z0-9]", "")
+| extend undatedModel = replace_regex(normalizedModel, @"20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$", "")
+| extend modelKey = iff(set_has_element(KnownModels, normalizedModel), normalizedModel, undatedModel)
+| join kind=leftouter RateCard on modelKey
+| extend promptKnownTokens =
+    iff(set_has_element(countedCategories, "input") and inputTokensKnown, inputTokens, 0)
+    + iff(set_has_element(countedCategories, "output") and outputTokensKnown, outputTokens, 0)
+    + iff(set_has_element(countedCategories, "cacheWrite5m") and cacheWrite5mTokensKnown, cacheWrite5mTokens, 0)
+    + iff(set_has_element(countedCategories, "cacheWrite1h") and cacheWrite1hTokensKnown, cacheWrite1hTokens, 0)
+    + iff(set_has_element(countedCategories, "cacheRead") and cacheReadTokensKnown, cacheReadTokens, 0),
+  promptTierKnown =
+    (not(set_has_element(countedCategories, "input")) or inputTokensKnown)
+    and (not(set_has_element(countedCategories, "output")) or outputTokensKnown)
+    and (not(set_has_element(countedCategories, "cacheWrite5m")) or cacheWrite5mTokensKnown)
+    and (not(set_has_element(countedCategories, "cacheWrite1h")) or cacheWrite1hTokensKnown)
+    and (not(set_has_element(countedCategories, "cacheRead")) or cacheReadTokensKnown)
+| extend inForce = isnotempty(rateModel) and timestamp >= effectiveFrom
+    and (isnull(effectiveTo) or timestamp < effectiveTo),
+  geoEligible = not(inferenceGeoKnown) or inference_geo == rateGeo,
+  tierEligible = (isnull(tierUpTo) or promptKnownTokens <= tierUpTo)
+    and (not(promptTierKnown) or isnull(tierOver) or promptKnownTokens > tierOver),
+  baseCountsKnown = inputTokensKnown and outputTokensKnown,
+  cacheKnown = cacheWrite5mTokensKnown and cacheWrite1hTokensKnown and cacheReadTokensKnown
+// Zero here is the additive identity for the *known subtotal*, never a missing total.
+| extend candidateCcu = todecimal(inputTokens) * inputRate + todecimal(outputTokens) * outputRate
+    + iff(cacheWrite5mTokensKnown, todecimal(cacheWrite5mTokens) * cacheWrite5mRate, decimal(0))
+    + iff(cacheWrite1hTokensKnown, todecimal(cacheWrite1hTokens) * cacheWrite1hRate, decimal(0))
+    + iff(cacheReadTokensKnown, todecimal(cacheReadTokens) * cacheReadRate, decimal(0))
+| extend candidateCcu = iff(inForce and geoEligible and tierEligible and baseCountsKnown and not(geoMismatch),
+    candidateCcu, decimal(null))
+// Unknown tier/geo: choose the cheapest compatible known subtotal, as ADR-0011 requires. The reason
+// for a request with no amount comes from all its candidate rows, not from the one arg_min returns.
+| summarize arg_min(candidateCcu, *), anyInForce = max(toint(inForce)), anyInForceGeo = max(toint(inForce and geoEligible))
+    by gatewayResourceId, gatewayRequestId
+| extend pricingStatus = case(isnull(candidateCcu), "unpriced",
+    not(cacheKnown) or not(inferenceGeoKnown) or not(promptTierKnown), "partial", "priced"),
+  pricingReason = case(not(baseCountsKnown), "input_or_output_unknown",
+    geoMismatch, "geography_mismatch",
+    not(set_has_element(KnownModels, modelKey)), "model_not_in_rate_card",
+    anyInForce == 0, "no_rate_in_force", anyInForceGeo == 0, "geography_not_in_rate_card",
+    not(cacheKnown), "cache_categories_unknown", not(inferenceGeoKnown), "geography_unknown",
+    not(promptTierKnown), "prompt_tier_unknown", "complete_token_usage")
+| extend knownListCcu = candidateCcu,
+    listCcu = iff(pricingStatus == "priced", candidateCcu, decimal(null)),
+    projectLabel = iff(isempty(projectId), "(unattributed)", projectId),
+    classificationGroup = iff(isempty(classification), "(unknown)", classification),
+    person = iff(isempty(personId), "(unknown Entra object id)", personId);

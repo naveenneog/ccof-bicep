@@ -1,0 +1,16 @@
+// WP-E2E (docs/status/WP-E2E.md): the usage ledger of [fromTime, toTime), UTC, half-open, grouped by
+// project, classification, person and how each row was measured. Token sums count known values only;
+// the *Known columns say how many rows knew each category. Read-only.
+// Prepend analytics/ledger.kql, then append CcofE2eLedgerTotals(fromTime, toTime, gatewayResourceId).
+let CcofE2eLedgerTotals = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    CcofUsageLedger(fromTime, toTime, resourceId)
+    | summarize requests = count(), streamedRequests = countif(streamed),
+        inputTokens = sumif(inputTokens, inputTokensKnown), inputKnown = countif(inputTokensKnown),
+        outputTokens = sumif(outputTokens, outputTokensKnown), outputKnown = countif(outputTokensKnown),
+        cacheWrite5mTokens = sumif(cacheWrite5mTokens, cacheWrite5mTokensKnown), cacheWrite5mKnown = countif(cacheWrite5mTokensKnown),
+        cacheWrite1hTokens = sumif(cacheWrite1hTokens, cacheWrite1hTokensKnown), cacheWrite1hKnown = countif(cacheWrite1hTokensKnown),
+        cacheReadTokens = sumif(cacheReadTokens, cacheReadTokensKnown), cacheReadKnown = countif(cacheReadTokensKnown),
+        firstRequestAt = min(timestamp), lastRequestAt = max(timestamp), latestIngestedAt = max(ingestedAt)
+        by projectId, classification, personId, attributionKnown, usageSource, model
+    | order by projectId asc, classification asc, personId asc, usageSource asc, model asc
+};

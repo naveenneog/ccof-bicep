@@ -1,0 +1,27 @@
+{
+  "name": "claude-code-on-foundry",
+  "version": "1.0.0",
+  "description": "Claude on Microsoft Foundry behind a self-hosted Azure API Management gateway at enterprise scale: project-scale identity, cross-project membership, project-specific backend routing, and dollar-accurate budget enforcement.",
+  "private": true,
+  "type": "module",
+  "main": "dist/**/*.js",
+  "scripts": {
+    "test": "pwsh -NoProfile -File scripts/run-tests.ps1",
+    "build": "npx tsc -p tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naveenneog/claude-code-on-foundry.git"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@azure/cosmos": "^4.10.1",
+    "@azure/functions": "^4.16.5",
+    "@azure/identity": "^4.13.3",
+    "decimal.js": "^10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}

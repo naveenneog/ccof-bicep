@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-GW",
+  "cosmosRoleDefinitions": [],
+  "assignments": [
+    {
+      "id": "gw-apim-foundry-user",
+      "plane": "azure-rbac",
+      "forEach": "answers.backends",
+      "where": "backendMode == managed-identity",
+      "principal": "${d1.apim.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Cognitive Services User",
+      "roleDefinitionId": "a97b65f3-24c7-4388-baec-2e87135dc908",
+      "scope": "${item.foundryAccountResourceId}",
+      "why": "Shape A, managed-identity backends (docs/PILOT.md C-8): the gateway policy's authentication-managed-identity takes a token for the resource in the backend descriptor (https://cognitiveservices.azure.com for Foundry) and calls the account's /anthropic endpoint, so APIM's system-assigned identity needs Cognitive Services User on each such backend's Foundry account; D3 makes one assignment per managed-identity backend. Shape B (second-tenant backends) needs none here: the backend tenant's app registration holds its role in that tenant. The gateway's other dependencies are not Azure RBAC: the resolver admits APIM's identity through App Service Authentication (WP-RES, D2 resolver-auth) and diagnostics are WP-TEL's."
+    }
+  ]
+}

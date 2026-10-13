@@ -1,0 +1,99 @@
+// Trace fields and limits: docs/TELEMETRY.md. The period is UTC and half-open.
+// Append CcofUsageLedger(fromTime, toTime, gatewayResourceId) to invoke.
+let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    let ReadCount = (value:dynamic) {
+        iff(gettype(value) == "long" and tolong(value) >= 0, tolong(value), long(null))
+    };
+    let gatewayRows =
+        ApiManagementGatewayLogs
+        | where TimeGenerated >= fromTime and TimeGenerated < toTime
+        | where isnotempty(resourceId) and _ResourceId =~ resourceId
+        | extend gatewayResourceId = tolower(_ResourceId),
+            gatewayRequestId = tolower(tostring(CorrelationId)), gatewayIngestedAt = ingestion_time()
+        | where isnotempty(gatewayRequestId);
+    let gatewayOutcomes = gatewayRows
+        | extend observedBackendId = tostring(BackendId), observedBackendUrl = tostring(BackendUrl),
+            observedErrorSource = tostring(LastErrorSource), observedErrorSection = tostring(LastErrorSection),
+            outcomeSignature = tostring(pack_array(ResponseCode, BackendResponseCode, BackendId, BackendUrl, LastErrorReason, Errors, LastErrorSource, LastErrorSection))
+        | summarize arg_max(gatewayIngestedAt, ResponseCode, BackendResponseCode, observedBackendId, observedBackendUrl,
+                LastErrorReason, Errors, observedErrorSource, observedErrorSection),
+            outcomeVariants = make_set(outcomeSignature, 2) by gatewayResourceId, gatewayRequestId;
+    let identity = gatewayRows
+        | extend traceIngestedAt = gatewayIngestedAt
+        | mv-expand traceRecord = TraceRecords
+        | where tostring(traceRecord.source) == "ccof.usage.v1"
+        | extend traceMessage = tostring(traceRecord.message)
+        | extend payload = parse_json(traceMessage)
+        | summarize arg_max(traceIngestedAt, payload), traceCopies = count(),
+            traceVariants = make_set(traceMessage, 2) by gatewayResourceId, gatewayRequestId;
+    ApiManagementGatewayLlmLog
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | project timestamp = TimeGenerated, llmIngestedAt = ingestion_time(),
+        gatewayResourceId = tolower(_ResourceId), gatewayRequestId = tolower(tostring(CorrelationId)),
+        providerRequestId = tostring(RequestId), model = tostring(ModelName), deployment = tostring(DeploymentName),
+        nativeInput = tolong(PromptTokens), nativeOutput = tolong(CompletionTokens),
+        nativeStreamed = tobool(IsStreamCompletion)
+    | where isnotempty(gatewayRequestId)
+    | extend llmSignature = tostring(pack_array(providerRequestId, model, deployment, nativeInput, nativeOutput, nativeStreamed))
+    | summarize arg_max(llmIngestedAt, *), llmCopies = count(),
+        llmVariants = make_set(llmSignature, 2) by gatewayResourceId, gatewayRequestId
+    | join kind=leftouter gatewayOutcomes on gatewayResourceId, gatewayRequestId
+    | join kind=leftouter identity on gatewayResourceId, gatewayRequestId
+    | extend traceConflict = isnotnull(traceVariants) and array_length(traceVariants) > 1,
+        llmConflict = array_length(llmVariants) > 1,
+        gatewayOutcomeKnown = isnotnull(outcomeVariants) and array_length(outcomeVariants) == 1
+    // No usage: a gateway failure (4xx or 5xx) with no backend response, backend or backend URL, raised before
+    // forwarding, or by the gateway's own operation match, which the log files under the backend section
+    // (WP-E2E G4: HEAD /api/hello). A forwarding error stays usage: the backend may have run the call.
+    | extend nativeCountsKnown = gatewayOutcomeKnown and not(llmConflict)
+        and ResponseCode between (200 .. 299) and BackendResponseCode between (200 .. 299)
+        and isempty(LastErrorReason) and (isnull(Errors) or array_length(Errors) == 0),
+        noBackendCall = gatewayOutcomeKnown and ResponseCode between (400 .. 599)
+            and (isnull(BackendResponseCode) or BackendResponseCode == 0) and isempty(observedBackendId) and isempty(observedBackendUrl)
+            and ((observedErrorSection in ("", "inbound") and observedErrorSource !in ("forward-request", "set-backend-service"))
+                or (observedErrorSource == "configuration" and LastErrorReason == "OperationNotFound"))
+    | extend traceKnown = isnotnull(traceVariants) and array_length(traceVariants) == 1
+        and gettype(payload.schemaVersion) == "long" and tolong(payload.schemaVersion) == 1
+        and tolower(tostring(payload.requestId)) == gatewayRequestId
+        and gettype(payload.streamed) == "bool"
+        and isnotnull(todatetime(payload.observedAt))
+    // The trace's streamed flag decides: IsStreamCompletion can be false for a streamed call (docs/TELEMETRY.md).
+    | extend streamed = iff(traceKnown, tobool(payload.streamed), nativeStreamed)
+    | extend bodyUsageKnown = traceKnown and not(streamed) and payload.usageSource == "body" and not(noBackendCall),
+        usage = payload.usage
+    | extend inputTokens = iff(bodyUsageKnown, ReadCount(usage.input_tokens),
+            iff(nativeCountsKnown and nativeInput >= 0, nativeInput, long(null))),
+        outputTokens = iff(bodyUsageKnown, ReadCount(usage.output_tokens),
+            iff(nativeCountsKnown and nativeOutput >= 0, nativeOutput, long(null))),
+        cacheWrite5mTokens = iff(bodyUsageKnown, ReadCount(usage.cache_creation.ephemeral_5m_input_tokens), long(null)),
+        cacheWrite1hTokens = iff(bodyUsageKnown, ReadCount(usage.cache_creation.ephemeral_1h_input_tokens), long(null)),
+        cacheReadTokens = iff(bodyUsageKnown, ReadCount(usage.cache_read_input_tokens), long(null)),
+        personId = iff(traceKnown and isnotnull(toguid(tostring(payload.personId))), tostring(payload.personId), ""),
+        projectId = iff(traceKnown and gettype(payload.projectId) == "string", tostring(payload.projectId), ""),
+        classification = iff(traceKnown and gettype(payload.classification) == "string", tostring(payload.classification), ""),
+        backendId = iff(traceKnown and gettype(payload.backendId) == "string", tostring(payload.backendId), ""),
+        model = iff(isempty(model) and traceKnown, tostring(payload.model), model),
+        deployment = iff(isempty(deployment) and traceKnown, tostring(payload.deployment), deployment),
+        inference_geo = iff(traceKnown and payload.inferenceGeoSource == "deployment"
+            and gettype(payload.inferenceGeo) == "string" and isnotempty(tostring(payload.inferenceGeo)),
+            tostring(payload.inferenceGeo), "unknown"),
+        bodyInferenceGeo = iff(bodyUsageKnown, tostring(usage.inference_geo), ""),
+        usageSource = iff(noBackendCall, "no-backend-call", iff(bodyUsageKnown, "body", "log")),
+        traceObservedAt = iff(traceKnown, todatetime(payload.observedAt), datetime(null)),
+        ingestedAt = iff(isnotnull(gatewayIngestedAt) and gatewayIngestedAt > llmIngestedAt, gatewayIngestedAt, llmIngestedAt)
+    | extend inputTokensKnown = isnotnull(inputTokens), outputTokensKnown = isnotnull(outputTokens),
+        cacheWrite5mTokensKnown = isnotnull(cacheWrite5mTokens), cacheWrite1hTokensKnown = isnotnull(cacheWrite1hTokens),
+        cacheReadTokensKnown = isnotnull(cacheReadTokens),
+        inferenceGeoKnown = inference_geo != "unknown",
+        attributionKnown = traceKnown and isnotempty(personId) and isnotempty(projectId)
+            and isnotempty(classification) and isnotempty(backendId)
+    | extend inputSource = iff(inputTokensKnown, iff(bodyUsageKnown, "body", "llm-log"), "unknown"),
+        geoMismatch = inferenceGeoKnown and isnotempty(bodyInferenceGeo) and bodyInferenceGeo != inference_geo
+    | project timestamp, ingestedAt, gatewayResourceId, gatewayRequestId, providerRequestId,
+        personId, projectId, classification, backendId, deployment, model, streamed,
+        inputTokens, outputTokens, cacheWrite5mTokens, cacheWrite1hTokens, cacheReadTokens,
+        inputTokensKnown, outputTokensKnown, cacheWrite5mTokensKnown, cacheWrite1hTokensKnown, cacheReadTokensKnown,
+        inference_geo, inferenceGeoKnown, bodyInferenceGeo, geoMismatch,
+        usageSource, inputSource, attributionKnown, traceConflict, llmConflict, traceObservedAt, llmCopies, traceCopies
+};

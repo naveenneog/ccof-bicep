@@ -1,0 +1,7 @@
+let Gateway =
+    ApiManagementGatewayLogs
+    | where TimeGenerated >= ago(_windowMinutes * 1m)
+    | where _ResourceId =~ _gatewayResourceId and ApiId == _apiId
+    | project TimeGenerated, CorrelationId, ResponseCode, BackendId, BackendResponseCode,
+        LastErrorSource, LastErrorSection, TraceRecords
+    | summarize arg_max(TimeGenerated, *) by CorrelationId;

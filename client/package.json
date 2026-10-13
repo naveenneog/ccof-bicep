@@ -1,0 +1,15 @@
+{
+  "name": "ccof-token",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Entra SSO credential helper for the Claude on Foundry gateway",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22" },
+  "bin": { "ccof-token": "bin/ccof-token.mjs" },
+  "scripts": { "test": "node --test --test-reporter=tap test/*.test.mjs" },
+  "dependencies": {
+    "@azure/msal-node": "7.0.1",
+    "@azure/msal-node-extensions": "5.5.2"
+  }
+}

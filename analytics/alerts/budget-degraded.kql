@@ -1,0 +1,5 @@
+Resolver
+| summarize samples = count(), degraded = countif(gettype(payload.served) == "bool" and tobool(payload.served) == true
+    and (payload.resolverOutcome == "degraded" or payload.budgetState in ("degraded", "stale", "missing")))
+| where samples >= _minimumSamples
+| project value = toreal(degraded)

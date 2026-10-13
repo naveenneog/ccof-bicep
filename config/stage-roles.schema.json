@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/naveenneog/claude-code-on-foundry/config/stage-roles.schema.json",
+  "title": "Deployment stages as data for the plan report",
+  "description": "config/stage-roles.json: one entry per stage of docs/DEPLOYMENT-STAGES.md, Stage map, in its order. Read by scripts/Plan.Data.psm1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "description", "ownerAccepted", "stages"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ccof.stage-roles" },
+    "description": { "type": "string", "minLength": 1 },
+    "ownerAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "source", "retrieved"],
+      "properties": {
+        "text": { "$ref": "#/$defs/text" },
+        "source": { "type": "string", "pattern": "^https://learn\\.microsoft\\.com/[A-Za-z0-9/._-]+$" },
+        "retrieved": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      }
+    },
+    "stages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/stage" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 600 },
+    "template": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^\\r\\n]*$" },
+    "recordId": { "type": "string", "pattern": "^[A-Za-z0-9${}._:-]{1,200}$" },
+    "citation": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+:[1-9][0-9]*$" },
+    "condition": { "type": "string", "pattern": "^(answers|item)\\.[A-Za-z0-9_.]+ == [A-Za-z0-9_.-]+$" },
+    "roleName": { "type": "string", "pattern": "^[A-Za-z0-9 ._()-]{1,120}$" },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope", "anyOf", "heldBy", "purpose", "source"],
+      "properties": {
+        "kind": { "enum": ["azure-rbac", "entra-directory", "cosmos-data"] },
+        "scope": { "$ref": "#/$defs/template" },
+        "anyOf": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/roleName" } },
+        "tenantSetting": { "enum": ["allowedToCreateApps", "allowedToCreateSecurityGroups"] },
+        "when": { "$ref": "#/$defs/condition" },
+        "blocking": { "type": "boolean" },
+        "heldBy": { "$ref": "#/$defs/text" },
+        "purpose": { "$ref": "#/$defs/text" },
+        "source": { "$ref": "#/$defs/citation" }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "source"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,60}$" },
+        "when": { "$ref": "#/$defs/condition" },
+        "text": { "$ref": "#/$defs/text" },
+        "source": { "$ref": "#/$defs/citation" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["checkpoint-file", "answers-section", "d1-record", "d2-plan", "d3-plan", "arm-get", "api-revisions", "graph-app-role", "recorded-groups", "record", "onboarding-discover", "note"] },
+        "step": { "type": "string", "pattern": "^[a-z-]{1,40}$" },
+        "when": { "$ref": "#/$defs/condition" },
+        "label": { "$ref": "#/$defs/template" },
+        "suffix": { "type": "string", "pattern": "^\\.[A-Za-z0-9._-]{1,60}$" },
+        "anyOf": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Za-z0-9]{1,60}$" } },
+        "url": { "$ref": "#/$defs/template" },
+        "count": { "type": "boolean" },
+        "api": { "$ref": "#/$defs/template" },
+        "principal": { "$ref": "#/$defs/template" },
+        "appRoleId": { "$ref": "#/$defs/template" },
+        "record": { "$ref": "#/$defs/recordId" },
+        "fields": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9]{1,60}$" } },
+        "text": { "$ref": "#/$defs/text" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "checkpoint-file" } }, "required": ["kind"] }, "then": { "required": ["suffix", "label"] } },
+        { "if": { "properties": { "kind": { "const": "answers-section" } }, "required": ["kind"] }, "then": { "required": ["anyOf", "label"] } },
+        { "if": { "properties": { "kind": { "const": "arm-get" } }, "required": ["kind"] }, "then": { "required": ["url", "label"] } },
+        { "if": { "properties": { "kind": { "const": "api-revisions" } }, "required": ["kind"] }, "then": { "required": ["api"] } },
+        { "if": { "properties": { "kind": { "const": "graph-app-role" } }, "required": ["kind"] }, "then": { "required": ["principal", "appRoleId", "label"] } },
+        { "if": { "properties": { "kind": { "const": "recorded-groups" } }, "required": ["kind"] }, "then": { "required": ["record"] } },
+        { "if": { "properties": { "kind": { "const": "record" } }, "required": ["kind"] }, "then": { "required": ["record", "fields"] } },
+        { "if": { "properties": { "kind": { "const": "note" } }, "required": ["kind"] }, "then": { "required": ["text"] } }
+      ]
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mapRow", "title", "form", "performer", "records", "reads", "requirements", "discovery", "command", "handoff", "sources"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,40}$" },
+        "mapRow": { "type": ["integer", "null"], "minimum": 1, "maximum": 10 },
+        "title": { "$ref": "#/$defs/text" },
+        "form": { "$ref": "#/$defs/text" },
+        "performer": { "$ref": "#/$defs/text" },
+        "steps": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z-]{1,40}$" } },
+        "forEach": { "enum": ["answers.onboarding.projects", "answers.backends"] },
+        "itemKey": { "type": "string", "pattern": "^[A-Za-z0-9]{1,40}$" },
+        "onboardingStage": { "enum": ["1", "2", "3"] },
+        "itemDerive": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["name", "from", "segment"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9]{1,40}$" },
+              "from": { "type": "string", "pattern": "^[A-Za-z0-9]{1,40}$" },
+              "segment": { "type": "integer", "minimum": 1, "maximum": 20 }
+            }
+          }
+        },
+        "records": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/recordId" } },
+        "completion": { "enum": ["records", "revision-current"] },
+        "reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/recordId" } },
+        "answersStage": { "enum": ["D1", "D2", "D3"] },
+        "requirements": { "type": "array", "items": { "$ref": "#/$defs/requirement" } },
+        "performedBy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principals", "heldBy", "source"],
+          "description": "The stage runs as one of these identities only (the private runner): an operator who is not one of them hands it off, whatever roles they hold.",
+          "properties": {
+            "principals": { "$ref": "#/$defs/template" },
+            "heldBy": { "$ref": "#/$defs/text" },
+            "source": { "$ref": "#/$defs/citation" }
+          }
+        },
+        "blockers": { "type": "array", "items": { "$ref": "#/$defs/blocker" } },
+        "discovery": { "type": "array", "items": { "$ref": "#/$defs/probe" } },
+        "command": { "$ref": "#/$defs/template" },
+        "commandSteps": { "$ref": "#/$defs/template" },
+        "handoff": { "$ref": "#/$defs/text" },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/citation" } }
+      },
+      "allOf": [
+        { "if": { "required": ["forEach"] }, "then": { "required": ["itemKey"] } },
+        { "if": { "required": ["steps"] }, "then": { "required": ["commandSteps"] } }
+      ]
+    }
+  }
+}

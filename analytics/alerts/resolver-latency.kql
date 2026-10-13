@@ -1,0 +1,7 @@
+Resolver
+| where gettype(payload.resolverDurationMs) in ("long", "double")
+| extend durationMs = toreal(payload.resolverDurationMs)
+| where durationMs >= 0
+| summarize samples = count(), latency = percentile(durationMs, _latencyPercentile)
+| where samples >= _minimumSamples
+| project value = latency

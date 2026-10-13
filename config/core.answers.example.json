@@ -1,0 +1,329 @@
+{
+  "$schema": "./core.answers.schema.json",
+  "schemaVersion": 1,
+  "kind": "ccof.core.answers",
+  "purpose": "validation",
+  "provenance": {
+    "basis": "coordinator-assumption",
+    "note": "Example only: every id below is a placeholder. Replace each value; nothing is defaulted.",
+    "decidedBy": "00000000-0000-4000-8000-000000000001",
+    "decidedAt": "2026-10-11T13:00:00Z",
+    "signOffSheet": null
+  },
+  "target": {
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "subscriptionId": "22222222-2222-4222-8222-222222222222",
+    "location": "eastus2",
+    "resourceGroup": {
+      "name": "ccof-core-example-rg",
+      "mode": "create"
+    },
+    "resourceProviders": "verify-only",
+    "tags": {
+      "workload": "claude-code-on-foundry",
+      "environment": "validation"
+    },
+    "cloud": {
+      "authorityHost": "https://login.microsoftonline.com",
+      "v1IssuerHost": "https://sts.windows.net",
+      "graphBaseUrl": "https://graph.microsoft.com/v1.0"
+    }
+  },
+  "availability": {
+    "schemaVersion": 1,
+    "kind": "ccof.stage0.availability",
+    "provenance": {
+      "basis": "coordinator-assumption",
+      "note": "Validation sizes: eastus2, Standard v2 x1 non-zonal, Cosmos provisioned autoscale. Coordinator assumption, owner to confirm.",
+      "decidedBy": "00000000-0000-4000-8000-000000000001",
+      "decidedAt": "2026-10-11T13:05:00Z",
+      "signOffSheet": null
+    },
+    "region": {
+      "primary": "eastus2",
+      "mode": "single-region"
+    },
+    "apim": {
+      "sku": "StandardV2",
+      "units": 1,
+      "zones": []
+    },
+    "registry": {
+      "capacityMode": "provisioned-autoscale",
+      "autoscaleMaxThroughput": 1000,
+      "manualThroughput": null,
+      "zoneRedundant": true,
+      "regions": [
+        "eastus2"
+      ],
+      "multipleWriteLocations": false
+    },
+    "functions": {
+      "resolver": {
+        "alwaysReady": 0,
+        "zoneRedundant": false,
+        "maximumInstanceCount": 40,
+        "instanceMemoryMB": 2048
+      },
+      "sync": {
+        "alwaysReady": 0,
+        "zoneRedundant": false,
+        "maximumInstanceCount": 40,
+        "instanceMemoryMB": 2048
+      },
+      "reconciler": {
+        "alwaysReady": 0,
+        "zoneRedundant": false,
+        "maximumInstanceCount": 40,
+        "instanceMemoryMB": 2048
+      }
+    },
+    "storage": {
+      "sku": "Standard_LRS"
+    },
+    "entitlementCache": {
+      "cachingType": "internal",
+      "allowTtlSeconds": 120,
+      "refusalTtlSeconds": 30,
+      "lastKnownGoodGraceSeconds": 3600,
+      "refreshBackoffSeconds": 30,
+      "unavailableRetryAfterSeconds": 5
+    },
+    "budgetState": {
+      "graceSeconds": 900,
+      "hardLimitSeconds": 3600
+    },
+    "telemetry": {
+      "workspaceRegion": "eastus2",
+      "retentionDays": 31,
+      "replication": {
+        "enabled": false,
+        "secondaryRegion": null
+      }
+    },
+    "sync": {
+      "schedule": "0 */1 * * * *",
+      "leaseSeconds": 300,
+      "maxRemovalsPerRun": 5,
+      "maxRemovalFraction": 0.1
+    }
+  },
+  "names": {
+    "deploymentPrefix": "ccof-core",
+    "apim": "ccofex-apim",
+    "logAnalyticsWorkspace": "ccofex-law",
+    "cosmosAccount": "ccofex-cosmos",
+    "cosmosDatabase": "ccof",
+    "cosmosPrivateEndpoint": "ccofex-pe-cosmos",
+    "cosmosRoles": {
+      "syncWriter": "ccof sync entitlement writer",
+      "reconcilerWriter": "ccof reconciler budget writer",
+      "projectWriter": "ccof onboarding project writer"
+    },
+    "identities": {
+      "sync": "ccofex-sync-id",
+      "reconciler": "ccofex-reconciler-id"
+    },
+    "apps": {
+      "resolver": {
+        "functionApp": "ccofex-resolver-func",
+        "plan": "ccofex-resolver-plan",
+        "storageAccount": "ccofexresolverstor",
+        "deploymentContainer": "app-package-resolver",
+        "storagePrivateEndpoint": "ccofex-pe-resolver-storage",
+        "appInsights": "ccofex-resolver-ai"
+      },
+      "sync": {
+        "functionApp": "ccofex-sync-func",
+        "plan": "ccofex-sync-plan",
+        "storageAccount": "ccofexsyncstor",
+        "deploymentContainer": "app-package-sync",
+        "storagePrivateEndpoint": "ccofex-pe-sync-storage",
+        "appInsights": "ccofex-sync-ai"
+      },
+      "reconciler": {
+        "functionApp": "ccofex-reconciler-func",
+        "plan": "ccofex-reconciler-plan",
+        "storageAccount": "ccofexrecstor",
+        "deploymentContainer": "app-package-reconciler",
+        "storagePrivateEndpoint": "ccofex-pe-reconciler-storage",
+        "appInsights": null
+      }
+    }
+  },
+  "network": {
+    "mode": "create",
+    "create": {
+      "vnetName": "ccofex-vnet",
+      "addressSpace": "10.60.0.0/16",
+      "apimNsgName": "ccofex-nsg-apim",
+      "subnets": {
+        "apim": {
+          "name": "snet-apim",
+          "prefix": "10.60.1.0/24"
+        },
+        "privateEndpoints": {
+          "name": "snet-private-endpoints",
+          "prefix": "10.60.2.0/24"
+        },
+        "functions": {
+          "name": "snet-functions",
+          "prefix": "10.60.3.0/24"
+        },
+        "runner": {
+          "name": "snet-runner",
+          "prefix": "10.60.4.0/27"
+        }
+      }
+    }
+  },
+  "identity": {
+    "gatewayApi": {
+      "appId": "33333333-3333-4333-8333-333333333333",
+      "scope": "access_as_user",
+      "accessTokenVersion": 1
+    },
+    "developerSignIn": {
+      "appId": "44444444-4444-4444-8444-444444444444",
+      "redirectUris": [
+        "https://login.microsoftonline.com/common/oauth2/nativeclient",
+        "http://localhost"
+      ]
+    },
+    "resolverApi": {
+      "appId": "55555555-5555-4555-8555-555555555555"
+    },
+    "testClientAppIds": [],
+    "allowAppOnlyTestTokens": false,
+    "testClientAppRole": null
+  },
+  "permissions": {
+    "privateRunnerPrincipalIds": [],
+    "workbookReaderPrincipalIds": []
+  },
+  "apim": {
+    "publisherEmail": "platform-team@example.com",
+    "publisherName": "Example platform team",
+    "apiId": "claude-messages",
+    "apiPath": "anthropic",
+    "apiDisplayName": "Claude Messages"
+  },
+  "resolver": {
+    "budgetEnforcement": "token-limits-only",
+    "cosmosRequestTimeoutMs": 2000,
+    "cosmosRetryAttempts": 2,
+    "cosmosRetryMaxWaitSeconds": 2,
+    "requestDeadlineMs": 4000
+  },
+  "sync": {
+    "mode": "delegated-snapshot",
+    "graphPermission": null,
+    "memberTypes": "user",
+    "graphMaxRetries": 3,
+    "graphMaxRetryAfterSeconds": 30,
+    "graphTimeoutSeconds": 30,
+    "writeMode": "apply"
+  },
+  "reconciler": {
+    "timerEnabled": false,
+    "schedule": "0 */2 * * * *",
+    "validitySeconds": 600,
+    "leaseSeconds": 300,
+    "ledgerTimeoutSeconds": 60,
+    "ledgerMaxRows": 100000,
+    "maxStates": 10000,
+    "writeConcurrency": 8,
+    "logAnalyticsEndpoint": "https://api.loganalytics.io"
+  },
+  "gateway": {
+    "configurationId": "ccofex-gateway-1",
+    "promoteAfterSmoke": true,
+    "admission": {
+      "perPerson": {
+        "calls": 120,
+        "renewalPeriodSeconds": 60
+      },
+      "resolverMisses": {
+        "calls": 200,
+        "renewalPeriodSeconds": 1,
+        "maxConcurrent": 100
+      }
+    },
+    "resolverTimeoutSeconds": 10,
+    "projectHeaderName": "x-ccof-project",
+    "keyVersion": 1,
+    "tokenLimits": {
+      "estimatePromptTokens": false,
+      "headers": {
+        "personRemainingQuota": "x-ccof-person-quota-remaining",
+        "personRemainingTokens": "x-ccof-person-tokens-remaining",
+        "groupRemainingQuota": "x-ccof-group-quota-remaining",
+        "groupRemainingTokens": "x-ccof-group-tokens-remaining",
+        "tokensConsumed": "x-ccof-tokens-consumed"
+      }
+    },
+    "defaultAnthropicVersion": "2023-06-01"
+  },
+  "telemetry": {
+    "alertConfigurationFile": null
+  },
+  "rateCard": {
+    "path": "../config/rate-card.json",
+    "version": "2026-10-11",
+    "contractSchedulePath": "../config/contract-schedule.json"
+  },
+  "workbook": {
+    "resourceName": "66666666-6666-4666-8666-666666666666",
+    "displayName": "Claude gateway chargeback",
+    "settings": { "defaultProjectId": "*", "maxRows": 1000, "topUsers": 25, "maxQueryDays": 62, "budgetLookbackDays": 31 }
+  },
+  "backends": [
+    {
+      "id": "foundry-example",
+      "backendMode": "managed-identity",
+      "url": "https://example-foundry.services.ai.azure.com/anthropic",
+      "foundryAccountResourceId": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/rg-foundry/providers/Microsoft.CognitiveServices/accounts/example-foundry",
+      "resource": "https://cognitiveservices.azure.com",
+      "deploymentInferenceGeo": {}
+    }
+  ],
+  "onboarding": {
+    "projects": [
+      {
+        "projectId": "EXAMPLEPROJ01",
+        "backendId": "foundry-example",
+        "classifications": [
+          "STD",
+          "PRM",
+          "CYB"
+        ]
+      }
+    ]
+  },
+  "client": {
+    "helperTtlSeconds": 300,
+    "minimumTokenLifetimeSeconds": 360,
+    "loginTimeoutSeconds": 120,
+    "tokenTimeoutSeconds": 30,
+    "disableNonessentialTraffic": true,
+    "models": {
+      "default": "claude-sonnet-5",
+      "opus": "claude-opus-5",
+      "sonnet": "claude-sonnet-5",
+      "haiku": "claude-haiku-4-5",
+      "available": [
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-opus-5-5",
+        "claude-haiku-4-5"
+      ]
+    },
+    "desktop": {
+      "profileId": "77777777-7777-4777-8777-777777777777",
+      "profileName": "Claude enterprise gateway"
+    }
+  },
+  "output": {
+    "directory": "../../ccof-core-output/example"
+  }
+}

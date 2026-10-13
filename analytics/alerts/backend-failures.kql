@@ -1,0 +1,7 @@
+Gateway
+| where isnotempty(BackendId) or BackendResponseCode > 0
+    or LastErrorSource in ("forward-request", "set-backend-service")
+| summarize samples = count(), failures = countif(BackendResponseCode >= 400
+    or LastErrorSource in ("forward-request", "set-backend-service"))
+| where samples >= _minimumSamples
+| project value = 10000.0 * failures / samples

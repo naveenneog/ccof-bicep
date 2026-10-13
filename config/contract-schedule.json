@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "version": "2026-10-11",
+  "description": "The customer's private-offer discount per Claude model, with effective intervals (ADR-0005 decision 3, ADR-0011 decision 6). Each entry is copied from the Azure Marketplace private offer by the checkpointed finance stage and records offerReference, recordedBy and recordedAt. Empty: no discount is recorded, so every amount is list price and labelled 'list' (U-18).",
+  "notes": [
+    "Entry format: { \"model\": a rate-card model, \"discount\": a decimal string at least 0 and below 1, such as \"0.10\" for 10%, \"effectiveFrom\" and \"effectiveTo\": UTC instants with a Z suffix (effectiveTo null for open-ended), \"offerReference\", \"recordedBy\", \"recordedAt\" }.",
+    "Discounts: 'Applied as fewer CCUs metered' (https://platform.claude.com/docs/en/about-claude/pricing, Claude in Microsoft Foundry pricing, retrieved 2026-10-11). 'A private offer can carry different discount rates for different Claude models. The applicable rate is used per call before conversion to CCU.' (https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models-billing, ms.date 2026-08-14, retrieved 2026-10-11)"
+  ],
+  "entries": []
+}

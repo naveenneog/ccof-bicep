@@ -1,0 +1,583 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/naveenneog/claude-code-on-foundry/config/core.answers.schema.json",
+  "title": "claude-code-on-foundry: one-time core installer answers (scripts/Install-Core.ps1)",
+  "description": "Every value the core needs. No field has a default: a missing decision is listed with every other missing decision and the installer stops before any Azure call. docs/INSTALL.md explains each field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "purpose", "provenance", "target", "output"],
+  "x-ccof-stages": {
+    "D1": ["availability|availabilityFile", "names", "network", "apim", "identity", "workbook"],
+    "D2": ["availability|availabilityFile", "names", "identity", "apim", "resolver", "sync", "reconciler", "gateway", "telemetry", "rateCard", "workbook", "backends", "onboarding", "client"],
+    "D3": ["names", "sync", "permissions", "backends"]
+  },
+  "properties": {
+    "$schema": { "type": "string", "maxLength": 300 },
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ccof.core.answers" },
+    "purpose": { "enum": ["validation", "production"], "description": "validation: the values are recorded as validation values, not production sizing." },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenantId", "subscriptionId", "location", "resourceGroup", "resourceProviders", "tags", "cloud"],
+      "properties": {
+        "tenantId": { "$ref": "#/$defs/guid" },
+        "subscriptionId": { "$ref": "#/$defs/guid" },
+        "location": { "$ref": "#/$defs/region" },
+        "resourceGroup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "mode"],
+          "properties": {
+            "name": { "$ref": "#/$defs/resourceGroupName" },
+            "mode": { "enum": ["create", "existing"] }
+          }
+        },
+        "resourceProviders": { "enum": ["register", "verify-only"], "description": "register needs Contributor on the subscription (docs/DEPLOYMENT-GUIDE.md, People and roles)." },
+        "tags": { "type": "object", "maxProperties": 15, "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$" }, "additionalProperties": { "type": "string", "maxLength": 256 } },
+        "cloud": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authorityHost", "v1IssuerHost", "graphBaseUrl"],
+          "properties": {
+            "authorityHost": { "$ref": "#/$defs/httpsOrigin" },
+            "v1IssuerHost": { "$ref": "#/$defs/httpsOrigin" },
+            "graphBaseUrl": { "$ref": "#/$defs/httpsUrl" }
+          }
+        }
+      }
+    },
+    "availabilityFile": { "$ref": "#/$defs/relativeOrAbsolutePath", "description": "The Stage 0 export (WP-HADEC), kind ccof.stage0.availability; validated against #/$defs/availability." },
+    "availability": { "$ref": "#/$defs/availability" },
+    "names": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deploymentPrefix", "apim", "logAnalyticsWorkspace", "cosmosAccount", "cosmosDatabase", "cosmosPrivateEndpoint", "cosmosRoles", "identities", "apps"],
+      "properties": {
+        "deploymentPrefix": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,39}$" },
+        "apim": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,48}[A-Za-z0-9]$" },
+        "logAnalyticsWorkspace": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{2,61}[A-Za-z0-9]$" },
+        "cosmosAccount": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$" },
+        "cosmosDatabase": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+        "cosmosPrivateEndpoint": { "$ref": "#/$defs/resourceName" },
+        "cosmosRoles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["syncWriter", "reconcilerWriter", "projectWriter"],
+          "properties": {
+            "syncWriter": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$" },
+            "reconcilerWriter": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$" },
+            "projectWriter": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$", "description": "The private runners' custom Cosmos role on projects (WP-ONB's D3 data, onboarding Stage 3): readMetadata, items/read and items/create only. Each custom role needs its own name." }
+          }
+        },
+        "identities": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "User-assigned identities, created first. The resolver keeps its system-assigned identity, as in the PoC (phase3-cosmos-function.bicep).",
+          "required": ["sync", "reconciler"],
+          "properties": {
+            "sync": { "$ref": "#/$defs/identityName" },
+            "reconciler": { "$ref": "#/$defs/identityName" }
+          }
+        },
+        "apps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resolver", "sync", "reconciler"],
+          "properties": {
+            "resolver": { "$ref": "#/$defs/appNames" },
+            "sync": { "$ref": "#/$defs/appNames" },
+            "reconciler": { "$ref": "#/$defs/appNames" }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["create", "existing"], "description": "create: the minimal VNet, subnets, private endpoints and DNS zones of the PoC. existing: bring your own (day 2)." },
+        "create": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vnetName", "addressSpace", "apimNsgName", "subnets"],
+          "properties": {
+            "vnetName": { "$ref": "#/$defs/resourceName" },
+            "addressSpace": { "$ref": "#/$defs/cidr" },
+            "apimNsgName": { "$ref": "#/$defs/resourceName" },
+            "subnets": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["apim", "privateEndpoints", "functions", "runner"],
+              "properties": {
+                "apim": { "$ref": "#/$defs/subnet" },
+                "privateEndpoints": { "$ref": "#/$defs/subnet" },
+                "functions": { "$ref": "#/$defs/subnet" },
+                "runner": { "oneOf": [{ "$ref": "#/$defs/subnet" }, { "type": "null" }], "description": "Subnet for a temporary private runner (onboarding Stage 3); null for none." }
+              }
+            }
+          }
+        },
+        "existing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apimSubnetId", "privateEndpointSubnetId", "functionsSubnetId", "privateDnsZoneIds"],
+          "properties": {
+            "apimSubnetId": { "$ref": "#/$defs/subnetId" },
+            "privateEndpointSubnetId": { "$ref": "#/$defs/subnetId" },
+            "functionsSubnetId": { "$ref": "#/$defs/subnetId" },
+            "privateDnsZoneIds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cosmos", "blob"],
+              "properties": {
+                "cosmos": { "type": "string", "pattern": "^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.documents\\.azure\\.com$" },
+                "blob": { "type": "string", "pattern": "^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.blob\\.core\\.windows\\.net$" }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "create" } }, "required": ["mode"] }, "then": { "required": ["create"], "properties": { "existing": false } } },
+        { "if": { "properties": { "mode": { "const": "existing" } }, "required": ["mode"] }, "then": { "required": ["existing"], "properties": { "create": false } } }
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Entra app registrations in the deployment's tenant, created in the D1 workbook (docs/PREREQUISITES-WORKBOOK.md) by an application administrator; the stages verify and record them and never create them.",
+      "required": ["gatewayApi", "developerSignIn", "resolverApi", "testClientAppIds", "allowAppOnlyTestTokens", "testClientAppRole"],
+      "properties": {
+        "gatewayApi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["appId", "scope", "accessTokenVersion"],
+          "properties": {
+            "appId": { "$ref": "#/$defs/guid" },
+            "scope": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,120}$" },
+            "accessTokenVersion": { "enum": [1, 2] }
+          }
+        },
+        "developerSignIn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["appId", "redirectUris"],
+          "properties": {
+            "appId": { "$ref": "#/$defs/guid" },
+            "redirectUris": { "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^(https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?|http://localhost(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)$" } }
+          }
+        },
+        "resolverApi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["appId"],
+          "properties": {
+            "appId": { "$ref": "#/$defs/guid" }
+          }
+        },
+        "testClientAppIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/$defs/guid" } },
+        "allowAppOnlyTestTokens": { "type": "boolean", "description": "WP-GW entra.testIdentities.allowAppOnlyTokens (WP-NET finding S1). false (production): testClientAppIds is empty, testClientAppRole is null, and the gateway refuses every app-only token. true: at least one testClientAppIds entry and a testClientAppRole." },
+        "testClientAppRole": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$", "description": "WP-GW entra.testIdentities.appRole: the value of the Gateway API app role that a test client's app-only token must carry in its roles claim (exact match). null when allowAppOnlyTestTokens is false. Pattern as infra/gateway/gateway-config.schema.json." }
+      },
+      "allOf": [
+        { "if": { "properties": { "allowAppOnlyTestTokens": { "const": true } }, "required": ["allowAppOnlyTestTokens"] }, "then": { "properties": { "testClientAppIds": { "minItems": 1 }, "testClientAppRole": { "type": "string" } } } },
+        { "if": { "properties": { "allowAppOnlyTestTokens": { "const": false } }, "required": ["allowAppOnlyTestTokens"] }, "then": { "properties": { "testClientAppIds": { "maxItems": 0 }, "testClientAppRole": { "type": "null" } } } }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Principals that D3 grants access to, beyond the core's own identities. Explicit lists; empty means none.",
+      "required": ["privateRunnerPrincipalIds", "workbookReaderPrincipalIds"],
+      "properties": {
+        "privateRunnerPrincipalIds": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/$defs/guid" }, "description": "Managed identities of private runners inside the VNet (onboarding Stage 3, the sync snapshot apply)." },
+        "workbookReaderPrincipalIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/guid" }, "description": "People or groups who open the chargeback workbook (WP-WB): Workbook Reader and Log Analytics Reader." }
+      }
+    },
+    "apim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publisherEmail", "publisherName", "apiId", "apiPath", "apiDisplayName"],
+      "properties": {
+        "publisherEmail": { "type": "string", "pattern": "^[^@\\s]{1,64}@[A-Za-z0-9.-]{1,190}\\.[A-Za-z]{2,24}$" },
+        "publisherName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "apiId": { "$ref": "#/$defs/name" },
+        "apiPath": { "$ref": "#/$defs/name" },
+        "apiDisplayName": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "resolver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budgetEnforcement", "cosmosRequestTimeoutMs", "cosmosRetryAttempts", "cosmosRetryMaxWaitSeconds", "requestDeadlineMs"],
+      "properties": {
+        "budgetEnforcement": { "enum": ["token-limits-only", "budget-state"], "description": "RESOLVER_BUDGET_ENFORCEMENT (docs/PILOT.md C-3, C-7). budget-state only after onboarding Stage 5." },
+        "cosmosRequestTimeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+        "cosmosRetryAttempts": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "cosmosRetryMaxWaitSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "requestDeadlineMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "graphPermission", "memberTypes", "graphMaxRetries", "graphMaxRetryAfterSeconds", "graphTimeoutSeconds", "writeMode"],
+      "properties": {
+        "mode": { "enum": ["application-permission", "delegated-snapshot"], "description": "application-permission: the sync identity holds a Graph application permission (DEPLOYMENT-GUIDE Step 7). D3 grants it only when the caller holds an active Privileged Role Administrator or Global Administrator role; otherwise D3 prints Step 7 and records it pending. The sync timer is enabled only after the grant is verified. delegated-snapshot: no Graph application permission; the operator's delegated read is applied inside the network (WP-SYNC)." },
+        "graphPermission": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["permission", "appRoleId"],
+              "properties": {
+                "permission": { "enum": ["GroupMember.Read.All", "Group.Read.All"] },
+                "appRoleId": { "$ref": "#/$defs/guid" }
+              }
+            }
+          ]
+        },
+        "memberTypes": { "type": "string", "pattern": "^(user|servicePrincipal)(,(user|servicePrincipal))?$" },
+        "graphMaxRetries": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "graphMaxRetryAfterSeconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "graphTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "writeMode": { "enum": ["apply", "dry-run"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "application-permission" } }, "required": ["mode"] }, "then": { "properties": { "graphPermission": { "type": "object" } } } },
+        { "if": { "properties": { "mode": { "const": "delegated-snapshot" } }, "required": ["mode"] }, "then": { "properties": { "graphPermission": { "type": "null" } } } }
+      ]
+    },
+    "reconciler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timerEnabled", "schedule", "validitySeconds", "leaseSeconds", "ledgerTimeoutSeconds", "ledgerMaxRows", "maxStates", "writeConcurrency", "logAnalyticsEndpoint"],
+      "properties": {
+        "timerEnabled": { "type": "boolean", "description": "AzureWebJobs.reconcileBudgets.Disabled is its negation. Must be true before onboarding Stage 5 (WP-REC)." },
+        "schedule": { "type": "string", "pattern": "^0 \\*/([1-9]|[1-5][0-9]) \\* \\* \\* \\*$" },
+        "validitySeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "leaseSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "ledgerTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "ledgerMaxRows": { "type": "integer", "minimum": 1, "maximum": 500000 },
+        "maxStates": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "writeConcurrency": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "logAnalyticsEndpoint": { "$ref": "#/$defs/httpsOrigin", "description": "RECONCILER_LOG_ANALYTICS_ENDPOINT (WP-REC): the Log Analytics query API origin of the workspace's cloud, also the token audience; no path or trailing slash. Public cloud: https://api.loganalytics.io (Learn, Logs query API request format)." }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configurationId", "admission", "resolverTimeoutSeconds", "projectHeaderName", "keyVersion", "tokenLimits", "defaultAnthropicVersion", "promoteAfterSmoke"],
+      "description": "The WP-GW gateway-config fields that the deployment cannot derive (infra/gateway/gateway-config.schema.json on wp/gw), and whether D2 makes the tested revision current.",
+      "properties": {
+        "promoteAfterSmoke": { "type": "boolean", "description": "true: D2 makes the new revision current when its smoke tests pass. false: D2 leaves it non-current; the coordinator or platform owner makes it current (the live proof of concept)." },
+        "configurationId": { "$ref": "#/$defs/name" },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["perPerson", "resolverMisses"],
+          "properties": {
+            "perPerson": {
+              "type": "object", "additionalProperties": false, "required": ["calls", "renewalPeriodSeconds"],
+              "properties": { "calls": { "type": "integer", "minimum": 1, "maximum": 1000000 }, "renewalPeriodSeconds": { "type": "integer", "minimum": 1, "maximum": 300 } }
+            },
+            "resolverMisses": {
+              "type": "object", "additionalProperties": false, "required": ["calls", "renewalPeriodSeconds", "maxConcurrent"],
+              "properties": { "calls": { "type": "integer", "minimum": 1, "maximum": 1000000 }, "renewalPeriodSeconds": { "type": "integer", "minimum": 1, "maximum": 300 }, "maxConcurrent": { "type": "integer", "minimum": 1, "maximum": 100000 } }
+            }
+          }
+        },
+        "resolverTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "projectHeaderName": { "$ref": "#/$defs/headerName" },
+        "keyVersion": { "type": "integer", "minimum": 1, "maximum": 999999 },
+        "tokenLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["estimatePromptTokens", "headers"],
+          "properties": {
+            "estimatePromptTokens": { "type": "boolean" },
+            "headers": {
+              "type": "object", "additionalProperties": false,
+              "required": ["personRemainingQuota", "personRemainingTokens", "groupRemainingQuota", "groupRemainingTokens", "tokensConsumed"],
+              "properties": {
+                "personRemainingQuota": { "$ref": "#/$defs/headerName" },
+                "personRemainingTokens": { "$ref": "#/$defs/headerName" },
+                "groupRemainingQuota": { "$ref": "#/$defs/headerName" },
+                "groupRemainingTokens": { "$ref": "#/$defs/headerName" },
+                "tokensConsumed": { "$ref": "#/$defs/headerName" }
+              }
+            }
+          }
+        },
+        "defaultAnthropicVersion": { "oneOf": [{ "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }, { "type": "null" }] }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alertConfigurationFile"],
+      "properties": {
+        "alertConfigurationFile": { "oneOf": [{ "$ref": "#/$defs/relativeOrAbsolutePath" }, { "type": "null" }], "description": "WP-TEL alert configuration (recipients, thresholds). null: alerts stay off; there are no default recipients or thresholds." }
+      }
+    },
+    "rateCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "version", "contractSchedulePath"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativeOrAbsolutePath" },
+        "version": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", "description": "Must equal the file's top-level version (WP-COST)." },
+        "contractSchedulePath": { "$ref": "#/$defs/relativeOrAbsolutePath" }
+      }
+    },
+    "workbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceName", "displayName", "settings"],
+      "properties": {
+        "resourceName": { "$ref": "#/$defs/guid" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "WP-WB's workbook settings (analytics/workbooks/config.ts on wp/wb, validateWorkbookSettings).",
+          "required": ["defaultProjectId", "maxRows", "topUsers", "maxQueryDays", "budgetLookbackDays"],
+          "properties": {
+            "defaultProjectId": { "type": "string", "pattern": "^(\\*|[A-Za-z0-9][A-Za-z0-9_-]{0,79})$" },
+            "maxRows": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "topUsers": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "maxQueryDays": { "type": "integer", "minimum": 31, "maximum": 730, "description": "At least 31: WP-WB checks month periods against it (analytics/workbooks/config.ts, must_cover_a_calendar_month)." },
+            "budgetLookbackDays": { "type": "integer", "minimum": 1, "maximum": 730 }
+          }
+        }
+      }
+    },
+    "backends": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "description": "Initial backends (docs/PILOT.md C-8). The core creates each APIM backend entity; onboarding Stage 2 grants access.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "backendMode", "url", "foundryAccountResourceId", "deploymentInferenceGeo"],
+        "properties": {
+          "id": { "$ref": "#/$defs/name" },
+          "backendMode": { "enum": ["managed-identity", "second-tenant"], "description": "managed-identity: APIM's identity in the same tenant (shape A). second-tenant: client credentials of an app registration in the backend's tenant (shape B)." },
+          "url": { "type": "string", "pattern": "^https://[a-z0-9-]+(\\.[a-z0-9-]+)+/anthropic$" },
+          "foundryAccountResourceId": { "type": "string", "pattern": "^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\\.CognitiveServices/accounts/[A-Za-z0-9._-]{2,64}$" },
+          "resource": { "$ref": "#/$defs/audience" },
+          "tenantId": { "$ref": "#/$defs/guid" },
+          "clientId": { "$ref": "#/$defs/guid" },
+          "secretNamedValue": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,256}$" },
+          "scope": { "$ref": "#/$defs/httpsUrl" },
+          "tokenRequestTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
+          "deploymentInferenceGeo": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$" }, "additionalProperties": { "enum": ["global", "us"] } }
+        },
+        "allOf": [
+          { "if": { "properties": { "backendMode": { "const": "managed-identity" } }, "required": ["backendMode"] }, "then": { "required": ["resource"], "properties": { "tenantId": false, "clientId": false, "secretNamedValue": false, "scope": false, "tokenRequestTimeoutSeconds": false } } },
+          { "if": { "properties": { "backendMode": { "const": "second-tenant" } }, "required": ["backendMode"] }, "then": { "required": ["tenantId", "clientId", "secretNamedValue", "scope", "tokenRequestTimeoutSeconds"], "properties": { "resource": false } } }
+        ]
+      }
+    },
+    "onboarding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projects"],
+      "description": "Initial projects, registered through WP-ONB's stages 1 to 5 after the core; the installer writes their deployment facts and prints the commands.",
+      "properties": {
+        "projects": {
+          "type": "array", "minItems": 1, "maxItems": 100,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["projectId", "backendId", "classifications"],
+            "properties": {
+              "projectId": { "$ref": "#/$defs/name" },
+              "backendId": { "$ref": "#/$defs/name" },
+              "classifications": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" } }
+            }
+          }
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["helperTtlSeconds", "minimumTokenLifetimeSeconds", "loginTimeoutSeconds", "tokenTimeoutSeconds", "disableNonessentialTraffic", "models", "desktop"],
+      "description": "WP-CLIENT configuration values that the deployment cannot derive (client/config.example.json on wp/client).",
+      "properties": {
+        "helperTtlSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "minimumTokenLifetimeSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "loginTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "tokenTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "disableNonessentialTraffic": { "type": "boolean" },
+        "models": {
+          "type": "object", "additionalProperties": false, "required": ["default", "opus", "sonnet", "haiku", "available"],
+          "properties": {
+            "default": { "$ref": "#/$defs/modelName" }, "opus": { "$ref": "#/$defs/modelName" }, "sonnet": { "$ref": "#/$defs/modelName" }, "haiku": { "$ref": "#/$defs/modelName" },
+            "available": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/modelName" } },
+            "capabilities": { "type": "object", "additionalProperties": false, "properties": { "opus": { "$ref": "#/$defs/capabilityList" }, "sonnet": { "$ref": "#/$defs/capabilityList" }, "haiku": { "$ref": "#/$defs/capabilityList" } } }
+          }
+        },
+        "desktop": {
+          "type": "object", "additionalProperties": false, "required": ["profileId", "profileName"],
+          "properties": { "profileId": { "$ref": "#/$defs/guid" }, "profileName": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[^\\r\\n]+$" } }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory"],
+      "properties": {
+        "directory": { "$ref": "#/$defs/azArgumentPath", "description": "Deployment record, audit lines and generated configuration (no secrets). Keep it outside the repository. D2 passes the code packages under it to the Azure CLI, so it refuses what Assert-OnboardingAzArguments refuses." }
+      }
+    }
+  },
+  "$defs": {
+    "guid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+    "modelName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$" },
+    "capabilityList": { "type": "string", "pattern": "^[a-z_]+(,[a-z_]+)*$" },
+    "headerName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$" },
+    "region": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,39}$" },
+    "resourceGroupName": { "type": "string", "pattern": "^[A-Za-z0-9._-]{0,89}[A-Za-z0-9_-]$", "description": "Azure also allows ( and ), but D2 passes the name to the Azure CLI, and az.cmd re-parses them through cmd.exe on Windows (Assert-OnboardingAzArguments, scripts/Onboarding.Azure.psm1)." },
+    "resourceName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9_]$" },
+    "identityName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$" },
+    "httpsOrigin": { "type": "string", "pattern": "^https://[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
+    "httpsUrl": { "type": "string", "pattern": "^https://[a-z0-9-]+(\\.[a-z0-9-]+)+(/[A-Za-z0-9._~-]+)*/?$" },
+    "audience": { "type": "string", "pattern": "^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|api://[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*|https://[a-z0-9-]+(\\.[a-z0-9-]+)+(/[A-Za-z0-9._~-]+)*/?)$" },
+    "cidr": { "type": "string", "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/([8-9]|[12][0-9])$" },
+    "relativeOrAbsolutePath": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^<>|\"*?\\r\\n]+$" },
+    "azArgumentPath": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^<>|\"*?\\r\\n&()^%'`]+$", "description": "A path the Azure CLI receives files under: none of & | < > ^ ( ) % ' \" ` or a line break, which Assert-OnboardingAzArguments refuses because az.cmd passes every argument through cmd.exe on Windows." },
+    "subnetId": { "type": "string", "pattern": "^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\\.Network/virtualNetworks/[A-Za-z0-9._-]{2,64}/subnets/[A-Za-z0-9._-]{1,80}$" },
+    "subnet": {
+      "type": "object", "additionalProperties": false, "required": ["name", "prefix"],
+      "properties": { "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,78}[A-Za-z0-9_]$" }, "prefix": { "$ref": "#/$defs/cidr" } }
+    },
+    "appNames": {
+      "type": "object", "additionalProperties": false,
+      "required": ["functionApp", "plan", "storageAccount", "deploymentContainer", "storagePrivateEndpoint", "appInsights"],
+      "properties": {
+        "appInsights": { "oneOf": [{ "$ref": "#/$defs/resourceName" }, { "type": "null" }], "description": "null when the app logs through a diagnostic setting instead (reconciler, WP-REC)." },
+        "functionApp": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$" },
+        "plan": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,58}[A-Za-z0-9]$" },
+        "storageAccount": { "type": "string", "pattern": "^[a-z0-9]{3,24}$" },
+        "deploymentContainer": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$" },
+        "storagePrivateEndpoint": { "$ref": "#/$defs/resourceName" }
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["basis", "note", "decidedBy", "decidedAt"],
+      "properties": {
+        "basis": { "enum": ["owner", "stage0", "coordinator-assumption"] },
+        "note": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "decidedBy": { "$ref": "#/$defs/guid" },
+        "decidedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?Z$" },
+        "signOffSheet": { "oneOf": [{ "$ref": "#/$defs/relativeOrAbsolutePath" }, { "type": "null" }] }
+      }
+    },
+    "functionsSizing": {
+      "type": "object", "additionalProperties": false, "required": ["alwaysReady", "zoneRedundant", "maximumInstanceCount", "instanceMemoryMB"],
+      "properties": {
+        "alwaysReady": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "zoneRedundant": { "type": "boolean" },
+        "maximumInstanceCount": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "instanceMemoryMB": { "enum": [512, 2048, 4096] }
+      },
+      "if": { "properties": { "zoneRedundant": { "const": true } }, "required": ["zoneRedundant"] },
+      "then": { "properties": { "alwaysReady": { "minimum": 2 } } }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Stage 0 decisions (WP-HADEC export, kind ccof.stage0.availability), agreed 2026-10-11 (docs/status/WP-CORE.md).",
+      "required": ["schemaVersion", "kind", "provenance", "region", "apim", "registry", "functions", "storage", "entitlementCache", "budgetState", "telemetry", "sync"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "ccof.stage0.availability" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "region": {
+          "type": "object", "additionalProperties": false, "required": ["primary", "mode"],
+          "properties": { "primary": { "$ref": "#/$defs/region" }, "mode": { "enum": ["single-region"] } }
+        },
+        "apim": {
+          "type": "object", "additionalProperties": false, "required": ["sku", "units", "zones"],
+          "properties": {
+            "sku": { "enum": ["StandardV2", "PremiumV2"] },
+            "units": { "type": "integer", "minimum": 1, "maximum": 30 },
+            "zones": { "type": "array", "uniqueItems": true, "maxItems": 3, "items": { "enum": ["1", "2", "3"] } }
+          }
+        },
+        "registry": {
+          "type": "object", "additionalProperties": false,
+          "required": ["capacityMode", "autoscaleMaxThroughput", "manualThroughput", "zoneRedundant", "regions", "multipleWriteLocations"],
+          "properties": {
+            "capacityMode": { "enum": ["serverless", "provisioned-autoscale", "provisioned-manual"] },
+            "autoscaleMaxThroughput": { "oneOf": [{ "type": "integer", "minimum": 1000, "maximum": 1000000, "multipleOf": 1000 }, { "type": "null" }] },
+            "manualThroughput": { "oneOf": [{ "type": "integer", "minimum": 400, "maximum": 1000000, "multipleOf": 100 }, { "type": "null" }] },
+            "zoneRedundant": { "type": "boolean" },
+            "regions": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/region" } },
+            "multipleWriteLocations": { "type": "boolean" }
+          },
+          "allOf": [
+            { "if": { "properties": { "capacityMode": { "const": "serverless" } }, "required": ["capacityMode"] }, "then": { "properties": { "autoscaleMaxThroughput": { "type": "null" }, "manualThroughput": { "type": "null" }, "regions": { "maxItems": 1 }, "multipleWriteLocations": { "const": false } } } },
+            { "if": { "properties": { "capacityMode": { "const": "provisioned-autoscale" } }, "required": ["capacityMode"] }, "then": { "properties": { "autoscaleMaxThroughput": { "type": "integer" }, "manualThroughput": { "type": "null" } } } },
+            { "if": { "properties": { "capacityMode": { "const": "provisioned-manual" } }, "required": ["capacityMode"] }, "then": { "properties": { "manualThroughput": { "type": "integer" }, "autoscaleMaxThroughput": { "type": "null" } } } }
+          ]
+        },
+        "functions": {
+          "type": "object", "additionalProperties": false, "required": ["resolver", "sync", "reconciler"],
+          "properties": { "resolver": { "$ref": "#/$defs/functionsSizing" }, "sync": { "$ref": "#/$defs/functionsSizing" }, "reconciler": { "$ref": "#/$defs/functionsSizing" } }
+        },
+        "storage": {
+          "type": "object", "additionalProperties": false, "required": ["sku"],
+          "properties": { "sku": { "enum": ["Standard_LRS", "Standard_ZRS"] } }
+        },
+        "entitlementCache": {
+          "type": "object", "additionalProperties": false,
+          "required": ["cachingType", "allowTtlSeconds", "refusalTtlSeconds", "lastKnownGoodGraceSeconds", "refreshBackoffSeconds", "unavailableRetryAfterSeconds"],
+          "properties": {
+            "cachingType": { "enum": ["internal", "external", "prefer-external"] },
+            "allowTtlSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+            "refusalTtlSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+            "lastKnownGoodGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 604800 },
+            "refreshBackoffSeconds": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "WP-GW: after a failed refresh of an expired allow, last-known-good is served for this long without asking the resolver again. At most lastKnownGoodGraceSeconds when that is above 0." },
+            "unavailableRetryAfterSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 }
+          }
+        },
+        "budgetState": {
+          "type": "object", "additionalProperties": false, "required": ["graceSeconds", "hardLimitSeconds"],
+          "properties": { "graceSeconds": { "type": "integer", "minimum": 0, "maximum": 2147483647 }, "hardLimitSeconds": { "type": "integer", "minimum": 0, "maximum": 2147483647 } }
+        },
+        "telemetry": {
+          "type": "object", "additionalProperties": false, "required": ["workspaceRegion", "retentionDays", "replication"],
+          "properties": {
+            "workspaceRegion": { "$ref": "#/$defs/region" },
+            "retentionDays": { "type": "integer", "minimum": 30, "maximum": 730 },
+            "replication": {
+              "type": "object", "additionalProperties": false, "required": ["enabled", "secondaryRegion"],
+              "properties": { "enabled": { "type": "boolean" }, "secondaryRegion": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] } },
+              "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              "then": { "properties": { "secondaryRegion": { "type": "string" } } },
+              "else": { "properties": { "secondaryRegion": { "type": "null" } } }
+            }
+          }
+        },
+        "sync": {
+          "type": "object", "additionalProperties": false, "required": ["schedule", "leaseSeconds", "maxRemovalsPerRun", "maxRemovalFraction"],
+          "properties": {
+            "schedule": { "type": "string", "pattern": "^[0-9*/,-]+( [0-9*/,-]+){5}$" },
+            "leaseSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+            "maxRemovalsPerRun": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "maxRemovalFraction": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "evidence": { "type": "object", "description": "Free-form Stage 0 evidence (price snapshot, region facts, recommendations shown); copied to the deployment record." }
+      }
+    }
+  }
+}

@@ -1,0 +1,1256 @@
+{
+  "schemaVersion": 1, "dataVersion": "2026-10-11.3", "researchedOn": "2026-10-11",
+  "note": "Options, recommendations, reasons, meter filters and sources for the availability decisions in docs/AVAILABILITY.md section 4. No price and no region list is held here: prices come from the Azure Retail Prices API and region facts from Azure Resource Manager on the day of the decision. A recommendation is advice, never a default.",
+  "retailPrices": {"endpoint": "https://prices.azure.com/api/retail/prices", "apiVersion": "2023-01-01-preview", "referenceCurrency": "USD", "priceType": "Consumption", "source": "RP"},
+  "conventions": {
+    "hoursPerMonth": "730", "hoursPerMonthSource": "C5",
+    "edgeBillingZones": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
+    "edgeBillingZonesSource": "FD2", "includedRetentionDays": "31", "includedRetentionDaysSource": "L1",
+    "edgeBillingZoneLabels": {
+      "Zone 1": "North America", "Zone 2": "Asia Pacific (including Japan)", "Zone 3": "South America", "Zone 4": "Australia", "Zone 5": "India", "Zone 6": "Europe",
+      "Zone 7": "Middle East and Africa", "Zone 8": "Korea"
+    }
+  },
+  "sources": {
+    "RP": {
+      "title": "Azure Retail Prices REST API overview",
+      "url": "https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices",
+      "retrieved": "2026-10-11"
+    },
+    "SLA": {
+      "title": "Service Level Agreement for Microsoft Online Services, October 1, 2026",
+      "url": "https://www.microsoft.com/licensing/docs/documents/download/OnlineSvcsConsolidatedSLA(WW)(English)(October_2026)(CR).docx",
+      "retrieved": "2026-10-11"
+    },
+    "AM1": {"title": "Azure API Management v2 tiers", "url": "https://learn.microsoft.com/azure/api-management/v2-service-tiers-overview", "retrieved": "2026-10-11"},
+    "AM2": {"title": "Reliability in Azure API Management", "url": "https://learn.microsoft.com/azure/reliability/reliability-api-management", "retrieved": "2026-10-11"},
+    "AM4": {"title": "Caching overview and built-in cache", "url": "https://learn.microsoft.com/azure/api-management/api-management-howto-cache", "retrieved": "2026-10-11"},
+    "AM5": {
+      "title": "Use an external Redis-compatible cache",
+      "url": "https://learn.microsoft.com/azure/api-management/api-management-howto-cache-external",
+      "retrieved": "2026-10-11"
+    },
+    "AMP": {"title": "API Management pricing", "url": "https://azure.microsoft.com/pricing/details/api-management/", "retrieved": "2026-10-11"},
+    "AIG": {
+      "title": "AI gateway capabilities in Azure API Management", "url": "https://learn.microsoft.com/azure/api-management/genai-gateway-capabilities",
+      "retrieved": "2026-10-11"
+    },
+    "FD1": {"title": "Compare pricing between Azure Front Door tiers", "url": "https://learn.microsoft.com/azure/frontdoor/understanding-pricing", "retrieved": "2026-10-11"},
+    "FD2": {"title": "Azure Front Door pricing (billing zones)", "url": "https://azure.microsoft.com/pricing/details/frontdoor/", "retrieved": "2026-10-11"},
+    "FD3": {"title": "Azure Front Door health probes", "url": "https://learn.microsoft.com/azure/frontdoor/health-probes", "retrieved": "2026-10-11"},
+    "R1": {"title": "Azure Managed Redis overview", "url": "https://learn.microsoft.com/azure/redis/overview", "retrieved": "2026-10-11"},
+    "R2": {
+      "title": "Azure Managed Redis reliability and durability", "url": "https://learn.microsoft.com/azure/redis/plan-reliability-and-durability",
+      "retrieved": "2026-10-11"
+    },
+    "R3": {"title": "Azure Managed Redis active geo-replication", "url": "https://learn.microsoft.com/azure/redis/how-to-active-geo-replication", "retrieved": "2026-10-11"},
+    "R4": {"title": "Azure Cache for Redis retirement FAQ", "url": "https://learn.microsoft.com/azure/azure-cache-for-redis/retirement-faq", "retrieved": "2026-10-11"},
+    "R5": {
+      "title": "Azure Managed Redis pricing (one node and two node columns)", "url": "https://azure.microsoft.com/pricing/details/managed-redis/",
+      "retrieved": "2026-10-11"
+    },
+    "C1": {"title": "Azure Cosmos DB serverless", "url": "https://learn.microsoft.com/azure/cosmos-db/serverless", "retrieved": "2026-10-11"},
+    "C2": {"title": "Reliability in Azure Cosmos DB for NoSQL", "url": "https://learn.microsoft.com/azure/reliability/reliability-cosmos-db", "retrieved": "2026-10-11"},
+    "C3": {
+      "title": "Change capacity mode from serverless to provisioned", "url": "https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode",
+      "retrieved": "2026-10-11"
+    },
+    "C4": {"title": "Autoscale provisioned throughput", "url": "https://learn.microsoft.com/azure/cosmos-db/provision-throughput-autoscale", "retrieved": "2026-10-11"},
+    "C5": {
+      "title": "Optimize multi-region cost in Azure Cosmos DB (730-hour month in the worked bill)",
+      "url": "https://learn.microsoft.com/azure/cosmos-db/optimize-cost-regions", "retrieved": "2026-10-11"
+    },
+    "C6": {
+      "title": "Azure Cosmos DB pricing (availability zone and autoscale multipliers)",
+      "url": "https://azure.microsoft.com/pricing/details/cosmos-db/autoscale-provisioned/", "retrieved": "2026-10-11"
+    },
+    "C7": {"title": "Azure Cosmos DB service quotas", "url": "https://learn.microsoft.com/azure/cosmos-db/concepts-limits", "retrieved": "2026-10-11"},
+    "F1": {
+      "title": "Azure Functions Flex Consumption plan hosting", "url": "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan",
+      "retrieved": "2026-10-11"
+    },
+    "F2": {"title": "Reliability in Azure Functions", "url": "https://learn.microsoft.com/azure/reliability/reliability-functions", "retrieved": "2026-10-11"},
+    "L1": {"title": "Azure Monitor Logs cost calculations and options", "url": "https://learn.microsoft.com/azure/azure-monitor/logs/cost-logs", "retrieved": "2026-10-11"},
+    "L2": {"title": "Log Analytics workspace replication", "url": "https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication", "retrieved": "2026-10-11"},
+    "P1": {"title": "Azure Private Link pricing", "url": "https://azure.microsoft.com/pricing/details/private-link/", "retrieved": "2026-10-11"},
+    "G1": {"title": "Azure region pairs", "url": "https://learn.microsoft.com/azure/reliability/regions-paired", "retrieved": "2026-10-11"},
+    "G2": {"title": "Azure regions list", "url": "https://learn.microsoft.com/azure/reliability/regions-list", "retrieved": "2026-10-11"},
+    "AI1": {
+      "title": "Claude models in Microsoft Foundry: hosting comparison",
+      "url": "https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-hosting-comparison",
+      "retrieved": "2026-10-11"
+    },
+    "AI3": {
+      "title": "Deployment types for Microsoft Foundry Models",
+      "url": "https://learn.microsoft.com/azure/foundry/foundry-models/concepts/deployment-types",
+      "retrieved": "2026-10-11"
+    },
+    "ADR14": {"title": "ADR-0014 availability and failure modes (origin/wp/design 303b56a)", "url": "docs/adr/0014-availability-and-failure-modes.md", "retrieved": "2026-10-11"},
+    "GW": {"title": "WP-GW gateway configuration schema (origin/wp/gw)", "url": "infra/gateway/gateway-config.schema.json", "retrieved": "2026-10-11"},
+    "RES": {"title": "WP-RES status and ADR-0008 (origin/wp/res)", "url": "docs/status/WP-RES.md", "retrieved": "2026-10-11"},
+    "SYNC": {"title": "WP-SYNC status, availability settings (origin/wp/sync 9c31869)", "url": "docs/status/WP-SYNC.md", "retrieved": "2026-10-11"},
+    "TEL": {"title": "WP-TEL telemetry alert configuration (origin/wp/tel)", "url": "docs/TELEMETRY.md", "retrieved": "2026-10-11"}
+  },
+  "excludedOptions": [
+    {
+      "decision": "gateway.mode", "option": "premium-classic-multi-region",
+      "reason": "Classic Premium supports multi-region gateways, but the Anthropic Messages API token policies are supported in the v2 tiers only.",
+      "sources": ["AIG", "AM2"]
+    },
+    {
+      "decision": "cache.option", "option": "azure-cache-for-redis",
+      "reason": "Azure Cache for Redis Basic, Standard and Premium retire on September 30, 2028; Enterprise and Enterprise Flash retire on March 31, 2027.",
+      "sources": ["R4"]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "gateway.topology", "row": 1, "stage": "0", "type": "option", "owner": "WP-CORE (Install-Core); P-11",
+      "title": "Regional stamps: one region, or two or more regions behind Front Door",
+      "costNote": "The figures are the private endpoints of one stamp. Each additional stamp repeats every regional cost (API Management, the Functions apps, private endpoints, and the registry's read or write regions), which the later decisions show per region.",
+      "options": [
+        {
+          "id": "single-region", "label": "One regional stamp",
+          "impact": {
+            "covers": "Zone failures, if the stamp's components are zone-redundant.", "uncovered": "A region failure denies every developer.",
+            "sla": "Per component; see the other decisions."
+          },
+          "constraints": [], "cost": "private-endpoints", "export": {"region.mode": "single-region"}
+        },
+        {
+          "id": "multi-region-active-active", "label": "Two or more stamps serving at once, behind Front Door", "trafficShare": "even",
+          "impact": {
+            "covers": "Zone and region failures; Front Door removes an unhealthy origin from rotation.",
+            "uncovered": "A failure of a shared global dependency (Microsoft Entra ID, Front Door, the backend) still denies the developers it serves.",
+            "sla": "Front Door 99.99% (SLA)."
+          },
+          "constraints": ["minCandidates:2"], "cost": "private-endpoints",
+          "notDeployableByCore": "D1 to D3 deploy one region today (WP-CORE availability schema: region.mode single-region)"
+        },
+        {
+          "id": "multi-region-active-passive", "label": "A primary stamp and a standby stamp, behind Front Door priority routing", "trafficShare": "primary",
+          "impact": {
+            "covers": "Region failures, after Front Door's health probes fail the primary over.",
+            "uncovered": "Developers are denied during failover; the standby's capacity must match the primary's.",
+            "sla": "Front Door 99.99% (SLA)."
+          },
+          "constraints": ["minCandidates:2"], "cost": "private-endpoints",
+          "notDeployableByCore": "D1 to D3 deploy one region today (WP-CORE availability schema: region.mode single-region)"
+        }
+      ],
+      "recommendation": {
+        "option": "multi-region-active-active",
+        "reason": "ADR-0014 decision 2 requires at least two regional stamps for production. API Management v2 has no multi-region deployment, so regions are separate stamps behind Front Door; Azure Functions recommends an active-active pattern with Front Door.",
+        "sources": ["ADR14", "AM1", "F2"]
+      }
+    },
+    {
+      "id": "gateway.regions", "row": 1, "stage": "0", "type": "regions", "owner": "WP-CORE (Install-Core); P-11",
+      "title": "Stamp regions, primary first, chosen from the candidate regions",
+      "recommendation": {
+        "rule": "Regions where every chosen option passes its constraints; for two stamps, prefer a pair inside one data-residency geography (for India: centralindia with southindia, of which only centralindia has availability zones).",
+        "reason": "Residency stays inside the geography and a region failure leaves a stamp.", "sources": ["G1", "G2"]
+      }
+    },
+    {
+      "id": "gateway.mode", "row": 1, "stage": "0", "type": "option", "owner": "WP-CORE (Install-Core); P-11",
+      "title": "API Management tier and zone redundancy for each stamp",
+      "options": [
+        {
+          "id": "standard-v2-non-zonal", "label": "Standard v2, without zone redundancy",
+          "impact": {
+            "covers": "A single compute failure: each unit has two compute resources.",
+            "uncovered": "A zone failure denies every developer of the stamp. Zone redundancy cannot be added after creation.",
+            "sla": "99.95% (SLA, single region; pricing page lists 99.95% for Standard v2)."
+          },
+          "constraints": ["apimSku:StandardV2"], "cost": "apim-standard-v2", "export": {"apim.sku": "StandardV2", "apim.zoneRedundant": false}
+        },
+        {
+          "id": "standard-v2-zone-redundant", "label": "Standard v2, zone-redundant",
+          "impact": {
+            "covers": "A zone failure: units are spread across zones best-effort.",
+            "uncovered": "A region failure denies every developer of the stamp. Up to 10 units per instance; 25,000 subscriptions per instance (ADR-0006).",
+            "sla": "99.95% (SLA document and pricing page; no zone figure is stated for Standard v2)."
+          },
+          "constraints": ["apimSku:StandardV2", "apimZones"], "cost": "apim-standard-v2", "export": {"apim.sku": "StandardV2", "apim.zoneRedundant": true}
+        },
+        {
+          "id": "premium-v2-non-zonal", "label": "Premium v2, without zone redundancy",
+          "impact": {
+            "covers": "A single compute failure; dedicated compute; virtual network injection.",
+            "uncovered": "A zone failure denies every developer of the stamp. Zone redundancy cannot be added after creation.",
+            "sla": "99.95% (SLA, single region)."
+          },
+          "constraints": ["apimSku:PremiumV2"], "cost": "apim-premium-v2", "export": {"apim.sku": "PremiumV2", "apim.zoneRedundant": false}
+        },
+        {
+          "id": "premium-v2-zone-redundant", "label": "Premium v2, zone-redundant",
+          "impact": {
+            "covers": "A zone failure; up to 30 units per instance; virtual network injection; 75,000 subscriptions per instance (ADR-0006).",
+            "uncovered": "A region failure denies every developer of the stamp.",
+            "sla": "99.99% on the pricing page with units in two or more zones; the SLA document states 99.95% for one region and 99.99% for Premium across two or more regions, and does not name the v2 tiers (U-new-HADEC-1)."
+          },
+          "constraints": ["apimSku:PremiumV2", "apimZones"], "cost": "apim-premium-v2", "export": {"apim.sku": "PremiumV2", "apim.zoneRedundant": true}
+        }
+      ],
+      "recommendation": {
+        "option": "premium-v2-zone-redundant",
+        "reason": "It survives a zone failure, scales to 30 units per instance against 10, includes requests without a per-call meter, and supports full network isolation. Zone redundancy is set only at creation.",
+        "sources": ["AM1", "AM2", "AMP", "SLA"]
+      }
+    },
+    {
+      "id": "gateway.units", "row": 1, "stage": "0", "type": "integer", "owner": "WP-CORE (Install-Core); P-11", "setting": "apim.units",
+      "title": "API Management units per stamp", "min": 1, "maxFact": "apimSkuCapacity",
+      "recommendation": {
+        "formula": "apimUnits",
+        "reason": "Units = ceil(peak requests per second / measured requests per second per unit). With zone redundancy over Z zones, ceil(units x Z / (Z - 1)), at least 2, keeps the peak served after one zone is lost if units are spread evenly; the spread is best-effort. Microsoft states throughput figures must not be used for capacity planning and a load test must measure them (P-12).",
+        "sources": ["AMP", "AM2"]
+      },
+      "costOf": "gateway.mode"
+    },
+    {
+      "id": "edge.frontDoor", "row": 1, "stage": "0", "type": "option", "owner": "P-11", "title": "Azure Front Door in front of the stamps",
+      "options": [
+        {
+          "id": "none", "label": "No Front Door",
+          "impact": {
+            "covers": "Nothing global.",
+            "uncovered": "With one stamp, a region failure denies everyone; with several stamps there is no health-based routing between them.",
+            "sla": "Not applicable."
+          },
+          "constraints": ["topology:single-region"], "cost": []
+        },
+        {
+          "id": "standard", "label": "Front Door Standard",
+          "impact": {
+            "covers": "Region failure, by health probes and priority or weighted routing across stamps.",
+            "uncovered": "No Private Link to origins and no managed WAF rules: origins stay publicly reachable.",
+            "sla": "99.99% (SLA)."
+          },
+          "constraints": [], "cost": "front-door-standard", "notDeployableByCore": "D1 does not create Front Door today"
+        },
+        {
+          "id": "premium", "label": "Front Door Premium",
+          "impact": {
+            "covers": "Region failure, as Standard; Private Link to origins and managed WAF rules and bot protection.",
+            "uncovered": "A Front Door failure denies everyone routed through it.", "sla": "99.99% (SLA)."
+          },
+          "constraints": [], "cost": "front-door-premium", "notDeployableByCore": "D1 does not create Front Door today"
+        }
+      ],
+      "recommendation": {
+        "option": "premium",
+        "reason": "Two or more stamps need global health-based routing. Premium adds Private Link to origins, so the gateways need not be public, and managed WAF rules.",
+        "sources": ["FD1", "FD3", "ADR14"]
+      }
+    },
+    {
+      "id": "registry.capacity", "row": 2, "stage": "0", "type": "option", "owner": "WP-CORE (Install-Core); P-11", "bearing": "primary",
+      "title": "Registry (Cosmos DB) capacity mode and zone redundancy",
+      "options": [
+        {
+          "id": "serverless", "label": "Serverless, one region, no zones",
+          "impact": {
+            "covers": "Nothing beyond the platform's single-zone redundancy.",
+            "uncovered": "A zone or region failure denies everyone once cached decisions expire. Serverless runs in one region only; conversion to provisioned is irreversible.",
+            "sla": "The SLA document gives figures for provisioned throughput only."
+          },
+          "constraints": ["cosmosRegular"], "cost": "cosmos-serverless", "export": {"registry.capacityMode": "serverless", "registry.zoneRedundant": false}
+        },
+        {
+          "id": "serverless-zone-redundant", "label": "Serverless, one region, zone-redundant (only at account creation)",
+          "impact": {
+            "covers": "A zone failure.", "uncovered": "A region failure denies everyone once cached decisions expire.",
+            "sla": "The SLA document gives figures for provisioned throughput only."
+          },
+          "constraints": ["cosmosRegular", "cosmosZones"], "cost": "cosmos-serverless-zr",
+          "export": {"registry.capacityMode": "serverless", "registry.zoneRedundant": true}
+        },
+        {
+          "id": "provisioned-manual", "label": "Provisioned throughput, manual RU/s, no zones",
+          "impact": {
+            "covers": "Requests up to the provisioned RU/s; more regions can be added.",
+            "uncovered": "A zone failure denies everyone in a one-region account once cached decisions expire. Above the RU/s, requests are rate-limited (429).",
+            "sla": "99.99% one region; 99.999% reads with two or more regions (SLA)."
+          },
+          "constraints": ["cosmosRegular"], "cost": "cosmos-manual",
+          "export": {"registry.capacityMode": "provisioned-manual", "registry.zoneRedundant": false}
+        },
+        {
+          "id": "provisioned-manual-zone-redundant", "label": "Provisioned throughput, manual RU/s, zone-redundant",
+          "impact": {
+            "covers": "A zone failure.",
+            "uncovered": "A region failure, unless more regions are added. Above the RU/s, requests are rate-limited (429).",
+            "sla": "99.995% one region with zones (SLA)."
+          },
+          "constraints": ["cosmosRegular", "cosmosZones"], "cost": "cosmos-manual-zr",
+          "export": {"registry.capacityMode": "provisioned-manual", "registry.zoneRedundant": true}
+        },
+        {
+          "id": "provisioned-autoscale", "label": "Provisioned throughput, autoscale, no zones",
+          "impact": {
+            "covers": "Load between 10% of the maximum and the maximum RU/s without a change.",
+            "uncovered": "A zone failure denies everyone in a one-region account once cached decisions expire.",
+            "sla": "99.99% one region (SLA)."
+          },
+          "constraints": ["cosmosRegular"], "cost": "cosmos-autoscale",
+          "export": {"registry.capacityMode": "provisioned-autoscale", "registry.zoneRedundant": false}
+        },
+        {
+          "id": "provisioned-autoscale-zone-redundant", "label": "Provisioned throughput, autoscale, zone-redundant",
+          "impact": {
+            "covers": "A zone failure and load changes up to the maximum RU/s.", "uncovered": "A region failure, unless more regions are added.",
+            "sla": "99.995% one region with zones; 99.999% reads with two or more regions (SLA)."
+          },
+          "constraints": ["cosmosRegular", "cosmosZones"], "cost": "cosmos-autoscale",
+          "export": {"registry.capacityMode": "provisioned-autoscale", "registry.zoneRedundant": true}
+        }
+      ],
+      "recommendation": {
+        "option": "provisioned-autoscale-zone-redundant",
+        "reason": "Zones are included at no premium for autoscale, multi-region reads are possible, and serverless is limited to one region with irreversible conversion. Zone redundancy is set when a region is added.",
+        "sources": ["C1", "C2", "C3", "C4", "C6", "SLA"]
+      },
+      "costShownIn": "registry.regions"
+    },
+    {
+      "id": "registry.throughput", "row": 2, "stage": "0", "type": "integer", "owner": "WP-CORE (Install-Core)",
+      "setting": "registry.manualThroughput or registry.autoscaleMaxThroughput",
+      "title": "Registry RU/s (manual) or maximum RU/s (autoscale); not asked for serverless",
+      "min": 400, "step": 100,
+      "appliesTo": {"registry.capacity": ["provisioned-manual", "provisioned-manual-zone-redundant", "provisioned-autoscale", "provisioned-autoscale-zone-redundant"]},
+      "recommendation": {
+        "formula": "cosmosThroughput",
+        "reason": "RU/s = peak reads per second x RU per read + peak writes per second x RU per write, rounded up to a multiple of 100 (manual, at least 400) or of 1,000 (autoscale: the entry point is 1,000 RU/s and the maximum is set in increments of 1,000).",
+        "sources": ["C4", "C7"]
+      },
+      "costOf": "registry.capacity", "max": 1000000
+    },
+    {
+      "id": "registry.regions", "row": 2, "stage": "0", "type": "option", "owner": "WP-CORE (Install-Core); P-11", "title": "Registry regions",
+      "options": [
+        {
+          "id": "single-region", "label": "One region (the primary stamp's)",
+          "impact": {"covers": "As the capacity decision.", "uncovered": "A region failure denies everyone once cached decisions expire.", "sla": "As the capacity decision."},
+          "constraints": [], "cost": {"costOf": "registry.capacity"}, "bearing": "primary", "export": {"registry.multipleWriteLocations": false}
+        },
+        {
+          "id": "multi-region-reads", "label": "A read region in each stamp region, one write region",
+          "impact": {
+            "covers": "A region failure for reads; each stamp reads locally.",
+            "uncovered": "Writes (sync, onboarding) stop until failover; service-managed failover can take an hour or more.",
+            "sla": "99.999% read availability (SLA)."
+          },
+          "constraints": ["notServerless", "minStampRegions:2"], "cost": {"costOf": "registry.capacity"}, "bearing": "stamps", "recheck": "registry.capacity",
+          "export": {"registry.multipleWriteLocations": false}
+        },
+        {
+          "id": "multi-region-writes", "label": "Every stamp region writable",
+          "impact": {
+            "covers": "A region failure for reads and writes.",
+            "uncovered": "Conflicting writes in two regions resolve by the account's conflict policy.",
+            "sla": "99.999% (SLA)."
+          },
+          "constraints": ["notServerless", "minStampRegions:2"], "cost": "cosmos-multi-write", "bearing": "stamps", "recheck": "registry.capacity",
+          "export": {"registry.multipleWriteLocations": true}
+        }
+      ],
+      "recommendation": {
+        "option": "multi-region-reads",
+        "reason": "The request path only reads the registry; one write region keeps sync and onboarding simple, and a region failure leaves every stamp reading.",
+        "sources": ["C2", "C5", "SLA"]
+      }
+    },
+    {
+      "id": "resolver.instanceMemoryMB", "row": 3, "stage": "0", "type": "option", "owner": "WP-RES (resolver app)", "title": "Resolver instance memory",
+      "options": [
+        {
+          "id": "512", "label": "512 MB (0.25 core)",
+          "impact": {"covers": "Lowest memory cost per instance.", "uncovered": "Fewer concurrent requests per instance; more scale-out.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-resolver", "value": 512, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "2048", "label": "2,048 MB (1 core)",
+          "impact": {"covers": "The size the PoC resolver runs today.", "uncovered": "As the other sizes.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-resolver", "value": 2048, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "4096", "label": "4,096 MB (2 cores)",
+          "impact": {"covers": "Most concurrency per instance.", "uncovered": "Highest memory cost per instance.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-resolver", "value": 4096, "alwaysReadyBasis": 1
+        }
+      ],
+      "recommendation": {
+        "option": "2048",
+        "reason": "The PoC resolver runs at 2,048 MB (WP-RES, read 2026-10-11); P-12 measures whether another size serves the peak at lower cost.",
+        "sources": ["RES", "F1"]
+      },
+      "app": "resolver", "costShownIn": "resolver.alwaysReady"
+    },
+    {
+      "id": "resolver.zoneRedundancy", "row": 3, "stage": "0", "type": "option", "owner": "WP-RES (resolver app); WP-CORE (Install-Core)",
+      "title": "Resolver Function App (Flex Consumption) zone redundancy",
+      "options": [
+        {
+          "id": "zone-redundant", "label": "Zone-redundant Flex Consumption plan",
+          "impact": {
+            "covers": "A zone failure: always-ready instances are spread across at least two zones.",
+            "uncovered": "A region failure denies everyone of the stamp once cached decisions expire. At least two always-ready instances per function group, billed while idle.",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": ["flexZoneRedundant"], "cost": "flex-resolver", "export": {"functions.resolver.zoneRedundant": true}, "alwaysReadyBasis": 2
+        },
+        {
+          "id": "non-zonal", "label": "Flex Consumption without zone redundancy",
+          "impact": {
+            "covers": "Instance failures, replaced by the platform.",
+            "uncovered": "A zone failure can deny everyone of the stamp once cached decisions expire.",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": ["flex"], "cost": "flex-resolver", "export": {"functions.resolver.zoneRedundant": false}, "alwaysReadyBasis": 0
+        }
+      ],
+      "recommendation": {
+        "option": "zone-redundant",
+        "reason": "The resolver is on the request path for cache misses; zone redundancy has no separate meter, only the two always-ready instances it requires.",
+        "sources": ["F1", "F2", "ADR14"]
+      },
+      "app": "resolver", "costShownIn": "resolver.alwaysReady"
+    },
+    {
+      "id": "resolver.alwaysReady", "row": 3, "stage": "0", "type": "integer", "owner": "WP-RES (resolver app)", "setting": "functions.resolver.alwaysReady",
+      "app": "resolver",
+      "minWhenZoneRedundant": {"decision": "resolver.zoneRedundancy", "option": "zone-redundant", "min": 2},
+      "title": "Resolver always-ready instances", "min": 0, "max": 1000,
+      "recommendation": {
+        "formula": "flexAlwaysReady",
+        "reason": "Two: zone redundancy requires at least two always-ready instances per function group, and warm instances remove cold starts from the request path.",
+        "sources": ["F1", "F2", "ADR14"]
+      },
+      "cost": "flex-resolver"
+    },
+    {
+      "id": "resolver.maximumInstanceCount", "row": 3, "stage": "0", "type": "integer", "owner": "WP-RES (resolver app)",
+      "setting": "functions.resolver.maximumInstanceCount", "title": "Resolver maximum on-demand instances", "min": 1, "max": 1000,
+      "recommendation": {
+        "formula": "none",
+        "reason": "At least the peak concurrent resolver calls divided by one instance's concurrency, which P-12 measures. The PoC runs 40 (WP-RES).",
+        "sources": ["F1", "RES"]
+      }
+    },
+    {
+      "id": "cache.option", "row": 4, "stage": "0", "type": "option", "owner": "WP-GW (cachingType); P-11", "title": "Cache for fail-static resolutions",
+      "options": [
+        {
+          "id": "built-in", "label": "API Management built-in cache only",
+          "impact": {
+            "covers": "Resolver latency during normal operation.",
+            "uncovered": "The built-in cache is shared per region and is not guaranteed to persist; entries lost during a resolver or registry outage cannot be served last-known-good.",
+            "sla": "Part of API Management."
+          },
+          "constraints": [], "cost": [], "export": {"entitlementCache.cachingType": "internal"}
+        },
+        {
+          "id": "amr-balanced", "label": "Azure Managed Redis, Balanced tier, high availability",
+          "impact": {
+            "covers": "Resolver and registry outages within the stale-serve limit; a zone failure when the region has zones (automatic for high availability).",
+            "uncovered": "A region failure, unless each stamp has its own cache. Without high availability there is no SLA.",
+            "sla": "99.9% high availability; 99.99% with zone redundancy (SLA)."
+          },
+          "constraints": ["redisEnterprise"], "cost": "amr-balanced", "export": {"entitlementCache.cachingType": "external"},
+          "notDeployableByCore": "D1 does not create Azure Managed Redis today"
+        },
+        {
+          "id": "amr-memory-optimized", "label": "Azure Managed Redis, Memory Optimized tier, high availability",
+          "impact": {"covers": "As Balanced, with more memory per vCPU.", "uncovered": "As Balanced.", "sla": "99.9% high availability; 99.99% with zone redundancy (SLA)."},
+          "constraints": ["redisEnterprise"], "cost": "amr-memory-optimized", "export": {"entitlementCache.cachingType": "external"},
+          "notDeployableByCore": "D1 does not create Azure Managed Redis today"
+        },
+        {
+          "id": "amr-compute-optimized", "label": "Azure Managed Redis, Compute Optimized tier, high availability",
+          "impact": {"covers": "As Balanced, with most throughput per GB.", "uncovered": "As Balanced.", "sla": "99.9% high availability; 99.99% with zone redundancy (SLA)."},
+          "constraints": ["redisEnterprise"], "cost": "amr-compute-optimized", "export": {"entitlementCache.cachingType": "external"},
+          "notDeployableByCore": "D1 does not create Azure Managed Redis today"
+        }
+      ],
+      "recommendation": {
+        "option": "amr-balanced",
+        "reason": "Fail-static serving needs entries that survive gateway updates and zone failures; the built-in cache is volatile. Balanced suits a small key-value working set; P-12 confirms the size.",
+        "sources": ["AM4", "AM5", "R1", "R2", "SLA"]
+      }
+    },
+    {
+      "id": "cache.sku", "row": 4, "stage": "0", "type": "sku", "owner": "P-11",
+      "title": "Azure Managed Redis SKU (validated against the live price list for the chosen tier)",
+      "appliesTo": {"cache.option": ["amr-balanced", "amr-memory-optimized", "amr-compute-optimized"]},
+      "recommendation": {
+        "rule": "The smallest SKU whose memory holds the cached resolutions with headroom; B0 and B1 do not support active geo-replication.",
+        "reason": "Cost scales with SKU size.", "sources": ["R3", "R5"]
+      },
+      "costOf": "cache.option"
+    },
+    {
+      "id": "cache.geoReplication", "row": 4, "stage": "0", "type": "option", "owner": "P-11", "title": "Cache replication across stamps",
+      "appliesTo": {"cache.option": ["amr-balanced", "amr-memory-optimized", "amr-compute-optimized"]},
+      "options": [
+        {
+          "id": "per-stamp", "label": "One independent cache per stamp",
+          "impact": {
+            "covers": "Each stamp's own outage of the resolver or registry.",
+            "uncovered": "A developer routed to another stamp after a region failure starts with an empty cache there.",
+            "sla": "As the cache tier."
+          },
+          "constraints": [], "cost": []
+        },
+        {
+          "id": "active-geo-replication", "label": "Active geo-replication across the stamps (up to five instances)",
+          "impact": {
+            "covers": "Last-known-good entries are present in every stamp after a region failure.",
+            "uncovered": "Replication is eventually consistent, with no SLA on sync time.",
+            "sla": "99.999% with three or more regions, each highly available and zone-redundant (SLA)."
+          },
+          "constraints": ["minStampRegions:2", "skuNot:B0,B1"], "cost": []
+        }
+      ],
+      "recommendation": {
+        "option": "active-geo-replication",
+        "reason": "After a region failure, the surviving stamp can still serve last-known-good decisions for developers it has not served before.",
+        "sources": ["R3", "SLA"]
+      }
+    },
+    {
+      "id": "functions.storage", "row": 3, "stage": "0", "type": "option", "owner": "WP-CORE (D1 workbook)", "setting": "storage.sku",
+      "title": "Storage account redundancy for the Function Apps",
+      "options": [
+        {
+          "id": "Standard_ZRS", "label": "Zone-redundant storage",
+          "impact": {"covers": "A zone failure of the apps' deployment and host storage.", "uncovered": "A region failure.", "sla": "See the Storage SLA."},
+          "constraints": ["zones"], "cost": "storage-zrs", "export": {"storage.sku": "Standard_ZRS"}
+        },
+        {
+          "id": "Standard_LRS", "label": "Locally redundant storage",
+          "impact": {
+            "covers": "Disk and rack failures inside one datacenter.", "uncovered": "A zone failure can stop the apps that depend on the storage.",
+            "sla": "See the Storage SLA."
+          },
+          "constraints": [], "cost": "storage-lrs", "export": {"storage.sku": "Standard_LRS"}
+        }
+      ],
+      "recommendation": {"option": "Standard_ZRS", "reason": "Zone-redundant apps should not depend on storage that a single zone failure stops.", "sources": ["F2"]}
+    },
+    {
+      "id": "sync.regions", "row": 5, "stage": "0", "type": "option", "owner": "WP-SYNC (sync app)", "setting": "functions.sync placement",
+      "title": "Group sync app placement across stamp regions", "costShownIn": "sync.alwaysReady", "app": "sync",
+      "options": [
+        {
+          "id": "primary-region", "label": "One app, in the primary stamp region",
+          "impact": {
+            "covers": "As its zone decision.",
+            "uncovered": "A region failure delays membership changes until the region recovers; records persist, so nobody loses access.",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": [], "cost": "flex-always-ready", "alwaysReadyBasis": 1, "memoryBasisMB": 2048, "bearing": "primary"
+        },
+        {
+          "id": "every-stamp-region", "label": "An app in every stamp region; a lease lets one instance write",
+          "impact": {
+            "covers": "A region failure: another region's app takes the lease.", "uncovered": "A failure of the shared registry or of Microsoft Graph.",
+            "sla": "99.95% per app (SLA, Flex Consumption)."
+          },
+          "constraints": ["minStampRegions:2"], "cost": "flex-always-ready", "alwaysReadyBasis": 1, "memoryBasisMB": 2048, "bearing": "stamps"
+        }
+      ],
+      "recommendation": {
+        "option": "primary-region",
+        "reason": "The sync is off the request path and its records persist: a region outage delays changes and denies no one.",
+        "sources": ["ADR14", "F2", "SYNC"]
+      }
+    },
+    {
+      "id": "sync.instanceMemoryMB", "row": 5, "stage": "0", "type": "option", "owner": "WP-SYNC (sync app)", "setting": "functions.sync.instanceMemoryMB",
+      "title": "Group sync instance memory",
+      "options": [
+        {
+          "id": "512", "label": "512 MB (0.25 core)",
+          "impact": {"covers": "Lowest memory cost per instance.", "uncovered": "Longer runs for large reads.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 512, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "2048", "label": "2,048 MB (1 core)",
+          "impact": {"covers": "The common size.", "uncovered": "As the other sizes.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 2048, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "4096", "label": "4,096 MB (2 cores)",
+          "impact": {"covers": "Most memory per instance.", "uncovered": "Highest memory cost per instance.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 4096, "alwaysReadyBasis": 1
+        }
+      ],
+      "recommendation": {
+        "option": "2048",
+        "reason": "A run reads every entitlement document (WP-SYNC U-new-SYNC-5); P-12 measures whether a smaller size completes within the interval.",
+        "sources": ["F1"]
+      },
+      "app": "sync", "costShownIn": "sync.alwaysReady", "bearingFrom": "sync.regions"
+    },
+    {
+      "id": "sync.zoneRedundancy", "row": 5, "stage": "0", "type": "option", "owner": "WP-SYNC (sync app)", "setting": "functions.sync.zoneRedundant",
+      "title": "Group sync Function App zone redundancy",
+      "options": [
+        {
+          "id": "non-zonal", "label": "Without zone redundancy",
+          "impact": {
+            "covers": "Instance failures.",
+            "uncovered": "A zone failure delays additions and removals until the app recovers; records persist, so nobody loses access (ADR-0008).",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": ["flex"], "cost": "flex-always-ready", "export": {"functions.sync.zoneRedundant": false}, "alwaysReadyBasis": 0
+        },
+        {
+          "id": "zone-redundant", "label": "Zone-redundant",
+          "impact": {"covers": "A zone failure.", "uncovered": "A region failure delays changes.", "sla": "99.95% (SLA, Flex Consumption)."},
+          "constraints": ["flexZoneRedundant"], "cost": "flex-always-ready", "export": {"functions.sync.zoneRedundant": true}, "alwaysReadyBasis": 2
+        }
+      ],
+      "recommendation": {
+        "option": "non-zonal",
+        "reason": "The sync is off the request path and its records persist: an outage delays membership changes and denies no one, so two billed always-ready instances buy little.",
+        "sources": ["SYNC", "F2"]
+      },
+      "app": "sync", "costShownIn": "sync.alwaysReady", "bearingFrom": "sync.regions"
+    },
+    {
+      "id": "sync.alwaysReady", "row": 5, "stage": "0", "type": "integer", "owner": "WP-SYNC (sync app)", "setting": "functions.sync.alwaysReady", "min": 0, "max": 1000,
+      "cost": "flex-always-ready", "app": "sync",
+      "minWhenZoneRedundant": {"decision": "sync.zoneRedundancy", "option": "zone-redundant", "min": 2},
+      "title": "Group sync always-ready instances (at least 2 when zone-redundant)",
+      "recommendation": {"formula": "syncAlwaysReady", "reason": "None for a timer-triggered sync without zone redundancy; zone redundancy requires at least two.", "sources": ["F1", "F2"]},
+      "bearingFrom": "sync.regions"
+    },
+    {
+      "id": "sync.maximumInstanceCount", "row": 5, "stage": "0", "type": "integer", "owner": "WP-SYNC (sync app)", "setting": "functions.sync.maximumInstanceCount",
+      "min": 1, "max": 1000, "title": "Group sync maximum on-demand instances",
+      "recommendation": {"formula": "none", "reason": "One run at a time holds the lease, so a small number suffices; the lease prevents overlapping writers.", "sources": ["F1"]},
+      "bearingFrom": "sync.regions"
+    },
+    {
+      "id": "reconciler.regions", "row": 5, "stage": "0", "type": "option", "owner": "WP-REC (reconciler app)", "setting": "functions.reconciler placement",
+      "title": "Reconciler app placement across stamp regions", "costShownIn": "reconciler.alwaysReady", "app": "reconciler",
+      "options": [
+        {
+          "id": "primary-region", "label": "One app, in the primary stamp region",
+          "impact": {
+            "covers": "As its zone decision.",
+            "uncovered": "A region failure stops budget updates; beyond the budget-state hard limit every person is refused.",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": [], "cost": "flex-always-ready", "alwaysReadyBasis": 1, "memoryBasisMB": 2048, "bearing": "primary"
+        },
+        {
+          "id": "every-stamp-region", "label": "An app in every stamp region; a lease lets one instance write",
+          "impact": {
+            "covers": "A region failure: another region's app takes the lease.", "uncovered": "A failure of the shared registry or of Microsoft Graph.",
+            "sla": "99.95% per app (SLA, Flex Consumption)."
+          },
+          "constraints": ["minStampRegions:2"], "cost": "flex-always-ready", "alwaysReadyBasis": 1, "memoryBasisMB": 2048, "bearing": "stamps"
+        }
+      ],
+      "recommendation": {
+        "option": "every-stamp-region",
+        "reason": "A reconciler outage longer than the hard limit denies everyone; docs/AVAILABILITY.md section 3 row 6 runs it in two regions with a lease.",
+        "sources": ["ADR14", "F2", "RES"]
+      }
+    },
+    {
+      "id": "reconciler.instanceMemoryMB", "row": 5, "stage": "0", "type": "option", "owner": "WP-REC (reconciler app)",
+      "setting": "functions.reconciler.instanceMemoryMB", "title": "Reconciler instance memory",
+      "options": [
+        {
+          "id": "512", "label": "512 MB (0.25 core)",
+          "impact": {"covers": "Lowest memory cost per instance.", "uncovered": "Longer runs for large reads.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 512, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "2048", "label": "2,048 MB (1 core)",
+          "impact": {"covers": "The common size.", "uncovered": "As the other sizes.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 2048, "alwaysReadyBasis": 1
+        },
+        {
+          "id": "4096", "label": "4,096 MB (2 cores)",
+          "impact": {"covers": "Most memory per instance.", "uncovered": "Highest memory cost per instance.", "sla": "As Flex Consumption."},
+          "constraints": [], "cost": "flex-always-ready", "value": 4096, "alwaysReadyBasis": 1
+        }
+      ],
+      "recommendation": {"option": "2048", "reason": "The reconciler prices the ledger per run; P-12 measures the run time at target scale.", "sources": ["F1"]},
+      "app": "reconciler", "costShownIn": "reconciler.alwaysReady", "bearingFrom": "reconciler.regions"
+    },
+    {
+      "id": "reconciler.zoneRedundancy", "row": 5, "stage": "0", "type": "option", "owner": "WP-REC (reconciler app)", "setting": "functions.reconciler.zoneRedundant",
+      "title": "Reconciler Function App zone redundancy",
+      "options": [
+        {
+          "id": "zone-redundant", "label": "Zone-redundant",
+          "impact": {
+            "covers": "A zone failure: budget state stays fresh.",
+            "uncovered": "A region failure: budget state goes stale and, beyond the hard limit, every person is refused (WP-RES).",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": ["flexZoneRedundant"], "cost": "flex-always-ready", "export": {"functions.reconciler.zoneRedundant": true}, "alwaysReadyBasis": 2
+        },
+        {
+          "id": "non-zonal", "label": "Without zone redundancy",
+          "impact": {
+            "covers": "Instance failures.",
+            "uncovered": "A zone failure stops budget updates; beyond the hard limit every person is refused.",
+            "sla": "99.95% (SLA, Flex Consumption)."
+          },
+          "constraints": ["flex"], "cost": "flex-always-ready", "export": {"functions.reconciler.zoneRedundant": false}, "alwaysReadyBasis": 0
+        }
+      ],
+      "recommendation": {
+        "option": "zone-redundant",
+        "reason": "A reconciler outage longer than the budget-state hard limit denies everyone, so it carries the same zone requirement as the request path.",
+        "sources": ["RES", "ADR14", "F2"]
+      },
+      "app": "reconciler", "costShownIn": "reconciler.alwaysReady", "bearingFrom": "reconciler.regions"
+    },
+    {
+      "id": "reconciler.alwaysReady", "row": 5, "stage": "0", "type": "integer", "owner": "WP-REC (reconciler app)", "setting": "functions.reconciler.alwaysReady",
+      "min": 0, "max": 1000, "cost": "flex-always-ready", "app": "reconciler",
+      "minWhenZoneRedundant": {"decision": "reconciler.zoneRedundancy", "option": "zone-redundant", "min": 2},
+      "title": "Reconciler always-ready instances (at least 2 when zone-redundant)",
+      "recommendation": {"formula": "reconcilerAlwaysReady", "reason": "Zone redundancy requires at least two; without it, none for a timer-triggered app.", "sources": ["F1", "F2"]},
+      "bearingFrom": "reconciler.regions"
+    },
+    {
+      "id": "reconciler.maximumInstanceCount", "row": 5, "stage": "0", "type": "integer", "owner": "WP-REC (reconciler app)",
+      "setting": "functions.reconciler.maximumInstanceCount", "min": 1, "max": 1000, "title": "Reconciler maximum on-demand instances",
+      "recommendation": {"formula": "none", "reason": "A lease lets one instance write (docs/AVAILABILITY.md section 3 row 6); more instances add no throughput.", "sources": ["F1"]},
+      "bearingFrom": "reconciler.regions"
+    },
+    {
+      "id": "telemetry.retentionDays", "row": 6, "stage": "0", "type": "integer", "owner": "WP-TEL", "setting": "telemetry.retentionDays", "min": 31, "max": 730,
+      "title": "Analytics retention in days", "costShownIn": "telemetry.workspaceRegion", "cost": "log-retention",
+      "costBasis": {"value": 61, "label": "61 days, that is 30 days beyond the 31 included"},
+      "recommendation": {
+        "formula": "none",
+        "reason": "31 days are included in the ingestion price; a longer period follows the customer's audit and investigation needs.",
+        "sources": ["L1"]
+      }
+    },
+    {
+      "id": "telemetry.workspaceRegion", "row": 6, "stage": "0", "type": "region", "owner": "WP-TEL; WP-CORE (D1)", "setting": "telemetry.workspaceRegion",
+      "constraints": ["logAnalytics"], "title": "Log Analytics workspace region",
+      "recommendation": {
+        "rule": "The primary stamp's region, if it offers Log Analytics.",
+        "reason": "Gateway logs stay in the data-residency geography and next to the gateway.",
+        "sources": ["L1"]
+      },
+      "cost": "log-analytics"
+    },
+    {
+      "id": "telemetry.replication", "row": 6, "stage": "0", "type": "option", "owner": "WP-TEL; WP-CORE (D1)", "setting": "telemetry.replication",
+      "title": "Log Analytics workspace replication",
+      "options": [
+        {
+          "id": "none", "label": "No replication",
+          "impact": {
+            "covers": "Zone failures handled by the service in the region.",
+            "uncovered": "A region failure stops alerts and the usage ledger; the reconciler then marks scopes 'telemetry missing' and budget state ages towards the hard limit.",
+            "sla": "99.9% query availability (SLA)."
+          },
+          "constraints": [], "cost": [], "export": {"telemetry.replication.enabled": false}
+        },
+        {
+          "id": "workspace-replication", "label": "Replicate to a secondary region in the same region group",
+          "impact": {
+            "covers": "A region failure, after a manual switchover; only logs ingested after enabling are replicated.",
+            "uncovered": "Data collection rules not associated with the workspace's endpoint are billed but not replicated; Auxiliary tables are not supported.",
+            "sla": "99.9% query availability (SLA)."
+          },
+          "constraints": [], "cost": "log-replication", "export": {"telemetry.replication.enabled": true}
+        }
+      ],
+      "recommendation": {"option": "workspace-replication", "reason": "Usage records feed budgets and alerts; a region outage without a replica leaves both blind.", "sources": ["L2"]},
+      "bearingFrom": "telemetry.workspaceRegion"
+    },
+    {
+      "id": "telemetry.secondaryRegion", "row": 6, "stage": "0", "type": "region", "owner": "WP-TEL; WP-CORE (D1)", "setting": "telemetry.replication.secondaryRegion",
+      "constraints": ["laReplicationSecondary"], "appliesTo": {"telemetry.replication": ["workspace-replication"]},
+      "title": "Workspace replication secondary region (any region of the same replication group)",
+      "recommendation": {
+        "rule": "A secondary region of the workspace region's replication group; for centralindia, southindia.",
+        "reason": "Replication is allowed only inside the documented region groups.", "sources": ["L2"]
+      }
+    },
+    {
+      "id": "entitlementCache.allowTtlSeconds", "row": 7, "stage": "0", "type": "integer", "owner": "WP-GW", "setting": "entitlementCache.allowTtlSeconds", "min": 1,
+      "max": 86400, "title": "Seconds an allow decision is served before the resolver is asked again",
+      "recommendation": {
+        "formula": "none",
+        "reason": "A removal takes effect within the sync interval plus this value (docs/PILOT.md, enforcement table); shorter values send more resolver calls.",
+        "sources": ["GW"]
+      }
+    },
+    {
+      "id": "entitlementCache.refusalTtlSeconds", "row": 7, "stage": "0", "type": "integer", "owner": "WP-GW", "setting": "entitlementCache.refusalTtlSeconds", "min": 1,
+      "max": 86400, "title": "Seconds a refusal is cached",
+      "recommendation": {
+        "formula": "none",
+        "reason": "A newly added member waits up to the sync interval plus this value; short values protect the resolver less from repeated refused calls.",
+        "sources": ["GW"]
+      }
+    },
+    {
+      "id": "entitlementCache.lastKnownGoodGraceSeconds", "row": 7, "stage": "0", "type": "integer", "owner": "WP-GW",
+      "setting": "entitlementCache.lastKnownGoodGraceSeconds", "min": 0, "max": 604800,
+      "title": "Maximum stale-serve time: seconds after the allow TTL that a last-known-good allow is served while the resolver fails",
+      "recommendation": {
+        "formula": "none",
+        "reason": "Long enough to ride out a resolver or registry outage, short enough that a removed person's access ends within the organisation's tolerance. 0 turns off last-known-good serving: during a resolver outage each request is refused once its cached allow expires (ADR-0014 decision 1; WP-GW schema).",
+        "sources": ["ADR14", "GW"]
+      }
+    },
+    {
+      "id": "entitlementCache.refreshBackoffSeconds", "row": 7, "stage": "0", "type": "integer", "owner": "WP-GW", "setting": "entitlementCache.refreshBackoffSeconds",
+      "min": 1, "max": 3600, "atMostWhenPositive": "entitlementCache.lastKnownGoodGraceSeconds",
+      "title": "Seconds a last-known-good allow is served after a failed refresh before the resolver is asked again (at most the maximum stale-serve time when that is above 0)",
+      "recommendation": {
+        "formula": "none",
+        "reason": "30 to 120 seconds (WP-GW): during a resolver outage each expired allow asks the failing resolver at most once per backoff, and last-known-good is served meanwhile; shorter values load the resolver more, longer values delay recovery. The pilot runs 30 (coordinator pilot decision).",
+        "sources": ["GW"]
+      }
+    },
+    {
+      "id": "entitlementCache.unavailableRetryAfterSeconds", "row": 7, "stage": "0", "type": "integer", "owner": "WP-GW",
+      "setting": "entitlementCache.unavailableRetryAfterSeconds", "min": 1, "max": 3600,
+      "title": "Retry-After seconds sent with a 503 when no last-known-good allow exists",
+      "recommendation": {"formula": "none", "reason": "Long enough not to amplify an outage with client retries.", "sources": ["GW"]}
+    },
+    {
+      "id": "budgetState.graceSeconds", "row": 8, "stage": "0", "type": "integer", "owner": "WP-RES", "setting": "RESOLVER_BUDGET_STATE_GRACE_SECONDS", "min": 0,
+      "max": 2147483647,
+      "title": "Budget-state grace window (seconds after validUntil served with the last ceiling, flagged degraded)",
+      "recommendation": {"formula": "none", "reason": "At least two reconciler intervals, so one missed run degrades nobody's access; the PoC runs 600 (WP-RES).", "sources": ["RES"]}
+    },
+    {
+      "id": "budgetState.hardLimitSeconds", "row": 8, "stage": "0", "type": "integer", "owner": "WP-RES", "setting": "RESOLVER_BUDGET_STATE_HARD_LIMIT_SECONDS", "min": 0,
+      "max": 2147483647, "atLeast": "budgetState.graceSeconds",
+      "title": "Budget-state hard limit (seconds after validUntil after which requests are refused)",
+      "recommendation": {
+        "formula": "none",
+        "reason": "Not below the grace window; it bounds overspend during a reconciler or telemetry outage, and beyond it every person is refused (WP-RES AC5). The PoC runs 3,600.",
+        "sources": ["RES", "ADR14"]
+      }
+    },
+    {
+      "id": "sync.intervalMinutes", "row": 11, "stage": "0", "type": "integer", "owner": "WP-SYNC", "setting": "SYNC_SCHEDULE",
+      "allowedValues": [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60], "title": "Sync interval in minutes (exported as the NCRONTAB schedule 0 */N * * * *)",
+      "recommendation": {
+        "formula": "none",
+        "reason": "5 to 15 minutes at 500,000 people: each run reads every entitlement document; removals take up to one interval plus the gateway cache TTL (WP-SYNC).",
+        "sources": ["SYNC"]
+      }
+    },
+    {
+      "id": "sync.maxRemovalsPerRun", "row": 11, "stage": "0", "type": "integer", "owner": "WP-SYNC", "setting": "SYNC_MAX_REMOVALS_PER_RUN", "min": 0, "max": 1000000,
+      "title": "Removals always allowed in one sync run",
+      "recommendation": {"formula": "none", "reason": "About the largest routine offboarding batch per interval (WP-SYNC).", "sources": ["SYNC"]}
+    },
+    {
+      "id": "sync.maxRemovalFraction", "row": 11, "stage": "0", "type": "decimal", "owner": "WP-SYNC", "setting": "SYNC_MAX_REMOVAL_FRACTION", "min": "0", "max": "1",
+      "scale": 6, "title": "Fraction of memberships one run may remove beyond the count",
+      "recommendation": {"formula": "none", "reason": "0.01 to 0.05 at 500,000 people; with the count it bounds a mass revocation (WP-SYNC).", "sources": ["SYNC"]}
+    },
+    {
+      "id": "sync.leaseSeconds", "row": 11, "stage": "0", "type": "integer", "owner": "WP-SYNC", "setting": "SYNC_LEASE_SECONDS", "min": 1, "max": 3600,
+      "title": "Sync lease seconds (WP-CORE's schema allows 1 to 3,600; WP-SYNC accepts up to 86,400)",
+      "recommendation": {"formula": "none", "reason": "300 to 900: above clock skew and the longest Graph wait (WP-SYNC).", "sources": ["SYNC"]}
+    },
+    {
+      "id": "gateway.resolverTimeoutSeconds", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW", "setting": "resolver.timeoutSeconds",
+      "title": "Gateway timeout for one resolver call",
+      "recommendation": {
+        "reason": "Above the resolver's p99 latency measured by P-12 and below the client's patience; a timeout falls back to last-known-good.",
+        "sources": ["GW"],
+        "rule": "Above the resolver's p99 latency measured by P-12 and below the client's patience; a timeout falls back to last-known-good."
+      },
+      "decidedIn": "D2 answers: gateway.resolverTimeoutSeconds (WP-CORE config/core.answers.schema.json)"
+    },
+    {
+      "id": "gateway.admissionPerPersonCalls", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW", "setting": "admission.perPerson.calls",
+      "title": "Per-person admission: calls per renewal period, before any resolver call",
+      "recommendation": {
+        "reason": "Above the heaviest legitimate Claude Code use; it stops one runaway client from consuming resolver capacity for others.",
+        "sources": ["GW"],
+        "rule": "Above the heaviest legitimate Claude Code use; it stops one runaway client from consuming resolver capacity for others."
+      },
+      "decidedIn": "D2 answers: gateway.admission (WP-CORE)"
+    },
+    {
+      "id": "gateway.admissionPerPersonRenewalSeconds", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW", "setting": "admission.perPerson.renewalPeriodSeconds",
+      "title": "Per-person admission renewal period in seconds (rate-limit-by-key allows at most 300)",
+      "recommendation": {"reason": "Matches the calls value above.", "sources": ["GW"], "rule": "Matches the calls value above."},
+      "decidedIn": "D2 answers: gateway.admission (WP-CORE)"
+    },
+    {
+      "id": "gateway.admissionResolverMissCalls", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW", "setting": "admission.resolverMisses.calls",
+      "title": "Resolver-miss admission: calls per renewal period (applies to cache misses only; a refresh of an expired allow is not refused by it)",
+      "recommendation": {
+        "reason": "At most what the resolver serves, measured by P-12; the reference's ADR-0017 admitted 200 per second.",
+        "sources": ["GW", "ADR14"],
+        "rule": "At most what the resolver serves, measured by P-12; the reference's ADR-0017 admitted 200 per second."
+      },
+      "decidedIn": "D2 answers: gateway.admission (WP-CORE)"
+    },
+    {
+      "id": "gateway.admissionResolverMissRenewalSeconds", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW",
+      "setting": "admission.resolverMisses.renewalPeriodSeconds", "title": "Resolver-miss admission renewal period in seconds",
+      "recommendation": {"reason": "Matches the calls value above.", "sources": ["GW"], "rule": "Matches the calls value above."},
+      "decidedIn": "D2 answers: gateway.admission (WP-CORE)"
+    },
+    {
+      "id": "gateway.admissionResolverMaxConcurrent", "row": 7, "stage": "0", "type": "info", "owner": "WP-GW", "setting": "admission.resolverMisses.maxConcurrent",
+      "title": "Concurrent resolver calls per gateway",
+      "recommendation": {
+        "reason": "At most the resolver's measured concurrency; the reference's ADR-0017 admitted 100.",
+        "sources": ["GW", "ADR14"],
+        "rule": "At most the resolver's measured concurrency; the reference's ADR-0017 admitted 100."
+      },
+      "decidedIn": "D2 answers: gateway.admission (WP-CORE)"
+    },
+    {
+      "id": "alerting.configurationId", "row": 11, "stage": "0", "type": "info", "owner": "WP-TEL", "setting": "configurationId",
+      "title": "WP-TEL alert configuration id holding the recipients and thresholds the operations team approved",
+      "recommendation": {
+        "rule": "The approved configuration; recipients an on-call group mailbox, not a person; thresholds per docs/TELEMETRY.md.",
+        "reason": "Recipients are personal data and stay in WP-TEL's configuration; this record binds the decision to it by id and digest.",
+        "sources": ["TEL"]
+      },
+      "decidedIn": "D2 answers: telemetry.alertConfigurationFile (WP-CORE); recipients and thresholds in WP-TEL's alert configuration"
+    },
+    {
+      "id": "alerting.configurationSha256", "row": 11, "stage": "0", "type": "info", "owner": "WP-TEL", "setting": "configuration file SHA-256",
+      "title": "SHA-256 of that alert configuration file (Get-FileHash -Algorithm SHA256, lower case)",
+      "recommendation": {"rule": "The digest of the approved file.", "reason": "A later edit of the file no longer matches the recorded decision.", "sources": ["TEL"]},
+      "decidedIn": "D2 answers: telemetry.alertConfigurationFile (WP-CORE)"
+    },
+    {
+      "id": "backend.failover", "row": 9, "stage": "2", "type": "info", "owner": "WP-ONB (Stage 2)",
+      "title": "Backend failover members, order and data-zone limit, per designated subscription",
+      "decidedIn": "onboarding Stage 2 (WP-ONB), per designated subscription", "showsRegionFacts": true,
+      "recommendation": {
+        "rule": "Two or more Claude deployments in different regions of the designated subscription, inside the data zone the project allows, behind an APIM backend pool with circuit breakers.",
+        "reason": "A Global Standard or Data Zone Standard deployment does not move a region's traffic elsewhere: 'if the primary region experiences an interruption in service, all traffic initially routed to this region is affected'. No data zone covers India.",
+        "sources": ["AI1", "AI3"]
+      }
+    },
+    {
+      "id": "backend.authMode", "row": 10, "stage": "2", "type": "info", "owner": "WP-ONB (Stage 2); ADR-0007", "title": "Backend authentication mode",
+      "decidedIn": "onboarding Stage 2 (WP-ONB), per backend",
+      "recommendation": {
+        "rule": "Managed identity in the gateway's tenant (shape A); across tenants, a federated credential where the other tenant allows it, otherwise a certificate broker; a client secret only with automated rotation and an expiry alert.",
+        "reason": "An expired secret denies everyone on that backend (docs/AVAILABILITY.md section 3 row 9).",
+        "sources": ["ADR14"]
+      }
+    }
+  ],
+  "logAnalyticsReplication": {
+    "source": "L2",
+    "groups": {
+      "north-america": {
+        "primary": ["canadacentral", "canadaeast", "centralus", "eastus", "eastus2", "northcentralus", "southcentralus", "westcentralus", "westus", "westus2", "westus3"],
+        "secondary": ["canadacentral", "centralus", "eastus", "eastus2", "westus", "westus2", "westus3"],
+        "exclusiveSet": ["eastus", "eastus2", "southcentralus"]
+      },
+      "south-america": {"primary": ["brazilsouth", "brazilsoutheast"], "secondary": ["brazilsouth", "brazilsoutheast"], "exclusiveSet": []},
+      "europe": {
+        "primary": ["francecentral", "francesouth", "germanynorth", "germanywestcentral", "italynorth", "northeurope", "norwayeast", "norwaywest", "polandcentral", "uksouth", "spaincentral", "swedencentral", "swedensouth", "switzerlandnorth", "switzerlandwest", "westeurope", "ukwest"],
+        "secondary": ["francecentral", "germanywestcentral", "northeurope", "uksouth", "westeurope", "ukwest"],
+        "exclusiveSet": []
+      },
+      "middle-east": {"primary": ["qatarcentral", "uaecentral", "uaenorth"], "secondary": ["qatarcentral", "uaecentral", "uaenorth"], "exclusiveSet": []},
+      "india": {
+        "primary": ["centralindia", "jioindiacentral", "jioindiawest", "southindia"], "secondary": ["centralindia", "jioindiacentral", "jioindiawest", "southindia"],
+        "exclusiveSet": []
+      },
+      "asia-pacific": {
+        "primary": ["eastasia", "japaneast", "japanwest", "koreacentral", "koreasouth", "southeastasia"],
+        "secondary": ["eastasia", "japaneast", "japanwest", "koreacentral", "southeastasia"], "exclusiveSet": []
+      },
+      "oceania": {
+        "primary": ["australiacentral", "australiacentral2", "australiaeast", "australiasoutheast"],
+        "secondary": ["australiacentral", "australiaeast", "australiasoutheast"], "exclusiveSet": []
+      },
+      "africa": {"primary": ["southafricanorth", "southafricawest"], "secondary": ["southafricanorth", "southafricawest"], "exclusiveSet": []}
+    }
+  },
+  "costModels": {
+    "apim-standard-v2": [
+      {
+        "label": "First unit",
+        "meter": {"serviceName": "API Management", "productName": "API Management", "skuName": "Standard v2", "meterName": "Standard v2 Unit", "unit": "1 Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth"]
+      },
+      {
+        "label": "Additional units",
+        "meter": {"serviceName": "API Management", "productName": "API Management", "skuName": "Standard v2", "meterName": "Standard v2 Secondary Unit", "unit": "1 Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$apimAdditionalUnits"]
+      },
+      {
+        "label": "Requests beyond the included tier",
+        "meter": {"serviceName": "API Management", "productName": "API Management", "skuName": "Standard v2", "meterName": "Standard v2 Calls", "unit": "10K"},
+        "scope": "region", "quantity": ["$stampRequests10K"]
+      }
+    ],
+    "apim-premium-v2": [
+      {
+        "label": "First unit",
+        "meter": {"serviceName": "API Management", "productName": "API Management", "skuName": "Premium v2", "meterName": "Premium v2 Unit", "unit": "1 Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth"]
+      },
+      {
+        "label": "Additional units",
+        "meter": {"serviceName": "API Management", "productName": "API Management", "skuName": "Premium v2", "meterName": "Premium v2 Secondary Unit", "unit": "1 Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$apimAdditionalUnits"]
+      }
+    ],
+    "front-door-standard": [
+      {
+        "label": "Base fee",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Standard", "meterName": "Standard Base Fees", "unit": "1/Month"},
+        "scope": "billingZone", "quantity": ["1"]
+      },
+      {
+        "label": "Requests",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Standard", "meterName": "Standard Requests", "unit": "10K"},
+        "scope": "billingZone", "quantity": ["$monthlyRequests10K"]
+      },
+      {
+        "label": "Edge to client",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Standard", "meterName": "Standard Data Transfer Out", "unit": "1 GB"},
+        "scope": "billingZone", "quantity": ["$edgeEgressGB"]
+      },
+      {
+        "label": "Edge to origin",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Standard", "meterName": "Standard Data Transfer In", "unit": "1 GB"},
+        "scope": "billingZone", "quantity": ["$edgeToOriginGB"]
+      }
+    ],
+    "front-door-premium": [
+      {
+        "label": "Base fee",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Premium", "meterName": "Premium Base Fees", "unit": "1/Month"},
+        "scope": "billingZone", "quantity": ["1"]
+      },
+      {
+        "label": "Requests",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Premium", "meterName": "Premium Requests", "unit": "10K"},
+        "scope": "billingZone", "quantity": ["$monthlyRequests10K"]
+      },
+      {
+        "label": "Edge to client",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Premium", "meterName": "Premium Data Transfer Out", "unit": "1 GB"},
+        "scope": "billingZone", "quantity": ["$edgeEgressGB"]
+      },
+      {
+        "label": "Edge to origin",
+        "meter": {"serviceName": "Azure Front Door Service", "productName": "Azure Front Door", "skuName": "Premium", "meterName": "Premium Data Transfer In", "unit": "1 GB"},
+        "scope": "billingZone", "quantity": ["$edgeToOriginGB"]
+      }
+    ],
+    "cosmos-serverless": [
+      {
+        "label": "Request units consumed",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB serverless", "skuName": "RUs", "meterName": "1M RUs", "unit": "1M"},
+        "scope": "region", "quantity": ["$cosmosServerlessMillions"]
+      },
+      {
+        "label": "Storage",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "cosmos-serverless-zr": [
+      {
+        "label": "Request units consumed (the zone multiplier for serverless is not published: U-new-HADEC-3)",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB serverless", "skuName": "RUs", "meterName": "1M RUs", "unit": "1M"},
+        "scope": "region", "quantity": ["$cosmosServerlessMillions", "unpublished"]
+      },
+      {
+        "label": "Storage",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "cosmos-manual": [
+      {
+        "label": "Provisioned RU/s",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "100 RU/s", "unit": "1/Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$cosmosHundreds"]
+      },
+      {
+        "label": "Storage",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "cosmos-manual-zr": [
+      {
+        "label": "Provisioned RU/s x 1.25 for zones",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "100 RU/s", "unit": "1/Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$cosmosHundreds", "1.25"]
+      },
+      {
+        "label": "Storage",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "cosmos-autoscale": [
+      {
+        "label": "Autoscale maximum RU/s x 1.5, every hour at the maximum (upper bound; the floor is 10% of it)",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "100 RU/s", "unit": "1/Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$cosmosHundreds", "1.5"]
+      },
+      {
+        "label": "Storage",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "cosmos-multi-write": [
+      {
+        "label": "Multi-region write RU/s in this region (no autoscale or zone premium)",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "mRUs", "meterName": "100 Multi-master RU/s", "unit": "1/Hour"},
+        "scope": "region", "quantity": ["$hoursPerMonth", "$cosmosHundreds"]
+      },
+      {
+        "label": "Storage in this region",
+        "meter": {"serviceName": "Azure Cosmos DB", "productName": "Azure Cosmos DB", "skuName": "RUs", "meterName": "Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$cosmosStorageGB"]
+      }
+    ],
+    "amr-balanced": [
+      {
+        "label": "Two nodes (high availability)",
+        "meter": {
+          "serviceName": "Redis Cache", "productName": "Azure Managed Redis - Balanced", "skuName": "{cache.sku}", "meterName": "{cache.sku} Cache Instance",
+          "unit": "1 Hour"
+        },
+        "scope": "region", "quantity": ["$hoursPerMonth", "2"]
+      }
+    ],
+    "amr-memory-optimized": [
+      {
+        "label": "Two nodes (high availability)",
+        "meter": {
+          "serviceName": "Redis Cache", "productName": "Azure Managed Redis - Memory Optimized", "skuName": "{cache.sku}", "meterName": "{cache.sku} Cache Instance",
+          "unit": "1 Hour"
+        },
+        "scope": "region", "quantity": ["$hoursPerMonth", "2"]
+      }
+    ],
+    "amr-compute-optimized": [
+      {
+        "label": "Two nodes (high availability)",
+        "meter": {
+          "serviceName": "Redis Cache", "productName": "Azure Managed Redis - Compute Optimized", "skuName": "{cache.sku}", "meterName": "{cache.sku} Cache Instance",
+          "unit": "1 Hour"
+        },
+        "scope": "region", "quantity": ["$hoursPerMonth", "2"]
+      }
+    ],
+    "flex-resolver": [
+      {
+        "label": "Always-ready baseline",
+        "meter": {"serviceName": "Functions", "productName": "Flex Consumption", "skuName": "Always Ready", "meterName": "Always Ready Baseline", "unit": "1 GB Second"},
+        "scope": "region", "quantity": ["$resolverAlwaysReadyGBs"]
+      },
+      {
+        "label": "Execution time at the on-demand rate, with instances fully packed at the measured concurrency (an estimate, not a bound: U-new-HADEC-5)",
+        "meter": {"serviceName": "Functions", "productName": "Flex Consumption", "skuName": "On Demand", "meterName": "On Demand Execution Time", "unit": "1 GB Second"},
+        "scope": "region", "quantity": ["$resolverExecutionGBs"]
+      },
+      {
+        "label": "Executions",
+        "meter": {"serviceName": "Functions", "productName": "Flex Consumption", "skuName": "On Demand", "meterName": "On Demand Total Executions", "unit": "10"},
+        "scope": "region", "quantity": ["$resolverExecutions10"]
+      }
+    ],
+    "flex-always-ready": [
+      {
+        "label": "Always-ready baseline",
+        "meter": {"serviceName": "Functions", "productName": "Flex Consumption", "skuName": "Always Ready", "meterName": "Always Ready Baseline", "unit": "1 GB Second"},
+        "scope": "region", "quantity": ["$alwaysReadyGBs"]
+      }
+    ],
+    "storage-zrs": [
+      {
+        "label": "Hot ZRS data stored",
+        "meter": {"serviceName": "Storage", "productName": "General Block Blob v2", "skuName": "Hot ZRS", "meterName": "Hot ZRS Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$functionsStorageGB"]
+      }
+    ],
+    "storage-lrs": [
+      {
+        "label": "Hot LRS data stored",
+        "meter": {"serviceName": "Storage", "productName": "General Block Blob v2", "skuName": "Hot LRS", "meterName": "Hot LRS Data Stored", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$functionsStorageGB"]
+      }
+    ],
+    "private-endpoints": [
+      {
+        "label": "Private endpoints",
+        "meter": {
+          "serviceName": "Virtual Network", "productName": "Virtual Network Private Link", "skuName": "Standard", "meterName": "Standard Private Endpoint",
+          "unit": "1 Hour"
+        },
+        "scope": "global", "quantity": ["$hoursPerMonth", "$privateEndpoints"]
+      },
+      {
+        "label": "Data processed, ingress",
+        "meter": {
+          "serviceName": "Virtual Network", "productName": "Virtual Network Private Link", "skuName": "Standard", "meterName": "Standard Data Processed - Ingress",
+          "unit": "1 GB"
+        },
+        "scope": "global", "quantity": ["$privateEndpointIngressGB"]
+      },
+      {
+        "label": "Data processed, egress",
+        "meter": {
+          "serviceName": "Virtual Network", "productName": "Virtual Network Private Link", "skuName": "Standard", "meterName": "Standard Data Processed - Egress",
+          "unit": "1 GB"
+        },
+        "scope": "global", "quantity": ["$privateEndpointEgressGB"]
+      }
+    ],
+    "log-analytics": [
+      {
+        "label": "Analytics Logs ingestion",
+        "meter": {"serviceName": "Log Analytics", "productName": "Log Analytics", "skuName": "Analytics Logs", "meterName": "Analytics Logs Data Ingestion", "unit": "1 GB"},
+        "scope": "region", "quantity": ["$logIngestionGB"]
+      },
+      {
+        "label": "Retention beyond the included 31 days",
+        "meter": {"serviceName": "Log Analytics", "productName": "Log Analytics", "skuName": "Analytics Logs", "meterName": "Analytics Logs Data Retention", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$logRetainedGB"]
+      }
+    ],
+    "log-retention": [
+      {
+        "label": "Retention beyond the included 31 days",
+        "meter": {"serviceName": "Log Analytics", "productName": "Log Analytics", "skuName": "Analytics Logs", "meterName": "Analytics Logs Data Retention", "unit": "1 GB/Month"},
+        "scope": "region", "quantity": ["$logRetainedGB"]
+      }
+    ],
+    "log-replication": [
+      {
+        "label": "Workspace replication",
+        "meter": {"serviceName": "Azure Monitor", "productName": "Azure Monitor", "skuName": "Data Replication", "meterName": "Data Replication Data Replicated", "unit": "1 GB"},
+        "scope": "region", "quantity": ["$logIngestionGB"]
+      }
+    ]
+  }
+}

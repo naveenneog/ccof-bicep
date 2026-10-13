@@ -1,0 +1,950 @@
+<!--
+  claude-messages gateway policy, generated from configuration %%CONFIGURATION_ID%% (sha256 %%CONFIG_SHA256%%)
+  and template sha256 %%TEMPLATE_SHA256%%. Do not edit it in the portal: change the configuration or
+  infra/gateway/policy/claude-messages.template.xml, render with infra/gateway/render.ts and deploy a new
+  revision with infra/gateway/Deploy-GatewayRevision.ps1.
+  Design: docs/adr/0017-gateway-policy-entitlement-and-limits.md. Operator guide: docs/GATEWAY.md.
+
+  Inbound runs in stages. Each stage after authentication runs only while ccofRefusal is empty; every
+  refusal leaves through the single exit at the end of inbound, in Anthropic's error shape. Errors a
+  policy raises (token validation, admission and token limits, backend credential, forwarding), and a
+  request that matches no operation of the API (404), are answered in on-error, in the same shape.
+-->
+<policies>
+  <inbound>
+    <base />
+    <!-- 1. Authentication: a Microsoft Entra access token for this gateway's API, issued by the
+         configured tenant (v1 or v2 issuer), with that tenant in tid. -->
+    <validate-jwt id="ccof-jwt" header-name="Authorization" require-scheme="Bearer" failed-validation-httpcode="401" output-token-variable-name="ccofJwt">
+      <openid-config url="%%OPENID_CONFIG_URL%%" />
+      <audiences>
+        %%AUDIENCE_ELEMENTS%%
+      </audiences>
+      <issuers>
+        <issuer>%%ISSUER_V1%%</issuer>
+        <issuer>%%ISSUER_V2%%</issuer>
+      </issuers>
+      <required-claims>
+        <claim name="tid" match="all">
+          <value>%%TENANT_ID%%</value>
+        </claim>
+      </required-claims>
+    </validate-jwt>
+    <!-- 2. The caller: oid must be a GUID. A person's token carries scp with the configured scope and
+         comes from a configured client application (azp, or appid in a v1 token; WP-SEC A3), because
+         any application granted the scope gets tokens that carry it. An app-only token (no scp) is
+         accepted only from the configured test clients, and only if its roles claim holds the
+         configured app role (WP-NET S1), matched exactly among the claim's values. -->
+    <set-variable name="ccofOid" value="@{
+        var oid = ((Jwt)context.Variables["ccofJwt"]).Claims.GetValueOrDefault("oid", "").ToLowerInvariant();
+        return System.Text.RegularExpressions.Regex.IsMatch(oid, "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") ? oid : "";
+    }" />
+    <set-variable name="ccofClientAppId" value="@{
+        var jwt = (Jwt)context.Variables["ccofJwt"];
+        return jwt.Claims.GetValueOrDefault("azp", jwt.Claims.GetValueOrDefault("appid", "")).ToLowerInvariant();
+    }" />
+    <set-variable name="ccofRefusal" value="@{
+        if ((string)context.Variables["ccofOid"] == "") { return "token_identity_missing"; }
+        var scopes = ((Jwt)context.Variables["ccofJwt"]).Claims.GetValueOrDefault("scp", "").Trim();
+        if (scopes != "") {
+            if (!(" " + scopes + " ").Contains(" %%DELEGATED_SCOPE%% ")) { return "token_scope_missing"; }
+            var delegatedClients = new string[] { %%DELEGATED_CLIENT_IDS%% };
+            return Array.IndexOf(delegatedClients, (string)context.Variables["ccofClientAppId"]) >= 0 ? "" : "token_client_not_allowed";
+        }
+        var testClients = new string[] { %%APP_ONLY_CLIENT_IDS%% };
+        string[] roles;
+        var hasRole = ((Jwt)context.Variables["ccofJwt"]).Claims.TryGetValue("roles", out roles) && roles != null && Array.IndexOf(roles, "%%APP_ONLY_ROLE%%") >= 0;
+        return %%ALLOW_APP_ONLY%% && Array.IndexOf(testClients, (string)context.Variables["ccofClientAppId"]) >= 0 && hasRole ? "" : "app_token_not_allowed";
+    }" />
+    <!-- 3. Admission per person (%%PERSON_CALLS%% calls per %%PERSON_PERIOD%% s), before any resolver
+         call, so one client cannot crowd out the others. -->
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+        <rate-limit-by-key id="ccof-admission-person" calls="%%PERSON_CALLS%%" renewal-period="%%PERSON_PERIOD%%" counter-key="@("ccof-person:" + (string)context.Variables["ccofOid"])" retry-after-variable-name="ccofRetryAfter" />
+      </when>
+    </choose>
+    <!-- 4. The request: the optional project selector (C-1) and the body's model and stream fields.
+         The body stays readable for forwarding (preserveContent). -->
+    <set-variable name="ccofSelector" value="@(context.Request.Headers.GetValueOrDefault("%%PROJECT_HEADER%%", ""))" />
+    <set-variable name="ccofRequestFacts" value="@{
+        try {
+            var body = context.Request.Body.As<JObject>(preserveContent: true);
+            var model = body["model"];
+            var stream = body["stream"];
+            return new JObject(
+                new JProperty("model", model != null && model.Type == JTokenType.String ? (string)model : ""),
+                new JProperty("stream", stream != null && stream.Type == JTokenType.Boolean && (bool)stream)).ToString(Newtonsoft.Json.Formatting.None);
+        } catch {
+            return "";
+        }
+    }" />
+    <set-variable name="ccofModel" value="@{
+        var facts = (string)context.Variables["ccofRequestFacts"];
+        return facts == "" ? "" : (string)JObject.Parse(facts)["model"];
+    }" />
+    <set-variable name="ccofStream" value="@{
+        var facts = (string)context.Variables["ccofRequestFacts"];
+        return facts != "" && (bool)JObject.Parse(facts)["stream"];
+    }" />
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "" && (string)context.Variables["ccofSelector"] != "" && !System.Text.RegularExpressions.Regex.IsMatch((string)context.Variables["ccofSelector"], "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"))">
+        <set-variable name="ccofRefusal" value="project_header_invalid" />
+      </when>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "" && (string)context.Variables["ccofRequestFacts"] == "")">
+        <set-variable name="ccofRefusal" value="request_body_invalid" />
+      </when>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "" && (string)context.Variables["ccofModel"] == "")">
+        <set-variable name="ccofRefusal" value="request_model_missing" />
+      </when>
+    </choose>
+    <!-- 5. Entitlement, cached. One entry per tenant, person and selector holds the last decision and
+         when it was obtained ("at", whole seconds). An allow is fresh for %%ALLOW_TTL%% s; after that
+         the resolver is asked again, and if it fails the allow is still served, marked degraded, up
+         to %%LKG_GRACE%% s more (last-known-good), and the resolver is not asked again for that
+         person for %%REFRESH_BACKOFF%% s ("rt", retry-at). A refusal is fresh for %%REFUSAL_TTL%% s
+         and replaces an earlier allow. The built-in cache is volatile: a lost entry is a miss. The
+         key's d1 marks the decision format; keyVersion is the operator's switch to drop every entry. -->
+    <set-variable name="ccofCacheState" value="none" />
+    <set-variable name="ccofDecision" value="" />
+    <set-variable name="ccofEntitlementSource" value="" />
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+        <set-variable name="ccofCacheKey" value="@("ccof-ent:d1:v%%CACHE_KEY_VERSION%%:%%TENANT_ID%%:" + (string)context.Variables["ccofOid"] + ":" + ((string)context.Variables["ccofSelector"] == "" ? "-" : "p." + (string)context.Variables["ccofSelector"]))" />
+        <cache-lookup-value key="@((string)context.Variables["ccofCacheKey"])" variable-name="ccofCached" caching-type="%%CACHING_TYPE%%" />
+        <set-variable name="ccofCacheState" value="@{
+            if (!context.Variables.ContainsKey("ccofCached")) { return "miss"; }
+            try {
+                var entry = JObject.Parse((string)context.Variables["ccofCached"]);
+                var now = DateTime.UtcNow.Ticks / 10000000;
+                var age = now - (long)entry["at"];
+                var kind = (string)entry["k"];
+                if (age < 0) { return "miss"; }
+                if (kind == "allow") {
+                    if (age >= %%ALLOW_TTL%% + %%LKG_GRACE%%) { return "miss"; }
+                    if (age < %%ALLOW_TTL%%) { return "fresh-allow"; }
+                    var retryAt = entry["rt"];
+                    return retryAt != null && retryAt.Type == JTokenType.Integer && now < (long)retryAt ? "stale-allow-backoff" : "stale-allow";
+                }
+                if (kind == "refuse") { return age < %%REFUSAL_TTL%% ? "fresh-refusal" : "miss"; }
+                return "miss";
+            } catch {
+                return "miss";
+            }
+        }" />
+      </when>
+    </choose>
+    <choose>
+      <when condition="@((string)context.Variables["ccofCacheState"] == "fresh-allow")">
+        <set-variable name="ccofDecision" value="@(JObject.Parse((string)context.Variables["ccofCached"])["d"].ToString(Newtonsoft.Json.Formatting.None))" />
+        <set-variable name="ccofEntitlementSource" value="cache" />
+      </when>
+      <when condition="@((string)context.Variables["ccofCacheState"] == "stale-allow-backoff")">
+        <set-variable name="ccofDecision" value="@(JObject.Parse((string)context.Variables["ccofCached"])["d"].ToString(Newtonsoft.Json.Formatting.None))" />
+        <set-variable name="ccofEntitlementSource" value="last-known-good" />
+      </when>
+      <when condition="@((string)context.Variables["ccofCacheState"] == "fresh-refusal")">
+        <set-variable name="ccofRefusal" value="@{
+            var code = (string)JObject.Parse((string)context.Variables["ccofCached"])["c"];
+            return code == "project_selection_required" || code == "budget_state_unavailable" || code == "budget_exhausted" || code == "aggregate_budget_exhausted" ? code : "not_authorized";
+        }" />
+        <set-variable name="ccofProjectId" value="@((string)JObject.Parse((string)context.Variables["ccofCached"])["rp"] ?? "")" />
+        <set-variable name="ccofClassification" value="@((string)JObject.Parse((string)context.Variables["ccofCached"])["rc"] ?? "")" />
+      </when>
+    </choose>
+    <!-- 6. On a miss or a due refresh of an expired allow: ask the resolver (C-1) with APIM's managed
+         identity (ADR-0009). Misses are admitted gateway-wide (%%MISS_CALLS%% per %%MISS_PERIOD%% s, at
+         most %%MISS_CONCURRENCY%% at once). A refresh is not subject to those gateway-wide limits, so
+         a person who holds last-known-good keeps it when they trip; its concurrency is counted per
+         person, and a failed refresh backs off (step 5). An answer that is not a classified allow or
+         refusal (5xx, timeout, transport, unclassified 401/403, malformed body, no token) is
+         "unavailable". A 503 that carries a budget state ("stale" or "missing") is the resolver
+         refusing on budget state (ADR-0008): it replaces the cached entry and is never served from
+         last-known-good. -->
+    <set-variable name="ccofResolverCalled" value="@(false)" />
+    <set-variable name="ccofResolverTraced" value="@(false)" />
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "" && ((string)context.Variables["ccofCacheState"] == "miss" || (string)context.Variables["ccofCacheState"] == "stale-allow"))">
+        <choose>
+          <when condition="@((string)context.Variables["ccofCacheState"] == "miss")">
+            <rate-limit-by-key id="ccof-admission-resolver" calls="%%MISS_CALLS%%" renewal-period="%%MISS_PERIOD%%" counter-key="ccof-resolver-calls" />
+          </when>
+        </choose>
+        <set-variable name="ccofResolverCalled" value="@(true)" />
+        <set-variable name="ccofResolverStartTicks" value="@(DateTime.UtcNow.Ticks)" />
+        <authentication-managed-identity id="ccof-resolver-credential" resource="%%RESOLVER_AUDIENCE%%" output-token-variable-name="ccofResolverToken" ignore-error="true" />
+        <set-header name="Authorization" exists-action="delete" />
+        <choose>
+          <when condition="@(context.Variables.ContainsKey("ccofResolverToken") && !string.IsNullOrEmpty((string)context.Variables["ccofResolverToken"]))">
+            <limit-concurrency id="ccof-admission-resolver-concurrency" key="@((string)context.Variables["ccofCacheState"] == "miss" ? "ccof-resolver-calls" : "ccof-resolver-refresh:" + (string)context.Variables["ccofOid"])" max-count="%%MISS_CONCURRENCY%%">
+              <send-request mode="new" response-variable-name="ccofResolverResponse" timeout="%%RESOLVER_TIMEOUT%%" ignore-error="true">
+                <set-url>%%RESOLVER_URL%%</set-url>
+                <set-method>POST</set-method>
+                <set-header name="Content-Type" exists-action="override">
+                  <value>application/json</value>
+                </set-header>
+                <set-header name="Authorization" exists-action="override">
+                  <value>@("Bearer " + (string)context.Variables["ccofResolverToken"])</value>
+                </set-header>
+                <set-body><![CDATA[@{
+                    var body = new JObject(
+                        new JProperty("personId", (string)context.Variables["ccofOid"]),
+                        new JProperty("requestId", context.RequestId.ToString()));
+                    var selector = (string)context.Variables["ccofSelector"];
+                    if (selector != "") { body["projectId"] = selector; }
+                    return body.ToString(Newtonsoft.Json.Formatting.None);
+                }]]></set-body>
+              </send-request>
+            </limit-concurrency>
+          </when>
+        </choose>
+        <set-variable name="ccofResolverToken" value="" />
+        <set-variable name="ccofResolverMs" value="@((DateTime.UtcNow.Ticks - (long)context.Variables["ccofResolverStartTicks"]) / 10000)" />
+        <set-variable name="ccofResolverResult" value="@{
+            var unavailable = new JObject(new JProperty("o", "unavailable")).ToString(Newtonsoft.Json.Formatting.None);
+            var response = context.Variables.ContainsKey("ccofResolverResponse") ? context.Variables["ccofResolverResponse"] as IResponse : null;
+            if (response == null) { return unavailable; }
+            try {
+                var body = response.Body.As<JObject>();
+                if (body == null) { return unavailable; }
+                var outcome = body["resolverOutcome"] != null && body["resolverOutcome"].Type == JTokenType.String ? (string)body["resolverOutcome"] : "";
+                var error = body["error"] != null && body["error"].Type == JTokenType.String ? (string)body["error"] : "";
+                var budget = body["budgetState"] != null && body["budgetState"].Type == JTokenType.String ? (string)body["budgetState"] : "";
+                if (budget != "fresh" && budget != "degraded" && budget != "stale" && budget != "missing") { budget = ""; }
+                var idPattern = "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$";
+                var refusedProject = body["projectId"] != null && body["projectId"].Type == JTokenType.String && System.Text.RegularExpressions.Regex.IsMatch((string)body["projectId"], idPattern) ? (string)body["projectId"] : "";
+                var refusedClassification = body["classification"] != null && body["classification"].Type == JTokenType.String && System.Text.RegularExpressions.Regex.IsMatch((string)body["classification"], idPattern) ? (string)body["classification"] : "";
+                if (outcome == "refused" && response.StatusCode == 403 && (error == "budget_exhausted" || error == "aggregate_budget_exhausted")) {
+                    return new JObject(new JProperty("o", "refuse"), new JProperty("r", "refused"), new JProperty("c", error), new JProperty("b", budget), new JProperty("rp", refusedProject), new JProperty("rc", refusedClassification)).ToString(Newtonsoft.Json.Formatting.None);
+                }
+                if (outcome == "refused" && response.StatusCode == 403) {
+                    return new JObject(new JProperty("o", "refuse"), new JProperty("r", "refused"), new JProperty("c", "not_authorized"), new JProperty("b", budget)).ToString(Newtonsoft.Json.Formatting.None);
+                }
+                if (outcome == "refused" && response.StatusCode == 400 && error == "project_selection_required") {
+                    return new JObject(new JProperty("o", "refuse"), new JProperty("r", "refused"), new JProperty("c", "project_selection_required"), new JProperty("b", budget)).ToString(Newtonsoft.Json.Formatting.None);
+                }
+                if (response.StatusCode == 503 && (budget == "stale" || budget == "missing")) {
+                    return new JObject(new JProperty("o", "refuse"), new JProperty("r", "unavailable"), new JProperty("c", "budget_state_unavailable"), new JProperty("b", budget)).ToString(Newtonsoft.Json.Formatting.None);
+                }
+                if (response.StatusCode != 200 || (outcome != "success" && outcome != "degraded")) { return unavailable; }
+                var decision = new JObject();
+                foreach (var field in new string[] { "projectId", "classification", "backendId" }) {
+                    var value = body[field];
+                    if (value == null || value.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)value, idPattern)) { return unavailable; }
+                    decision[field] = (string)value;
+                }
+                var models = body["modelAllowList"] as JArray;
+                if (models == null || models.Count == 0) { return unavailable; }
+                var allowList = new JArray();
+                foreach (var model in models) {
+                    if (model.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)model, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")) { return unavailable; }
+                    allowList.Add((string)model);
+                }
+                decision["modelAllowList"] = allowList;
+                var limits = body["tokenLimits"] as JObject;
+                if (limits == null) { return unavailable; }
+                var periods = new string[] { "Hourly", "Daily", "Weekly", "Monthly", "Yearly" };
+                var normalized = new JObject();
+                foreach (var scopeName in new string[] { "person", "group" }) {
+                    var scope = limits[scopeName] as JObject;
+                    if (scope == null || scope.Property("tokensPerMinute") == null || scope.Property("tokenQuota") == null || scope.Property("tokenQuotaPeriod") == null) { return unavailable; }
+                    var tpm = scope["tokensPerMinute"];
+                    var quota = scope["tokenQuota"];
+                    var period = scope["tokenQuotaPeriod"];
+                    if (tpm.Type != JTokenType.Null && (tpm.Type != JTokenType.Integer || (long)tpm < 1 || (long)tpm > int.MaxValue)) { return unavailable; }
+                    if (quota.Type != JTokenType.Null && (quota.Type != JTokenType.Integer || (long)quota < 1)) { return unavailable; }
+                    if (period.Type != JTokenType.Null && (period.Type != JTokenType.String || Array.IndexOf(periods, (string)period) < 0)) { return unavailable; }
+                    if ((quota.Type == JTokenType.Null) != (period.Type == JTokenType.Null)) { return unavailable; }
+                    normalized[scopeName] = new JObject(
+                        new JProperty("tpm", tpm.Type == JTokenType.Null ? 0L : (long)tpm),
+                        new JProperty("quota", quota.Type == JTokenType.Null ? 0L : (long)quota),
+                        new JProperty("period", period.Type == JTokenType.Null ? "" : (string)period));
+                }
+                decision["tokenLimits"] = normalized;
+                var descriptor = body["backend"];
+                if (descriptor != null && descriptor.Type != JTokenType.Null) {
+                    var backend = descriptor as JObject;
+                    if (backend == null || backend["id"] == null || backend["id"].Type != JTokenType.String || (string)backend["id"] != (string)decision["backendId"]) { return unavailable; }
+                    if (backend["apiFormat"] == null || backend["apiFormat"].Type != JTokenType.String || (string)backend["apiFormat"] != "anthropic-messages") { return unavailable; }
+                    var auth = backend["auth"] as JObject;
+                    var mode = auth != null && auth["mode"] != null && auth["mode"].Type == JTokenType.String ? (string)auth["mode"] : "";
+                    var normalizedAuth = new JObject(new JProperty("mode", mode));
+                    if (mode == "managed-identity") {
+                        var resource = auth["resource"];
+                        if (resource == null || resource.Type != JTokenType.String) { return unavailable; }
+                        var resourceText = (string)resource;
+                        var resourceOk = System.Text.RegularExpressions.Regex.IsMatch(resourceText, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+                        if (!resourceOk && resourceText.Length <= 2048) {
+                            var resourceUri = new Uri(resourceText);
+                            resourceOk = resourceUri.Scheme == Uri.UriSchemeHttps || resourceUri.Scheme == "api";
+                        }
+                        if (!resourceOk) { return unavailable; }
+                        normalizedAuth["resource"] = resourceText;
+                    } else if (mode == "credential-manager") {
+                        foreach (var name in new string[] { "providerId", "connectionId" }) {
+                            var reference = auth[name];
+                            if (reference == null || reference.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)reference, idPattern)) { return unavailable; }
+                            normalizedAuth[name] = (string)reference;
+                        }
+                    } else if (mode != "backend-entity") {
+                        return unavailable;
+                    }
+                    decision["auth"] = normalizedAuth;
+                }
+                return new JObject(new JProperty("o", "allow"), new JProperty("r", outcome), new JProperty("b", budget), new JProperty("d", decision)).ToString(Newtonsoft.Json.Formatting.None);
+            } catch {
+                return unavailable;
+            }
+        }" />
+        <set-variable name="ccofResolverOutcome" value="@{
+            var result = JObject.Parse((string)context.Variables["ccofResolverResult"]);
+            var reported = result["r"];
+            return reported == null ? "unavailable" : (string)reported;
+        }" />
+        <set-variable name="ccofResolverBudgetState" value="@{
+            var b = JObject.Parse((string)context.Variables["ccofResolverResult"])["b"];
+            return b == null ? "" : (string)b;
+        }" />
+        <choose>
+          <when condition="@((string)JObject.Parse((string)context.Variables["ccofResolverResult"])["o"] == "allow")">
+            <set-variable name="ccofDecision" value="@(JObject.Parse((string)context.Variables["ccofResolverResult"])["d"].ToString(Newtonsoft.Json.Formatting.None))" />
+            <set-variable name="ccofEntitlementSource" value="resolver" />
+            <set-variable name="ccofStoreValue" value="@(new JObject(new JProperty("k", "allow"), new JProperty("at", DateTime.UtcNow.Ticks / 10000000), new JProperty("d", JObject.Parse((string)context.Variables["ccofDecision"]))).ToString(Newtonsoft.Json.Formatting.None))" />
+            <set-variable name="ccofStoreSeconds" value="@(%%ALLOW_TTL%% + %%LKG_GRACE%%)" />
+          </when>
+          <when condition="@((string)JObject.Parse((string)context.Variables["ccofResolverResult"])["o"] == "refuse")">
+            <set-variable name="ccofRefusal" value="@((string)JObject.Parse((string)context.Variables["ccofResolverResult"])["c"])" />
+            <set-variable name="ccofProjectId" value="@((string)JObject.Parse((string)context.Variables["ccofResolverResult"])["rp"] ?? "")" />
+            <set-variable name="ccofClassification" value="@((string)JObject.Parse((string)context.Variables["ccofResolverResult"])["rc"] ?? "")" />
+            <set-variable name="ccofStoreValue" value="@(new JObject(new JProperty("k", "refuse"), new JProperty("at", DateTime.UtcNow.Ticks / 10000000), new JProperty("c", (string)context.Variables["ccofRefusal"]), new JProperty("rp", (string)context.Variables["ccofProjectId"]), new JProperty("rc", (string)context.Variables["ccofClassification"])).ToString(Newtonsoft.Json.Formatting.None))" />
+            <set-variable name="ccofStoreSeconds" value="@(%%REFUSAL_TTL%%)" />
+          </when>
+          <when condition="@((string)context.Variables["ccofCacheState"] == "stale-allow")">
+            <set-variable name="ccofDecision" value="@(JObject.Parse((string)context.Variables["ccofCached"])["d"].ToString(Newtonsoft.Json.Formatting.None))" />
+            <set-variable name="ccofEntitlementSource" value="last-known-good" />
+            <set-variable name="ccofStoreValue" value="@{
+                var cached = JObject.Parse((string)context.Variables["ccofCached"]);
+                return new JObject(
+                    new JProperty("k", "allow"),
+                    new JProperty("at", (long)cached["at"]),
+                    new JProperty("rt", DateTime.UtcNow.Ticks / 10000000 + %%REFRESH_BACKOFF%%),
+                    new JProperty("d", JObject.Parse((string)context.Variables["ccofDecision"]))).ToString(Newtonsoft.Json.Formatting.None);
+            }" />
+            <set-variable name="ccofStoreSeconds" value="@{
+                var left = %%ALLOW_TTL%% + %%LKG_GRACE%% - (DateTime.UtcNow.Ticks / 10000000 - (long)JObject.Parse((string)context.Variables["ccofCached"])["at"]);
+                return left < 1 ? 1 : (int)left;
+            }" />
+          </when>
+          <otherwise>
+            <set-variable name="ccofRefusal" value="entitlement_unavailable" />
+          </otherwise>
+        </choose>
+        <choose>
+          <when condition="@(context.Variables.ContainsKey("ccofStoreValue"))">
+            <cache-store-value key="@((string)context.Variables["ccofCacheKey"])" value="@((string)context.Variables["ccofStoreValue"])" duration="@((int)context.Variables["ccofStoreSeconds"])" caching-type="%%CACHING_TYPE%%" />
+          </when>
+        </choose>
+      </when>
+    </choose>
+    <!-- 7. The decision's routing and limits; then the backend (a configured one, or one the resolver
+         described: C-8, the gateway routes only to what the resolver returns) and the model
+         allow-list (the person's classification in that project). -->
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+        <set-variable name="ccofProjectId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["projectId"])" />
+        <set-variable name="ccofClassification" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["classification"])" />
+        <set-variable name="ccofBackendId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["backendId"])" />
+        <set-variable name="ccofPersonTpm" value="@((int)(long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["tpm"])" />
+        <set-variable name="ccofPersonQuota" value="@((long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["quota"])" />
+        <set-variable name="ccofPersonPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["period"])" />
+        <set-variable name="ccofGroupTpm" value="@((int)(long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["tpm"])" />
+        <set-variable name="ccofGroupQuota" value="@((long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["quota"])" />
+        <set-variable name="ccofGroupPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["period"])" />
+        <set-variable name="ccofBackendAuthMode" value="@{
+            var auth = JObject.Parse((string)context.Variables["ccofDecision"])["auth"] as JObject;
+            return auth == null ? "" : (string)auth["mode"];
+        }" />
+        <set-variable name="ccofBackendAuthResource" value="@{
+            var auth = JObject.Parse((string)context.Variables["ccofDecision"])["auth"] as JObject;
+            return auth == null || auth["resource"] == null ? "" : (string)auth["resource"];
+        }" />
+        <set-variable name="ccofBackendAuthProvider" value="@{
+            var auth = JObject.Parse((string)context.Variables["ccofDecision"])["auth"] as JObject;
+            return auth == null || auth["providerId"] == null ? "" : (string)auth["providerId"];
+        }" />
+        <set-variable name="ccofBackendAuthConnection" value="@{
+            var auth = JObject.Parse((string)context.Variables["ccofDecision"])["auth"] as JObject;
+            return auth == null || auth["connectionId"] == null ? "" : (string)auth["connectionId"];
+        }" />
+        <set-variable name="ccofBackendAllowed" value="@(Array.IndexOf(new string[] { %%BACKEND_IDS%% }, (string)context.Variables["ccofBackendId"]) >= 0 || (string)context.Variables["ccofBackendAuthMode"] != "")" />
+        <set-variable name="ccofModelAllowed" value="@{
+            var model = (string)context.Variables["ccofModel"];
+            foreach (var allowed in (JArray)JObject.Parse((string)context.Variables["ccofDecision"])["modelAllowList"]) {
+                if (string.Equals((string)allowed, model, StringComparison.Ordinal)) { return true; }
+            }
+            return false;
+        }" />
+        <choose>
+          <when condition="@(!(bool)context.Variables["ccofBackendAllowed"])">
+            <set-variable name="ccofRefusal" value="backend_not_configured" />
+          </when>
+          <when condition="@(!(bool)context.Variables["ccofModelAllowed"])">
+            <set-variable name="ccofRefusal" value="model_not_allowed" />
+          </when>
+        </choose>
+      </when>
+    </choose>
+    <!-- 8. Token limits from the resolver's tokenLimits (C-2): the group's, then the person's. A null
+         limit is not applied. Counters are per gateway. A rate refusal is 429 and a quota refusal 403;
+         on-error tells them apart by policy id. -->
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+        <choose>
+          <when condition="@((int)context.Variables["ccofGroupTpm"] > 0 && (long)context.Variables["ccofGroupQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-group-rate-quota" counter-key="@("g:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassification"])" tokens-per-minute="@((int)context.Variables["ccofGroupTpm"])" token-quota="@((long)context.Variables["ccofGroupQuota"])" token-quota-period="@((string)context.Variables["ccofGroupPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_GROUP_QUOTA%%" remaining-tokens-header-name="%%H_GROUP_TOKENS%%" />
+          </when>
+          <when condition="@((int)context.Variables["ccofGroupTpm"] > 0)">
+            <llm-token-limit id="ccof-limit-group-rate" counter-key="@("g:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassification"])" tokens-per-minute="@((int)context.Variables["ccofGroupTpm"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-tokens-header-name="%%H_GROUP_TOKENS%%" />
+          </when>
+          <when condition="@((long)context.Variables["ccofGroupQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-group-quota" counter-key="@("g:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassification"])" token-quota="@((long)context.Variables["ccofGroupQuota"])" token-quota-period="@((string)context.Variables["ccofGroupPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_GROUP_QUOTA%%" />
+          </when>
+        </choose>
+        <choose>
+          <when condition="@((int)context.Variables["ccofPersonTpm"] > 0 && (long)context.Variables["ccofPersonQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-person-rate-quota" counter-key="@("p:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"])" tokens-per-minute="@((int)context.Variables["ccofPersonTpm"])" token-quota="@((long)context.Variables["ccofPersonQuota"])" token-quota-period="@((string)context.Variables["ccofPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_PERSON_QUOTA%%" remaining-tokens-header-name="%%H_PERSON_TOKENS%%" tokens-consumed-header-name="%%H_TOKENS_CONSUMED%%" />
+          </when>
+          <when condition="@((int)context.Variables["ccofPersonTpm"] > 0)">
+            <llm-token-limit id="ccof-limit-person-rate" counter-key="@("p:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"])" tokens-per-minute="@((int)context.Variables["ccofPersonTpm"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-tokens-header-name="%%H_PERSON_TOKENS%%" tokens-consumed-header-name="%%H_TOKENS_CONSUMED%%" />
+          </when>
+          <when condition="@((long)context.Variables["ccofPersonQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-person-quota" counter-key="@("p:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"])" token-quota="@((long)context.Variables["ccofPersonQuota"])" token-quota-period="@((string)context.Variables["ccofPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_PERSON_QUOTA%%" tokens-consumed-header-name="%%H_TOKENS_CONSUMED%%" />
+          </when>
+        </choose>
+      </when>
+    </choose>
+    <!-- 9. Forwarding: the client's credentials and the selector never reach the backend, which gets
+         its own credential. Other headers, anthropic-version and anthropic-beta included, pass. -->
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+        <set-header name="Authorization" exists-action="delete" />
+        <set-header name="x-api-key" exists-action="delete" />
+        <set-header name="api-key" exists-action="delete" />
+        <set-header name="%%PROJECT_HEADER%%" exists-action="delete" />
+        %%ANTHROPIC_VERSION_DEFAULT%%
+        <choose>
+          %%BACKEND_BRANCHES%%
+          <when condition="@((string)context.Variables["ccofBackendAuthMode"] == "managed-identity")">
+            <authentication-managed-identity id="ccof-backend-credential-managed-identity" resource="@((string)context.Variables["ccofBackendAuthResource"])" />
+            <set-backend-service backend-id="@((string)context.Variables["ccofBackendId"])" />
+          </when>
+          <when condition="@((string)context.Variables["ccofBackendAuthMode"] == "credential-manager")">
+            <get-authorization-context id="ccof-backend-credential-credential-manager" provider-id="@((string)context.Variables["ccofBackendAuthProvider"])" authorization-id="@((string)context.Variables["ccofBackendAuthConnection"])" context-variable-name="ccofBackendAuthContext" identity-type="managed" ignore-error="true" />
+            <choose>
+              <when condition="@(context.Variables.GetValueOrDefault("ccofBackendAuthContext") == null)">
+                <set-variable name="ccofRefusal" value="backend_credential_unavailable" />
+              </when>
+              <otherwise>
+                <set-header name="Authorization" exists-action="override">
+                  <value>@("Bearer " + ((Authorization)context.Variables["ccofBackendAuthContext"]).AccessToken)</value>
+                </set-header>
+                <set-backend-service backend-id="@((string)context.Variables["ccofBackendId"])" />
+              </otherwise>
+            </choose>
+          </when>
+          <when condition="@((string)context.Variables["ccofBackendAuthMode"] == "backend-entity")">
+            <set-backend-service backend-id="@((string)context.Variables["ccofBackendId"])" />
+          </when>
+          <otherwise>
+            <set-variable name="ccofRefusal" value="backend_not_configured" />
+          </otherwise>
+        </choose>
+      </when>
+    </choose>
+    <!-- 10. The single exit for every refusal above, with the resolver trace when the resolver was
+         asked (docs/TELEMETRY.md, ccof.resolver.v1); otherwise the trace of an admitted request. -->
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] != "")">
+        <choose>
+          <when condition="@((bool)context.Variables["ccofResolverCalled"])">
+            <trace source="ccof.resolver.v1" severity="information">
+              <message><![CDATA[@{
+                  var budget = (string)context.Variables["ccofResolverBudgetState"];
+                  return new JObject(
+                      new JProperty("schemaVersion", 1),
+                      new JProperty("requestId", context.RequestId.ToString()),
+                      new JProperty("observedAt", DateTime.UtcNow.ToString("o")),
+                      new JProperty("resolverOutcome", (string)context.Variables["ccofResolverOutcome"]),
+                      new JProperty("resolverDurationMs", (long)context.Variables["ccofResolverMs"]),
+                      new JProperty("budgetState", budget == "" ? null : budget),
+                      new JProperty("served", false)).ToString(Newtonsoft.Json.Formatting.None);
+              }]]></message>
+            </trace>
+            <set-variable name="ccofResolverTraced" value="@(true)" />
+          </when>
+        </choose>
+        <set-variable name="ccofRefusalStatus" value="@{
+            switch ((string)context.Variables["ccofRefusal"]) {
+                case "token_identity_missing": return 401;
+                case "token_scope_missing": case "token_client_not_allowed": case "app_token_not_allowed": case "not_authorized": case "model_not_allowed": return 403;
+                case "budget_exhausted": case "aggregate_budget_exhausted": return 403;
+                case "project_header_invalid": case "request_body_invalid": case "request_model_missing": case "project_selection_required": return 400;
+                default: return 503;
+            }
+        }" />
+        <set-variable name="ccofRefusalBody" value="@{
+            var code = (string)context.Variables["ccofRefusal"];
+            var project = context.Variables.GetValueOrDefault<string>("ccofProjectId", "");
+            var classification = context.Variables.GetValueOrDefault<string>("ccofClassification", "");
+            var selector = (string)context.Variables["ccofSelector"];
+            var model = (string)context.Variables["ccofModel"];
+            string type;
+            string message;
+            switch (code) {
+                case "token_identity_missing":
+                    type = "authentication_error";
+                    message = "The access token has no valid user object id (oid). Sign in to the gateway again.";
+                    break;
+                case "token_scope_missing":
+                    type = "permission_error";
+                    message = "The access token does not carry this gateway's %%DELEGATED_SCOPE%% permission. Sign in again through your organisation's Claude sign-in.";
+                    break;
+                case "token_client_not_allowed":
+                    type = "permission_error";
+                    message = "The access token was issued to an application this gateway does not accept. Sign in through your organisation's Claude sign-in.";
+                    break;
+                case "app_token_not_allowed":
+                    type = "permission_error";
+                    message = "This gateway accepts a person's sign-in, not an application token. Sign in as yourself.";
+                    break;
+                case "project_header_invalid":
+                    type = "invalid_request_error";
+                    message = "The %%PROJECT_HEADER%% header must be a project id: a letter or digit followed by up to 79 letters, digits, '_' or '-'.";
+                    break;
+                case "request_body_invalid":
+                    type = "invalid_request_error";
+                    message = "The request body must be a JSON object.";
+                    break;
+                case "request_model_missing":
+                    type = "invalid_request_error";
+                    message = "The request body must name a model in its 'model' field.";
+                    break;
+                case "not_authorized":
+                    type = "permission_error";
+                    message = "You are not entitled to use Claude through this gateway" + (selector == "" ? "" : " for project " + selector) + ". Ask your platform team to add you to your project's Claude group.";
+                    break;
+                case "project_selection_required":
+                    type = "invalid_request_error";
+                    message = "You belong to more than one project. Set the %%PROJECT_HEADER%% header to the id of the project this request is for.";
+                    break;
+                case "budget_exhausted":
+                    type = "permission_error";
+                    message = "Your CCU budget" + (project == "" ? "" : " for project " + project) + " is used up for this budget period. Your access is otherwise unchanged; ask your platform team to raise the budget, or wait for the next period.";
+                    break;
+                case "aggregate_budget_exhausted":
+                    type = "permission_error";
+                    message = "The CCU budget shared by classification " + (classification == "" ? "of your group" : classification) + (project == "" ? "" : " in project " + project) + " is used up for this budget period. Your own access is unchanged; ask your platform team to raise the budget, or wait for the next period.";
+                    break;
+                case "model_not_allowed":
+                    type = "permission_error";
+                    var names = new System.Collections.Generic.List<string>();
+                    foreach (var allowed in (JArray)JObject.Parse((string)context.Variables["ccofDecision"])["modelAllowList"]) { names.Add((string)allowed); }
+                    var shown = System.Text.RegularExpressions.Regex.IsMatch(model, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$") ? "'" + model + "'" : "requested";
+                    message = "The " + shown + " model is not available to classification " + classification + " in project " + project + ". Choose one of: " + string.Join(", ", names) + ".";
+                    break;
+                case "entitlement_unavailable":
+                    type = "api_error";
+                    message = "The gateway could not confirm your access just now. This is not a problem with your access. Retry in %%RETRY_AFTER%% seconds.";
+                    break;
+                case "backend_credential_unavailable":
+                    type = "api_error";
+                    message = "The gateway could not get a credential for the model service. Your access is unaffected. Retry in %%RETRY_AFTER%% seconds; if this continues, tell your platform team.";
+                    break;
+                case "budget_state_unavailable":
+                    type = "api_error";
+                    message = "The budget state for your project could not be confirmed, so this request cannot be admitted now. This is not about your access. Retry in %%RETRY_AFTER%% seconds; if this continues, tell your platform team.";
+                    break;
+                case "backend_not_configured":
+                    type = "api_error";
+                    message = "The model service for project " + project + " is not configured on this gateway. Your access is unaffected; tell your platform team.";
+                    break;
+                default:
+                    type = "api_error";
+                    message = "The gateway refused the request.";
+                    break;
+            }
+            return new JObject(
+                new JProperty("type", "error"),
+                new JProperty("error", new JObject(
+                    new JProperty("type", type),
+                    new JProperty("message", message + " Request id: " + context.RequestId.ToString() + ".")))).ToString(Newtonsoft.Json.Formatting.None);
+        }" />
+        <choose>
+          <when condition="@((string)context.Variables["ccofRefusal"] == "entitlement_unavailable" || (string)context.Variables["ccofRefusal"] == "backend_credential_unavailable" || (string)context.Variables["ccofRefusal"] == "budget_state_unavailable")">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Retry-After" exists-action="override">
+                <value>%%RETRY_AFTER%%</value>
+              </set-header>
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-header name="x-ccof-request-id" exists-action="override">
+                <value>@(context.RequestId.ToString())</value>
+              </set-header>
+              <set-body>@((string)context.Variables["ccofRefusalBody"])</set-body>
+            </return-response>
+          </when>
+          <otherwise>
+            <return-response>
+              <set-status code="@((int)context.Variables["ccofRefusalStatus"])" reason="@{
+                  switch ((int)context.Variables["ccofRefusalStatus"]) {
+                      case 400: return "Bad Request";
+                      case 401: return "Unauthorized";
+                      case 403: return "Forbidden";
+                      default: return "Service Unavailable";
+                  }
+              }" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-header name="x-ccof-request-id" exists-action="override">
+                <value>@(context.RequestId.ToString())</value>
+              </set-header>
+              <set-body>@((string)context.Variables["ccofRefusalBody"])</set-body>
+            </return-response>
+          </otherwise>
+        </choose>
+      </when>
+      <otherwise>
+        <choose>
+          <when condition="@((bool)context.Variables["ccofResolverCalled"])">
+            <trace source="ccof.resolver.v1" severity="information">
+              <message><![CDATA[@{
+                  var budget = (string)context.Variables["ccofResolverBudgetState"];
+                  return new JObject(
+                      new JProperty("schemaVersion", 1),
+                      new JProperty("requestId", context.RequestId.ToString()),
+                      new JProperty("observedAt", DateTime.UtcNow.ToString("o")),
+                      new JProperty("resolverOutcome", (string)context.Variables["ccofResolverOutcome"]),
+                      new JProperty("resolverDurationMs", (long)context.Variables["ccofResolverMs"]),
+                      new JProperty("budgetState", budget == "" ? null : budget),
+                      new JProperty("served", true)).ToString(Newtonsoft.Json.Formatting.None);
+              }]]></message>
+            </trace>
+            <set-variable name="ccofResolverTraced" value="@(true)" />
+          </when>
+        </choose>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <!-- Forwarding. A streamed request ("stream": true) is relayed chunk by chunk (buffer-response
+         false, owner approval (d)); any other request is forwarded as the service scope's bare
+         forward-request does, with the platform defaults. This section does not inherit the service
+         scope, so a change there does not reach this API. -->
+    <choose>
+      <when condition="@(context.Variables.GetValueOrDefault<bool>("ccofStream", false))">
+        <forward-request buffer-response="false" />
+      </when>
+      <otherwise>
+        <forward-request />
+      </otherwise>
+    </choose>
+  </backend>
+  <outbound>
+    <base />
+    <!-- 11. The usage trace (docs/TELEMETRY.md, ccof.usage.v1): counts only, built field by field.
+         A streamed body is never read; a non-streamed JSON body is read for usage and model only. The
+         gateway reads the whole reply before any policy that mentions the response body runs, whatever
+         that policy's own checks (live, 2026-10-12, U-new-GW-10), so the body is read by a policy of its
+         own in a branch that a streamed reply never enters. -->
+    <choose>
+      <when condition="@(context.Variables.ContainsKey("ccofBackendId") && context.Variables.GetValueOrDefault<string>("ccofRefusal", "x") == "")">
+        <choose>
+          <when condition="@(!context.Variables.GetValueOrDefault<bool>("ccofStream", false) && context.Response.StatusCode == 200 && context.Response.Headers.GetValueOrDefault("Content-Type", "").Contains("application/json"))">
+            <set-variable name="ccofResponseJson" value="@(context.Response.Body.As<string>(preserveContent: true))" />
+          </when>
+        </choose>
+        <set-variable name="ccofUsageTrace" value="@{
+            JObject usage = null;
+            var servedModel = "";
+            try {
+                var text = context.Variables.GetValueOrDefault<string>("ccofResponseJson", "");
+                if (text != "") {
+                    var body = JObject.Parse(text);
+                    var m = body["model"];
+                    if (m != null && m.Type == JTokenType.String && System.Text.RegularExpressions.Regex.IsMatch((string)m, "^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")) { servedModel = (string)m; }
+                    var u = body["usage"] as JObject;
+                    if (u != null) {
+                        usage = new JObject();
+                        foreach (var name in new string[] { "input_tokens", "output_tokens", "cache_read_input_tokens" }) {
+                            var v = u[name];
+                            usage[name] = v != null && v.Type == JTokenType.Integer && (long)v >= 0 ? new JValue((long)v) : JValue.CreateNull();
+                        }
+                        var created = u["cache_creation"] as JObject;
+                        if (created == null) {
+                            usage["cache_creation"] = JValue.CreateNull();
+                        } else {
+                            var counts = new JObject();
+                            foreach (var name in new string[] { "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens" }) {
+                                var v = created[name];
+                                counts[name] = v != null && v.Type == JTokenType.Integer && (long)v >= 0 ? new JValue((long)v) : JValue.CreateNull();
+                            }
+                            usage["cache_creation"] = counts;
+                        }
+                        var geo = u["inference_geo"];
+                        usage["inference_geo"] = geo != null && geo.Type == JTokenType.String && System.Text.RegularExpressions.Regex.IsMatch((string)geo, "^[a-z_]{1,32}$") ? new JValue((string)geo) : JValue.CreateNull();
+                    }
+                }
+            } catch {
+                usage = null;
+                servedModel = "";
+            }
+            try {
+                var backendId = (string)context.Variables["ccofBackendId"];
+                var deployment = (string)context.Variables["ccofModel"];
+                string inferenceGeo = null;
+                foreach (var entry in new string[] { %%INFERENCE_GEO_ENTRIES%% }) {
+                    if (entry.StartsWith(backendId + "|" + deployment + "=", StringComparison.Ordinal)) { inferenceGeo = entry.Substring(entry.IndexOf("=", StringComparison.Ordinal) + 1); }
+                }
+                return new JObject(
+                    new JProperty("schemaVersion", 1),
+                    new JProperty("requestId", context.RequestId.ToString()),
+                    new JProperty("observedAt", DateTime.UtcNow.ToString("o")),
+                    new JProperty("personId", (string)context.Variables["ccofOid"]),
+                    new JProperty("projectId", (string)context.Variables["ccofProjectId"]),
+                    new JProperty("classification", (string)context.Variables["ccofClassification"]),
+                    new JProperty("backendId", backendId),
+                    new JProperty("deployment", deployment),
+                    new JProperty("model", servedModel),
+                    new JProperty("streamed", (bool)context.Variables["ccofStream"]),
+                    new JProperty("inferenceGeo", inferenceGeo),
+                    new JProperty("inferenceGeoSource", inferenceGeo == null ? "unknown" : "deployment"),
+                    new JProperty("usageSource", usage == null ? "log" : "body"),
+                    new JProperty("usage", usage)).ToString(Newtonsoft.Json.Formatting.None);
+            } catch {
+                return "";
+            }
+        }" />
+        <choose>
+          <when condition="@((string)context.Variables["ccofUsageTrace"] != "")">
+            <trace source="ccof.usage.v1" severity="information">
+              <message>@((string)context.Variables["ccofUsageTrace"])</message>
+            </trace>
+          </when>
+        </choose>
+        <!-- A backend 401 or 403 means the gateway's own credential was refused (an expired secret, a
+             missing role), not the caller's: answered 502 api_error, so a client does not send its user
+             to sign in again. The usage trace above has already recorded the call. -->
+        <choose>
+          <when condition="@(context.Response.StatusCode == 401 || context.Response.StatusCode == 403)">
+            <return-response>
+              <set-status code="502" reason="Bad Gateway" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-header name="x-ccof-request-id" exists-action="override">
+                <value>@(context.RequestId.ToString())</value>
+              </set-header>
+              <set-body>@(new JObject(
+                  new JProperty("type", "error"),
+                  new JProperty("error", new JObject(
+                      new JProperty("type", "api_error"),
+                      new JProperty("message", "The model service refused the gateway's credential. Your access is unaffected; tell your platform team." + " Request id: " + context.RequestId.ToString() + ".")))).ToString(Newtonsoft.Json.Formatting.None))</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <choose>
+          <when condition="@((string)context.Variables["ccofEntitlementSource"] == "last-known-good")">
+            <set-header name="x-ccof-entitlement" exists-action="override">
+              <value>degraded</value>
+            </set-header>
+          </when>
+        </choose>
+      </when>
+    </choose>
+    <set-header name="x-ccof-request-id" exists-action="override">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+  </outbound>
+  <on-error>
+    <base />
+    <!-- 12. Errors raised by a policy, answered in Anthropic's error shape. The limits are told apart by
+         policy id; nothing from context.LastError.Message reaches the caller. A request that matches no
+         operation of the API (APIM's built-in step: source configuration, reason OperationNotFound), such
+         as Claude Code's HEAD /api/hello connection-warming probe, comes here before any other policy
+         has run: it is answered 404 not_found_error, with nothing forwarded and nothing counted. -->
+    <set-variable name="ccofErrorKind" value="@{
+        var source = context.LastError.Source ?? "";
+        var policy = context.LastError.PolicyId ?? "";
+        var reason = context.LastError.Reason ?? "";
+        var status = context.Response.StatusCode;
+        if (source == "validate-jwt") { return "jwt"; }
+        if (policy == "ccof-admission-person") { return "admission_person"; }
+        if (policy == "ccof-admission-resolver" || policy == "ccof-admission-resolver-concurrency") { return "admission_resolver"; }
+        if (policy.StartsWith("ccof-limit-group", StringComparison.Ordinal)) { return status == 403 || reason.Contains("Quota") ? "group_quota" : "group_rate"; }
+        if (policy.StartsWith("ccof-limit-person", StringComparison.Ordinal)) { return status == 403 || reason.Contains("Quota") ? "person_quota" : "person_rate"; }
+        if (policy.StartsWith("ccof-backend-credential", StringComparison.Ordinal)) { return "backend_credential"; }
+        if (reason == "BackendConnectionFailure") { return "backend_unreachable"; }
+        if (reason == "Timeout") { return "backend_timeout"; }
+        if (source == "configuration" && reason == "OperationNotFound") { return "not_found"; }
+        return "unexpected";
+    }" />
+    <choose>
+      <when condition="@(context.Variables.GetValueOrDefault<bool>("ccofResolverCalled", false) && !context.Variables.GetValueOrDefault<bool>("ccofResolverTraced", false) && context.Variables.ContainsKey("ccofResolverOutcome"))">
+        <trace source="ccof.resolver.v1" severity="information">
+          <message><![CDATA[@{
+              var budget = context.Variables.GetValueOrDefault<string>("ccofResolverBudgetState", "");
+              return new JObject(
+                  new JProperty("schemaVersion", 1),
+                  new JProperty("requestId", context.RequestId.ToString()),
+                  new JProperty("observedAt", DateTime.UtcNow.ToString("o")),
+                  new JProperty("resolverOutcome", (string)context.Variables["ccofResolverOutcome"]),
+                  new JProperty("resolverDurationMs", context.Variables.GetValueOrDefault<long>("ccofResolverMs", 0)),
+                  new JProperty("budgetState", budget == "" ? null : budget),
+                  new JProperty("served", false)).ToString(Newtonsoft.Json.Formatting.None);
+          }]]></message>
+        </trace>
+      </when>
+    </choose>
+    <set-variable name="ccofErrorStatus" value="@{
+        var kind = (string)context.Variables["ccofErrorKind"];
+        if (kind == "jwt") { return 401; }
+        if (kind == "admission_person" || kind == "admission_resolver" || kind == "group_rate" || kind == "person_rate") { return 429; }
+        if (kind == "group_quota" || kind == "person_quota") { return 403; }
+        if (kind == "backend_credential") { return 503; }
+        if (kind == "backend_unreachable") { return 502; }
+        if (kind == "backend_timeout") { return 504; }
+        if (kind == "not_found") { return 404; }
+        return 500;
+    }" />
+    <set-variable name="ccofErrorRetryAfter" value="@{
+        var kind = (string)context.Variables["ccofErrorKind"];
+        if (kind == "admission_resolver" || kind == "backend_credential") { return "%%RETRY_AFTER%%"; }
+        if ((kind == "admission_person" || kind.EndsWith("_rate") || kind.EndsWith("_quota")) && context.Variables.ContainsKey("ccofRetryAfter")) {
+            return Convert.ToString(context.Variables["ccofRetryAfter"]);
+        }
+        return "";
+    }" />
+    <set-variable name="ccofErrorBody" value="@{
+        var kind = (string)context.Variables["ccofErrorKind"];
+        var reason = context.LastError.Reason ?? "";
+        var project = context.Variables.GetValueOrDefault<string>("ccofProjectId", "");
+        var classification = context.Variables.GetValueOrDefault<string>("ccofClassification", "");
+        var period = kind == "group_quota" ? context.Variables.GetValueOrDefault<string>("ccofGroupPeriod", "") : context.Variables.GetValueOrDefault<string>("ccofPersonPeriod", "");
+        var unit = period == "Hourly" ? "hour" : period == "Daily" ? "day" : period == "Weekly" ? "week" : period == "Monthly" ? "month" : period == "Yearly" ? "year" : "period";
+        var adjective = period == "" ? "" : period.ToLowerInvariant() + " ";
+        string type = "api_error";
+        string message;
+        switch (kind) {
+            case "jwt":
+                type = "authentication_error";
+                if (reason.Contains("NotPresent")) { message = "No access token was sent. Sign in to the gateway and send the token as a Bearer token in the Authorization header."; }
+                else if (reason.Contains("Expired")) { message = "Your access token has expired. Sign in again to get a new one."; }
+                else if (reason.Contains("Audience")) { message = "The access token is for a different application. Request a token for this gateway's API."; }
+                else if (reason.Contains("Issuer") || reason.Contains("Claim")) { message = "The access token was not issued by your organisation's Microsoft Entra tenant. Sign in with your organisation account."; }
+                else { message = "The access token is not valid. Sign in again."; }
+                break;
+            case "admission_person":
+                type = "rate_limit_error";
+                message = "You sent more than %%PERSON_CALLS%% requests in %%PERSON_PERIOD%% seconds. Wait for the time in the Retry-After header, then retry.";
+                break;
+            case "admission_resolver":
+                type = "rate_limit_error";
+                message = "The gateway is busy checking access. Retry in %%RETRY_AFTER%% seconds; your access has not changed.";
+                break;
+            case "person_rate":
+                type = "rate_limit_error";
+                message = "You have reached your tokens-per-minute limit for project " + project + ". Retry after the time in the Retry-After header.";
+                break;
+            case "person_quota":
+                type = "permission_error";
+                message = "Your " + adjective + "token quota for project " + project + " is used up. It resets at the start of the next " + unit + " (UTC). Your access is otherwise unchanged.";
+                break;
+            case "group_rate":
+                type = "rate_limit_error";
+                message = "The tokens-per-minute limit shared by classification " + classification + " in project " + project + " is reached. Retry after the time in the Retry-After header.";
+                break;
+            case "group_quota":
+                type = "permission_error";
+                message = "The " + adjective + "token quota shared by classification " + classification + " in project " + project + " is used up. It resets at the start of the next " + unit + " (UTC). Your own access is unchanged.";
+                break;
+            case "backend_credential":
+                message = "The gateway could not get a credential for the model service. Your access is unaffected. Retry in %%RETRY_AFTER%% seconds; if this continues, tell your platform team.";
+                break;
+            case "backend_unreachable":
+                message = "The model service could not be reached. Retry shortly.";
+                break;
+            case "backend_timeout":
+                message = "The model service did not answer in time. Retry shortly.";
+                break;
+            case "not_found":
+                type = "not_found_error";
+                message = "This gateway does not serve the requested path or method. Check the endpoint path.";
+                break;
+            default:
+                message = "The gateway hit an unexpected error. Retry; if this continues, tell your platform team.";
+                break;
+        }
+        return new JObject(
+            new JProperty("type", "error"),
+            new JProperty("error", new JObject(
+                new JProperty("type", type),
+                new JProperty("message", message + " Request id: " + context.RequestId.ToString() + ".")))).ToString(Newtonsoft.Json.Formatting.None);
+    }" />
+    <choose>
+      <when condition="@((string)context.Variables["ccofErrorRetryAfter"] != "")">
+        <return-response>
+          <set-status code="@((int)context.Variables["ccofErrorStatus"])" reason="@((int)context.Variables["ccofErrorStatus"] == 403 ? "Forbidden" : ((int)context.Variables["ccofErrorStatus"] == 429 ? "Too Many Requests" : "Service Unavailable"))" />
+          <set-header name="Retry-After" exists-action="override">
+            <value>@((string)context.Variables["ccofErrorRetryAfter"])</value>
+          </set-header>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-ccof-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>@((string)context.Variables["ccofErrorBody"])</set-body>
+        </return-response>
+      </when>
+      <when condition="@((string)context.Variables["ccofErrorKind"] == "jwt")">
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+          <set-header name="WWW-Authenticate" exists-action="override">
+            <value>Bearer</value>
+          </set-header>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-ccof-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>@((string)context.Variables["ccofErrorBody"])</set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="@((int)context.Variables["ccofErrorStatus"])" reason="@{
+              switch ((int)context.Variables["ccofErrorStatus"]) {
+                  case 403: return "Forbidden";
+                  case 404: return "Not Found";
+                  case 429: return "Too Many Requests";
+                  case 502: return "Bad Gateway";
+                  case 503: return "Service Unavailable";
+                  case 504: return "Gateway Timeout";
+                  default: return "Internal Server Error";
+              }
+          }" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-ccof-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>@((string)context.Variables["ccofErrorBody"])</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </on-error>
+</policies>

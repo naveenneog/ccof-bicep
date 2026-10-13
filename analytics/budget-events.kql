@@ -1,0 +1,47 @@
+// WP-REC/WP-WB contract: ccof.reconciler.budget.v1 in FunctionAppLogs.Message.
+let CcofBudgetEvents = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    let ReadCount = (value:dynamic) {
+        iff(gettype(value) == "long" and tolong(value) >= 0, tolong(value), long(null))
+    };
+    FunctionAppLogs
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | extend payload = parse_json(Message)
+    | where payload.schema == "ccof.reconciler.budget.v1"
+    | extend scope = tostring(payload.scope), scopeId = tostring(payload.scopeId),
+        periodStart = todatetime(payload.periodStart), periodEnd = todatetime(payload.periodEnd),
+        computedAt = todatetime(payload.computedAt)
+    | where scope in ("person", "group") and isnotempty(scopeId)
+        and isnotnull(periodStart) and isnotnull(periodEnd) and isnotnull(computedAt)
+    | summarize arg_max(computedAt, *) by scope, scopeId, periodStart, periodEnd
+    | extend runId = tostring(payload.runId), personId = tostring(payload.personId),
+        projectId = tostring(payload.projectId), classification = tostring(payload.classification),
+        period = tostring(payload.period), validUntil = todatetime(payload.validUntil),
+        spentCcu = todecimal(tostring(payload.spentCcu)), budgetCcu = todecimal(tostring(payload.budgetCcu)),
+        exhausted = tobool(payload.exhausted), mode = tostring(payload.mode),
+        completeness = tostring(payload.completeness), rateCardVersion = extract_json("$.rateCardVersion", Message, typeof(string)),
+        pricedRequests = ReadCount(payload.pricedRequests), partialRequests = ReadCount(payload.partialRequests),
+        unpricedRequests = ReadCount(payload.unpricedRequests), activeMemberCount = ReadCount(payload.activeMemberCount)
+    | where gettype(payload.spentCcu) == "string" and isnotnull(spentCcu) and spentCcu >= decimal(0)
+        and bag_has_key(payload, "budgetCcu")
+        and ((gettype(payload.budgetCcu) == "string" and isnotnull(budgetCcu) and budgetCcu >= decimal(0))
+            or (scope == "group" and isnull(payload.budgetCcu)))
+        and isnotnull(toguid(runId)) and gettype(payload.projectId) == "string" and isnotempty(projectId)
+        and gettype(payload.classification) == "string" and isnotempty(classification)
+        and gettype(payload.exhausted) == "bool" and mode in ("strict", "notify")
+        and completeness in ("complete", "partial") and isnotempty(rateCardVersion)
+        and gettype(payload.rateCardVersion) in ("string", "datetime", "guid")
+        and isnotnull(pricedRequests) and isnotnull(partialRequests) and isnotnull(unpricedRequests)
+        and gettype(payload.computedAt) in ("string", "datetime") and gettype(payload.validUntil) in ("string", "datetime")
+        and isnotnull(validUntil) and validUntil > computedAt
+        and periodStart == startofmonth(periodStart) and periodEnd == datetime_add("month", 1, periodStart)
+        and period == format_datetime(periodStart, "yyyy-MM")
+        and bag_has_key(payload, "personId") and bag_has_key(payload, "activeMemberCount")
+        and ((scope == "person" and isnotnull(toguid(personId)) and mode == "strict"
+                and isnull(payload.activeMemberCount) and scopeId == strcat(personId, ":", projectId))
+            or (scope == "group" and isnull(payload.personId) and isnotnull(activeMemberCount)
+                and scopeId == strcat(projectId, ":", classification)))
+    | project runId, scope, scopeId, personId, projectId, classification, period, periodStart, periodEnd,
+        spentCcu, budgetCcu, exhausted, mode, completeness, pricedRequests, partialRequests, unpricedRequests,
+        activeMemberCount, rateCardVersion, computedAt, validUntil
+};

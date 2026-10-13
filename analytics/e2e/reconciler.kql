@@ -1,0 +1,65 @@
+// WP-E2E (docs/status/WP-E2E.md): what the CCU budget reconciler logged in [fromTime, toTime), UTC,
+// half-open (FunctionAppLogs; schemas in docs/TELEMETRY.md and docs/status/WP-REC.md). Read-only.
+// Append CcofE2eRuns(fromTime, toTime, reconcilerResourceId): one row per run line.
+// Append CcofE2eBudgetSeries(fromTime, toTime, reconcilerResourceId): one row per scope and distinct
+// spend, with the first run that wrote it and when that budget line reached the workspace.
+// Append CcofE2eLedgerReads(fromTime, toTime, reconcilerResourceId, fastMs): runs grouped by whether the
+// ledger read took at most fastMs and whether it saw a newer ingested row than the run before it.
+// rateCardVersion is read with extract_json: parse_json turns the date-shaped "2026-10-11" into a
+// datetime (docs/TELEMETRY.md, ccof.reconciler.budget.v1).
+let CcofE2eRuns = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    FunctionAppLogs
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | where Message has "ccof.reconciler.run.v1"
+    | extend run = parse_json(Message)
+    | where tostring(run.schema) == "ccof.reconciler.run.v1"
+    | project computedAt = todatetime(run.computedAt), logIngestedAt = ingestion_time(), outcome = tostring(run.outcome),
+        reason = tostring(run.reason), period = tostring(run.period), ledgerRows = tolong(run.ledgerRows),
+        noUsageRequests = tolong(run.noUsageRequests), unattributedRequests = tolong(run.unattributedRequests),
+        unregisteredScopeRequests = tolong(run.unregisteredScopeRequests), pricedRequests = tolong(run.pricedRequests),
+        partialRequests = tolong(run.partialRequests), unpricedRequests = tolong(run.unpricedRequests),
+        unattributedCcu = tostring(run.unattributedCcu), personStates = tolong(run.personStates),
+        groupStates = tolong(run.groupStates), statesWritten = tolong(run.statesWritten),
+        maxIngestionDelaySeconds = todouble(run.maxIngestionDelaySeconds),
+        newestRowIngestionDelaySeconds = todouble(run.newestRowIngestionDelaySeconds),
+        newestIngestedAt = todatetime(run.newestIngestedAt), ledgerReadMs = tolong(run.ledgerReadMs),
+        rateCardVersion = extract_json("$.rateCardVersion", Message, typeof(string)), problems = tostring(run.problems)
+    | order by computedAt asc
+};
+let CcofE2eBudgetSeries = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    FunctionAppLogs
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | where Message has "ccof.reconciler.budget.v1"
+    | extend budget = parse_json(Message)
+    | where tostring(budget.schema) == "ccof.reconciler.budget.v1"
+    | extend computedAt = todatetime(budget.computedAt), logIngestedAt = ingestion_time()
+    | summarize lines = count(), firstComputedAt = min(computedAt), firstLogIngestedAt = min(logIngestedAt),
+        lastComputedAt = max(computedAt)
+        by scope = tostring(budget.scope), scopeId = tostring(budget.scopeId), projectId = tostring(budget.projectId),
+            classification = tostring(budget.classification), period = tostring(budget.period),
+            spentCcu = tostring(budget.spentCcu), budgetCcu = tostring(budget.budgetCcu),
+            exhausted = tostring(budget.exhausted), mode = tostring(budget.mode),
+            completeness = tostring(budget.completeness), pricedRequests = tolong(budget.pricedRequests),
+            partialRequests = tolong(budget.partialRequests), unpricedRequests = tolong(budget.unpricedRequests),
+            activeMemberCount = tostring(budget.activeMemberCount),
+            rateCardVersion = extract_json("$.rateCardVersion", Message, typeof(string))
+    | order by scope asc, scopeId asc, firstComputedAt asc
+};
+let CcofE2eLedgerReads = (fromTime:datetime, toTime:datetime, resourceId:string, fastMs:long) {
+    FunctionAppLogs
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | where Message has "ccof.reconciler.run.v1"
+    | extend run = parse_json(Message)
+    | where tostring(run.schema) == "ccof.reconciler.run.v1"
+    | project computedAt = todatetime(run.computedAt), newestIngestedAt = tostring(run.newestIngestedAt),
+        ledgerReadMs = tolong(run.ledgerReadMs)
+    | order by computedAt asc
+    | extend previousNewest = prev(newestIngestedAt), hasPrevious = isnotnull(prev(computedAt))
+    | where hasPrevious
+    | summarize runs = count(), minReadMs = min(ledgerReadMs), medianReadMs = percentile(ledgerReadMs, 50),
+        maxReadMs = max(ledgerReadMs)
+        by fastRead = ledgerReadMs <= fastMs, sawNewerRow = newestIngestedAt != previousNewest
+};

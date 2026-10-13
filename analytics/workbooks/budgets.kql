@@ -1,0 +1,74 @@
+let BudgetSnapshots = FunctionAppLogs
+| where _ResourceId =~ ReconcilerResourceId
+| where TimeGenerated >= ReportNow - BudgetLookbackDays * 1d and TimeGenerated <= ReportNow
+| where Message has "ccof.reconciler.budget.v1"
+| extend payload = parse_json(Message)
+| where tostring(payload.schema) == "ccof.reconciler.budget.v1"
+| extend scope = tostring(payload.scope), scopeId = tostring(payload.scopeId),
+    personId = tostring(payload.personId), projectId = tostring(payload.projectId),
+    classification = tostring(payload.classification), period = tostring(payload.period),
+    periodStart = todatetime(payload.periodStart), periodEnd = todatetime(payload.periodEnd),
+    computedAt = todatetime(payload.computedAt), validUntil = todatetime(payload.validUntil),
+    spentCcu = todecimal(tostring(payload.spentCcu)),
+    budgetCcu = todecimal(tostring(payload.budgetCcu)),
+    exhausted = tobool(payload.exhausted), mode = tostring(payload.mode),
+    completeness = tostring(payload.completeness),
+    // A typed read keeps a date-shaped version ("2026-10-11") a string; parse_json makes it a datetime (WP-E2E G5).
+    rateCardVersion = extract_json("$.rateCardVersion", Message, typeof(string)),
+    pricedRequests = tolong(payload.pricedRequests), partialRequests = tolong(payload.partialRequests),
+    unpricedRequests = tolong(payload.unpricedRequests), activeMemberCount = tolong(payload.activeMemberCount),
+    runId = tostring(payload.runId), eventIngestedAt = ingestion_time()
+| where RangeValid and periodStart < ToTime and periodEnd > FromTime
+| where ProjectFilter == "*" or projectId == ProjectFilter
+| summarize arg_max(computedAt, *) by scope, scopeId, periodStart, periodEnd
+| extend noCap = isnull(payload.budgetCcu) and scope == "group",
+    identityValid = isnotempty(projectId) and isnotempty(classification)
+      and ((scope == "person" and isnotnull(toguid(personId)) and scopeId == strcat(personId, ":", projectId))
+        or (scope == "group" and isempty(personId) and scopeId == strcat(projectId, ":", classification)))
+// A budget of 0 is valid (WP-ONB, WP-COST, WP-REC) and is exhausted. A missing or malformed field makes
+// the comparison null; coalesce keeps such a line invalid instead of letting null fall through as valid.
+| extend eventValidRaw = identityValid and isnotnull(computedAt) and computedAt <= ReportNow
+    and isnotnull(validUntil) and validUntil > computedAt
+    and periodEnd > periodStart and gettype(payload.spentCcu) == "string" and spentCcu >= decimal(0)
+    and (noCap or (gettype(payload.budgetCcu) == "string" and budgetCcu >= decimal(0)))
+    and gettype(payload.exhausted) == "bool" and mode in ("strict", "notify")
+    and completeness in ("complete", "partial")
+    and pricedRequests >= 0 and partialRequests >= 0 and unpricedRequests >= 0
+    and ((noCap and not(exhausted)) or (not(noCap) and exhausted == (spentCcu >= budgetCcu)))
+| extend eventValid = coalesce(eventValidRaw, false)
+| extend snapshotState = case(not(eventValid), "invalid_event",
+    periodEnd <= ReportNow, "historical", validUntil <= ReportNow, "expired", "current"),
+    budgetState = case(not(eventValid), "unknown", noCap, "no_cap", exhausted, "exhausted", "available"),
+    snapshotAgeSeconds = datetime_diff("second", ReportNow, computedAt),
+    eventDeliverySeconds = datetime_diff("second", eventIngestedAt, computedAt),
+    rateCardMismatch = rateCardVersion != RateCardVersion
+| project scope, scopeId, projectId, classification, personId, period, periodStart, periodEnd,
+    spentCcu = iff(eventValid, spentCcu, decimal(null)),
+    budgetCcu = iff(eventValid, budgetCcu, decimal(null)),
+    spentUsdEquivalent = iff(eventValid, spentCcu / decimal(100), decimal(null)),
+    budgetUsdEquivalent = iff(eventValid, budgetCcu / decimal(100), decimal(null)),
+    budgetState, exhausted = iff(eventValid, exhausted, bool(null)), mode, completeness,
+    pricedRequests, partialRequests, unpricedRequests, activeMemberCount,
+    computedAt, validUntil, snapshotAgeSeconds, eventDeliverySeconds, snapshotState,
+    rateCardVersion, rateCardMismatch, runId;
+// Latest reconciler run per outcome (WP-REC ccof.reconciler.run.v1): shows whether budget state is fresh.
+let ReconcilerRuns = FunctionAppLogs
+| where _ResourceId =~ ReconcilerResourceId
+| where TimeGenerated >= ReportNow - BudgetLookbackDays * 1d and TimeGenerated <= ReportNow
+| where Message has "ccof.reconciler.run.v1"
+| extend payload = parse_json(Message)
+| where tostring(payload.schema) == "ccof.reconciler.run.v1"
+| extend outcome = tostring(payload.outcome), reason = tostring(payload.reason),
+    loggedAt = TimeGenerated, eventIngestedAt = ingestion_time()
+| summarize runs = count(), arg_max(loggedAt, payload, eventIngestedAt) by outcome, reason
+| project outcome, reason, runs, latestRunAt = loggedAt,
+    latestAgeSeconds = datetime_diff("second", ReportNow, loggedAt),
+    runId = tostring(payload.runId), statesWritten = tolong(payload.statesWritten),
+    personStates = tolong(payload.personStates), groupStates = tolong(payload.groupStates),
+    completeness = tostring(payload.completeness),
+    maxIngestionDelaySeconds = todouble(payload.maxIngestionDelaySeconds),
+    unattributedRequests = tolong(payload.unattributedRequests),
+    unattributedCcu = todecimal(tostring(payload.unattributedCcu)),
+    unpricedRequests = tolong(payload.unpricedRequests),
+    computedAt = todatetime(payload.computedAt), validUntil = todatetime(payload.validUntil),
+    logDeliverySeconds = datetime_diff("second", eventIngestedAt, loggedAt);

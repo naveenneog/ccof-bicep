@@ -1,0 +1,9 @@
+let Resolver =
+    Gateway
+    | mv-expand record = TraceRecords
+    | where tostring(record.source) == "ccof.resolver.v1"
+    | extend payload = parse_json(tostring(record.message))
+    | where gettype(payload.schemaVersion) == "long" and payload.schemaVersion == 1
+        and tostring(payload.requestId) =~ CorrelationId
+        and payload.resolverOutcome in ("success", "refused", "unavailable", "degraded")
+    | summarize arg_max(TimeGenerated, payload) by CorrelationId;

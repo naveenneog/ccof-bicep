@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-WB",
+  "cosmosRoleDefinitions": [],
+  "assignments": [
+    {
+      "id": "workbook-reader",
+      "plane": "azure-rbac",
+      "principals": "${answers.permissions.workbookReaderPrincipalIds}",
+      "role": "Workbook Reader",
+      "roleDefinitionId": "b279062a-9be3-42a0-92ae-8b3cf002ec4d",
+      "scope": "${d1.workbook.id}",
+      "why": "Opens the shared chargeback workbook. Read only: a reader cannot save or change it."
+    },
+    {
+      "id": "workbook-log-reader",
+      "plane": "azure-rbac",
+      "principals": "${answers.permissions.workbookReaderPrincipalIds}",
+      "role": "Log Analytics Reader",
+      "roleDefinitionId": "73c42c96-874c-492b-b04d-ab87d138a893",
+      "scope": "${d1.workspace.id}",
+      "why": "Runs the workbook's ledger and budget queries. This reads every table in the workspace, including Entra object ids in gateway traces; prompts and responses are never logged (ADR-0010)."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Ironclad: secrets never enter git
+.env
+.env.*
+!.env.example
+
+# Node dependencies - reinstalled via npm install, never committed
+node_modules/
+
+# TypeScript build output - regenerated via npm run build, never committed
+dist/
+deploy-package.zip
+
+# Temp commit-message files (PowerShell quote-nesting workaround) - never committed
+.git-commit-msg.txt
+
+# Quick-start generated files (Deploy-Quickstart.ps1); the state file is already covered by .env.*
+infra/quickstart/.generated/

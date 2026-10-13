@@ -1,0 +1,38 @@
+// WP-E2E (docs/status/WP-E2E.md): one row per request in [fromTime, toTime), UTC, half-open, with the
+// gateway outcome, the ccof.usage.v1 and ccof.resolver.v1 traces and the LLM log row side by side.
+// Read-only. Ids and counts only: no prompt, response or header is read.
+// Append CcofE2eCalls(fromTime, toTime, gatewayResourceId) to invoke.
+let CcofE2eCalls = (fromTime:datetime, toTime:datetime, resourceId:string) {
+    let llmRows = ApiManagementGatewayLlmLog
+        | where TimeGenerated >= fromTime and TimeGenerated < toTime
+        | where isnotempty(resourceId) and _ResourceId =~ resourceId
+        | project llmCorrelationId = tolower(tostring(CorrelationId)), llmAt = TimeGenerated, llmIngestedAt = ingestion_time(),
+            llmModel = tostring(ModelName), llmPromptTokens = tolong(PromptTokens),
+            llmCompletionTokens = tolong(CompletionTokens), isStreamCompletion = tostring(IsStreamCompletion);
+    ApiManagementGatewayLogs
+    | where TimeGenerated >= fromTime and TimeGenerated < toTime
+    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | extend gatewayCorrelationId = tolower(tostring(CorrelationId)), gatewayIngestedAt = ingestion_time()
+    | mv-apply traceRecord = TraceRecords on (
+        summarize usageTraces = make_list_if(tostring(traceRecord.message), tostring(traceRecord.source) == "ccof.usage.v1"),
+            resolverTraces = make_list_if(tostring(traceRecord.message), tostring(traceRecord.source) == "ccof.resolver.v1"))
+    | extend usage = parse_json(tostring(usageTraces[0])), resolver = parse_json(tostring(resolverTraces[0]))
+    | join kind=fullouter llmRows on $left.gatewayCorrelationId == $right.llmCorrelationId
+    | project requestAt = coalesce(TimeGenerated, llmAt), correlationId = coalesce(gatewayCorrelationId, llmCorrelationId),
+        apiRevision = ApiRevision, operation = strcat(Method, " ", tostring(parse_url(Url).Path)),
+        responseCode = ResponseCode, backendResponseCode = BackendResponseCode, lastErrorReason = LastErrorReason,
+        gatewayIngestedAt, llmIngestedAt,
+        gatewayDelaySeconds = datetime_diff("second", gatewayIngestedAt, TimeGenerated),
+        llmDelaySeconds = datetime_diff("second", llmIngestedAt, llmAt),
+        usageTraceCount = array_length(usageTraces), resolverOutcome = tostring(resolver.resolverOutcome),
+        resolverBudgetState = iff(array_length(resolverTraces) == 0, "",
+            iff(isnull(resolver.budgetState), "null", tostring(resolver.budgetState))),
+        personId = tostring(usage.personId), projectId = tostring(usage.projectId),
+        classification = tostring(usage.classification), backendId = tostring(usage.backendId),
+        streamed = tostring(usage.streamed), usageSource = tostring(usage.usageSource), traceModel = tostring(usage.model),
+        bodyInputTokens = tolong(usage.usage.input_tokens), bodyOutputTokens = tolong(usage.usage.output_tokens),
+        bodyCacheWrite5mTokens = tolong(usage.usage.cache_creation.ephemeral_5m_input_tokens),
+        bodyCacheWrite1hTokens = tolong(usage.usage.cache_creation.ephemeral_1h_input_tokens),
+        bodyCacheReadTokens = tolong(usage.usage.cache_read_input_tokens),
+        llmModel, llmPromptTokens, llmCompletionTokens, isStreamCompletion
+};
