@@ -1,6 +1,6 @@
 import type { WorkbookAnswers } from "./config.ts";
 import type { CompiledCard } from "./rate-card.ts";
-import { layout } from "./layout.ts";
+import { layout, QUERY_TIME_CONTEXT } from "./layout.ts";
 
 export function chargebackLayout(answers: WorkbookAnswers, card: CompiledCard, queries: Record<string, string>) {
   const workbook = layout(answers, card, queries);
@@ -13,7 +13,7 @@ export function chargebackLayout(answers: WorkbookAnswers, card: CompiledCard, q
     type: 3, name, content: {
       version: "KqlItem/1.0", query: queries[name], title, size: 0, queryType: 0,
       resourceType: "microsoft.operationalinsights/workspaces", crossComponentResources: [answers.workspaceResourceId],
-      visualization, timeContext: { durationMs: 0 }, showExportToExcel: true, exportToExcelOptions: "all",
+      visualization, timeContext: QUERY_TIME_CONTEXT, showExportToExcel: true, exportToExcelOptions: "all",
       gridSettings: { filter: true }, noDataMessage: "No matching observations; not evidence of zero spend. Check filters, access and telemetry.",
       noDataMessageStyle: 3,
     },

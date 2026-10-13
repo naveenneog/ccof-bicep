@@ -1,7 +1,7 @@
 # v0.2.0 verification record
 
 Implementation baseline: `953f41b64ccf46bdb3be9091ede095b4cdcc2512`.
-Current candidate source: `9b0c4ff14c11dbaba9b03676405a4a12d22e25cc`
+Current candidate source: `e0565ab966205d0df19b0a18687c4fe57728d7bb`
 (production runtime `eb1a33296902bd96c3aa2b6ef47b99a10575c82c`),
 including snapshot registration/wake fixes and current-attempt correlation,
 replay-success preservation and pre-mutation hostname retries.
@@ -88,11 +88,27 @@ separately, retaining the sample's no-customer-ID contract.
 
 ## Live evidence is separate
 
-The live agent subsequently reported a Haiku geography sentinel bug: a provider
-body value of `not_available` is treated as a disagreement with the trusted
-deployment mapping in this candidate. Producer fix `b97de12` is queued for separate
-review/integration; it is not included here. Do not treat this branch as complete
-chargeback or production acceptance while that fix and its final gates are pending.
+The candidate now includes the separately reviewed geography-sentinel and portal
+time-context repairs. Exact case-sensitive body `not_available` is an absent
+cross-check, never a pricing authority. Trusted deployment geography and real
+mismatch guards are unchanged. Every query item uses a nonzero730-day portal
+envelope rather than PT0S; KQL still enforces its UTC interval and retention.
+This does not extend stored history or promise arbitrary older custom ranges.
+
+The previous source checkpoint's draft PR1 and push CI actually passed:
+https://github.com/naveenneog/ccof-bicep/actions/runs/38470532254 and
+https://github.com/naveenneog/ccof-bicep/actions/runs/38470532328.
+Their head was b9e8a2470acc1fdbd4b8784f41cce37f53258f0e. The real PR checkout
+b1e6e62088df68a6f038a318d3d7189c1715237c has tree
+e9fa4f0245cf95e61687861981a86aac9b84b306, exactly matching the tested prospective
+merge tree. All four Node22/26 jobs succeeded. These are checkpoint receipts,
+not CI proof for this newer candidate. Main remains a59a09b until fresh final-tip
+full/merge tests and actual CI pass. Enterprise changes remain outside this candidate.
+
+The new public regressions reproduced two PT0S builder failures and one absent
+sentinel assertion before applying accepted production changes. Fresh complete
+candidate totals and exact gates must supersede the older checks above before
+publication; no complete chargeback, settled-billing or release claim is made.
 
 Earlier seed-trigger resynchronization was reported live-passed. Current v3 client/
 gateway/resolver E2E, a second designated-subscription route, workbook portal rendering,
