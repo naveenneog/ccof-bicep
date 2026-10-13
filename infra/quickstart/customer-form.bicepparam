@@ -1,6 +1,6 @@
 // =====================================================================================================
 // CUSTOMER FORM: quick-start parameters (docs/QUICKSTART.md explains each one).
-// Do not fill this file. Copy it to the git-ignored name and fill the copy (README, "Deploy from Azure
+// Do not fill this file. Copy it to the git-ignored name and fill the copy (docs/QUICKSTART.md, "Azure
 // Cloud Shell"):
 //   cp infra/quickstart/customer-form.bicepparam infra/quickstart/.env.customer.bicepparam
 // Every value that says REPLACE is a customer decision; the filled copy is the deployment's whole
@@ -217,8 +217,8 @@ param runner = { enabled: false }
 param enableAlerts = false
 param resolver = { budgetEnforcement: 'token-limits-only', cosmosRequestTimeoutMs: 2000, cosmosRetryAttempts: 2, cosmosRetryMaxWaitSeconds: 2, requestDeadlineMs: 4000 }
 // application-permission: the customer's Privileged Role Administrator grants Microsoft Graph
-// permissions after the deployment (Grant-SyncGraphPermissions.ps1). delegated-snapshot is not usable
-// from this repository (README, Known limits).
+// permissions after the deployment (Grant-SyncGraphPermissions.ps1). delegated-snapshot needs the
+// runner VM (section 5) and the snapshot apply of docs/SYNC.md; step 1 refuses it without the runner.
 param sync = {
   mode: 'application-permission'
   schedule: '0 */1 * * * *'

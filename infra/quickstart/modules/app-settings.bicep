@@ -1,5 +1,7 @@
 // Quick-start (ADR-0024, Proposed): every application setting D2's settings step writes
-// (scripts/Core.D2Steps.psm1, Get-CoreAppSettings), and the resolver's App Service Authentication
+// (scripts/Core.D2Steps.psm1, Get-CoreAppSettings), plus the quick-start's own switch of the
+// registry seed function (AzureWebJobs.registrySeed.Disabled, named in ADR-0024), and the
+// resolver's App Service Authentication
 // that admits only the APIM's managed identity (ADR-0009; infra/poc/resolver-auth.ps1,
 // New-ResolverAuthSettingsBody). Runtime values arrive as parameters, so the three *Settings
 // variables stay in the compiled template where tests/Test-Quickstart.ps1 compares them with D2.
@@ -82,6 +84,9 @@ var syncSettings = {
   SYNC_GRAPH_TIMEOUT_SECONDS: string(sync.graphTimeoutSeconds)
   SYNC_WRITE_MODE: sync.writeMode
   'AzureWebJobs.syncEntitlement.Disabled': syncTimerEnabled ? 'false' : 'true'
+  // The registry seed function (src/sync/registry-seed.ts) stays off; step 5 of Deploy-Quickstart.ps1
+  // sets it to false with the seed documents, and back to true when it is done (ADR-0024).
+  'AzureWebJobs.registrySeed.Disabled': 'true'
 }
 
 var reconcilerSettings = {

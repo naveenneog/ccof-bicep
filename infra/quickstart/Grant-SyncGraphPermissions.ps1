@@ -17,7 +17,8 @@
     5. reads the assignments back (Step 7c) and prints the rollback (DELETE) for each.
     Until it runs, the sync reports that it cannot read the groups; or the administrator uses
     sync.mode delegated-snapshot (docs/SYNC.md), which needs no application permission.
-    Then set syncTimerEnabled = true in main.bicepparam and run Deploy-Quickstart.ps1 -From 3.
+    Then set syncTimerEnabled = true in the parameters file and run Deploy-Quickstart.ps1 -Only 3
+    (the template alone; the code and the seed stay as they are).
 #>
 [CmdletBinding()]
 param(
@@ -97,4 +98,4 @@ foreach ($v in $verified | Where-Object { $_.AssignmentId }) {
     Write-Host "verified $($v.Permission). Rollback: az rest --method delete --url https://graph.microsoft.com/v1.0/servicePrincipals/$SyncPrincipalId/appRoleAssignments/$($v.AssignmentId)"
 }
 if ($missing.Count) { throw "not_verified: $($missing.Permission -join ', ') not found after the grant." }
-Write-Host 'Next: set syncTimerEnabled = true in main.bicepparam and run Deploy-Quickstart.ps1 -From 3. Managed identity tokens are cached for up to 24 hours (docs/DEPLOYMENT-GUIDE.md, Step 7).'
+Write-Host 'Next: set syncTimerEnabled = true in the parameters file and run Deploy-Quickstart.ps1 -Only 3 (the template alone; the code and the seed stay as they are). Managed identity tokens are cached for up to 24 hours (docs/DEPLOYMENT-GUIDE.md, Step 7).'

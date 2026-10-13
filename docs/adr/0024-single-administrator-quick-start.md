@@ -37,8 +37,8 @@ Add a separate path, `infra/quickstart/`, for one administrator. It does not rep
    Analytics, identities, Cosmos account, Flex Consumption apps), `infra/poc/phase4-telemetry.bicep`
    and `infra/workbook`, and adds modules for the Cosmos database, containers and data-plane roles,
    the application settings and the resolver's authentication, the API in the existing APIM, the
-   Azure role assignments, the cross-subscription Cognitive Services User grant and the private
-   runner.
+   Azure role assignments, the cross-subscription Cognitive Services User grant and, when
+   `runner.enabled` is true, the private runner.
 3. **The existing APIM is referenced, never changed.** The template reads its system-assigned
    identity with `existing` and writes only child resources (API, operation, backends, policy,
    logger, diagnostics).
@@ -51,11 +51,56 @@ The quick-start must create what the stages create, from the same sources:
 
 - the Cosmos containers and partition keys equal D2's schema step (`scripts/Core.D2Steps.psm1`);
 - the application settings per app equal D2's settings step (`Get-CoreAppSettings`): names, and
-  the values that are constants;
-- the Cosmos data-plane role definitions and assignments equal D3's data files.
+  the values that are constants, plus the quick-start setting named below
+  (`AzureWebJobs.registrySeed.Disabled`);
+- the Cosmos data-plane role definitions and assignments equal D3's data files, plus the additions
+  named below.
 
 `tests/Test-Quickstart.ps1` checks the three. A change to D2 or D3 that the quick-start does not
 follow fails that test.
+
+## The backend registry writer (D-7): the quick-start's Proposed answer
+
+D-7 (PENDING, `docs/STATUS.md`) asks who writes the backend registry documents in `backends`, with
+which grant; D3's data has no writer. The quick-start seeds `projects` and `backends` itself (step 5),
+so it needs one. Cosmos public access is off, so the writer runs inside the VNet.
+
+- **The sync identity** (user-assigned, `identities.sync`) holds D3's custom role "onboarding project
+  writer" (`onbProjectWriter`: `readMetadata`, `items/read`, `items/create`) on `projects` and on
+  `backends`: assignments `qs-sync-projects-writer` and `qs-sync-backends-writer` in
+  `infra/quickstart/modules/cosmos-data.bicep`, in every sync mode. It keeps Cosmos DB Built-in Data
+  Reader on `projects` (`sync-projects-reader`). Step 5 has the sync app's `registrySeed` timer
+  function (`src/sync/registry-seed.ts`) create the documents.
+  - *Reason.* A customer whose Azure Policy denies marketplace VM images cannot create the runner VM
+    that held this role before (PR #58), and without a VM the only compute inside the VNet is the
+    Flex Consumption apps. The sync app already runs as this identity, with VNet integration and the
+    Cosmos private endpoint.
+  - *Risk.* The sync identity already writes `entitlement` (`syncEntitlementWriter`: create and
+    replace), and an entitlement document grants access directly: whoever controls the sync code or
+    identity can already admit anyone to any project. Creating `projects` or `backends` documents adds
+    no access path beyond that one. Create-only cannot change an existing document: the role has no
+    `items/upsert` and no `items/replace` (Learn, "Azure Cosmos DB for NoSQL data plane security
+    reference", https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security, retrieved
+    2026-10-13: upsert and replace are separate data actions), so a registered project or backend
+    cannot be altered or retargeted with it. The residual risk is that the role stays after step 5
+    (a rerun needs it): a compromised sync could add documents for new projects, which its
+    `entitlement` write already allows in effect. Revoking the two assignments after the seed is an
+    operator's option.
+  - *When the function runs.* The function is registered only while the app setting
+    `CCOF_SEED_DOCUMENTS` is set, which only step 5 does (the staged path never does), and the host
+    runs it only while `AzureWebJobs.registrySeed.Disabled` is `false`. The quick-start's settings
+    keep that switch `true` (the one quick-start setting that D2 does not write); step 5 sets it to
+    `false` with the documents and, whatever the outcome, back to `true` and deletes the documents.
+- **The runner**, when it exists (`runner.enabled` true, which only the delegated-snapshot sync mode
+  needs), holds the same role on `backends` (`qs-runner-backends-writer`) besides D3's on `projects`,
+  and step 5 then uses it through Run Command, as reviewed in PR #58. Its assignments exist only when
+  the runner is enabled.
+- Either way, step 5 creates each document, takes an existing one (HTTP 409) as present, reads it
+  back and compares its seeded fields with the parameters; it reports a document that differs by
+  container and id and never overwrites it. Changing a seeded document is an onboarding change,
+  outside the quick-start.
+- This answers D-7 for the quick-start only. The staged path keeps D-7 PENDING until the owner
+  decides it for onboarding Stage 2.
 
 ## What stays with the staged path
 

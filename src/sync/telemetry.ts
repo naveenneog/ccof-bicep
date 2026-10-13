@@ -120,3 +120,54 @@ export function formatRun(summary: RunSummary): string {
   const { schema, runId, trigger, source, snapshotSha256, snapshotReadAt, writeMode, outcome, reasons, refusals, problems, startedAt, finishedAt, durationMs, timings, counts } = summary;
   return JSON.stringify({ schema, runId, trigger, source, snapshotSha256, snapshotReadAt, writeMode, outcome, reasons, refusals, problems, startedAt, finishedAt, durationMs, timings, counts });
 }
+
+// The quick-start's registry seed (src/sync/registry-seed.ts): one `ccof.seed.result.v1` line per
+// run, which Deploy-Quickstart.ps1 step 5 finds by seedId in the sync app's Application Insights.
+// Per document: container, id (only when it matches the identifier pattern), outcome, the names of
+// the fields that differ, a short code, and problems as field paths with codes, never values.
+export const SEED_RESULT_SCHEMA = "ccof.seed.result.v1";
+
+export type SeedDocumentOutcome = "created" | "present-equal" | "present-differs" | "failed";
+
+export interface SeedDocumentResult {
+  container: "projects" | "backends";
+  id: string | null;
+  outcome: SeedDocumentOutcome;
+  fields?: string[];
+  code?: string;
+  problems?: string[];
+}
+
+export type SeedOutcome = "succeeded" | "differs" | "failed" | "refused";
+
+export interface SeedCounts {
+  created: number;
+  presentEqual: number;
+  presentDiffers: number;
+  failed: number;
+}
+
+export interface SeedResult {
+  schema: typeof SEED_RESULT_SCHEMA;
+  seedId: string | null;
+  outcome: SeedOutcome;
+  reason?: string;
+  problems?: string[];
+  counts: SeedCounts;
+  documents: SeedDocumentResult[];
+  startedAt: string;
+  durationMs: number;
+}
+
+export function formatSeedResult(result: SeedResult): string {
+  const { schema, seedId, outcome, reason, problems, counts, startedAt, durationMs } = result;
+  const documents = result.documents.map(({ container, id, outcome: documentOutcome, fields, code, problems: documentProblems }) => ({
+    container,
+    id,
+    outcome: documentOutcome,
+    fields,
+    code,
+    problems: documentProblems,
+  }));
+  return JSON.stringify({ schema, seedId, outcome, reason, problems, counts, documents, startedAt, durationMs });
+}

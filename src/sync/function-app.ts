@@ -1,5 +1,6 @@
-// Azure Functions v4 registration of the timer-triggered sync. Thin by design:
-// the run is src/sync/run.ts, tested with fakes.
+// Azure Functions v4 registration of the timer-triggered sync, and of the quick-start's registry seed
+// (registry-seed.ts) while its documents are set. Thin by design: the run is src/sync/run.ts, the
+// seed src/sync/registry-seed.ts, both tested with fakes.
 //
 // The resolver app's package also contains dist/sync, because package.json
 // "main" is the glob dist/**/*.js. The timer is therefore registered only in
@@ -16,8 +17,9 @@ import { randomUUID } from "node:crypto";
 import { app } from "@azure/functions";
 import type { InvocationContext, Timer } from "@azure/functions";
 import { ManagedIdentityCredential } from "@azure/identity";
-import { createAzureDependencies } from "./azure.ts";
+import { createAzureDependencies, createSeedStore } from "./azure.ts";
 import { readHostSettings, readSyncConfig } from "./config.ts";
+import { SEED_FUNCTION_NAME, SEED_SCHEDULE, SEED_SETTING, runRegistrySeed } from "./registry-seed.ts";
 import { configFailure, runSync } from "./run.ts";
 
 // No hyphen: a function whose name has one cannot be disabled on Linux (Learn,
@@ -41,6 +43,21 @@ async function syncTimer(_timer: Timer, context: InvocationContext): Promise<voi
   await runSync(sync.config, createAzureDependencies(sync.config, credential), runContext);
 }
 
+// The quick-start's registry seed (registry-seed.ts; docs/QUICKSTART.md, step 5).
+async function registrySeedTimer(_timer: Timer, context: InvocationContext): Promise<void> {
+  await runRegistrySeed(process.env, {
+    openStore: (config, clientId) => createSeedStore(config, new ManagedIdentityCredential({ clientId })),
+    log: (line: string) => context.log(line),
+    now: () => new Date(),
+  });
+}
+
 if (process.env.CCOF_APP_ROLE === "sync") {
   app.timer(FUNCTION_NAME, { schedule: "%SYNC_SCHEDULE%", runOnStartup: false, handler: syncTimer });
+  // Only while step 5 has set the seed documents, so the staged path (which never sets them) gets no
+  // new function; the host runs it only while AzureWebJobs.registrySeed.Disabled is false, which the
+  // quick-start's settings keep true outside step 5.
+  if (process.env[SEED_SETTING]?.trim()) {
+    app.timer(SEED_FUNCTION_NAME, { schedule: SEED_SCHEDULE, runOnStartup: false, handler: registrySeedTimer });
+  }
 }

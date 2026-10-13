@@ -168,7 +168,8 @@ param sync = {
   graphTimeoutSeconds: 30
   writeMode: 'apply'
 }
-// Set to true and rerun step 3 after Grant-SyncGraphPermissions.ps1 verified the permissions.
+// Set to true after Grant-SyncGraphPermissions.ps1 verified the permissions, then run
+// Deploy-Quickstart.ps1 -Only 3 (the template alone writes the timer setting).
 param syncTimerEnabled = false
 param reconciler = { timerEnabled: false, schedule: '0 */2 * * * *', validitySeconds: 600, leaseSeconds: 300, ledgerTimeoutSeconds: 60, ledgerMaxRows: 100000, maxStates: 10000, writeConcurrency: 8, logAnalyticsEndpoint: 'https://api.loganalytics.io' }
 param budgetState = { graceSeconds: 900, hardLimitSeconds: 3600 }

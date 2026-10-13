@@ -82,6 +82,12 @@ var cosmosRoleDefinitions = [
 
 // D3's cosmos-data assignments. container '' is database scope; when '' always applies.
 // 00000000-0000-0000-0000-000000000001 is Cosmos DB Built-in Data Reader.
+// The last three entries are the quick-start's own (ADR-0024, its Proposed answer to open decision
+// D-7, which has no writer for `backends` in D3's data); tests/Test-Quickstart.ps1 names them as
+// additions. The sync identity creates the projects and backends documents in step 5 (the registry
+// seed function in the sync app: no VM where policy denies marketplace VM images) with D3's create-only
+// project writer role; the runner, when enabled, holds the same role on backends. main.bicep passes an
+// empty runner principal when the runner is off, and activeAssignments then skips the runner's.
 var cosmosAssignments = [
   { id: 'resolver-cosmos-data-reader', principal: 'resolver', role: '00000000-0000-0000-0000-000000000001', container: '', when: '' }
   { id: 'sync-entitlement-writer', principal: 'sync', role: 'custom:syncEntitlementWriter', container: 'entitlement', when: '' }
@@ -96,6 +102,9 @@ var cosmosAssignments = [
   { id: 'reconciler-aggregate-state-writer', principal: 'reconciler', role: 'custom:reconcilerStateWriter', container: 'aggregateBudgetState', when: '' }
   { id: 'reconciler-lease-writer', principal: 'reconciler', role: 'custom:reconcilerStateWriter', container: 'reconcilerLease', when: '' }
   { id: 'onb-private-runner-project-writer', principal: 'runner', role: 'custom:onbProjectWriter', container: 'projects', when: '' }
+  { id: 'qs-runner-backends-writer', principal: 'runner', role: 'custom:onbProjectWriter', container: 'backends', when: '' }
+  { id: 'qs-sync-projects-writer', principal: 'sync', role: 'custom:onbProjectWriter', container: 'projects', when: '' }
+  { id: 'qs-sync-backends-writer', principal: 'sync', role: 'custom:onbProjectWriter', container: 'backends', when: '' }
 ]
 
 var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode) && !empty(principals[a.principal]))

@@ -10,9 +10,9 @@ commit `1201de0`, 2026-10-13) and contains only the files the quick-start uses.
 > App at a time). `bicep build` is clean and an `az deployment what-if` against a validation
 > subscription succeeded (`docs/adr/0024-single-administrator-quick-start.md`). A live run with a
 > smoke test is in progress. Steps 4 (function code), 5 (Cosmos seed) and 7 (smoke with a developer
-> token) are not yet proven live. In this version step 5 writes
-> `infra/quickstart/.generated/seed-documents.json` and stops with `seed_not_automated`; the
-> automated seed follows in a later commit. The prerequisites guide
+> token) are not yet proven live. Step 5 seeds Cosmos without a VM: it passes the seed documents to a
+> `registrySeed` timer function in the sync Function App, waits for its result in Application
+> Insights, then switches the function off again (tested offline only). The prerequisites guide
 > `docs/QUICKSTART-PREREQUISITES.md` follows in a later commit.
 
 ## What it deploys
@@ -93,7 +93,7 @@ pwsh -File infra/quickstart/Grant-SyncGraphPermissions.ps1
 ```
 
 Then the deployer sets `syncTimerEnabled = true` in the parameters file and runs the wrapper with
-`-Only 3`. The grant script's closing message says `-From 3`, which also reruns steps 4 and 5.
+`-Only 3`, as the grant script's closing message says.
 
 ## Deploy from Azure Cloud Shell
 
@@ -153,7 +153,6 @@ the token helper in `client/`, and the support path for 401, 403 and 429 answers
 
 - The guides were written for the private repository and cite some files that are not part of this
   export (status records under `docs/status/`, other decision records); those links do not resolve here.
-- Step 5 (Cosmos seed) is not automated in this version (see the status note above).
 - Step 3 deploys only the workbook shell (`workbookShell` in `infra/quickstart/main.bicep`): the
   wrapper does not build the workbook content yet. The usage records are in the Log Analytics tables
   `ApiManagementGatewayLogs` and `ApiManagementGatewayLlmLog` (`analytics/ledger.kql`).

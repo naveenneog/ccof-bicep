@@ -4,13 +4,15 @@
 // never load an Azure SDK (tests/helpers/live-azure.ts enforces this).
 
 import { CosmosClient } from "@azure/cosmos";
-import type { Container } from "@azure/cosmos";
+import type { Container, Database } from "@azure/cosmos";
 import type { TokenCredential } from "@azure/identity";
 import type { SyncConfig } from "./config.ts";
 import { GRAPH_SCOPE, readGroupMembers, readerSettings } from "./graph.ts";
 import type { FetchLike } from "./graph.ts";
 import type { LeaseDocument, LeaseStore, LeaseWrite } from "./lease.ts";
 import type { EntitlementWriter, ExistingEntitlement } from "./plan-types.ts";
+import { BACKENDS_CONTAINER } from "./registry-seed.ts";
+import type { SeedContainer, SeedStore } from "./registry-seed.ts";
 import type { RunDependencies } from "./run.ts";
 import type { EntitlementRecord } from "./types.ts";
 
@@ -79,9 +81,44 @@ export function createLeaseStore(container: Container): LeaseStore {
 
 const fetchAdapter: FetchLike = (url, init) => fetch(url, init);
 
+// One client setup for a sync run and for the registry seed: the account endpoint and database of
+// the sync's settings, with the sync's Entra credential.
+function openDatabase(config: SyncConfig, credential: TokenCredential): Database {
+  return new CosmosClient({ endpoint: config.cosmosEndpoint, aadCredentials: credential }).database(config.cosmosDatabase);
+}
+
+// The registry seed's create-only writes (registry-seed.ts): items.create, never upsert or replace,
+// which the sync identity's onbProjectWriter role would refuse anyway; a 409 is the caller's to read.
+export function createSeedStore(config: SyncConfig, credential: TokenCredential): SeedStore {
+  const database = openDatabase(config, credential);
+  const containers: Record<SeedContainer, Container> = {
+    projects: database.container(config.projectsContainer),
+    backends: database.container(BACKENDS_CONTAINER),
+  };
+  return {
+    async create(name, doc) {
+      try {
+        await containers[name].items.create(doc);
+        return "created";
+      } catch (err) {
+        if (statusOf(err) === 409) return "conflict";
+        throw err;
+      }
+    },
+    async read(name, id, partitionKey) {
+      try {
+        const response = await containers[name].item(id, partitionKey).read<Record<string, unknown>>();
+        return response.resource ?? null;
+      } catch (err) {
+        if (statusOf(err) === 404) return null;
+        throw err;
+      }
+    },
+  };
+}
+
 export function createAzureDependencies(config: SyncConfig, credential: TokenCredential): RunDependencies {
-  const client = new CosmosClient({ endpoint: config.cosmosEndpoint, aadCredentials: credential });
-  const database = client.database(config.cosmosDatabase);
+  const database = openDatabase(config, credential);
   const projects = database.container(config.projectsContainer);
   const entitlement = database.container(config.entitlementContainer);
   const getToken = async () => {
