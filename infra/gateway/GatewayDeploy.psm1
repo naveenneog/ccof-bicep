@@ -282,7 +282,10 @@ function Invoke-GatewayMakeCurrent {
     # The replaced revision would still answer at ;rev=N with its older policy; rollback brings it back online.
     Set-RevisionOnline -Arm $arm -Target $target -Revision $state.Current -Online $false
     $null = Write-GatewayAudit -Event 'revision_offline' -AuditPath $auditPath -Data @{ apiId = $target.ApiId; revision = $state.Current; currentRevision = $Revision; actorObjectId = $session.ActorObjectId; approvedBy = $approvedBy }
-    [pscustomobject]@{ Action = 'makeCurrent'; ApiId = $target.ApiId; Revision = $Revision; PreviousCurrentRevision = $state.Current; PreviousRevisionOffline = $true; ReleaseId = $releaseId; RollbackRevision = $state.Current }
+    $result = [pscustomobject]@{ Action = 'makeCurrent'; ApiId = $target.ApiId; Revision = $Revision; CurrentRevision = $after.Current; PreviousCurrentRevision = $state.Current; PreviousRevisionOffline = $true; ReleaseId = $releaseId; RollbackRevision = $state.Current }
+    # Its own record: deployment.json stays the record of the revision's creation (WP-SEC F-6).
+    $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutDir 'make-current.json') -Encoding utf8NoBOM
+    $result
 }
 
 function Invoke-GatewayTakeOffline {
@@ -340,4 +343,4 @@ function Invoke-GatewayRender {
     }
 }
 
-Export-ModuleMember -Function Invoke-GatewayRevisionDeployment, Invoke-GatewayMakeCurrent, Invoke-GatewayTakeOffline, Invoke-GatewayRender, Read-GatewayAnswers, Read-GatewayTarget, New-ArmInvoker, Write-GatewayAudit
+Export-ModuleMember -Function Invoke-GatewayRevisionDeployment, Invoke-GatewayMakeCurrent, Invoke-GatewayTakeOffline, Invoke-GatewayRender, Read-GatewayAnswers, Read-GatewayTarget, New-ArmInvoker, Write-GatewayAudit, Format-PolicyForCompare

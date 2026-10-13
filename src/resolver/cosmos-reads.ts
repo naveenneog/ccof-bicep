@@ -14,7 +14,7 @@ import { cosmosClientOptions, createRegistryReads } from "./registry-reads.ts";
 export type CosmosRegistryConfig = CosmosClientSettings & { readDeadlineMs: number };
 
 // Entra RBAC only - this tenant disables Cosmos DB local (key-based) auth by
-// default (`disableLocalAuth: true`, confirmed live on ccof-poc-cosmos,
+// default (`disableLocalAuth: true`, confirmed live on sample-pilot-cosmos,
 // docs/STATUS.md Phase 3), consistent with the Foundry account's own
 // `disableLocalAuth: true` found in Phase 1/2. DefaultAzureCredential picks
 // up the Function App's managed identity in a real deployment, or the

@@ -11,6 +11,7 @@
 #>
 
 Import-Module (Join-Path $PSScriptRoot 'Core.Schema.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Core.Auth.psm1')
 
 function New-CoreRuleProblem {
     param([string]$Path, [string]$Code, [string]$Detail)
@@ -35,6 +36,9 @@ function Test-CoreAnswerRules {
     $p = [System.Collections.Generic.List[object]]::new()
     function Test-Ready([string[]]$Sections) { -not @($Sections | Where-Object { $SkipSections -contains $_ }).Count }
     $location = [string]$Answers.target.location
+    if ($Answers.identity -is [System.Collections.IDictionary] -and (Test-Ready 'identity')) {
+        foreach ($problem in @(Test-CoreAuthSeparation -Registrations $Answers.identity)) { $p.Add($problem) }
+    }
     $availability = $Answers.availability
     if ($availability -is [System.Collections.IDictionary] -and (Test-Ready 'availability', 'target')) {
         if (-not [string]::Equals([string]$availability.region.primary, $location, 'Ordinal')) {
@@ -180,7 +184,7 @@ function Find-CorePendingValues {
     <#
     .SYNOPSIS
         Strings of the form "PENDING:<who>:<reason>" mark a decision someone still has to make
-        (validation answers files). Each is reported as pending_decision with its path.
+        (WP-Validation's answers files). Each is reported as pending_decision with its path.
     #>
     param($Value, [string]$Path)
     if ($Value -is [string] -and $Value.StartsWith('PENDING:', [StringComparison]::Ordinal)) {

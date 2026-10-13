@@ -18,7 +18,7 @@ param alertConfiguration object = {}
 param alertConfigurationDigest string = ''
 
 // With alerts off, D2 passes no configuration, so alertConfiguration is {}, and ARM still evaluates
-// expressions of the alert resources it does not deploy: in a validation subscription (2026-10-13) the rules' dependsOn
+// expressions of the alert resources it does not deploy: in Validation (2026-10-13) the rules' dependsOn
 // read alertConfiguration.actionGroup and the deployment failed with InvalidTemplate
 // (docs/status/WP-TEL.md). Every alert value is therefore read from `alerting`: the administrator's
 // configuration when alerts are on, else `alertsOff`, which has every field and deploys nothing (no

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ClientError } from './errors.mjs';
+import { isSelfGuidScope } from './scopes.mjs';
 
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const deployment = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
@@ -22,15 +23,16 @@ export function validateConfig(value) {
   if (value.schemaVersion !== 1) invalid('schemaVersion');
   if (!guid.test(value.tenantId ?? '') || !guid.test(value.clientId ?? '')) invalid('tenantId/clientId');
   let gateway, scope;
-  try { gateway = new URL(value.gatewayUrl); scope = new URL(value.scope); }
+  const selfGuidScope = isSelfGuidScope(value.scope, value.clientId);
+  try { gateway = new URL(value.gatewayUrl); scope = selfGuidScope ? null : new URL(value.scope); }
   catch { invalid('gatewayUrl/scope'); }
   if (typeof value.gatewayUrl !== 'string' || /\s/.test(value.gatewayUrl) ||
       gateway.protocol !== 'https:' || gateway.username || gateway.password ||
       gateway.search || gateway.hash || /\/v1(?:\/messages)?\/?$/.test(gateway.pathname)) invalid('gatewayUrl');
-  if (typeof value.scope !== 'string' || /\s/.test(value.scope) ||
+  if (!selfGuidScope && (typeof value.scope !== 'string' || /\s/.test(value.scope) ||
       !['api:', 'https:'].includes(scope.protocol) || !scope.hostname ||
       !scope.pathname || scope.pathname === '/' || scope.search || scope.hash ||
-      scope.username || scope.password) invalid('scope');
+      scope.username || scope.password)) invalid('scope');
   for (const key of ['helperTtlSeconds', 'minimumTokenLifetimeSeconds', 'loginTimeoutSeconds', 'tokenTimeoutSeconds']) {
     if (!positiveInteger(value[key]) || value[key] * 1000 > 2_147_483_647) invalid(key);
   }

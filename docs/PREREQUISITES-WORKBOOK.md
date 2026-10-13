@@ -24,7 +24,7 @@ pwsh ./scripts/Record-Prerequisites.ps1 -Action Plan -AnswersPath <answers.json>
 ```
 
 It lists every missing decision, or writes `d1.parameters.json` in the answers' output directory and
-prints the optional Bicep commands.
+prints the optional Bicep commands, the role preflight first (Role preflight, after D1-19).
 
 ## Who does what
 
@@ -200,23 +200,40 @@ One set per app: resolver, sync, reconciler.
 
 ### D1-16 to D1-18 App registrations (Microsoft Entra)
 
-In the deployment's tenant. They are created once per gateway, not per project.
+In the deployment's tenant. They are created once per gateway, not per project. The Entra
+application administrator runs the registrations preflight first (Role preflight, below).
 
-- **D1-16 Gateway API:** App registrations → New registration, single tenant; Expose an API: an
-  Application ID URI and the scope of `identity.gatewayApi.scope` (enabled); Manifest:
-  `requestedAccessTokenVersion` as `identity.gatewayApi.accessTokenVersion` (empty means 1). Its
+- **Default (ADR-0026): two mandatory registrations.** D1-16 and D1-17 configure **one**
+  combined developer/gateway application. Set `identity.gatewayApi.appId` and
+  `identity.developerSignIn.appId` to the same application ID. D1-18 stays a separate Resolver API.
+  A backend application is optional, only for a cross-tenant client-credentials backend.
+  Existing installations with separate D1-16/D1-17 apps remain supported.
+- **D1-16 Gateway API settings:** App registrations → New registration, single tenant; Expose an API: an
+  Application ID URI and the scope of `identity.gatewayApi.scope` (enabled); Manifest: set
+  `requestedAccessTokenVersion` explicitly to `identity.gatewayApi.accessTokenVersion`, whatever a
+  new registration shows (2 in the combined example; legacy answers may use 1 or 2). Resources
+  set it explicitly, and an empty value means 1 ([app manifest reference](https://learn.microsoft.com/entra/identity-platform/reference-microsoft-graph-app-manifest),
+  retrieved 2026-10-13). D1-19 reads it and refuses any other value (`token_version_mismatch`,
+  `scripts/Core.Prereqs.psm1:155-161`). Its
   Application ID URI and app id are the audiences the gateway accepts. Only when
   `identity.allowAppOnlyTestTokens` is true (test identities, WP-NET finding S1): an app role whose
   value is `identity.testClientAppRole`, `allowedMemberTypes` `Application`, enabled, and assigned to
   the service principal of each application in `identity.testClientAppIds`. The PoC's role and
   assignment are G17 and G18 in `docs/status/WP-GW.md`.
-- **D1-17 Developer sign-in:** a public client; Authentication: the redirect URIs of
+- **D1-17 Developer sign-in settings, on that same application by default:** a public client;
+  Authentication: the redirect URIs of
   `identity.developerSignIn.redirectUris`; API permissions: delegated access to the Gateway API's
-  scope. WP-CLIENT's `scripts/client/Set-DeveloperSignInRedirects.ps1` can add the redirect URIs.
-  Consent follows the tenant's settings (`docs/DEPLOYMENT-GUIDE.md`, Tenant settings).
+  scope for a legacy separate client. Include `http://localhost`, the native-client callback,
+  and the Windows broker callback `ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId>`.
+  Enable public-client flows for optional device-code login; browser/WAM use the redirects.
+  WP-CLIENT's `scripts/client/Set-DeveloperSignInRedirects.ps1` adds redirects without changing API
+  settings. Consent follows the tenant's settings; do not assume token-to-self bypasses them.
+  The helper requests `<appId>/<scope>` for itself (AADSTS90009; ADR-0026).
 - **D1-18 Resolver API** (ADR-0009, WP-RES): single tenant; Application ID URI `api://<appId>`;
   Manifest `requestedAccessTokenVersion` 2; no secret, no redirect URI, no scope; its enterprise
-  application exists. WP-RES's `Initialize-ResolverApiRegistration` (`infra/poc/resolver-auth.ps1`)
+  application exists. Its app ID must differ from **both** D1-16/D1-17 role IDs; only APIM's
+  managed identity passes its application/principal restrictions. WP-RES's
+  `Initialize-ResolverApiRegistration` (`infra/poc/resolver-auth.ps1`)
   can create it.
 - **Answers:** put each app id in `identity.*.appId`. The test-identity decision is
   `identity.allowAppOnlyTestTokens`, `identity.testClientAppIds` and `identity.testClientAppRole`:
@@ -236,9 +253,38 @@ pwsh ./scripts/Record-Prerequisites.ps1 -Action Record -AnswersPath <answers.jso
 It reads every resource and registration above with the signed-in Azure CLI identity of the target
 tenant, read-only, and refuses with each difference and its reason if anything differs from the
 decisions. When all match, it writes `stage-D1` with the ids of `docs/DEPLOYMENT-STAGES.md`, "D1
-record keys", and audit lines next to the checkpoint record. Run it again after any fix.
+record keys", the role preflights passed (`rolePreflight`: who, when and through which role, or null
+for a part not run), and audit lines next to the checkpoint record. Run it again after any fix.
 
 > Screenshot D1-19: pending capture (WP-SHOTS), terminal output, ids only.
+
+## Role preflight
+
+Before the first write of a part, the person who performs it checks that they hold D1's minimum role
+for it (`config/stage-roles.json`, stage D1), with the checkpoint record the stages share:
+
+```powershell
+pwsh ./scripts/Record-Prerequisites.ps1 -Action Preflight -Part resources -AnswersPath <answers.json> -CheckpointPath <checkpoint.json>
+pwsh ./scripts/Record-Prerequisites.ps1 -Action Preflight -Part registrations -AnswersPath <answers.json> -CheckpointPath <checkpoint.json>
+```
+
+| Part | Before | Who runs it | Passes with |
+|---|---|---|---|
+| `resources` | The Bicep of `infra/prereqs`, or the portal steps D1-02 to D1-15 | Infrastructure team | Contributor or Owner on the resource group, assigned there or above it (before D1-02 in mode `create`, on the subscription) |
+| `registrations` | D1-16 to D1-18 | Entra application administrator | Application Administrator or Cloud Application Administrator, active; or "Users can register applications" set to Yes |
+
+It reads only, and refuses before any write with a reason code: `caller_rights_missing` (it names the
+roles, the scope, who usually holds them and what you hold), `caller_roles_unreadable` (a role that
+cannot be read is never taken as held), `identity_unreadable` (the Azure CLI gives no identity for
+`target.subscriptionId`: sign in with an account that sees that subscription, with any role on it,
+for example Reader on the resource group; this applies to the registrations part too),
+`stage_data_invalid`, `part_missing`, `answers_incomplete` or `wrong_tenant`. A pass is recorded as
+`stage-D1-preflight:<part>` with your object id; D1-19 copies it into `stage-D1` as recorded in the
+shared file, without checking it again, and says whether it ran with the same answers
+(`sameAnswers`). It does not check Contributor on the subscription for `target.resourceProviders`
+`register` (D1-01) or Network Contributor on the VNet in network mode `existing`: the stage data does
+not declare them (`docs/status/WP-CORE-RUN.md`, U-new-CORE-RUN-14). A service principal cannot pass
+the registrations part, because its directory roles cannot be read (U-new-CORE-RUN-13).
 
 ## Rollback
 

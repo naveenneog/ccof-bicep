@@ -5,12 +5,16 @@
     entities, the check that each second-tenant backend's secret named value exists, the gateway
     configuration for WP-GW's renderer, the policy revision through WP-GW's
     infra/gateway/Deploy-GatewayRevision.ps1 (non-current, smoke-tested on its revision URL, made
-    current only when gateway.promoteAfterSmoke is true), and the final smoke tests.
+    current only when gateway.promoteAfterSmoke is true), and the final smoke tests. A recorded
+    revision with the render's digest is unchanged only when the live gateway still holds it: current
+    if it was made current, with a stored policy equal to the render (WP-SEC C7).
     Never calls `az apim update` (it removes the managed identity) and never writes a secret.
 #>
 
 Import-Module (Join-Path $PSScriptRoot 'Core.Schema.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Core.D2Steps.psm1')
+# WP-GW's comparison of a stored policy with a render: whitespace ignored, as APIM reformats the text.
+Import-Module (Join-Path $PSScriptRoot '../infra/gateway/GatewayDeploy.psm1')
 
 $script:Arm = 'https://management.azure.com'
 $script:ApiVersion = '2024-05-01'
@@ -114,6 +118,40 @@ function Get-CoreCurrentRevision {
     return $null
 }
 
+function Test-CoreD2PolicyLive {
+    <#
+    .SYNOPSIS
+        WP-SEC C7: whether the live gateway still holds what the policy step's record says. The recorded
+        revision is current when the record says it was made current, and its stored policy equals the
+        render, whitespace and line ends ignored as WP-GW compares them (APIM stores the text
+        reformatted: docs/status/WP-GW.md, live change G23). Returns Verified, and Lines that say why not.
+    #>
+    param($Ctx, $Previous, [string]$RenderedPolicy)
+    $no = { param([string]$Why) [pscustomobject]@{ Verified = $false; Lines = @($Why) } }
+    $api = "$script:Arm$($Ctx.D1.apim.id)/apis/$($Ctx.Answers.apim.apiId)"
+    $revision = [string]$Previous.revision
+    # The revision goes into the read's ARM path, so only a revision number is read.
+    if ($revision -cnotmatch '^[1-9][0-9]{0,5}\z') { return & $no "The recorded revision '$revision' is not a revision number." }
+    if ([string]::IsNullOrWhiteSpace($RenderedPolicy)) { return & $no 'The render gave no policy text to compare.' }
+    $policyUrl = "$api;rev=$revision/policies/policy?api-version=$script:ApiVersion&format=rawxml"
+    if ($Previous.promoted) {
+        $list = & $Ctx.Send 'GET' "$api/revisions?api-version=$script:ApiVersion" $null
+        if ($list.Status -ne 200) { return & $no "The API's revisions could not be read (HTTP $($list.Status))." }
+        $current = @($list.Content.value | Where-Object { $_.isCurrent -eq $true })
+        if ($current.Count -ne 1) { return & $no "The API has $($current.Count) current revisions, not one." }
+        if ([string]$current[0].apiRevision -cne $revision) { return & $no "Revision $($current[0].apiRevision) is current, not the recorded revision $revision." }
+        # The API id without ;rev=N names the current revision (Learn, "Api Policy - Get").
+        $policyUrl = "$api/policies/policy?api-version=$script:ApiVersion&format=rawxml"
+    }
+    $stored = & $Ctx.Send 'GET' $policyUrl $null
+    $text = if ($stored.Status -eq 200) { $stored.Content.properties.value } else { $null }
+    if ($text -isnot [string]) { return & $no "The stored policy of revision $revision could not be read (HTTP $($stored.Status))." }
+    if (-not [string]::Equals((Format-PolicyForCompare $text), (Format-PolicyForCompare $RenderedPolicy), [StringComparison]::Ordinal)) {
+        return & $no "The stored policy of revision $revision differs from the render."
+    }
+    [pscustomobject]@{ Verified = $true; Lines = @() }
+}
+
 function Invoke-CoreD2Policy {
     param($Ctx)
     $gatewayDir = Join-Path $Ctx.OutDir 'gateway'
@@ -125,25 +163,57 @@ function Invoke-CoreD2Policy {
     if (-not $render -or $render.policySha256 -notmatch '^[0-9a-f]{64}$') { return New-CoreStepResult 'failed' -ReasonCode 'render_failed' -Lines @('WP-GW render.ts refused the generated configuration; see its message.') }
     $promote = [bool]$Ctx.Answers.gateway.promoteAfterSmoke
     $previous = $Ctx.Previous['policy']
+    $redeploy = @()
     if ($previous -and $previous.policySha256 -eq $render.policySha256 -and ([bool]$previous.promoted -eq $promote -or -not $promote)) {
-        return New-CoreStepResult 'unchanged' -Outputs $previous
+        # WP-SEC C7: the recorded digest sits in the shared record, so only a live revision that holds the
+        # render is unchanged. Any other answer, an error included, deploys the policy again.
+        $check = try {
+            $rendered = if ($render.policyPath -and (Test-Path -LiteralPath $render.policyPath -PathType Leaf)) { Get-Content -LiteralPath $render.policyPath -Raw } else { $null }
+            Test-CoreD2PolicyLive -Ctx $Ctx -Previous $previous -RenderedPolicy $rendered
+        }
+        catch { [pscustomobject]@{ Verified = $false; Lines = @("The live check failed: $($_.Exception.Message)") } }
+        if ($check.Verified -is [bool] -and $check.Verified) { return New-CoreStepResult 'unchanged' -Outputs $previous }
+        $redeploy = @("The recorded policy revision $($previous.revision) was not verified live, so D2 deployed the policy again:") + @($check.Lines | ForEach-Object { "  $_" })
     }
+    $result = Publish-CoreD2PolicyRevision -Ctx $Ctx -Config $config -ConfigPath $configPath -Render $render -GatewayDir $gatewayDir -Promote $promote
+    if ($redeploy.Count) {
+        $result.Lines = @($redeploy) + @($result.Lines)
+        if ($result.State -eq 'applied') { $result.ReasonCode = 'policy_not_verified_redeployed' }
+    }
+    $result
+}
+
+function Publish-CoreD2PolicyRevision {
+    <#
+    .SYNOPSIS
+        The rendered policy as a new non-current revision through WP-GW's deploy script, smoke-tested on
+        its revision URL, and made current when -Promote. Returns the step result.
+    #>
+    param($Ctx, $Config, [string]$ConfigPath, $Render, [string]$GatewayDir, [bool]$Promote)
     $current = Get-CoreCurrentRevision $Ctx
     if (-not $current) { return New-CoreStepResult 'failed' -ReasonCode 'revisions_unreadable' }
-    $answersPath = Join-Path $gatewayDir 'create-revision.answers.json'
-    [ordered]@{ action = 'createRevision'; apiId = $Ctx.Answers.apim.apiId; configurationId = $config.configurationId; expectedCurrentRevision = $current; policySha256 = $render.policySha256; approvedBy = $Ctx.Actor.objectId } | ConvertTo-Json | Set-Content -LiteralPath $answersPath -Encoding utf8NoBOM
-    $deployed = & $Ctx.Pieces.GatewayDeploy $configPath $answersPath (Join-Path $gatewayDir 'out') $false $null
+    $answersPath = Join-Path $GatewayDir 'create-revision.answers.json'
+    [ordered]@{ action = 'createRevision'; apiId = $Ctx.Answers.apim.apiId; configurationId = $Config.configurationId; expectedCurrentRevision = $current; policySha256 = $Render.policySha256; approvedBy = $Ctx.Actor.objectId } | ConvertTo-Json | Set-Content -LiteralPath $answersPath -Encoding utf8NoBOM
+    $deployed = & $Ctx.Pieces.GatewayDeploy $ConfigPath $answersPath (Join-Path $GatewayDir 'out') $false $null
     if (-not $deployed -or -not $deployed.Revision -or -not $deployed.StoredMatchesRendered) { return New-CoreStepResult 'failed' -ReasonCode 'revision_not_created' }
+    # The record of the revision D2 will test and make current must be this run's: this render, made from
+    # the revision D2 found current.
+    if ([string]$deployed.PolicySha256 -cne [string]$Render.policySha256 -or [string]$deployed.CurrentRevision -cne [string]$current) {
+        return New-CoreStepResult 'failed' -ReasonCode 'revision_record_mismatch' -Lines @("The createRevision record (deployment.json in $(Join-Path $GatewayDir 'out')) names revision $($deployed.Revision) with policy $([string]$deployed.PolicySha256), made from revision $([string]$deployed.CurrentRevision); this run rendered $($Render.policySha256) with revision $current current. Revision $($deployed.Revision) stays non-current; nothing was made current.")
+    }
     $base = ([string]$Ctx.D1.apim.gatewayUrl).TrimEnd('/')
     $revisionStatus = & $Ctx.Pieces.Http 'POST' "$base/$($Ctx.Answers.apim.apiPath);rev=$($deployed.Revision)/v1/messages"
     if ($revisionStatus -ne 401) { return New-CoreStepResult 'failed' -ReasonCode 'revision_smoke_failed' -Lines @("The new revision $($deployed.Revision) answered $revisionStatus without a token, not 401. It stays non-current.") }
-    $outputs = [ordered]@{ policySha256 = $render.policySha256; revision = [string]$deployed.Revision; previousRevision = $current; promoted = $false; configurationId = $config.configurationId }
-    if ($promote) {
-        $note = "D2 stage: configuration $($config.configurationId), policy $($render.policySha256.Substring(0, 12)); revision URL answered 401 without a token."
-        $makePath = Join-Path $gatewayDir 'make-current.answers.json'
+    $outputs = [ordered]@{ policySha256 = $Render.policySha256; revision = [string]$deployed.Revision; previousRevision = $current; promoted = $false; configurationId = $Config.configurationId }
+    if ($Promote) {
+        $note = "D2 stage: configuration $($Config.configurationId), policy $($Render.policySha256.Substring(0, 12)); revision URL answered 401 without a token."
+        $makePath = Join-Path $GatewayDir 'make-current.answers.json'
         [ordered]@{ action = 'makeCurrent'; apiId = $Ctx.Answers.apim.apiId; revision = [string]$deployed.Revision; expectedCurrentRevision = $current; releaseNote = $note; approvedBy = $Ctx.Actor.objectId } | ConvertTo-Json | Set-Content -LiteralPath $makePath -Encoding utf8NoBOM
-        $made = & $Ctx.Pieces.GatewayDeploy $configPath $makePath (Join-Path $gatewayDir 'out') $true ([string]$deployed.Revision)
-        if (-not $made -or [string]$made.CurrentRevision -ne [string]$deployed.Revision) { return New-CoreStepResult 'failed' -ReasonCode 'make_current_failed' }
+        $made = & $Ctx.Pieces.GatewayDeploy $ConfigPath $makePath (Join-Path $GatewayDir 'out') $true ([string]$deployed.Revision)
+        # make-current's own record must name the revision D2 made current, and that revision as current.
+        if (-not $made -or [string]$made.Revision -cne [string]$deployed.Revision -or [string]$made.CurrentRevision -cne [string]$deployed.Revision) {
+            return New-CoreStepResult 'failed' -ReasonCode 'make_current_failed' -Lines @("Deploy-GatewayRevision.ps1 -MakeCurrent did not record revision $($deployed.Revision) as current (make-current.json in $(Join-Path $GatewayDir 'out')). Check the API's releases; to roll back: infra/gateway/Deploy-GatewayRevision.ps1 -MakeCurrent -Revision $current.")
+        }
         $currentStatus = & $Ctx.Pieces.Http 'POST' "$base/$($Ctx.Answers.apim.apiPath)/v1/messages"
         if ($currentStatus -ne 401) { return New-CoreStepResult 'failed' -ReasonCode 'current_smoke_failed' -Lines @("After make-current the gateway answered $currentStatus without a token. Roll back: infra/gateway/Deploy-GatewayRevision.ps1 -MakeCurrent -Revision $current.") }
         $outputs.promoted = $true

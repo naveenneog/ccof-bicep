@@ -1,7 +1,7 @@
 {
   "name": "claude-code-on-foundry",
-  "version": "1.0.0",
-  "description": "Claude on Microsoft Foundry behind a self-hosted Azure API Management gateway at enterprise scale: project-scale identity, cross-project membership, project-specific backend routing, and dollar-accurate budget enforcement.",
+  "version": "0.2.0",
+  "description": "Claude on Foundry behind Azure API Management: project routing, family quotas, identity and fixed-price usage reporting.",
   "private": true,
   "type": "module",
   "main": "dist/**/*.js",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/naveenneog/claude-code-on-foundry.git"
+    "url": "git+https://github.com/naveenneog/ccof-bicep.git"
   },
   "license": "UNLICENSED",
   "dependencies": {

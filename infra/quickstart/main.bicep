@@ -26,8 +26,11 @@ param apim object
 @description('mode create (vnetName, addressSpace, apimNsgName, subnets) or existing (subnet and private DNS zone ids).')
 param network object
 
-@description('Entra groups: groupId, projectId, classification, modelAllowList, token limits, budgets. Seeded by the wrapper (step 5).')
+@description('Entra groups: groupId, projectId, classification, familyPolicy, budgets; optional backendId must agree per project and is required with multiple backends. Seeded by the wrapper (step 5).')
 param groups array
+
+@description('Step 8 client export: explicit projectId, classification and models {default, opus, sonnet, haiku}; each model must be admitted on the selected project backend. Empty refuses client export.')
+param client object = {}
 
 @description('Prerequisite app registrations: gatewayApi { appId, scope }, developerSignIn { appId }, resolverApi { appId }.')
 param registrations object
@@ -70,7 +73,7 @@ param syncTimerEnabled bool = false
 @description('Written by the wrapper (step 2): the policy rendered by infra/gateway/render.ts. Empty: the API answers 503.')
 param policyXml string = ''
 
-@description('Written by the wrapper (step 2): analytics/workbooks/build.ts output. Empty: the workbook shell only.')
+@description('Written by step 2: analytics/workbooks/chargeback.ts output. Empty: preserve any existing workbook; never deploy an empty shell over it.')
 param workbookContent object = {}
 
 param workbookContentTags object = {}
@@ -145,7 +148,7 @@ module cosmosAccount '../prereqs/cosmos-account.bicep' = {
 }
 
 // One app at a time: the three apps join the same Functions subnet, and in parallel two of them failed
-// with "Failed to acquire ServiceAssociationLinkLease" (validation subscription, 2026-10-13).
+// with "Failed to acquire ServiceAssociationLinkLease" (Validation, 2026-10-13).
 // batchSize(1) is sequential (https://learn.microsoft.com/azure/azure-resource-manager/bicep/loops#deploy-in-batches, retrieved 2026-10-13).
 @batchSize(1)
 module apps '../prereqs/function-app.bicep' = [for app in appKeys: {
@@ -220,16 +223,6 @@ module workbookFull '../workbook/main.bicep' = if (!empty(workbookContent)) {
   }
 }
 
-module workbookShell '../workbook/resource.bicep' = if (empty(workbookContent)) {
-  name: '${prefix}-qs-workbook-shell'
-  params: {
-    workbookResourceName: workbook.resourceName
-    workbookDisplayName: workbook.displayName
-    location: location
-    workspaceResourceId: workspace.outputs.id
-  }
-}
-
 module rbac 'modules/rbac.bicep' = {
   name: '${prefix}-qs-rbac'
   params: {
@@ -238,7 +231,7 @@ module rbac 'modules/rbac.bicep' = {
     workbookResourceName: workbook.resourceName
     workbookReaderPrincipalIds: workbook.readerPrincipalIds
   }
-  dependsOn: [apps, cosmosAccount, workbookFull, workbookShell]
+  dependsOn: [apps, cosmosAccount, workbookFull]
 }
 
 module gatewayApi 'modules/apim-api.bicep' = {
@@ -260,15 +253,6 @@ module foundryRoles 'modules/foundry-role.bicep' = [for b in backends: if (b.ass
   params: { accountName: b.accountName, principalId: apimPrincipalId, apimResourceId: apimService.id }
 }]
 
-// Application Insights of the resolver and the sync, created by the app modules above.
-resource resolverInsights 'Microsoft.Insights/components@2020-02-02' existing = {
-  name: names.apps.resolver.appInsights
-}
-
-resource syncInsights 'Microsoft.Insights/components@2020-02-02' existing = {
-  name: names.apps.sync.appInsights
-}
-
 module settings 'modules/app-settings.bicep' = {
   name: '${prefix}-qs-settings'
   params: {
@@ -278,8 +262,10 @@ module settings 'modules/app-settings.bicep' = {
     databaseName: names.cosmosDatabase
     syncClientId: identities.outputs.syncClientId
     reconcilerClientId: identities.outputs.reconcilerClientId
-    resolverAppInsightsConnection: resolverInsights.properties.ConnectionString
-    syncAppInsightsConnection: syncInsights.properties.ConnectionString
+    // From the app modules' outputs: a reference() to the components in this template is read when a
+    // fresh deployment starts, before the modules create them (ResourceNotFound, live run 2026-10-13).
+    resolverAppInsightsConnection: apps[0].outputs.appInsightsConnectionString
+    syncAppInsightsConnection: apps[1].outputs.appInsightsConnectionString
     workspaceCustomerId: workspace.outputs.customerId
     apimId: apimService.id
     resolver: resolver
@@ -318,6 +304,7 @@ output cosmosAccountId string = cosmosAccount.outputs.id
 output workspaceId string = workspace.outputs.id
 output apimPrincipalId string = apimPrincipalId
 output projectIds array = union(map(groups, g => g.projectId), [])
+output clientSelection object = client
 output registrationIds object = registrations
 output rateCardPath string = rateCard.path
 output gatewayConfigurationId string = gateway.configurationId

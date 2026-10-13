@@ -192,4 +192,7 @@ output hostName string = functionApp.properties.defaultHostName
 output planId string = plan.id
 output storageAccountId string = storage.id
 output appInsightsId string = empty(appInsightsName) ? '' : appInsights.id
+// The quick-start's settings module takes it from here: read in the caller's own template, ARM would
+// look for the component at the start of a fresh deployment, before this module creates it.
+output appInsightsConnectionString string = empty(appInsightsName) ? '' : appInsights!.properties.ConnectionString
 output systemPrincipalId string = usesUserAssigned ? '' : functionApp.identity.principalId

@@ -82,24 +82,29 @@ function Get-OnboardingProjectSchema {
         amount=@{type='number';minimum=0};currency=@{enum=@('CCU','USD')};period=@{const='monthly'}
     }
     $classification=New-OnboardingObjectSchema @{
-        groupId=$guid; modelAllowList=@{type='array';minItems=1;uniqueItems=$true;items=@{type='string';pattern='^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$'}}
+        groupId=$guid
         personBudget=$budget;aggregateBudget=@{anyOf=@($budget,@{type='null'})}
         aggregateMode=@{enum=@('strict','notify')};onboardingMode=@{enum=@('block','warn')}
-        tokenLimits=Get-OnboardingTokenLimitsSchema
+        familyPolicy=Get-OnboardingFamilyPolicySchema
     }
+    $classification.properties.classificationGroupDisplayName=@{type='string';minLength=1;maxLength=256}
+    $restricted=@{not=@{anyOf=@(@{required=@('fable')},@{required=@('mythos')})}}
+    $nonCyb=@{allOf=@($classification,@{properties=@{familyPolicy=@{properties=@{families=$restricted}}}})}
     New-OnboardingObjectSchema @{
         id=$id;projectId=$id;displayName=@{type='string';minLength=1;maxLength=200}
         status=@{const='active'};backendId=$id;designatedSubscriptionId=$guid
-        classifications=@{type='object';minProperties=1;propertyNames=$id;additionalProperties=$classification}
+        classifications=@{type='object';minProperties=1;propertyNames=$id;additionalProperties=$classification
+            patternProperties=@{'^(?!CYB$).+$'=$nonCyb}}
         supersedes=@{type='null'};retiredAt=@{type='null'}
     }
 }
 
 function Get-OnboardingTokenLimitsSchema {
     $periods=@('Hourly','Daily','Weekly','Monthly','Yearly')
-    $number=@{type=@('integer','null');minimum=1}
     $limit=New-OnboardingObjectSchema @{
-        tokensPerMinute=$number;tokenQuota=$number;tokenQuotaPeriod=@{enum=($periods+@($null))}
+        tokensPerMinute=@{type=@('integer','null');minimum=1;maximum=2147483647}
+        tokenQuota=@{type=@('integer','null');minimum=1;maximum=9007199254740991}
+        tokenQuotaPeriod=@{enum=($periods+@($null))}
     }
     $limit.oneOf=@(
         @{properties=@{tokenQuota=@{type='null'};tokenQuotaPeriod=@{type='null'}}}
@@ -107,4 +112,20 @@ function Get-OnboardingTokenLimitsSchema {
     )
     New-OnboardingObjectSchema @{person=$limit;group=$limit}
 }
-Export-ModuleMember -Function Get-OnboardingSchema, New-OnboardingObjectSchema, Get-OnboardingProjectSchema, Get-OnboardingRegistrySchema, Get-OnboardingResilienceSchema, Get-OnboardingTokenLimitsSchema
+function Get-OnboardingFamilyPolicySchema {
+    $limits=Get-OnboardingTokenLimitsSchema
+    $families=@{}
+    foreach($family in @('haiku','sonnet','opus','fable','mythos')) {
+        $families[$family]=New-OnboardingObjectSchema @{
+            models=@{type='array';minItems=1;uniqueItems=$true;items=@{
+                type='string';pattern="^(?:claude-$family-[A-Za-z0-9][A-Za-z0-9._-]{0,105}|(?!claude-)[A-Za-z0-9][A-Za-z0-9._-]{0,119})`$(?![\s\S])"
+            }}
+            person=$limits.properties.person;group=$limits.properties.group
+        }
+    }
+    New-OnboardingObjectSchema @{
+        aggregateLimits=$limits
+        families=@{type='object';minProperties=1;additionalProperties=$false;properties=$families}
+    }
+}
+Export-ModuleMember -Function Get-OnboardingSchema, New-OnboardingObjectSchema, Get-OnboardingProjectSchema, Get-OnboardingRegistrySchema, Get-OnboardingResilienceSchema, Get-OnboardingTokenLimitsSchema, Get-OnboardingFamilyPolicySchema

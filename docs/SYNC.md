@@ -189,7 +189,7 @@ lease, so they never write at once.
 
 ## Without the Graph application permission
 
-Where no one can grant the application permission (for example a tenant where the operator holds no directory role), a person reads
+Where no one can grant the application permission (shape A in Validation, `docs/PILOT.md`), a person reads
 the groups on a workstation with their own delegated sign-in, and a runner inside the VNet applies
 the snapshot with the same plan, lease and removal limits as the timer. No interactive sign-in
 happens inside the VNet, and no credential travels.
@@ -276,6 +276,30 @@ the application permission has none of these steps.
 
 **4. Delete the runner** when done: the VM, its OS disk and NIC, and its three Cosmos role
 assignments.
+### Apply through the sync Function App without a runner VM
+
+When the sync app already has private-network access and its approved Cosmos roles,
+an operator can apply a delegated snapshot through its conditional snapshotApply timer:
+
+```powershell
+pwsh -File infra/sync/Invoke-SnapshotApplyThroughFunction.ps1 -Subscription <sub> -ResourceGroup <rg> `
+  -FunctionApp <prefix>-sync-func -AppInsights <prefix>-sync-ai -SnapshotPath .env.sync-snapshot.json `
+  -ExpectedSnapshotSha256 <sha256 printed by the snapshot command>
+```
+
+The helper checks the file's SHA-256 before any Azure call, sets the temporary base64
+snapshot/hash and explicit limits, enables snapshotApply, resynchronizes triggers,
+polls for that snapshot's run line, and always disables the function and removes
+temporary settings. The function revalidates tenant, age, schema, size and hash,
+then uses the same registered-group, lease, generation and removal safeguards.
+Keep the ordinary sync timer disabled when its Graph application permission is absent.
+
+Anyone allowed to edit the sync app's settings has the delegated snapshot trust
+described above; SHA-256 is integrity binding, not proof of directory membership.
+Windows command-line transport is limited to 7,000 base64 characters; Cloud Shell's
+helper limit is 96 KiB. This is not a large-fleet transport guarantee. Offline tests
+do not establish this path's live acceptance.
+
 ## Telemetry
 
 `ccof.sync.run.v1` (one per run, the last line): `runId`, `trigger`, `writeMode`, `outcome`

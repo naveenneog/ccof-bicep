@@ -31,6 +31,7 @@ $script:QsDirectory = $PSScriptRoot
 # D2's packaging (step 4) and onboarding Stage 3's project schema (step 5).
 Import-Module (Join-Path $script:RepoRoot 'scripts/Core.D2Code.psm1') -DisableNameChecking
 Import-Module (Join-Path $script:RepoRoot 'scripts/Onboarding.Projects.psm1') -DisableNameChecking
+Import-Module (Join-Path $script:RepoRoot 'scripts/Core.Auth.psm1') -DisableNameChecking
 
 function Invoke-QuickstartSteps {
     <#
@@ -94,7 +95,10 @@ function Get-QsGraph { param([string]$Path) Invoke-QsAz @('rest', '--method', 'g
 
 function Test-QsPrerequisites {
     param($Ctx)
+    $null=New-QsSeedDocuments $Ctx.P
     $p = $Ctx.P; $problems = [System.Collections.Generic.List[string]]::new()
+    $separation = @(Test-CoreAuthSeparation -Registrations $p.registrations)
+    if ($separation.Count) { throw "resolver_app_shared: $($separation[0].detail) (nothing was changed)" }
     $account = Invoke-QsAz @('account', 'show')
     if ($account.tenantId -ne $p.tenantId) { $problems.Add("tenant_mismatch: az is signed in to $($account.tenantId), parameters say $($p.tenantId)") }
     if ($account.id -ne $p.names.subscriptionId) { $problems.Add("subscription_mismatch: az uses $($account.id); run az account set --subscription $($p.names.subscriptionId)") }
@@ -114,7 +118,8 @@ function Test-QsPrerequisites {
         if ($null -eq $gw.api.requestedAccessTokenVersion) { $problems.Add('gateway_api_token_version_unset: set api.requestedAccessTokenVersion explicitly (1 or 2) in the manifest') }
         if (-not @($gw.api.oauth2PermissionScopes | Where-Object { $_.value -ceq $r.gatewayApi.scope -and $_.isEnabled }).Count) { $problems.Add("gateway_api_scope_missing: scope $($r.gatewayApi.scope) is not exposed and enabled") }
     }
-    $dev = @((Get-QsGraph "applications?`$filter=appId eq '$($r.developerSignIn.appId)'").value)[0]
+    $dev = if ($r.developerSignIn.appId -eq $r.gatewayApi.appId) { $gw }
+    else { @((Get-QsGraph "applications?`$filter=appId eq '$($r.developerSignIn.appId)'").value)[0] }
     $warnings = [System.Collections.Generic.List[string]]::new()
     # "Allow public client flows" is needed only by the device code flow (ccof-token login
     # --device-code); WAM and the browser sign-in use the app's public-client redirect URIs
@@ -127,14 +132,28 @@ function Test-QsPrerequisites {
         if ($res.api.requestedAccessTokenVersion -ne 2) { $problems.Add('resolver_api_token_version: the Resolver API needs requestedAccessTokenVersion 2 (ADR-0009)') }
         if (@($res.identifierUris) -notcontains "api://$($r.resolverApi.appId)") { $problems.Add("resolver_api_uri: identifier URI api://$($r.resolverApi.appId) is missing") }
     }
+    $authRegistrations = @{
+        gatewayApi = $r.gatewayApi
+        developerSignIn = @{ appId = $r.developerSignIn.appId; redirectUris = @('http://localhost', 'https://login.microsoftonline.com/common/oauth2/nativeclient') }
+        resolverApi = $r.resolverApi
+    }
+    $roleNames = @{ gatewayApi = 'gateway_api'; developerSignIn = 'developer_sign_in'; resolverApi = 'resolver_api' }
+    foreach ($problem in @(Test-CoreAuthRegistrations -Registrations $authRegistrations -Applications @{ gatewayApi = $gw; developerSignIn = $dev; resolverApi = $res })) {
+        $problems.Add("$($roleNames[$problem.name])_$($problem.code): $($problem.detail)")
+    }
+    $groupDisplayNames=@{}
     foreach ($g in $p.groups) {
         $group = try { Get-QsGraph "groups/$($g.groupId)" } catch { $null }
         if (-not $group -or -not $group.securityEnabled) { $problems.Add("group_missing: $($g.projectId)/$($g.classification) group $($g.groupId) is not an existing security group") }
+        elseif($group.displayName -is [string] -and $group.displayName.Length -ge 1 -and $group.displayName.Length -le 256) {
+            $g.classificationGroupDisplayName=$group.displayName
+            $groupDisplayNames[$g.groupId]=$group.displayName
+        }
     }
     if ($problems.Count) { throw ("prerequisites not met (nothing was changed):`n  - " + ($problems -join "`n  - ")) }
     foreach ($w in $warnings) { Write-Host "WARNING: $w" -ForegroundColor Yellow }
     Write-Host 'Azure roles: Deploy needs Owner, or Contributor plus Role Based Access Control Administrator, on the resource group and on each backend account (docs/QUICKSTART.md, phase 2); ARM refuses the deployment otherwise (AuthorizationFailed).'
-    return @{ apimId = $apimId; apimPrincipalId = $principalId; apimIdentityAppId = $apimAppId; gatewayBaseUrl = $apim.properties.gatewayUrl; gatewayIdentifierUri = @($gw.identifierUris)[0]; warnings = @($warnings) }
+    return @{ apimId = $apimId; apimPrincipalId = $principalId; apimIdentityAppId = $apimAppId; gatewayBaseUrl = $apim.properties.gatewayUrl; gatewayIdentifierUri = @($gw.identifierUris)[0]; classificationGroupDisplayNames=$groupDisplayNames; warnings = @($warnings) }
 }
 
 function New-QsGatewayConfig {
@@ -169,15 +188,88 @@ function Invoke-QsBuild {
     if ($LASTEXITCODE -ne 0) { throw 'render_failed: infra/gateway/render.ts refused the generated configuration; see its message.' }
     Push-Location $script:RepoRoot
     try { npx tsc -p tsconfig.json | Out-Host; if ($LASTEXITCODE -ne 0) { throw 'build_failed: npx tsc -p tsconfig.json failed (run npm ci first).' } } finally { Pop-Location }
-    return @{ policyPath = (Join-Path $gen "gateway/$($Ctx.P.apim.apiId).policy.xml"); gatewayConfig = $configPath }
+    $answers = New-QsWorkbookAnswers -P $Ctx.P -ApimId $checks.apimId -Directory $gen
+    $groupsPath = Join-Path $gen 'workbook.groups.json'
+    @(Get-QsWorkbookGroups -P $Ctx.P) | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath $groupsPath -Encoding utf8NoBOM
+    $workbook = Invoke-QsWorkbookBuild -AnswersPath $answers -GroupsPath $groupsPath -Directory $gen
+    return @{ policyPath = (Join-Path $gen "gateway/$($Ctx.P.apim.apiId).policy.xml"); gatewayConfig = $configPath
+        workbookParametersPath = $workbook.parametersPath; workbookContentSha256 = $workbook.contentSha256 }
+}
+
+function Get-QsWorkbookGroups {
+    # Deploy-only directory metadata; never query Graph while processing a model request.
+    param([Parameter(Mandatory)] $P)
+    $read = @{}
+    foreach ($g in $P.groups) {
+        $id = ([string]$g.groupId).ToLowerInvariant()
+        if (-not $read.ContainsKey($id)) {
+            $actual = try { Get-QsGraph "groups/$id`?`$select=id,displayName" } catch { $null }
+            if ($actual -and $actual.id -ine $id) { throw 'group_identity_mismatch: directory metadata named another object.' }
+            $read[$id] = if ($actual -and $actual.displayName -is [string] -and $actual.displayName.Length) { $actual.displayName } else { $null }
+        }
+        [ordered]@{ projectId = $g.projectId; classification = $g.classification; groupId = $id; displayName = $read[$id] }
+    }
+}
+
+function New-QsWorkbookAnswers {
+    # Reuses WP-WB's answers composer from quickstart-r2; only outputDirectory is machine-local.
+    param([Parameter(Mandatory)] $P, [Parameter(Mandatory)] [string]$ApimId, [Parameter(Mandatory)] [string]$Directory)
+    $sub = $P.names.subscriptionId; $rg = $P.names.resourceGroup; $s = $P.workbook.settings
+    $file = Join-Path $Directory 'workbook.answers.json'
+    [ordered]@{
+        schemaVersion = 1; subscriptionId = $sub; tenantId = $P.tenantId; resourceGroupName = $rg; location = $P.location
+        deploymentName = "$($P.names.deploymentPrefix)-qs-workbook"; workbookResourceName = $P.workbook.resourceName; workbookDisplayName = $P.workbook.displayName
+        workspaceResourceId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.OperationalInsights/workspaces/$($P.names.logAnalyticsWorkspace)"
+        gatewayResourceId = $ApimId
+        reconcilerResourceId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$($P.names.apps.reconciler.functionApp)"
+        rateCardPath = [IO.Path]::GetFullPath((Join-Path $script:QsDirectory $P.rateCard.path))
+        ledgerPath = (Join-Path $script:RepoRoot 'analytics' 'ledger.kql'); outputDirectory = '.env.qs-workbook'
+        defaultProjectId = $s.defaultProjectId; maxRows = $s.maxRows; topUsers = $s.topUsers
+        maxQueryDays = $s.maxQueryDays; budgetLookbackDays = $s.budgetLookbackDays
+        retentionDays = if ($null -ne $P.logRetentionDays) { $P.logRetentionDays } else { 31 }
+    } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+    return $file
+}
+
+function Invoke-QsWorkbookBuild {
+    param([Parameter(Mandatory)] [string]$AnswersPath, [Parameter(Mandatory)] [string]$GroupsPath, [Parameter(Mandatory)] [string]$Directory)
+    Push-Location $Directory
+    try {
+        $output = @(& node (Join-Path $script:RepoRoot 'analytics' 'workbooks' 'chargeback.ts') --answers $AnswersPath --groups $GroupsPath 2>&1 | ForEach-Object { "$_" })
+        $exit = $LASTEXITCODE
+    } finally { Pop-Location }
+    $line = @($output | Where-Object { $_.StartsWith('{') }) | Select-Object -Last 1
+    $result = if ($line) { try { $line | ConvertFrom-Json -AsHashtable } catch { $null } }
+    if ($exit -ne 0 -or -not $result -or $result.outcome -cne 'validated') { throw 'workbook_build_failed: reporting inputs were refused; check answers, rate card and group metadata.' }
+    $parameters = Join-Path $Directory '.env.qs-workbook' 'parameters.json'
+    if (-not (Test-Path -LiteralPath $parameters)) { throw 'workbook_build_failed: validated build wrote no parameters.' }
+    return @{ parametersPath = $parameters; contentSha256 = $result.contentSha256 }
 }
 
 function Invoke-QsDeploy {
     param($Ctx)
+    $null=New-QsSeedDocuments $Ctx.P
     $p = $Ctx.P; $checks = $Ctx.State.completed['1'].outputs; $build = $Ctx.State.completed['2'].outputs
+    # Refuse BEFORE even building deployment parameters: Only 3 must never replace a report with a shell.
+    if (-not $build.workbookParametersPath -or -not (Test-Path -LiteralPath $build.workbookParametersPath)) {
+        throw 'workbook_content_required: run step 2 to rebuild the full report, then rerun step 3.'
+    }
+    $report = (Get-Content -LiteralPath $build.workbookParametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
+    $expectedWorkspace = "/subscriptions/$($p.names.subscriptionId)/resourceGroups/$($p.names.resourceGroup)/providers/Microsoft.OperationalInsights/workspaces/$($p.names.logAnalyticsWorkspace)"
+    if ($report.workbookResourceName.value -cne $p.workbook.resourceName -or
+        $report.workspaceResourceId.value -ine $expectedWorkspace -or
+        $report.workbookContent.value.version -cne 'Notebook/1.0' -or
+        @($report.workbookContent.value.items | Where-Object { $_.type -eq 3 }).Count -lt 9 -or
+        $report.contentTags.value.'ccof-report' -cne 'fixed-price-v1') {
+        throw 'workbook_content_required: generated workbook is incomplete or belongs to another configuration; rerun step 2.'
+    }
+    $verification = @(& node (Join-Path $script:RepoRoot 'analytics' 'workbooks' 'chargeback.ts') --verify $build.workbookParametersPath 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'workbook_content_required: generated content digest failed verification; rerun step 2.' }
     $built = Invoke-QsAz @('bicep', 'build-params', '--file', $Ctx.ParametersPath, '--stdout')
     $doc = $built.parametersJson | ConvertFrom-Json -AsHashtable -Depth 100
     if ($build.policyPath -and (Test-Path -LiteralPath $build.policyPath)) { $doc.parameters.policyXml = @{ value = (Get-Content -LiteralPath $build.policyPath -Raw) } }
+    $doc.parameters.workbookContent = @{ value = $report.workbookContent.value }
+    $doc.parameters.workbookContentTags = @{ value = $report.contentTags.value }
     $doc.parameters.apimIdentityAppId = @{ value = [string]$checks.apimIdentityAppId }
     $file = Join-Path $Ctx.GeneratedDir 'main.parameters.json'
     $doc | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
@@ -246,13 +338,42 @@ function New-QsSeedDocuments {
         onboarding Stage 3 (docs/examples/pilot01-stage3.answers.json), and one backends document per
         backend (src/resolver/backend.ts BackendRecord).
     #>
-    param($P)
-    $projects = [ordered]@{}
+    param($P, [Collections.IDictionary]$ClassificationGroupDisplayNames)
+    $projects = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+    $backendsById=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach($backend in $P.backends) {
+        if($backend.id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$' -or
+           $backend.subscriptionId -cnotmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' -or
+           -not $backendsById.TryAdd($backend.id,$backend)) { throw 'seed_backend_invalid: backend IDs must be unique identifiers with a subscription GUID.' }
+    }
+    if($backendsById.Count -eq 0) { throw 'seed_backend_missing: configure at least one backend.' }
     foreach ($g in $P.groups) {
-        if (-not $projects.Contains($g.projectId)) {
-            $projects[$g.projectId] = [ordered]@{ id = $g.projectId; projectId = $g.projectId; displayName = $g.projectId; status = 'active'; backendId = $P.backends[0].id; designatedSubscriptionId = $P.backends[0].subscriptionId; supersedes = $null; retiredAt = $null; classifications = [ordered]@{} }
+        if (@($g.Keys | Where-Object { $_ -cnotin @('groupId','projectId','classification','displayName','classificationGroupDisplayName','backendId','familyPolicy','personBudget','aggregateBudget','aggregateMode','onboardingMode') }).Count) {
+            throw 'seed_group_invalid: unknown group field (old modelAllowList/tokenLimits are not supported).'
         }
-        $projects[$g.projectId].classifications[$g.classification] = [ordered]@{ groupId = $g.groupId; modelAllowList = $g.modelAllowList; personBudget = $g.personBudget; aggregateBudget = $g.aggregateBudget; aggregateMode = $g.aggregateMode; onboardingMode = $g.onboardingMode; tokenLimits = $g.tokenLimits }
+        if($g.projectId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$' -or $g.classification -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') {
+            throw 'seed_group_invalid: projectId/classification must be identifiers.'
+        }
+        try { Assert-OnboardingFamilyPolicy $g.familyPolicy $g.classification }
+        catch { throw "seed_document_invalid: $($_.Exception.Message)" }
+        $backendId=$g.backendId
+        if($null -eq $backendId -and $backendsById.Count -eq 1) { $backendId=$P.backends[0].id }
+        if($backendId -isnot [string] -or -not $backendsById.ContainsKey($backendId)) { throw 'seed_backend_unknown: choose a registered backendId for every group when multiple backends exist.' }
+        $selectedBackend=$backendsById[$backendId]
+        if (-not $projects.Contains($g.projectId)) {
+            $projects[$g.projectId] = [ordered]@{ id = $g.projectId; projectId = $g.projectId; displayName = $g.projectId; status = 'active'; backendId = $selectedBackend.id; designatedSubscriptionId = $selectedBackend.subscriptionId; supersedes = $null; retiredAt = $null; classifications = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal) }
+        }
+        elseif($projects[$g.projectId].backendId -cne $backendId) { throw 'seed_backend_conflict: all groups of one project must select the same backend.' }
+        if($projects[$g.projectId].classifications.Contains($g.classification)) { throw 'seed_group_duplicate: project/classification must be unique.' }
+        $projects[$g.projectId].classifications[$g.classification] = [ordered]@{ groupId = $g.groupId; familyPolicy = $g.familyPolicy; personBudget = $g.personBudget; aggregateBudget = $g.aggregateBudget; aggregateMode = $g.aggregateMode; onboardingMode = $g.onboardingMode }
+        if($null -ne $g.classificationGroupDisplayName) { $projects[$g.projectId].classifications[$g.classification].classificationGroupDisplayName=$g.classificationGroupDisplayName }
+        if($ClassificationGroupDisplayNames -and $ClassificationGroupDisplayNames.Contains($g.groupId)) {
+            $projects[$g.projectId].classifications[$g.classification].classificationGroupDisplayName=$ClassificationGroupDisplayNames[$g.groupId]
+        }
+    }
+    foreach($project in $projects.Values) {
+        try { $null=ConvertTo-OnboardingProjectDocument ($project | ConvertTo-Json -Depth 64 | ConvertFrom-Json -AsHashtable) }
+        catch { throw "seed_document_invalid: $($_.Exception.Message)" }
     }
     $backends = @($P.backends | ForEach-Object { [ordered]@{ id = $_.id; backendId = $_.id; status = 'active'; apiFormat = 'anthropic-messages'; auth = [ordered]@{ mode = 'managed-identity'; resource = $_.resource } } })
     return @{ projects = @($projects.Values); backends = $backends }
@@ -373,8 +494,12 @@ function Wait-QsSeedResult {
         https://api.applicationinsights.io; Learn, az account get-access-token, retrieved 2026-10-13).
         A run with a failed document is retried by the function's next run a minute later, so a later
         line counts; the last line is returned once it has no failed document, or after three runs.
+        A poll without the line reads the app's function list (FunctionsUrl) and asks for another
+        trigger sync (SyncUrl) while registrySeed is not listed: an instance that started before the new
+        settings registers no registrySeed, and Flex Consumption wakes an app only for the triggers the
+        last sync recorded (live run 2026-10-13: the app scaled to zero and the seed never ran).
     #>
-    param([Parameter(Mandatory)] $Ctx, [Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId)
+    param([Parameter(Mandatory)] $Ctx, [Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId, [string]$FunctionsUrl, [string]$SyncUrl)
     $attempts = if ($Ctx.SeedPollAttempts -is [int]) { $Ctx.SeedPollAttempts } else { 30 }
     $pause = if ($Ctx.PollSeconds -is [int]) { $Ctx.PollSeconds } else { 20 }
     $latest = $null; $lastError = $null
@@ -389,6 +514,13 @@ function Wait-QsSeedResult {
         if ($lines.Count) {
             $latest = $lines[-1]
             if ($latest.outcome -cne 'failed' -or $lines.Count -ge 3) { return $latest }
+        }
+        elseif ($FunctionsUrl -and $SyncUrl) {
+            try {
+                $listed = @((Invoke-QsAz @('rest', '--method', 'get', '--url', $FunctionsUrl)).value | ForEach-Object { [string]$_.name })
+                if (-not ($listed | Where-Object { $_ -like '*/registrySeed' })) { $null = Invoke-QsAz @('rest', '--method', 'post', '--url', $SyncUrl) }
+            }
+            catch { Write-Host "WARNING: checking the sync app's registrySeed trigger failed ($($_.Exception.Message)); polling on." -ForegroundColor Yellow }
         }
         if ($attempt -lt $attempts) { Start-Sleep -Seconds $pause }
     }
@@ -436,9 +568,10 @@ function Invoke-QsSeedThroughFunction {
     $result = $null; $failure = $null; $cleanup = [System.Collections.Generic.List[string]]::new()
     try {
         $null = Invoke-QsAz ($settings + @('set') + $target + @('--settings', "CCOF_SEED_DOCUMENTS=$payload", 'AzureWebJobs.registrySeed.Disabled=false', '--output', 'none'))
-        try { $null = Invoke-QsAz @('rest', '--method', 'post', '--url', "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$app/syncfunctiontriggers?api-version=2024-04-01") }
+        $site = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$app"
+        try { $null = Invoke-QsAz @('rest', '--method', 'post', '--url', "$site/syncfunctiontriggers?api-version=2024-04-01") }
         catch { Write-Host "WARNING: the trigger sync failed ($($_.Exception.Message)); the app's own sync after its restart has to do." -ForegroundColor Yellow }
-        $result = Wait-QsSeedResult -Ctx $Ctx -AppId $appId -SeedId $seedId
+        $result = Wait-QsSeedResult -Ctx $Ctx -AppId $appId -SeedId $seedId -FunctionsUrl "$site/functions?api-version=2024-04-01" -SyncUrl "$site/syncfunctiontriggers?api-version=2024-04-01"
         Write-QsSeedOutcomes $result
     }
     catch { $failure = $_.Exception.Message }
@@ -473,7 +606,7 @@ function Invoke-QsSeed {
     #>
     param($Ctx)
     $p = $Ctx.P
-    $docs = New-QsSeedDocuments -P $p
+    $docs = New-QsSeedDocuments -P $p -ClassificationGroupDisplayNames $Ctx.State.completed['1'].outputs.classificationGroupDisplayNames
     foreach ($project in @($docs.projects)) {
         try { $null = ConvertTo-OnboardingProjectDocument -Project ($project | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable) }
         catch { throw "seed_document_invalid: the projects document $($project.id) built from the groups parameter fails onboarding Stage 3's schema: $($_.Exception.Message)" }
@@ -519,20 +652,57 @@ function Invoke-QsSmoke {
 function Invoke-QsClient {
     param($Ctx)
     $p = $Ctx.P; $r = $p.registrations
+    $documents=New-QsSeedDocuments $p
+    $selection=$p.client
+    if($selection -isnot [Collections.IDictionary] -or
+       @($selection.Keys | Where-Object {$_ -cnotin @('projectId','classification','models')}).Count -or
+       $selection.projectId -isnot [string] -or $selection.classification -isnot [string]) {
+        throw 'client_selection_required: configure client.projectId, classification and explicit model aliases.'
+    }
+    $project=@($documents.projects | Where-Object {$_.projectId -ceq $selection.projectId})
+    $group=@($p.groups | Where-Object {$_.projectId -ceq $selection.projectId -and $_.classification -ceq $selection.classification})
+    if($project.Count -ne 1 -or $group.Count -ne 1) {throw 'client_selection_invalid: select one configured project/classification.'}
+    $backend=@($p.backends | Where-Object {$_.id -ceq $project[0].backendId})[0]
+    $admitted=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($family in $group[0].familyPolicy.families.Values) {
+        foreach($model in $family.models) {
+            if(@($backend.deploymentInferenceGeo.Keys | Where-Object {$_ -ceq $model}).Count -eq 1) {[void]$admitted.Add($model)}
+        }
+    }
+    $aliases=$selection.models
+    if($aliases -isnot [Collections.IDictionary] -or $aliases.Count -ne 4 -or
+       @($aliases.Keys | Where-Object {$_ -cnotin @('default','opus','sonnet','haiku')}).Count) {
+        throw 'client_aliases_invalid: provide default, opus, sonnet and haiku exact deployment IDs.'
+    }
+    foreach($alias in @('default','opus','sonnet','haiku')) {
+        if($aliases[$alias] -isnot [string] -or -not $admitted.Contains($aliases[$alias])) {
+            throw 'client_alias_not_admitted: every alias must name an exact admitted deployment on the selected backend.'
+        }
+    }
     $config = [ordered]@{
         schemaVersion = 1; tenantId = $p.tenantId; clientId = $r.developerSignIn.appId
-        scope = "$($Ctx.State.completed['1'].outputs.gatewayIdentifierUri)/$($r.gatewayApi.scope)"; gatewayUrl = $Ctx.State.completed['3'].outputs.gatewayUrl
+        scope = Get-CoreDeveloperScope -Registrations $r -GatewayIdentifierUri $Ctx.State.completed['1'].outputs.gatewayIdentifierUri; gatewayUrl = $Ctx.State.completed['3'].outputs.gatewayUrl
         helperTtlSeconds = 300; minimumTokenLifetimeSeconds = 360; loginTimeoutSeconds = 120; tokenTimeoutSeconds = 30; disableNonessentialTraffic = $true
-        models = [ordered]@{ default = 'claude-sonnet-5'; opus = 'claude-opus-5'; sonnet = 'claude-sonnet-5'; haiku = 'claude-haiku-4-5'; available = @($p.backends[0].deploymentInferenceGeo.Keys) }
+        models = [ordered]@{ default = $aliases.default; opus = $aliases.opus; sonnet = $aliases.sonnet; haiku = $aliases.haiku; available = @($admitted | Sort-Object -CaseSensitive) }
         desktop = [ordered]@{ profileId = [guid]::NewGuid().ToString(); profileName = 'Claude gateway (quick-start)' }
-        project = [ordered]@{ id = $p.groups[0].projectId; selectorHeader = $p.gateway.projectHeaderName }
+        project = [ordered]@{ id = $selection.projectId; selectorHeader = $p.gateway.projectHeaderName }
     }
+    $candidate=Join-Path $Ctx.GeneratedDir '.env.client-config.pending.json'
+    try {
+        $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $candidate -Encoding utf8NoBOM
+        $validated=& node (Join-Path $script:RepoRoot 'client\bin\validate-config.mjs') $candidate 2>$null
+        if($LASTEXITCODE -ne 0 -or -not $validated) {throw 'client_configuration_invalid: export failed the workstation client schema; existing exports unchanged.'}
+        $config=$validated | ConvertFrom-Json -AsHashtable
+    } finally {Remove-Item -LiteralPath $candidate -ErrorAction SilentlyContinue}
     $file = Join-Path $Ctx.GeneratedDir 'client-config.json'
-    $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+    $onboarding=Join-Path $Ctx.GeneratedDir 'onboarding.json'
+    $text=$config | ConvertTo-Json -Depth 10
+    $text | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+    $text | Set-Content -LiteralPath $onboarding -Encoding utf8NoBOM
     $command = "pwsh -File scripts/client/Set-ClaudeCodeGateway.ps1 -ConfigPath $file -Confirmed"
     if ($ConfigureClient) { & (Join-Path $script:RepoRoot 'scripts/client/Set-ClaudeCodeGateway.ps1') -ConfigPath $file -Confirmed }
     else { Write-Host "Configure this machine: $command" }
-    return @{ clientConfig = $file }
+    return @{ clientConfig = $file; onboardingJson = $onboarding }
 }
 
 function Get-QsSteps {
@@ -554,6 +724,7 @@ $paramsFull = Resolve-QsParametersPath $ParametersPath
 $generated = Join-Path (Split-Path $paramsFull -Parent) '.generated'
 New-Item -ItemType Directory -Path $generated -Force | Out-Null
 $ctx = @{ ParametersPath = $paramsFull; ParametersText = (Get-Content -LiteralPath $paramsFull -Raw); P = (Read-QsParameters $paramsFull); GeneratedDir = $generated }
+$null=New-QsSeedDocuments $ctx.P
 $statePath = Join-Path (Split-Path $paramsFull -Parent) '.env.quickstart.state.json'
 $run = Invoke-QuickstartSteps -Steps (Get-QsSteps) -StatePath $statePath -Context $ctx -From $From -Only $Only
 if ($run.Failed) { exit 1 }

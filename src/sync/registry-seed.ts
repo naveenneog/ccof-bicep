@@ -14,6 +14,7 @@
 // timer and azure.ts supplies the Cosmos containers.
 
 import { checkBackendRecord } from "../resolver/backend.ts";
+import { parseFamilyPolicy } from "../contracts/model-families.ts";
 import { isIdentifier } from "../resolver/freshness.ts";
 import { readHostSettings, readSyncConfig } from "./config.ts";
 import type { SyncConfig } from "./config.ts";
@@ -65,7 +66,7 @@ const PAYLOAD_KEYS = ["backends", "projects", "seedId"];
 // The exact shape of New-QsSeedDocuments (infra/quickstart/Deploy-Quickstart.ps1), which onboarding
 // Stage 3's project schema also fixes (scripts/Onboarding.Schemas.psm1).
 const PROJECT_KEYS = ["id", "projectId", "displayName", "status", "backendId", "designatedSubscriptionId", "supersedes", "retiredAt", "classifications"];
-const CLASSIFICATION_KEYS = ["groupId", "modelAllowList", "personBudget", "aggregateBudget", "aggregateMode", "onboardingMode", "tokenLimits"];
+const CLASSIFICATION_KEYS = ["groupId", "familyPolicy", "classificationGroupDisplayName", "personBudget", "aggregateBudget", "aggregateMode", "onboardingMode"];
 const BUDGET_KEYS = ["amount", "currency", "period"];
 const BACKEND_KEYS = ["id", "backendId", "status", "apiFormat", "auth"];
 // The fields each authentication mode of src/resolver/backend.ts uses, and no other.
@@ -112,6 +113,12 @@ function checkProject(doc: unknown): string[] {
       if (!isIdentifier(code) || !isObject(value)) continue;
       const path = `classifications.${code}`;
       if (!hasOnlyKeys(value, CLASSIFICATION_KEYS)) problems.push(`${path}:unexpected_key`);
+      const policy = parseFamilyPolicy(value.familyPolicy, code);
+      if (!policy.ok) problems.push(`${path}.familyPolicy:${policy.detail}`);
+      if (value.classificationGroupDisplayName !== undefined &&
+          (typeof value.classificationGroupDisplayName !== "string" || value.classificationGroupDisplayName.length < 1 || value.classificationGroupDisplayName.length > 256)) {
+        problems.push(`${path}.classificationGroupDisplayName:invalid`);
+      }
       if (!isBudget(value.personBudget)) problems.push(`${path}.personBudget:invalid`);
       if (value.aggregateBudget !== null && !isBudget(value.aggregateBudget)) problems.push(`${path}.aggregateBudget:invalid`);
       if (value.onboardingMode !== "block" && value.onboardingMode !== "warn") problems.push(`${path}.onboardingMode:invalid`);

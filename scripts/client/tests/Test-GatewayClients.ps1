@@ -218,7 +218,9 @@ try {
         }
     }
     $script:remote = @{ id = '66666666-6666-4666-8666-666666666666'
-        appId = $config.clientId; publicClient = @{ redirectUris = @('http://localhost', 'https://login.microsoftonline.com/common/oauth2/nativeclient') } }
+        appId = $config.clientId; publicClient = @{ redirectUris = @('http://localhost', 'https://login.microsoftonline.com/common/oauth2/nativeclient') }
+        identifierUris = @("api://$($config.clientId)")
+        api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = @(@{ value = 'access_as_user'; isEnabled = $true }) } }
     $script:patches = 0
     $graph = {
         param($Method, $Uri, $Body)
@@ -226,7 +228,9 @@ try {
             if ($script:patches -eq 0) {
                 Assert (@(Get-ChildItem $backupRoot -Recurse -File -Filter 'redirects.json').Count -gt 0) 'Redirect backup must exist before PATCH'
             }
-            $script:patches++; $script:remote.publicClient = ($Body | ConvertFrom-Json -AsHashtable).publicClient; return
+            $patch = $Body | ConvertFrom-Json -AsHashtable
+            Assert (@($patch.Keys).Count -eq 1 -and $patch.Contains('publicClient')) 'Redirect PATCH must never overwrite combined API settings'
+            $script:patches++; $script:remote.publicClient = $patch.publicClient; return
         }
         return $script:remote
     }
@@ -241,6 +245,8 @@ try {
         Assert ($patches -eq 1) 'Expected one Graph PATCH'
         Assert ($remote.publicClient.redirectUris -ccontains "ms-appx-web://Microsoft.AAD.BrokerPlugin/$($config.clientId)") 'Broker URI missing'
         Assert ($remote.publicClient.redirectUris -ccontains 'http://localhost') 'Existing redirect lost'
+        Assert ($remote.identifierUris[0] -ceq "api://$($config.clientId)" -and
+            $remote.api.requestedAccessTokenVersion -eq 2 -and $remote.api.oauth2PermissionScopes[0].isEnabled) 'Combined API identifier, scope or token version lost'
         Assert (Test-Path (Join-Path $backupRoot "$($redirectResult.changeId)/redirects.json")) 'Redirect backup missing'
     }
     Test-Case 'redirect setup is idempotent' {

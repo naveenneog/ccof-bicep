@@ -1,0 +1,18 @@
+{
+  "cosmosAccountName": "sample-cosmos",
+  "cosmosDatabaseName": "ccof",
+  "projectsContainerName": "projects",
+  "entitlementContainerName": "entitlement",
+  "leaseContainerName": "syncLease",
+  "syncSettings": {
+    "SYNC_TENANT_ID": "11111111-1111-4111-8111-111111111111",
+    "SYNC_LEASE_SECONDS": "300",
+    "SYNC_MEMBER_TYPES": "servicePrincipal,user",
+    "SYNC_MAX_REMOVALS_PER_RUN": "5",
+    "SYNC_MAX_REMOVAL_FRACTION": "0.1",
+    "SYNC_GRAPH_MAX_RETRIES": "3",
+    "SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS": "30",
+    "SYNC_GRAPH_TIMEOUT_SECONDS": "30",
+    "SYNC_WRITE_MODE": "apply"
+  }
+}

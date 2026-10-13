@@ -1,14 +1,15 @@
 import { bounded, ClientError, signInRequired } from './errors.mjs';
+import { matchesTokenScope, tokenScope } from './scopes.mjs';
 
 export function createTokenService(config, runtime, { now = Date.now } = {}) {
-  const scopes = [config.scope];
+  const scopes = [tokenScope(config)];
   function checkResult(result, expectedAccount) {
     if (!result || typeof result.accessToken !== 'string' || !result.accessToken ||
         /\s/.test(result.accessToken) || !(result.expiresOn instanceof Date) ||
         !Number.isFinite(result.expiresOn.getTime()) || !result.account?.homeAccountId ||
         result.account.tenantId !== config.tenantId ||
         (expectedAccount && result.account.homeAccountId !== expectedAccount.homeAccountId) ||
-        !result.scopes?.some((scope) => scope.toLowerCase() === config.scope.toLowerCase())) {
+        !result.scopes?.some((scope) => matchesTokenScope(scope, config))) {
       throw new ClientError('invalid_token_result', 'No valid gateway token was returned. Run ccof-token login.');
     }
   }

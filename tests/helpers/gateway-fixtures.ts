@@ -1,0 +1,71 @@
+// A complete, valid gateway configuration with synthetic values, for tests.
+// Real environment values live only in infra/gateway/config/*.json.
+
+export function sampleConfig(): Record<string, any> {
+  return {
+    schemaVersion: 1,
+    configurationId: "test-gateway-config",
+    apim: {
+      subscriptionId: "00000000-0000-0000-0000-000000000001",
+      resourceGroup: "rg-test",
+      serviceName: "apim-test",
+      apiId: "claude-messages",
+      gatewayBaseUrl: "https://apim-test.example.test",
+      apiPath: "anthropic",
+    },
+    entra: {
+      tenantId: "00000000-0000-0000-0000-00000000000a",
+      authorityHost: "https://login.example.test",
+      v1IssuerHost: "https://sts.example.test",
+      audiences: ["api://00000000-0000-0000-0000-00000000000b", "00000000-0000-0000-0000-00000000000b"],
+      delegatedScope: "access_as_user",
+      delegatedClientAppIds: ["00000000-0000-0000-0000-00000000000f"],
+      testIdentities: { allowAppOnlyTokens: true, clientAppIds: ["00000000-0000-0000-0000-00000000000c"], appRole: "Gateway.Test" },
+    },
+    admission: {
+      perPerson: { calls: 120, renewalPeriodSeconds: 60 },
+      resolverMisses: { calls: 200, renewalPeriodSeconds: 1, maxConcurrent: 100 },
+    },
+    resolver: {
+      url: "https://resolver.example.test/api/resolve",
+      tokenAudience: "00000000-0000-0000-0000-00000000000d",
+      timeoutSeconds: 10,
+      projectHeaderName: "x-test-project",
+    },
+    entitlementCache: {
+      keyVersion: 3,
+      cachingType: "internal",
+      allowTtlSeconds: 120,
+      refusalTtlSeconds: 30,
+      lastKnownGoodGraceSeconds: 3600,
+      refreshBackoffSeconds: 45,
+      unavailableRetryAfterSeconds: 5,
+    },
+    tokenLimits: {
+      estimatePromptTokens: false,
+      headers: {
+        personRemainingQuota: "x-test-person-quota-remaining",
+        personRemainingTokens: "x-test-person-tokens-remaining",
+        groupRemainingQuota: "x-test-group-quota-remaining",
+        groupRemainingTokens: "x-test-group-tokens-remaining",
+        tokensConsumed: "x-test-tokens-consumed",
+      },
+    },
+    backends: [
+      {
+        id: "backend-cross-tenant",
+        credential: {
+          type: "crossTenantClientCredentials",
+          tenantId: "00000000-0000-0000-0000-0000000000f1",
+          clientId: "00000000-0000-0000-0000-0000000000f2",
+          clientSecretNamedValue: "test-backend-client-secret",
+          authorityHost: "https://login.example.test",
+          scope: "https://models.example.test/.default",
+          tokenRequestTimeoutSeconds: 10,
+        },
+      },
+    ],
+    inferenceGeo: { "backend-cross-tenant": {}, "backend-by-data": { "model-a": "global", "model-b": "us" } },
+    forwarding: { defaultAnthropicVersion: "2023-06-01" },
+  };
+}

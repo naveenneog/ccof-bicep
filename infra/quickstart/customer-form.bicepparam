@@ -6,7 +6,7 @@
 // Every value that says REPLACE is a customer decision; the filled copy is the deployment's whole
 // configuration (from the repository root):
 //   pwsh -File infra/quickstart/Deploy-Quickstart.ps1 -ParametersPath infra/quickstart/.env.customer.bicepparam -WhatIfOnly
-// Step 1 of that script refuses while any REPLACE value is left, and reads the APIM, the three app
+// Step 1 of that script refuses while any REPLACE value is left, and reads the APIM, the two app
 // registrations and the groups back before anything is created. The filled copy holds the customer's
 // tenant, subscription and object ids: keep it out of git and out of public repositories.
 // Sections 1-5: the customer's decisions. Section 6: defaults from the tested sample.
@@ -112,9 +112,8 @@ param apim = {
 // the account is in another subscription. url: https://<the account's custom subdomain>.services.ai.azure.com/anthropic
 // deploymentInferenceGeo: one key per Foundry DEPLOYMENT NAME, exactly as listed by
 //   az cognitiveservices account deployment list -g <resource group> -n <account> -o table
-// with the value 'global' or 'us'. Step 8 writes the developers' client configuration with the names
-// claude-sonnet-5, claude-opus-5 and claude-haiku-4-5 (Deploy-Quickstart.ps1, Invoke-QsClient): name
-// the Foundry deployments so, or edit the generated client-config.json.
+// with the value 'global' or 'us'. Step 8 exports only exact admitted deployment names from the
+// selected project's backend; set client.models below to explicit deployed/admitted IDs.
 // assignCognitiveServicesUser: false when the APIM identity already holds Cognitive Services User on
 // the account (ARM refuses a duplicate assignment).
 var foundryAccount = 'REPLACE-foundry-account-name'
@@ -133,21 +132,27 @@ param backends = [
 
 // ---- 4. ENTRA (created by the customer's Entra administrator before the deployment) -----------------
 // Application (client) IDs: Entra admin center > App registrations > the app > Overview.
-// Gateway API: scope access_as_user exposed; manifest requestedAccessTokenVersion 1.
+// Gateway API and Developer Sign-in share one app by default: scope access_as_user exposed;
+// manifest requestedAccessTokenVersion 2. Resolver remains a distinct confidential API registration.
 // Developer Sign-in: Allow public client flows Yes; redirect URIs http://localhost and
 //   https://login.microsoftonline.com/common/oauth2/nativeclient; delegated permission access_as_user.
 // Resolver API: Application ID URI api://<its appId>; manifest requestedAccessTokenVersion 2.
+var developerGatewayAppId = 'REPLACE-developer-gateway-app-id'
 param registrations = {
-  gatewayApi: { appId: 'REPLACE-gateway-api-app-id', scope: 'access_as_user', accessTokenVersion: 1 }
-  developerSignIn: { appId: 'REPLACE-developer-sign-in-app-id' }
+  gatewayApi: { appId: developerGatewayAppId, scope: 'access_as_user', accessTokenVersion: 2 }
+  developerSignIn: { appId: developerGatewayAppId }
   resolverApi: { appId: 'REPLACE-resolver-api-app-id' }
 }
 
 // One entry per existing Entra security group (Entra admin center > Groups > the group > Object ID).
 // projectId and classification: letters, digits, '-' and '_' (up to 80 characters). One project can
 // have several classifications, each with its own group; the sample below has two classifications of
-// project 1 and one of project 2. modelAllowList: deployment names from section 3.
-// tokenLimits: tokens per minute and quota, per person and per group. Budgets (CCU) are recorded but
+// project 1 and one of project 2. backendId selects section 3's backend, consistently per project.
+// familyPolicy: exact model admission, aggregate limits retained verbatim, plus family ceilings.
+// Removing a family revokes it; null family limits do not revoke exact models. Fable/Mythos may be
+// added ONLY under exact classification CYB after real deployment IDs and reachability are established.
+// No Fable/Mythos IDs or prices are supplied. These samples are not live customer configuration.
+// Budgets (CCU) are recorded but
 // not enforced while resolver.budgetEnforcement is 'token-limits-only' (section 6).
 var project1 = 'REPLACE-project-1-id'
 var project2 = 'REPLACE-project-2-id'
@@ -155,12 +160,18 @@ param groups = [
   {
     groupId: 'REPLACE-group-1-object-id'
     projectId: project1
+    backendId: 'foundry-1'
     classification: 'STD'
     displayName: 'Claude project 1 standard'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 500000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 25000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: { amount: 2000000, currency: 'CCU', period: 'monthly' }
@@ -170,12 +181,19 @@ param groups = [
   {
     groupId: 'REPLACE-group-2-object-id'
     projectId: project1
+    backendId: 'foundry-1'
     classification: 'PRM'
     displayName: 'Claude project 1 premium'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5', 'claude-opus-5', 'claude-opus-5-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 5000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        opus: { models: ['claude-opus-5', 'claude-opus-5-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 100000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: { amount: 1500000, currency: 'CCU', period: 'monthly' }
@@ -185,12 +203,18 @@ param groups = [
   {
     groupId: 'REPLACE-group-3-object-id'
     projectId: project2
+    backendId: 'foundry-1'
     classification: 'STD'
     displayName: 'Claude project 2 standard'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 500000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 25000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: null
@@ -198,6 +222,15 @@ param groups = [
     onboardingMode: 'warn'
   }
 ]
+
+// Step 8 exports onboarding.json and compatible client-config.json for this selected project/group.
+// Every alias must be an exact admitted deployment ID on the selected project's backend.
+// To export another project/classification, change this selection and rerun -Only 8.
+param client = {
+  projectId: project1
+  classification: 'PRM'
+  models: { default: 'claude-sonnet-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5', opus: 'claude-opus-5' }
+}
 
 // ---- 5. SIZING ----------------------------------------------------------------------------------
 param cosmos = { capacityMode: 'serverless', autoscaleMaxThroughput: 1000, zoneRedundant: false }
@@ -261,7 +294,7 @@ param rateCard = { path: '../../config/rate-card.json', contractSchedulePath: '.
 // readerPrincipalIds: optional object ids of the people or groups who open the chargeback workbook.
 // resourceName: a GUID, the workbook's resource name (any new GUID works: New-Guid in PowerShell).
 param workbook = {
-  resourceName: '5d0b7e43-6f2e-4b8e-9a51-0c6a2f3d9b11'
+  resourceName: 'REPLACE-00000000-0000-4000-8000-000000010000'
   displayName: 'Claude gateway chargeback'
   readerPrincipalIds: []
   settings: { defaultProjectId: '*', maxRows: 1000, topUsers: 25, maxQueryDays: 62, budgetLookbackDays: 31 }

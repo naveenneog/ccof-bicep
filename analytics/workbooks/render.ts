@@ -8,10 +8,13 @@ export interface RenderParameters {
   project: string;
   from: string | null;
   to: string | null;
+  group?: string;
+  developer?: string;
+  model?: string;
 }
 
 const utc = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
-const parameterToken = /\{(?:Period|Project|TimeRange)[:}]/;
+const parameterToken = /\{(?:Period|Project|TimeRange|Group|Developer|Model)[:}]/;
 // Person, request and scope identifiers stay in the workspace; verification prints aggregates only.
 const counted = ["requests", "pricedRequests", "partialRequests", "unpricedRequests", "unattributedRequests",
   "observedRequests", "noUsageRequests", "knownCostRequests", "runs", "statesWritten"];
@@ -26,6 +29,11 @@ const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
 export function validateRenderParameters(value: RenderParameters): RenderParameters {
   if (!["month", "previous", "custom"].includes(value.period)) throw new Error("period: invalid");
   if (typeof value.project !== "string" || !value.project || /[\u0000-\u001f]/.test(value.project)) throw new Error("project: required");
+  for (const key of ["group", "developer", "model"] as const) {
+    if (value[key] !== undefined && (typeof value[key] !== "string" || !value[key] || /[\u0000-\u001f]/.test(value[key]))) {
+      throw new Error(`${key}: nonempty_filter_required`);
+    }
+  }
   const custom = value.period === "custom";
   for (const key of ["from", "to"] as const) {
     if (custom ? !utc.test(value[key] ?? "") : value[key] !== null) throw new Error(`${key}: ${custom ? "utc_instant_required" : "custom_only"}`);
@@ -39,6 +47,9 @@ export function renderQuery(query: string, parameters: RenderParameters): string
   const rendered = query
     .replaceAll("{Period:base64}", base64(p.period))
     .replaceAll("{Project:base64}", base64(p.project))
+    .replaceAll("{Group:base64}", base64(p.group ?? "*"))
+    .replaceAll("{Developer:base64}", base64(p.developer ?? "*"))
+    .replaceAll("{Model:base64}", base64(p.model ?? "*"))
     .replaceAll("{TimeRange:start}", `datetime(${p.from ?? "null"})`)
     .replaceAll("{TimeRange:end}", `datetime(${p.to ?? "null"})`);
   if (parameterToken.test(rendered)) throw new Error("render: unresolved_parameter");

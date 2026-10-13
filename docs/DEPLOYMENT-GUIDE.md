@@ -20,12 +20,12 @@ flowchart TB
         DEV["Developer client<br/>(Claude Code CLI / VS Code / Desktop)"]
     end
 
-    subgraph VNET["ccof-poc-vnet (10.42.0.0/16)"]
+    subgraph VNET["sample-pilot-vnet (10.42.0.0/16)"]
         subgraph SNETAPIM["snet-apim (10.42.1.0/24)"]
-            APIM["ccof-poc-apim<br/>APIM StandardV2<br/>validate-azure-ad-token"]
+            APIM["sample-pilot-apim<br/>APIM StandardV2<br/>validate-azure-ad-token"]
         end
         subgraph SNETFUNC["snet-functions (10.42.3.0/24)"]
-            FUNC["ccof-poc-resolver-func<br/>Flex Consumption (FC1)<br/>Node.js resolver"]
+            FUNC["sample-pilot-resolver-func<br/>Flex Consumption (FC1)<br/>Node.js resolver"]
         end
         subgraph SNETPE["snet-private-endpoints (10.42.2.0/24)"]
             PEFOUNDRY["Private endpoint<br/>-> Foundry (cross-tenant)"]
@@ -34,13 +34,13 @@ flowchart TB
         end
     end
 
-    subgraph TENANTB["Backend tenant"]
-        FOUNDRY["Foundry account (Claude)<br/>disableLocalAuth: true"]
+    subgraph TENANTB["Tenant REPLACE-id (Validation)"]
+        FOUNDRY["ai-sample-hub530569751908<br/>Foundry account<br/>disableLocalAuth: true"]
     end
 
-    subgraph SAMETENANT["Same tenant as the VNet"]
-        COSMOS["ccof-poc-cosmos<br/>Serverless, 5 containers<br/>disableLocalAuth: true"]
-        STORAGE["ccofpocfnstor<br/>Function deployment package<br/>allowSharedKeyAccess: false"]
+    subgraph SAMETENANT["Same tenant as the VNet (REPLACE-id)"]
+        COSMOS["sample-pilot-cosmos<br/>Serverless, 5 containers<br/>disableLocalAuth: true"]
+        STORAGE["samplepilotfnstor<br/>Function deployment package<br/>allowSharedKeyAccess: false"]
     end
 
     DEV -- "HTTPS + Entra bearer token" --> APIM
@@ -75,7 +75,7 @@ each service identity holds.
 | Platform deployer | None | Contributor on the platform resource group, plus Role Based Access Control Administrator or User Access Administrator there for role assignments. Creating resource groups and registering resource providers needs Contributor on the subscription | 1, 2, 3, 5, 6, 7a, 8, 9, 10, 12 | The owner: Owner on the tenant root management group, inherited |
 | Entra privileged administrator | Privileged Role Administrator, activated through Privileged Identity Management (PIM) for the task. Global Administrator also works | None | 7b, once per tenant | The owner, by PIM activation |
 | Entra application administrator | Cloud Application Administrator or Application Administrator. The owner of a registration can change that registration. Creating a registration needs no role while "Users can register applications" is Yes | None | 4a, 9 (registration), 13 (redirect URIs) | The owner, as owner of both registrations |
-| Backend owner, per designated subscription | None in the same-tenant case. In the cross-tenant case, Application Administrator in the backend's tenant (`docs/PERMISSIONS.md` #10) | Role Based Access Control Administrator or User Access Administrator on the Foundry account, to assign Cognitive Services User | 3 (approval), 4 | The owner, in the backend's tenant |
+| Backend owner, per designated subscription | None in the same-tenant case. In the cross-tenant case, Application Administrator in the backend's tenant (`docs/PERMISSIONS.md` #10) | Role Based Access Control Administrator or User Access Administrator on the Foundry account, to assign Cognitive Services User | 3 (approval), 4 | The owner, in tenant `REPLACE-id-...` |
 | Onboarding operator | None while "Users can create security groups" is Yes; otherwise Groups Administrator | Cosmos data-plane write on `projects`, from a runner inside the VNet | 11 | The coordinator, for the pilot |
 | Group owner (project lead) | None. Owner of the classification group; "Only the group's owners can update membership" for non-administrators | None | Adds and removes members after step 11 | The owner |
 | Developer | None | None | Signs in from Claude Code or Claude Desktop (13) | The owner |
@@ -96,7 +96,7 @@ Sources:
 ### Tenant settings
 
 These settings decide whether steps 4a, 11 and 13 need a directory role. Each was read on
-2026-10-11 from the gateway tenant (`GET /policies/authorizationPolicy`).
+2026-10-11 from tenant `REPLACE-id-...` (`GET /policies/authorizationPolicy`).
 
 | Setting | Proof of concept value | When it is turned off |
 |---|---|---|
@@ -126,7 +126,7 @@ is added to this guide when its pull request merges.
 | 5 | Cosmos DB registry and data-plane role assignments | Platform deployer | Contributor on the resource group. Its `*` actions include `Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments/write` (role definition read 2026-10-11) | `az cosmosdb sql role assignment list` | Done, 2026-10-09 |
 | 6 | Resolver Function App | Platform deployer | Contributor on the resource group | The function answers `/api/resolve` | Done, 2026-10-10 |
 | 7 | Group sync identity (7a) and Microsoft Graph permission (7b) | 7a platform deployer; 7b Entra privileged administrator | 7a: Managed Identity Contributor or Contributor on the resource group. 7b: Privileged Role Administrator | `GET /servicePrincipals/<id>/appRoleAssignments` lists `GroupMember.Read.All` | Done, 2026-10-11 |
-| 8 | Telemetry: Log Analytics workspace, APIM diagnostics | Platform deployer | Contributor on the resource group | Gateway records in `ccof-poc-law` | Live, 2026-10-11; pull request #3 in review |
+| 8 | Telemetry: Log Analytics workspace, APIM diagnostics | Platform deployer | Contributor on the resource group | Gateway records in `sample-pilot-law` | Live, 2026-10-11; pull request #3 in review |
 | 9 | Resolver authentication: App Service Authentication and registration `ccof-resolver-api` (ADR-0009) | Platform deployer; Entra application administrator for the registration | Contributor on the Function App | A call without a token returns 401 | In review, pull request #6 |
 | 10 | Group sync Function App | Platform deployer | Contributor on the resource group; Cosmos data-plane roles as in step 5 | A run reads the registered groups and writes `entitlement` | In progress, branch `wp/sync` |
 | 11 | Classification groups and project registration (onboarding Stages 1 and 3) | Onboarding operator | Stage 1: as in Tenant settings. Stage 3: Cosmos data-plane write on `projects` | The groups exist with their owners; the `projects` document reads back | In review, pull request #2 |
@@ -142,13 +142,21 @@ which roles they hold against each stage's requirements, and what to run next or
 pwsh -NoProfile -File scripts/Get-DeploymentPlan.ps1 -AnswersPath <answers.json> -CheckpointPath <checkpoint.json> -SubscriptionId <subscription id>
 ```
 
+For the first deployment there is no checkpoint record yet. Add `-NewDeployment`: without it the
+report refuses a `-CheckpointPath` that does not exist (`checkpoint_not_found`,
+`scripts/Get-DeploymentPlan.ps1:120`), and with it every stage is planned from an empty record.
+
+```powershell
+pwsh -NoProfile -File scripts/Get-DeploymentPlan.ps1 -AnswersPath <answers.json> -CheckpointPath <checkpoint.json> -SubscriptionId <subscription id> -NewDeployment
+```
+
 The report sends only GET requests and writes no file except the plan object named by `-JsonPath`.
 Its rows, verdicts and rules are in `docs/DEPLOYMENT-STAGES.md`, Plan the deployment.
 
 ## Step 1 — Resource group and resource providers
 
 ```powershell
-az group create --name ccof-poc-rg --location eastus2
+az group create --name sample-pilot-rg --location eastus2
 
 # Needed by this PoC's resources - confirmed live, not guessed (docs/STATUS.md):
 az provider register --namespace Microsoft.Network
@@ -167,9 +175,9 @@ Deploys `infra/poc/main.bicep`: a VNet with three subnets, the NSG with Microsof
 
 ```powershell
 az deployment group create `
-  --resource-group ccof-poc-rg `
+  --resource-group sample-pilot-rg `
   --template-file infra/poc/main.bicep `
-  --parameters namePrefix=ccof-poc apimPublisherEmail=<you>@example.com `
+  --parameters namePrefix=sample-pilot apimPublisherEmail=<you>@example.com `
                existingFoundryAccountResourceId=<your Foundry account's resource ID>
 ```
 
@@ -180,7 +188,7 @@ az deployment group create `
 > Phase 1). Pass `apimZones=['1','2','3']` and `apimCapacity=3` once your subscription supports it.
 
 **Verify**: the deployment output includes `apimGatewayUrl` (e.g.
-`https://ccof-poc-apim.azure-api.net`) and `apimPrincipalId` (APIM's managed identity, used in Step 4).
+`https://sample-pilot-apim.azure-api.net`) and `apimPrincipalId` (APIM's managed identity, used in Step 4).
 
 ![APIM overview blade showing Standard v2 tier, 1 scale unit, and the private (External) virtual network setting](images/01-apim-overview.png)
 
@@ -242,10 +250,21 @@ gotcha: never splice a `{{named-value}}` secret directly inside a C# string lite
 
 ## Step 4a — Entra App Registrations (developer-facing auth)
 
-Separate from Step 4's backend auth: two app registrations, created once per gateway, not per project
-(`docs/CHECKPOINT-SETUP.md` Stage 0a) — a confidential **Gateway API** app (its App ID URI is the
-audience APIM's `validate-azure-ad-token` policy checks every request against) and a public-client
-**Developer Sign-in** app (what Claude Code CLI/VS Code/Desktop actually sign a developer into).
+Separate from Step 4's backend auth: **one combined developer/gateway registration by default**
+(ADR-0026), created once per gateway, not per project. Configure Expose an API and public-client
+Authentication on the same app: identifier URI `api://<appId>`, enabled `access_as_user` scope,
+v2 access tokens, browser/native/WAM redirects, optional device-code public-client flows.
+Use that app ID for both gateway and developer role records.
+
+The Resolver API in Step 9 is a **second mandatory** registration with a separate audience, no
+public-client redirect or delegated scope, and APIM-only identity checks (ADR-0009). A third
+registration is optional, only for a cross-tenant backend. No backend identity goes to developers.
+See [Entra prerequisites](QUICKSTART-PREREQUISITES.md) for consent and self-resource token checks.
+
+The screenshots below describe the **legacy separate-client deployment**, still supported:
+two developer-facing registrations (`docs/CHECKPOINT-SETUP.md` Stage 0a) — a **Gateway API** app
+(its App ID URI is the audience APIM's token validation checks) and a public-client
+**Developer Sign-in** app (what Claude Code CLI/VS Code/Desktop sign a developer into).
 
 ![The Gateway API app registration's Overview blade, showing its Application (client) ID and Directory (tenant) ID](images/13-entra-gateway-api-app.png)
 
@@ -259,7 +278,7 @@ audience APIM's `validate-azure-ad-token` policy checks every request against) a
 
 ```powershell
 .\infra\poc\create-cosmos-containers.ps1 `
-  -ResourceGroup ccof-poc-rg -AccountName ccof-poc-cosmos -SubscriptionId <your sub id>
+  -ResourceGroup sample-pilot-rg -AccountName sample-pilot-cosmos -SubscriptionId <your sub id>
 ```
 
 Creates the serverless account and all 5 containers from `docs/LLD.md` §1
@@ -276,7 +295,7 @@ Creates the serverless account and all 5 containers from `docs/LLD.md` §1
 > roles:
 > ```powershell
 > az cosmosdb sql role assignment create `
->   --account-name ccof-poc-cosmos --resource-group ccof-poc-rg `
+>   --account-name sample-pilot-cosmos --resource-group sample-pilot-rg `
 >   --role-definition-id 00000000-0000-0000-0000-000000000002 `
 >   --principal-id <the reader/writer's principal id> --scope "/"
 > ```
@@ -291,12 +310,12 @@ npm run build   # tsc -p tsconfig.json - produces dist/, needed since Azure's No
                 # does not run .ts natively the way local Node 26+ does (ADR-0003)
 
 az deployment group create `
-  --resource-group ccof-poc-rg `
+  --resource-group sample-pilot-rg `
   --template-file infra/poc/phase3-cosmos-function.bicep `
-  --parameters namePrefix=ccof-poc existingVnetName=ccof-poc-vnet
+  --parameters namePrefix=sample-pilot existingVnetName=sample-pilot-vnet
 ```
 
-Deploys `ccof-poc-resolver-func` on the **Flex Consumption (FC1)** plan — chosen over Premium EP1
+Deploys `sample-pilot-resolver-func` on the **Flex Consumption (FC1)** plan — chosen over Premium EP1
 specifically for cost: FC1 is true pay-per-use with no fixed monthly floor unless
 `alwaysReadyInstanceCount` is raised above its default of 0, versus EP1's researched ~$150/month fixed
 cost for one always-warm instance (`docs/STATUS.md` Phase 3; Microsoft Learn, "Create and manage
@@ -307,16 +326,16 @@ granted Storage role was found live to attach to the wrong principal — verify 
 `az functionapp identity show`, not just the Bicep output, before trusting it):
 
 ```powershell
-$principalId = az functionapp identity show --name ccof-poc-resolver-func `
-  --resource-group ccof-poc-rg --query principalId -o tsv
+$principalId = az functionapp identity show --name sample-pilot-resolver-func `
+  --resource-group sample-pilot-rg --query principalId -o tsv
 
-az cosmosdb sql role assignment create --account-name ccof-poc-cosmos `
-  --resource-group ccof-poc-rg --role-definition-id 00000000-0000-0000-0000-000000000002 `
+az cosmosdb sql role assignment create --account-name sample-pilot-cosmos `
+  --resource-group sample-pilot-rg --role-definition-id 00000000-0000-0000-0000-000000000002 `
   --principal-id $principalId --scope "/"
 
 az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal `
   --role "Storage Blob Data Owner" `
-  --scope "/subscriptions/<sub>/resourceGroups/ccof-poc-rg/providers/Microsoft.Storage/storageAccounts/ccofpocfnstor"
+  --scope "/subscriptions/<sub>/resourceGroups/sample-pilot-rg/providers/Microsoft.Storage/storageAccounts/samplepilotfnstor"
 ```
 
 ![Cosmos DB's Access control (IAM) blade confirming the Function App's managed identity holds the Data Contributor data-plane role](images/12-cosmos-iam-data-contributor.png)
@@ -336,20 +355,20 @@ Copy-Item dist, host.json, package.json, package-lock.json <staging> -Recurse
 cd <staging>; npm ci --omit=dev
 Compress-Archive -Path dist, host.json, package.json, package-lock.json, node_modules -DestinationPath deploy.zip -Force
 
-az functionapp deployment source config-zip --resource-group ccof-poc-rg `
-  --name ccof-poc-resolver-func --src deploy.zip
+az functionapp deployment source config-zip --resource-group sample-pilot-rg `
+  --name sample-pilot-resolver-func --src deploy.zip
 ```
 
 Verify against `/admin/functions` (master key via `az functionapp keys list`, not Kudu — Kudu's
 `vfs`/`logstream` endpoints 404 on Flex Consumption), then with a real HTTP call:
 
 ```powershell
-$key = az functionapp keys list --name ccof-poc-resolver-func --resource-group ccof-poc-rg --query masterKey -o tsv
-Invoke-RestMethod "https://ccof-poc-resolver-func.azurewebsites.net/admin/functions?code=$key"
+$key = az functionapp keys list --name sample-pilot-resolver-func --resource-group sample-pilot-rg --query masterKey -o tsv
+Invoke-RestMethod "https://sample-pilot-resolver-func.azurewebsites.net/admin/functions?code=$key"
 
-$fkey = az functionapp function keys list --name ccof-poc-resolver-func --resource-group ccof-poc-rg `
+$fkey = az functionapp function keys list --name sample-pilot-resolver-func --resource-group sample-pilot-rg `
   --function-name resolve --query default -o tsv
-Invoke-WebRequest "https://ccof-poc-resolver-func.azurewebsites.net/api/resolve?code=$fkey" -Method Post `
+Invoke-WebRequest "https://sample-pilot-resolver-func.azurewebsites.net/api/resolve?code=$fkey" -Method Post `
   -Body '{"personId":"...","subscriptionId":"..."}' -ContentType application/json
 ```
 
@@ -370,9 +389,9 @@ application permission.
 
 | Item | Value |
 |---|---|
-| Identity | User-assigned managed identity `ccof-poc-sync-id`: principal `<sync-identity-principal-id>`, client `<sync-identity-client-id>` |
+| Identity | User-assigned managed identity `sample-pilot-sync-id`: principal `00000000-0000-4000-8000-000000000011`, client `00000000-0000-4000-8000-000000000100` |
 | Permission | Microsoft Graph application permission `GroupMember.Read.All`, app role `98830695-27a2-44f7-8c18-0c3ebc9698f6` (the same in every tenant). Its description in Microsoft Graph: "Allows the app to read memberships and basic group properties for all groups without a signed-in user." It grants no write access |
-| Microsoft Graph service principal | `<graph-service-principal-object-id>` in the gateway tenant. The id differs per tenant: `az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv` |
+| Microsoft Graph service principal | `00000000-0000-4000-8000-000000000101` in tenant `REPLACE-id-...`. The id differs per tenant: `az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv` |
 | Why a user-assigned identity | It exists before the sync app, so the grant precedes the app's first token request. Its ids survive redeployment of the app. A re-created system-assigned identity gets new ids (ADR-0009, "Consequences") |
 
 **Order.** The grant precedes the sync app's first Microsoft Graph token request (step 10). Azure
@@ -388,7 +407,7 @@ Contributor includes `Microsoft.ManagedIdentity/userAssignedIdentities/write` (r
 2026-10-11).
 
 ```powershell
-az identity create -n ccof-poc-sync-id -g ccof-poc-rg --subscription <subscription id> --location eastus2 `
+az identity create -n sample-pilot-sync-id -g sample-pilot-rg --subscription <subscription id> --location eastus2 `
   --tags purpose=ccof-entitlement-sync owner=coordinator packet=M1.7-WP-SYNC
 ```
 
@@ -412,26 +431,26 @@ to a managed identity. Microsoft documents Azure CLI and Microsoft Graph PowerSh
 3. **Grant.** One line, which works in Cloud Shell's Bash and PowerShell:
 
    ```bash
-   az rest --method post --url https://graph.microsoft.com/v1.0/servicePrincipals/<sync-identity-principal-id>/appRoleAssignments --headers Content-Type=application/json --body '{"principalId":"<sync-identity-principal-id>","resourceId":"<graph-service-principal-object-id>","appRoleId":"98830695-27a2-44f7-8c18-0c3ebc9698f6"}'
+   az rest --method post --url https://graph.microsoft.com/v1.0/servicePrincipals/00000000-0000-4000-8000-000000000011/appRoleAssignments --headers Content-Type=application/json --body '{"principalId":"00000000-0000-4000-8000-000000000011","resourceId":"00000000-0000-4000-8000-000000000101","appRoleId":"98830695-27a2-44f7-8c18-0c3ebc9698f6"}'
    ```
 
    On a Windows workstation the body goes in a file (`--body @grant.json`), because `az.cmd`
    re-parses quoted arguments through `cmd.exe`.
 
    The response contains `"appRoleId": "98830695-27a2-44f7-8c18-0c3ebc9698f6"`,
-   `"principalDisplayName": "ccof-poc-sync-id"` and `"resourceDisplayName": "Microsoft Graph"`.
+   `"principalDisplayName": "sample-pilot-sync-id"` and `"resourceDisplayName": "Microsoft Graph"`.
 
 ### 7c — Verification
 
 - **Command:**
-  `az rest --method get --url https://graph.microsoft.com/v1.0/servicePrincipals/<sync-identity-principal-id>/appRoleAssignments`
+  `az rest --method get --url https://graph.microsoft.com/v1.0/servicePrincipals/00000000-0000-4000-8000-000000000011/appRoleAssignments`
   lists one assignment with app role `98830695-...`. Global Reader is enough to run it.
 - **Portal:** Entra admin center → Entra ID → Enterprise apps → All applications, Application type
-  filter set to Managed Identities → `ccof-poc-sync-id` → Permissions → Admin consent tab.
+  filter set to Managed Identities → `sample-pilot-sync-id` → Permissions → Admin consent tab.
 
 ### Revocation
 
-Entra admin center → Enterprise apps → `ccof-poc-sync-id` → Permissions → Admin consent → the
+Entra admin center → Enterprise apps → `sample-pilot-sync-id` → Permissions → Admin consent → the
 permission's **…** menu → **Revoke permission** (Microsoft Learn, "Review permissions granted to
 enterprise applications"). The command form is
 `az rest --method delete --url https://graph.microsoft.com/v1.0/servicePrincipals/<principal id>/appRoleAssignments/<assignment id>`.
@@ -458,11 +477,11 @@ Without it, the sync runs on a person's delegated sign-in and is started by hand
 npm test
 
 # Cosmos registry, directly:
-az cosmosdb sql container list --account-name ccof-poc-cosmos --resource-group ccof-poc-rg `
+az cosmosdb sql container list --account-name sample-pilot-cosmos --resource-group sample-pilot-rg `
   --database-name ccof --query "[].id" -o tsv
 
 # The gateway's network path (works end-to-end today, including the cross-tenant backend auth leg):
-curl -X POST https://ccof-poc-apim.azure-api.net/anthropic/v1/messages `
+curl -X POST https://sample-pilot-apim.azure-api.net/anthropic/v1/messages `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer <a real developer Entra token - see below>" `
   -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'
@@ -503,7 +522,7 @@ hypothetical — see `docs/STATUS.md` for the full chronological context of each
 ## Clean up
 
 ```powershell
-az group delete --name ccof-poc-rg --yes --no-wait
+az group delete --name sample-pilot-rg --yes --no-wait
 ```
 
 Deletes every resource created in this guide. The cross-tenant backend app registration

@@ -1,5 +1,5 @@
 // Quick-start parameters (ADR-0024, Proposed). EVERY configuration value is here; docs/QUICKSTART.md
-// explains each one. The values below are a validation shape
+// explains each one. The values below are the Validation validation shape (config/answers/Validation-shape-a.json)
 // with placeholder group ids: replace every value marked REPLACE before a live run.
 // Deploy-Quickstart.ps1 reads this file (az bicep build-params), adds the values it computes
 // (policyXml, workbookContent, apimIdentityAppId) and deploys main.bicep. Bicep has no decimal
@@ -7,42 +7,42 @@
 using 'main.bicep'
 
 // ---- 1. Tenant, subscription, resource group (the wrapper reads these three; Bicep uses tenantId) ----
-param tenantId = 'REPLACE-tenant-id'
-// subscriptionId and resource group: see names below.
+param tenantId = 'REPLACE-00000000-0000-4000-8000-000000010001'
+// subscriptionId REPLACE-00000000-0000-4000-8000-000000001000 and resource group sample-qs-rg: see quickstart below.
 param location = 'eastus2'
 param tags = { workload: 'claude-code-on-foundry', environment: 'quickstart' }
 
 // ---- 2. Names of every resource the quick-start creates ----
 param names = {
-  deploymentPrefix: 'ccofqs'
+  deploymentPrefix: 'sampleqs'
   // Wrapper: target subscription and resource group, and whether step 3 may create the group.
-  subscriptionId: 'REPLACE-subscription-id'
-  resourceGroup: 'ccof-qs-rg'
+  subscriptionId: 'REPLACE-00000000-0000-4000-8000-000000001000'
+  resourceGroup: 'sample-qs-rg'
   resourceGroupMode: 'create'
-  logAnalyticsWorkspace: 'ccofqs-law'
-  cosmosAccount: 'ccofqs-cosmos'
+  logAnalyticsWorkspace: 'sampleqs-law'
+  cosmosAccount: 'sampleqs-cosmos'
   cosmosDatabase: 'ccof'
-  cosmosPrivateEndpoint: 'ccofqs-pe-cosmos'
+  cosmosPrivateEndpoint: 'sampleqs-pe-cosmos'
   cosmosRoles: {
     syncWriter: 'ccof sync entitlement writer'
     reconcilerWriter: 'ccof reconciler budget writer'
     projectWriter: 'ccof onboarding project writer'
   }
-  identities: { sync: 'ccofqs-sync-id', reconciler: 'ccofqs-reconciler-id' }
-  runnerVm: 'ccofqs-runner'
+  identities: { sync: 'sampleqs-sync-id', reconciler: 'sampleqs-reconciler-id' }
+  runnerVm: 'sampleqs-runner'
   apps: {
-    resolver: { functionApp: 'ccofqs-resolver-func', plan: 'ccofqs-resolver-plan', storageAccount: 'ccofqsresolverstor', deploymentContainer: 'app-package-resolver', storagePrivateEndpoint: 'ccofqs-pe-resolver-storage', appInsights: 'ccofqs-resolver-ai' }
-    sync: { functionApp: 'ccofqs-sync-func', plan: 'ccofqs-sync-plan', storageAccount: 'ccofqssyncstor', deploymentContainer: 'app-package-sync', storagePrivateEndpoint: 'ccofqs-pe-sync-storage', appInsights: 'ccofqs-sync-ai' }
+    resolver: { functionApp: 'sampleqs-resolver-func', plan: 'sampleqs-resolver-plan', storageAccount: 'sampleqsresolverstor', deploymentContainer: 'app-package-resolver', storagePrivateEndpoint: 'sampleqs-pe-resolver-storage', appInsights: 'sampleqs-resolver-ai' }
+    sync: { functionApp: 'sampleqs-sync-func', plan: 'sampleqs-sync-plan', storageAccount: 'sampleqssyncstor', deploymentContainer: 'app-package-sync', storagePrivateEndpoint: 'sampleqs-pe-sync-storage', appInsights: 'sampleqs-sync-ai' }
     // The reconciler logs through a diagnostic setting, not Application Insights (WP-REC).
-    reconciler: { functionApp: 'ccofqs-reconciler-func', plan: 'ccofqs-reconciler-plan', storageAccount: 'ccofqsrecstor', deploymentContainer: 'app-package-reconciler', storagePrivateEndpoint: 'ccofqs-pe-reconciler-storage' }
+    reconciler: { functionApp: 'sampleqs-reconciler-func', plan: 'sampleqs-reconciler-plan', storageAccount: 'sampleqsrecstor', deploymentContainer: 'app-package-reconciler', storagePrivateEndpoint: 'sampleqs-pe-reconciler-storage' }
   }
 }
 
 // ---- 3. The EXISTING API Management (referenced, never changed); it must have a system-assigned identity ----
 param apim = {
-  name: 'REPLACE-existing-apim-name'
-  subscriptionId: 'REPLACE-subscription-id'
-  resourceGroup: 'REPLACE-apim-resource-group'
+  name: 'sample-core-apim'
+  subscriptionId: 'REPLACE-00000000-0000-4000-8000-000000001000'
+  resourceGroup: 'sample-core-core-rg'
   apiId: 'claude-messages-qs'
   apiPath: 'anthropic-qs'
   apiDisplayName: 'Claude Messages (quick-start)'
@@ -52,9 +52,9 @@ param apim = {
 param network = {
   mode: 'create'
   create: {
-    vnetName: 'ccofqs-vnet'
+    vnetName: 'sampleqs-vnet'
     addressSpace: '10.63.0.0/16'
-    apimNsgName: 'ccofqs-nsg-apim'
+    apimNsgName: 'sampleqs-nsg-apim'
     subnets: {
       apim: { name: 'snet-apim', prefix: '10.63.1.0/24' }
       privateEndpoints: { name: 'snet-private-endpoints', prefix: '10.63.2.0/24' }
@@ -66,24 +66,32 @@ param network = {
 }
 
 // ---- 5. Prerequisites made by the Entra administrator (docs/QUICKSTART.md, phase 1) ----
+var developerGatewayAppId = 'REPLACE-developer-gateway-app-id'
 param registrations = {
-  gatewayApi: { appId: 'REPLACE-gateway-api-app-id', scope: 'access_as_user', accessTokenVersion: 1 }
-  developerSignIn: { appId: 'REPLACE-developer-sign-in-client-id' }
+  gatewayApi: { appId: developerGatewayAppId, scope: 'access_as_user', accessTokenVersion: 2 }
+  developerSignIn: { appId: developerGatewayAppId }
   resolverApi: { appId: 'REPLACE-resolver-api-app-id' }
 }
 
 // The ALREADY-CREATED Entra groups, one per project and classification (at least three).
-// tokenLimits: tokens per minute and quota per person and per group; admission: calls per person.
+// familyPolicy retains aggregate limits unchanged; family limits are additional ceilings.
+// Removing a family revokes admission; null limits do not. Explicit backendId must agree per project.
+// Fable/Mythos are CYB-only and require independently established real deployment IDs (none supplied).
 param groups = [
   {
-    groupId: '11111111-1111-1111-1111-111111111111'
-    projectId: 'CCOFQS01'
+    groupId: 'REPLACE-11111111-1111-1111-1111-111111111111'
+    projectId: 'sampleqs01'
     classification: 'STD'
     displayName: 'Claude quick-start standard'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 500000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 25000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: { amount: 2000000, currency: 'CCU', period: 'monthly' }
@@ -91,14 +99,20 @@ param groups = [
     onboardingMode: 'block'
   }
   {
-    groupId: '22222222-2222-2222-2222-222222222222'
-    projectId: 'CCOFQS01'
+    groupId: 'REPLACE-22222222-2222-2222-2222-222222222222'
+    projectId: 'sampleqs01'
     classification: 'PRM'
     displayName: 'Claude quick-start premium'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5', 'claude-opus-5', 'claude-opus-5-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 5000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        opus: { models: ['claude-opus-5', 'claude-opus-5-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 100000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: { amount: 1500000, currency: 'CCU', period: 'monthly' }
@@ -106,14 +120,19 @@ param groups = [
     onboardingMode: 'warn'
   }
   {
-    groupId: '33333333-3333-3333-3333-333333333333'
-    projectId: 'CCOFQS02'
+    groupId: 'REPLACE-33333333-3333-3333-3333-333333333333'
+    projectId: 'sampleqs02'
     classification: 'STD'
     displayName: 'Claude quick-start second project'
-    modelAllowList: ['claude-haiku-4-5', 'claude-sonnet-5']
-    tokenLimits: {
+    familyPolicy: {
+      aggregateLimits: {
       person: { tokensPerMinute: 1000000, tokenQuota: 500000, tokenQuotaPeriod: 'Daily' }
       group: { tokensPerMinute: null, tokenQuota: 2000000, tokenQuotaPeriod: 'Daily' }
+      }
+      families: {
+        haiku: { models: ['claude-haiku-4-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+        sonnet: { models: ['claude-sonnet-5'], person: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null }, group: { tokensPerMinute: null, tokenQuota: null, tokenQuotaPeriod: null } }
+      }
     }
     personBudget: { amount: 25000, currency: 'CCU', period: 'monthly' }
     aggregateBudget: null
@@ -122,16 +141,23 @@ param groups = [
   }
 ]
 
+// Explicit project/classification and exact admitted aliases for onboarding.json / client-config.json.
+param client = {
+  projectId: 'sampleqs01'
+  classification: 'PRM'
+  models: { default: 'claude-sonnet-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5', opus: 'claude-opus-5' }
+}
+
 // ---- 6. Foundry backends, each reached with the APIM's managed identity (any subscription) ----
 // assignCognitiveServicesUser: false when stage D3 (or anyone) already granted the APIM identity
 // Cognitive Services User on that account; ARM refuses a duplicate (RoleAssignmentExists).
 param backends = [
   {
-    id: 'foundry-contosohub-qs'
-    subscriptionId: 'REPLACE-subscription-id'
-    resourceGroup: 'REPLACE-foundry-resource-group'
-    accountName: 'REPLACE-foundry-account-name'
-    url: 'https://REPLACE-foundry-account-name.services.ai.azure.com/anthropic'
+    id: 'foundry-sample-hub-qs'
+    subscriptionId: 'REPLACE-00000000-0000-4000-8000-000000001000'
+    resourceGroup: 'rg-sample-hub'
+    accountName: 'ai-sample-hub530569751908'
+    url: 'https://example-ai-sample-hub530569751908.services.ai.azure.com/anthropic'
     resource: 'https://cognitiveservices.azure.com'
     deploymentInferenceGeo: { 'claude-opus-5': 'global', 'claude-sonnet-5': 'global', 'claude-opus-5-5': 'global', 'claude-haiku-4-5': 'global' }
     assignCognitiveServicesUser: true
@@ -176,7 +202,7 @@ param budgetState = { graceSeconds: 900, hardLimitSeconds: 3600 }
 
 // ---- 9. Gateway policy inputs (infra/gateway/gateway-config.schema.json) ----
 param gateway = {
-  configurationId: 'ccofqs-gateway-1'
+  configurationId: 'sampleqs-gateway-1'
   admission: {
     perPerson: { calls: 120, renewalPeriodSeconds: 60 }
     resolverMisses: { calls: 200, renewalPeriodSeconds: 1, maxConcurrent: 100 }
@@ -202,7 +228,7 @@ param gateway = {
 param rateCard = { path: '../../config/rate-card.json', contractSchedulePath: '../../config/contract-schedule.json' }
 param workbook = {
   // A GUID: the workbook resource name.
-  resourceName: '5d0b7e43-6f2e-4b8e-9a51-0c6a2f3d9b11'
+  resourceName: 'REPLACE-00000000-0000-4000-8000-000000010000'
   displayName: 'Claude gateway chargeback (quick-start)'
   readerPrincipalIds: []
   settings: { defaultProjectId: '*', maxRows: 1000, topUsers: 25, maxQueryDays: 62, budgetLookbackDays: 31 }

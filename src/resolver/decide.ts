@@ -20,9 +20,11 @@ import { classifyBudgetValidity, MAX_TOKENS_PER_MINUTE, validateMembership } fro
 import type { RefusalReason, ResolveRefusal } from "./refusals.ts";
 import { refuse, settledValue } from "./refusals.ts";
 import { selectByKey, selectBySelector } from "./select-membership.ts";
+import type { FamilyPolicy } from "../contracts/model-families.ts";
 
 export { refusalStatus } from "./refusals.ts";
 export type { RefusalReason, ResolveRefusal } from "./refusals.ts";
+export type { FamilyPolicy, TokenLimit, TokenQuotaPeriod } from "../contracts/model-families.ts";
 
 export interface ResolveInput {
   personId: string;
@@ -49,36 +51,17 @@ export interface SubscriptionIndexRecord {
   status: string;
 }
 
-// The periods llm-token-limit accepts (docs/PILOT.md C-2).
-export type TokenQuotaPeriod = "Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly";
-
-// Each value is a positive integer, or null for "the gateway applies no such
-// limit"; a quota and its period are both set or both null.
-export interface TokenLimit {
-  tokensPerMinute: number | null;
-  tokenQuota: number | null;
-  tokenQuotaPeriod: TokenQuotaPeriod | null;
-}
-
-export interface TokenLimits {
-  person: TokenLimit;
-  group: TokenLimit;
-}
-
-// Written only by the sync (docs/PILOT.md C-4), which copies classification,
-// classificationGroupId, modelAllowList, backendId, aggregateMode and
-// tokenLimits from the projects document. WP-SYNC mirrors this type: change it
-// additively only.
+// Written only by the sync, which copies the registered group's policy.
 export interface ProjectMembership {
   projectId: string;
   classification: string;
   classificationGroupId: string;
+  classificationGroupDisplayName?: string;
   // Only on the per-project key path (ADR-0002); optional since M1.7.
   subscriptionId?: string;
-  modelAllowList: string[];
+  familyPolicy: FamilyPolicy;
   backendId: string;
   aggregateMode: "strict" | "notify";
-  tokenLimits: TokenLimits;
   denormalizedAt: string;
   joinedAt: string;
   status: string;
@@ -121,12 +104,14 @@ export interface ResolveDependencies {
 
 export interface ResolveSuccess {
   refused: false;
+  decisionVersion: 3;
   personId: string;
   projectId: string;
   classification: string;
+  classificationGroupId: string;
+  classificationGroupDisplayName?: string;
   backendId: string;
-  modelAllowList: string[];
-  tokenLimits: TokenLimits;
+  familyPolicy: FamilyPolicy;
   budgetEnforcement: BudgetEnforcement["mode"];
   // Whether the gateway must apply the CCU aggregate ceiling; false whenever
   // budgets are not enforced.
@@ -218,12 +203,16 @@ export async function resolveRequest(
 
   const resolved: Resolved = {
     refused: false,
+    decisionVersion: 3,
     personId: input.personId,
     projectId: membership.projectId,
     classification: membership.classification,
+    classificationGroupId: membership.classificationGroupId,
+    ...(membership.classificationGroupDisplayName !== undefined
+      ? { classificationGroupDisplayName: membership.classificationGroupDisplayName }
+      : {}),
     backendId: membership.backendId,
-    modelAllowList: membership.modelAllowList,
-    tokenLimits: membership.tokenLimits,
+    familyPolicy: membership.familyPolicy,
     personBudgetScope: `${input.personId}:${membership.projectId}`,
   };
 

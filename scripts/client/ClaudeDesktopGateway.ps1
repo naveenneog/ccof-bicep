@@ -14,11 +14,16 @@ function New-CcofDesktopProfile {
     }
     if ($Schema.credentialKinds -ccontains 'external-idp' -and
         $Schema.keys -ccontains 'inferenceIdpOidc' -and $Schema.keys -ccontains 'inferenceIdpAuthFlow') {
+        $scope = [string]$Config.scope
+        $selfPrefix = "api://$($Config.clientId)/"
+        if ($scope.StartsWith($selfPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            $scope = "$($Config.clientId)/$($scope.Substring($selfPrefix.Length))"
+        }
         $profile.inferenceCredentialKind = 'external-idp'
         $profile.inferenceIdpAuthFlow = 'broker'
         $profile.inferenceIdpOidc = @{
             issuer = "https://login.microsoftonline.com/$($Config.tenantId)/v2.0"
-            clientId = $Config.clientId; scopes = $Config.scope; bearerTokenType = 'access_token'
+            clientId = $Config.clientId; scopes = $scope; bearerTokenType = 'access_token'
         }
     } else {
         if ($Schema.credentialKinds -cnotcontains 'helper-script') { throw 'The installed Desktop schema does not support a compatible credential helper. No profile written.' }

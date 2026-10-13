@@ -193,7 +193,7 @@
       "performer": "Coordinator or platform deployer",
       "records": ["stage-5"], "reads": [],
       "requirements": [
-        { "kind": "azure-rbac", "scope": "${d1.apps.resolver.functionAppId}", "anyOf": ["Website Contributor", "Contributor", "Owner"], "heldBy": "Coordinator or platform deployer", "purpose": "write the resolver's budget mode", "source": "scripts/Set-ResolverBudgetStalenessPolicy.ps1:191" }
+        { "kind": "azure-rbac", "scope": "${d1.apps.resolver.functionAppId}", "anyOf": ["Website Contributor", "Contributor", "Owner"], "heldBy": "Coordinator or platform deployer", "purpose": "write the resolver's budget mode", "source": "scripts/Set-ResolverBudgetStalenessPolicy.ps1:205" }
       ],
       "blockers": [
         { "id": "stage-5-not-built", "text": "no script writes stage-5 yet (Stage 5 remains follow-up); the switch is scripts/Set-ResolverBudgetStalenessPolicy.ps1 once the reconciler's state is fresh for every member", "source": "docs/status/WP-ONB.md:5" }
@@ -230,7 +230,7 @@
       "discovery": [ { "kind": "api-revisions", "api": "${d1.apim.id}/apis/${answers.apim.apiId}" } ],
       "command": "pwsh -NoProfile -File infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath ${item.outputDirectory}/gateway/${answers.gateway.configurationId}.json -MakeCurrent -Revision ${item.revision} -ReleaseNote '<smoke result>'",
       "handoff": "The coordinator or platform owner makes the smoke-tested revision current (config/core.answers.schema.json:272, gateway.promoteAfterSmoke false).",
-      "sources": ["docs/DEPLOYMENT-STAGES.md:219", "infra/gateway/Deploy-GatewayRevision.ps1:19"]
+      "sources": ["docs/DEPLOYMENT-STAGES.md:234", "infra/gateway/Deploy-GatewayRevision.ps1:19"]
     }
   ]
 }

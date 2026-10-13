@@ -23,10 +23,10 @@
     Internal: set by tests/Test-ResolverAuth.ps1 to dot-source the functions without running the tail.
 
 .EXAMPLE
-    $apimOid = az apim show --name ccof-poc-apim --resource-group ccof-poc-rg --subscription <sub> --query identity.principalId -o tsv
+    $apimOid = az apim show --name sample-pilot-apim --resource-group sample-pilot-rg --subscription <sub> --query identity.principalId -o tsv
     $apimAppId = az ad sp show --id $apimOid --query appId -o tsv
-    ./infra/poc/resolver-auth.ps1 -TenantId <tenant> -SubscriptionId <sub> -ResourceGroup ccof-poc-rg `
-        -FunctionAppName ccof-poc-resolver-func -ResolverAppId <appId> `
+    ./infra/poc/resolver-auth.ps1 -TenantId <tenant> -SubscriptionId <sub> -ResourceGroup sample-pilot-rg `
+        -FunctionAppName sample-pilot-resolver-func -ResolverAppId <appId> `
         -AllowedCallerAppIds $apimAppId -AllowedCallerObjectIds $apimOid
 #>
 param(

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-RES",
+  "cosmosRoleDefinitions": [],
+  "assignments": [
+    {
+      "id": "resolver-cosmos-data-reader",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.resolver.principalId}",
+      "role": "Cosmos DB Built-in Data Reader",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000001",
+      "scope": "/dbs/${answers.names.cosmosDatabase}",
+      "runtime": true,
+      "why": "The resolver only point-reads (entitlement, subscriptionIndex, budgetState, aggregateBudgetState, backends; src/resolver/registry-reads.ts) and never writes. Database scope, because the backends container may not exist yet when D3 runs."
+    },
+    {
+      "id": "resolver-storage-blob-data-owner",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.resolver.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Storage Blob Data Owner",
+      "roleDefinitionId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+      "scope": "${d1.apps.resolver.storageAccountId}",
+      "runtime": true,
+      "why": "Flex Consumption deployment storage and AzureWebJobsStorage through the app's identity."
+    },
+    {
+      "id": "resolver-monitoring-metrics-publisher",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.resolver.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Monitoring Metrics Publisher",
+      "roleDefinitionId": "3913510d-42f4-4e42-8a64-420c390055eb",
+      "scope": "${d1.apps.resolver.appInsightsId}",
+      "why": "Telemetry ingestion when Application Insights disables local authentication; D2 also sets APPLICATIONINSIGHTS_AUTHENTICATION_STRING=Authorization=AAD (docs/status/WP-RES.md, U-new-RES-3). APIM needs no role on the resolver: the App Service Authentication allow-list set in D2 is its grant (ADR-0009)."
+    }
+  ]
+}

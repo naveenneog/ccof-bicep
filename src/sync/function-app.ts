@@ -21,6 +21,7 @@ import { createAzureDependencies, createSeedStore } from "./azure.ts";
 import { readHostSettings, readSyncConfig } from "./config.ts";
 import { SEED_FUNCTION_NAME, SEED_SCHEDULE, SEED_SETTING, runRegistrySeed } from "./registry-seed.ts";
 import { configFailure, runSync } from "./run.ts";
+import { SNAPSHOT_FUNCTION_NAME, SNAPSHOT_SCHEDULE, SNAPSHOT_SETTING, runSnapshotFunction } from "./snapshot-function.ts";
 
 // No hyphen: a function whose name has one cannot be disabled on Linux (Learn,
 // "How to disable functions in Azure Functions").
@@ -49,6 +50,23 @@ async function registrySeedTimer(_timer: Timer, context: InvocationContext): Pro
     openStore: (config, clientId) => createSeedStore(config, new ManagedIdentityCredential({ clientId })),
     log: (line: string) => context.log(line),
     now: () => new Date(),
+  });
+}
+
+// The delegated snapshot apply without a runner VM (snapshot-function.ts; docs/SYNC.md).
+async function snapshotApplyTimer(_timer: Timer, context: InvocationContext): Promise<void> {
+  const log = (line: string) => context.log(line);
+  const host = readHostSettings(process.env);
+  if (!host.ok) {
+    configFailure(host.problems, { trigger: "timer", now: () => new Date(), newRunId: () => randomUUID(), log });
+    return;
+  }
+  const credential = new ManagedIdentityCredential({ clientId: host.managedIdentityClientId });
+  await runSnapshotFunction(process.env, {
+    createDependencies: (config) => createAzureDependencies(config, credential),
+    log,
+    now: () => new Date(),
+    newRunId: () => randomUUID(),
   });
 }
 

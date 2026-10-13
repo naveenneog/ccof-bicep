@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "decisionVersion": 3,
+  "cacheNamespace": "ccof-ent:d3",
+  "telemetryField": "modelFamily",
+  "policyFamilyVariable": "ccofModelFamily",
+  "unknownModelRefusal": "model_family_not_allowed",
+  "familyNames": ["haiku", "sonnet", "opus", "fable", "mythos"],
+  "cybOnlyFamilies": ["fable", "mythos"],
+  "canonicalModelPattern": "^claude-(haiku|sonnet|opus|fable|mythos)-[A-Za-z0-9][A-Za-z0-9._-]{0,105}$",
+  "matching": {
+    "caseSensitive": true,
+    "exactConfiguredModelRequired": true,
+    "prefixAloneAdmits": false,
+    "customDeploymentAliasesRequireExplicitFamilyEntry": true,
+    "dateSuffixStripping": false,
+    "wildcards": false,
+    "canonicalPrefixMustAgreeWithConfiguredFamily": true
+  },
+  "quotaPeriods": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"],
+  "maxTokensPerMinute": 2147483647,
+  "maxTokenQuota": 9007199254740991,
+  "configuredDeploymentIds": [],
+  "prices": null
+}

@@ -208,11 +208,16 @@ function New-CoreDefaultPieces {
         GatewayDeploy = {
             param($Config, $AnswersFile, $Out, $MakeCurrent, $Revision)
             $script = Join-Path $RepositoryRoot 'infra/gateway/Deploy-GatewayRevision.ps1'
-            $args = @('-NoProfile', '-File', $script, '-ConfigPath', $Config, '-AnswersPath', $AnswersFile, '-NonInteractive', '-OutDir', $Out)
-            if ($MakeCurrent) { $args += @('-MakeCurrent', '-Revision', $Revision) }
-            pwsh @args | Out-Null
-            if ($LASTEXITCODE -ne 0) { return $null }
-            ConvertFrom-CoreJson (Get-Content -LiteralPath (Join-Path $Out 'deployment.json') -Raw)
+            $arguments = @('-NoProfile', '-File', $script, '-ConfigPath', $Config, '-AnswersPath', $AnswersFile, '-NonInteractive', '-OutDir', $Out)
+            if ($MakeCurrent) { $arguments += @('-MakeCurrent', '-Revision', $Revision) }
+            # Each action writes its own record: deployment.json for a new revision, make-current.json
+            # for make-current (WP-SEC F-6). One left by an earlier run is removed first, so a run that
+            # writes none is not taken as done.
+            $record = Join-Path $Out $(if ($MakeCurrent) { 'make-current.json' } else { 'deployment.json' })
+            Remove-Item -LiteralPath $record -Force -ErrorAction SilentlyContinue
+            pwsh @arguments | Out-Null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $record -PathType Leaf)) { return $null }
+            ConvertFrom-CoreJson (Get-Content -LiteralPath $record -Raw)
         }.GetNewClosure()
         Diagnostics = {
             param($Parameters)
@@ -236,6 +241,17 @@ function New-CoreDefaultPieces {
             $get = { param($Url) $g = & $arm 'GET' $Url $null; if ($g.Status -ne 200) { throw "authsettingsV2 read-back answered HTTP $($g.Status)." }; $g.Content }.GetNewClosure()
             $r = Invoke-ResolverAuthApply -SiteResourceId $Site -Body $body -PutAuthSettings $put -GetAuthSettings $get
             return [bool]$r.Verified
+        }.GetNewClosure()
+        # WP-RES's comparison alone (GET only), for a resolver-auth step whose digest is unchanged (WP-SEC
+        # C7): $true only when the live authsettingsV2 matches the body the apply piece would write.
+        ResolverAuthVerify = {
+            # Not named like resolver-auth.ps1's parameters, as in ResolverAuth.
+            param($Tenant, $ResolverApp, $ApimApp, $ApimPrincipal, $Site)
+            . (Join-Path $RepositoryRoot 'infra/poc/resolver-auth.ps1') -DotSourceOnly
+            $body = New-ResolverAuthSettingsBody -TenantId $Tenant -ResolverAppId $ResolverApp -AllowedCallerAppIds @($ApimApp) -AllowedCallerObjectIds @($ApimPrincipal)
+            $read = & $Send 'GET' "https://management.azure.com$Site/config/authsettingsV2?api-version=$script:AuthSettingsApiVersion" $null
+            if ($read.Status -ne 200 -or $null -eq $read.Content) { return $false }
+            return @(Compare-ResolverAuthSettings -Intended ($body | ConvertTo-Json -Depth 20 | ConvertFrom-Json) -Returned $read.Content).Count -eq 0
         }.GetNewClosure()
         Workbook = {
             param($Ctx)

@@ -4,14 +4,14 @@
   "confirm": false,
   "confirmedDiscovery": {},
   "decisions": {
-    "subscriptionId": "<subscription-id>",
-    "tenantId": "<tenant-id>",
-    "apimResourceId": "/subscriptions/<subscription-id>/resourceGroups/ccof-poc-rg/providers/Microsoft.ApiManagement/service/ccof-poc-apim",
+    "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000110",
+    "tenantId": "REPLACE-00000000-0000-4000-8000-000000000111",
+    "apimResourceId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim",
     "backendRegistrationMode": "existing_apim",
     "dependencyValidation": { "mode": "approved_plan", "validUntil": null },
     "registry": {
-      "accountResourceId": "/subscriptions/<subscription-id>/resourceGroups/ccof-poc-rg/providers/Microsoft.DocumentDB/databaseAccounts/ccof-poc-cosmos",
-      "endpoint": "https://ccof-poc-cosmos.documents.azure.com",
+      "accountResourceId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.DocumentDB/databaseAccounts/sample-pilot-cosmos",
+      "endpoint": "https://sample-pilot-cosmos.documents.azure.com",
       "database": "ccof"
     },
     "resilience": { "budgetStateGraceSeconds": null, "budgetStateHardLimitSeconds": null },
@@ -20,45 +20,62 @@
       "projectId": "CCOFPILOT01",
       "displayName": "Claude pilot 01",
       "status": "active",
-      "backendId": "foundry-contosohub",
-      "designatedSubscriptionId": "<backend-subscription-id>",
+      "backendId": "foundry-sample-hub",
+      "designatedSubscriptionId": "REPLACE-00000000-0000-4000-8000-000000001000",
       "supersedes": null,
       "retiredAt": null,
       "classifications": {
         "STD": {
           "groupId": null,
-          "modelAllowList": ["claude-haiku-4-5", "claude-sonnet-5"],
           "personBudget": { "amount": 25000, "currency": "CCU", "period": "monthly" },
           "aggregateBudget": { "amount": 2000000, "currency": "CCU", "period": "monthly" },
           "aggregateMode": "strict",
           "onboardingMode": "block",
-          "tokenLimits": {
+          "familyPolicy": {
+            "aggregateLimits": {
             "person": { "tokensPerMinute": 1000000, "tokenQuota": 500000, "tokenQuotaPeriod": "Daily" },
             "group": { "tokensPerMinute": null, "tokenQuota": 2000000, "tokenQuotaPeriod": "Daily" }
+            },
+            "families": {
+              "haiku": { "models": ["claude-haiku-4-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } },
+              "sonnet": { "models": ["claude-sonnet-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } }
+            }
           }
         },
         "PRM": {
           "groupId": null,
-          "modelAllowList": ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5"],
           "personBudget": { "amount": 100000, "currency": "CCU", "period": "monthly" },
           "aggregateBudget": { "amount": 1500000, "currency": "CCU", "period": "monthly" },
           "aggregateMode": "notify",
           "onboardingMode": "warn",
-          "tokenLimits": {
+          "familyPolicy": {
+            "aggregateLimits": {
             "person": { "tokensPerMinute": 1000000, "tokenQuota": 2000000, "tokenQuotaPeriod": "Daily" },
             "group": { "tokensPerMinute": null, "tokenQuota": 5000000, "tokenQuotaPeriod": "Daily" }
+            },
+            "families": {
+              "haiku": { "models": ["claude-haiku-4-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } },
+              "sonnet": { "models": ["claude-sonnet-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } },
+              "opus": { "models": ["claude-opus-5", "claude-opus-5-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } }
+            }
           }
         },
         "CYB": {
           "groupId": null,
-          "modelAllowList": ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5"],
           "personBudget": { "amount": 250000, "currency": "CCU", "period": "monthly" },
           "aggregateBudget": null,
           "aggregateMode": "notify",
           "onboardingMode": "warn",
-          "tokenLimits": {
+          "familyPolicy": {
+            "aggregateLimits": {
             "person": { "tokensPerMinute": 1000000, "tokenQuota": 2000000, "tokenQuotaPeriod": "Daily" },
             "group": { "tokensPerMinute": null, "tokenQuota": 5000000, "tokenQuotaPeriod": "Daily" }
+            },
+            "families": {
+              "haiku": { "models": ["claude-haiku-4-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } },
+              "sonnet": { "models": ["claude-sonnet-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } },
+              "opus": { "models": ["claude-opus-5", "claude-opus-5-5"], "person": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null }, "group": { "tokensPerMinute": null, "tokenQuota": null, "tokenQuotaPeriod": null } }
+            }
           }
         }
       }

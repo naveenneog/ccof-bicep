@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-ONB",
+  "cosmosRoleDefinitions": [
+    {
+      "key": "onbProjectWriter",
+      "roleName": "${answers.names.cosmosRoles.projectWriter}",
+      "dataActions": [
+        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create"
+      ]
+    }
+  ],
+  "assignments": [
+    {
+      "id": "onb-private-runner-registry-reader",
+      "plane": "azure-rbac",
+      "principals": "${answers.permissions.privateRunnerPrincipalIds}",
+      "role": "Reader",
+      "roleDefinitionId": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+      "scope": "${d1.cosmos.id}",
+      "why": "Read the registry account and its current Cosmos data-plane grants without Graph group expansion."
+    },
+    {
+      "id": "onb-private-runner-project-writer",
+      "plane": "cosmos-data",
+      "principals": "${answers.permissions.privateRunnerPrincipalIds}",
+      "role": "custom:onbProjectWriter",
+      "roleDefinitionId": "custom:onbProjectWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/projects",
+      "why": "Stage 3 creates approved projects and reads them back through the private endpoint: readMetadata for its role check, items/read for point reads, items/create for the one write. No query, replace, upsert or delete, and no other container."
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/naveenneog/claude-code-on-foundry/config/core.answers.schema.json",
+  "$id": "https://github.com/naveenneog/ccof-bicep/config/core.answers.schema.json",
   "title": "claude-code-on-foundry: one-time core installer answers (scripts/Install-Core.ps1)",
   "description": "Every value the core needs. No field has a default: a missing decision is listed with every other missing decision and the installer stops before any Azure call. docs/INSTALL.md explains each field.",
   "type": "object",
@@ -148,7 +148,7 @@
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Entra app registrations in the deployment's tenant, created in the D1 workbook (docs/PREREQUISITES-WORKBOOK.md) by an application administrator; the stages verify and record them and never create them.",
+      "description": "Entra application roles in the deployment's tenant (ADR-0026): gatewayApi and developerSignIn may refer to the same app, the default example. resolverApi must remain separate (ADR-0009); Core.Answers enforces that cross-field rule. Existing separate-client deployments remain supported. The stages verify and record apps and never create them.",
       "required": ["gatewayApi", "developerSignIn", "resolverApi", "testClientAppIds", "allowAppOnlyTestTokens", "testClientAppRole"],
       "properties": {
         "gatewayApi": {
@@ -167,7 +167,7 @@
           "required": ["appId", "redirectUris"],
           "properties": {
             "appId": { "$ref": "#/$defs/guid" },
-            "redirectUris": { "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^(https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?|http://localhost(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)$" } }
+            "redirectUris": { "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^(https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?|http://localhost(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?|ms-appx-web://Microsoft\\.AAD\\.BrokerPlugin/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$" } }
           }
         },
         "resolverApi": {

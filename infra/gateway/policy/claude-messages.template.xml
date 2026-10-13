@@ -82,6 +82,7 @@
         var facts = (string)context.Variables["ccofRequestFacts"];
         return facts == "" ? "" : (string)JObject.Parse(facts)["model"];
     }" />
+    <set-variable name="ccofModelFamily" value="" />
     <set-variable name="ccofStream" value="@{
         var facts = (string)context.Variables["ccofRequestFacts"];
         return facts != "" && (bool)JObject.Parse(facts)["stream"];
@@ -103,14 +104,72 @@
          to %%LKG_GRACE%% s more (last-known-good), and the resolver is not asked again for that
          person for %%REFRESH_BACKOFF%% s ("rt", retry-at). A refusal is fresh for %%REFUSAL_TTL%% s
          and replaces an earlier allow. The built-in cache is volatile: a lost entry is a miss. The
-         key's d1 marks the decision format; keyVersion is the operator's switch to drop every entry. -->
+         key's d3 marks the decision format; keyVersion is the operator's switch to drop every entry.
+         Urgent policy revocation requires a keyVersion increment and deployment; generation does
+         not eagerly evict this cache. Only validated v3 allows can be last-known-good. -->
     <set-variable name="ccofCacheState" value="none" />
     <set-variable name="ccofDecision" value="" />
     <set-variable name="ccofEntitlementSource" value="" />
     <choose>
       <when condition="@((string)context.Variables["ccofRefusal"] == "")">
-        <set-variable name="ccofCacheKey" value="@("ccof-ent:d1:v%%CACHE_KEY_VERSION%%:%%TENANT_ID%%:" + (string)context.Variables["ccofOid"] + ":" + ((string)context.Variables["ccofSelector"] == "" ? "-" : "p." + (string)context.Variables["ccofSelector"]))" />
+        <set-variable name="ccofCacheKey" value="@("ccof-ent:d3:v%%CACHE_KEY_VERSION%%:%%TENANT_ID%%:" + (string)context.Variables["ccofOid"] + ":" + ((string)context.Variables["ccofSelector"] == "" ? "-" : "p." + (string)context.Variables["ccofSelector"]))" />
         <cache-lookup-value key="@((string)context.Variables["ccofCacheKey"])" variable-name="ccofCached" caching-type="%%CACHING_TYPE%%" />
+        <set-variable name="ccofCachedDecisionValid" value="@{
+            if (!context.Variables.ContainsKey("ccofCached")) { return false; }
+            try {
+                var body = JObject.Parse((string)context.Variables["ccofCached"])["d"] as JObject;
+                if (body == null || body["decisionVersion"] == null || body["decisionVersion"].Type != JTokenType.Integer || (long)body["decisionVersion"] != 3) { return false; }
+                var idPattern = "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}\\z";
+                foreach (var field in new string[] { "projectId", "classification", "backendId" }) {
+                    var value = body[field];
+                    if (value == null || value.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)value, idPattern)) { return false; }
+                }
+                var groupId = body["classificationGroupId"];
+                if (groupId == null || groupId.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)groupId, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\z")) { return false; }
+                var familyPolicy = body["familyPolicy"] as JObject;
+                if (familyPolicy == null || familyPolicy.Count != 2) { return false; }
+                var aggregate = familyPolicy["aggregateLimits"] as JObject;
+                var families = familyPolicy["families"] as JObject;
+                if (aggregate == null || aggregate.Count != 2 || families == null || families.Count == 0) { return false; }
+                var scopes = new System.Collections.Generic.List<JObject>();
+                scopes.Add(aggregate["person"] as JObject);
+                scopes.Add(aggregate["group"] as JObject);
+                var registered = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+                foreach (var family in families.Properties()) {
+                    if (Array.IndexOf(new string[] { "haiku", "sonnet", "opus", "fable", "mythos" }, family.Name) < 0) { return false; }
+                    if ((family.Name == "fable" || family.Name == "mythos") && (string)body["classification"] != "CYB") { return false; }
+                    var entry = family.Value as JObject;
+                    if (entry == null || entry.Count != 3) { return false; }
+                    var models = entry["models"] as JArray;
+                    if (models == null || models.Count == 0) { return false; }
+                    foreach (var model in models) {
+                        if (model.Type != JTokenType.String) { return false; }
+                        var text = (string)model;
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(text, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\\z") || !registered.Add(text)) { return false; }
+                        if (text.StartsWith("claude-", StringComparison.Ordinal)) {
+                            var canonical = System.Text.RegularExpressions.Regex.Match(text, "^claude-(haiku|sonnet|opus|fable|mythos)-[A-Za-z0-9][A-Za-z0-9._-]{0,105}\\z");
+                            if (!canonical.Success || canonical.Groups[1].Value != family.Name) { return false; }
+                        }
+                    }
+                    scopes.Add(entry["person"] as JObject);
+                    scopes.Add(entry["group"] as JObject);
+                }
+                var periods = new string[] { "Hourly", "Daily", "Weekly", "Monthly", "Yearly" };
+                foreach (var scope in scopes) {
+                    if (scope == null || scope.Count != 3 || scope.Property("tokensPerMinute") == null || scope.Property("tokenQuota") == null || scope.Property("tokenQuotaPeriod") == null) { return false; }
+                    var tpm = scope["tokensPerMinute"];
+                    var quota = scope["tokenQuota"];
+                    var period = scope["tokenQuotaPeriod"];
+                    if (tpm.Type != JTokenType.Null && (tpm.Type != JTokenType.Integer || (long)tpm < 1 || (long)tpm > int.MaxValue)) { return false; }
+                    if (quota.Type != JTokenType.Null && (quota.Type != JTokenType.Integer || (long)quota < 1 || (long)quota > 9007199254740991L)) { return false; }
+                    if (period.Type != JTokenType.Null && (period.Type != JTokenType.String || Array.IndexOf(periods, (string)period) < 0)) { return false; }
+                    if ((quota.Type == JTokenType.Null) != (period.Type == JTokenType.Null)) { return false; }
+                }
+                return true;
+            } catch {
+                return false;
+            }
+        }" />
         <set-variable name="ccofCacheState" value="@{
             if (!context.Variables.ContainsKey("ccofCached")) { return "miss"; }
             try {
@@ -120,6 +179,7 @@
                 var kind = (string)entry["k"];
                 if (age < 0) { return "miss"; }
                 if (kind == "allow") {
+                    if (!(bool)context.Variables["ccofCachedDecisionValid"]) { return "miss"; }
                     if (age >= %%ALLOW_TTL%% + %%LKG_GRACE%%) { return "miss"; }
                     if (age < %%ALLOW_TTL%%) { return "fresh-allow"; }
                     var retryAt = entry["rt"];
@@ -226,40 +286,61 @@
                     return new JObject(new JProperty("o", "refuse"), new JProperty("r", "unavailable"), new JProperty("c", "budget_state_unavailable"), new JProperty("b", budget)).ToString(Newtonsoft.Json.Formatting.None);
                 }
                 if (response.StatusCode != 200 || (outcome != "success" && outcome != "degraded")) { return unavailable; }
+                if (body["decisionVersion"] == null || body["decisionVersion"].Type != JTokenType.Integer || (long)body["decisionVersion"] != 3) { return unavailable; }
                 var decision = new JObject();
                 foreach (var field in new string[] { "projectId", "classification", "backendId" }) {
                     var value = body[field];
                     if (value == null || value.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)value, idPattern)) { return unavailable; }
                     decision[field] = (string)value;
                 }
-                var models = body["modelAllowList"] as JArray;
-                if (models == null || models.Count == 0) { return unavailable; }
-                var allowList = new JArray();
-                foreach (var model in models) {
-                    if (model.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)model, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")) { return unavailable; }
-                    allowList.Add((string)model);
+                var groupId = body["classificationGroupId"];
+                if (groupId == null || groupId.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)groupId, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\z")) { return unavailable; }
+                var familyPolicy = body["familyPolicy"] as JObject;
+                if (familyPolicy == null || familyPolicy.Count != 2) { return unavailable; }
+                var aggregate = familyPolicy["aggregateLimits"] as JObject;
+                var families = familyPolicy["families"] as JObject;
+                if (aggregate == null || aggregate.Count != 2 || families == null || families.Count == 0) { return unavailable; }
+                var scopes = new System.Collections.Generic.List<JObject>();
+                scopes.Add(aggregate["person"] as JObject);
+                scopes.Add(aggregate["group"] as JObject);
+                var registered = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+                foreach (var family in families.Properties()) {
+                    if (Array.IndexOf(new string[] { "haiku", "sonnet", "opus", "fable", "mythos" }, family.Name) < 0) { return unavailable; }
+                    if ((family.Name == "fable" || family.Name == "mythos") && (string)body["classification"] != "CYB") { return unavailable; }
+                    var entry = family.Value as JObject;
+                    if (entry == null || entry.Count != 3) { return unavailable; }
+                    var models = entry["models"] as JArray;
+                    if (models == null || models.Count == 0) { return unavailable; }
+                    foreach (var model in models) {
+                        if (model.Type != JTokenType.String) { return unavailable; }
+                        var text = (string)model;
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(text, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\\z") || !registered.Add(text)) { return unavailable; }
+                        if (text.StartsWith("claude-", StringComparison.Ordinal)) {
+                            var canonical = System.Text.RegularExpressions.Regex.Match(text, "^claude-(haiku|sonnet|opus|fable|mythos)-[A-Za-z0-9][A-Za-z0-9._-]{0,105}\\z");
+                            if (!canonical.Success || canonical.Groups[1].Value != family.Name) { return unavailable; }
+                        }
+                    }
+                    scopes.Add(entry["person"] as JObject);
+                    scopes.Add(entry["group"] as JObject);
                 }
-                decision["modelAllowList"] = allowList;
-                var limits = body["tokenLimits"] as JObject;
-                if (limits == null) { return unavailable; }
                 var periods = new string[] { "Hourly", "Daily", "Weekly", "Monthly", "Yearly" };
-                var normalized = new JObject();
-                foreach (var scopeName in new string[] { "person", "group" }) {
-                    var scope = limits[scopeName] as JObject;
-                    if (scope == null || scope.Property("tokensPerMinute") == null || scope.Property("tokenQuota") == null || scope.Property("tokenQuotaPeriod") == null) { return unavailable; }
+                foreach (var scope in scopes) {
+                    if (scope == null || scope.Count != 3 || scope.Property("tokensPerMinute") == null || scope.Property("tokenQuota") == null || scope.Property("tokenQuotaPeriod") == null) { return unavailable; }
                     var tpm = scope["tokensPerMinute"];
                     var quota = scope["tokenQuota"];
                     var period = scope["tokenQuotaPeriod"];
                     if (tpm.Type != JTokenType.Null && (tpm.Type != JTokenType.Integer || (long)tpm < 1 || (long)tpm > int.MaxValue)) { return unavailable; }
-                    if (quota.Type != JTokenType.Null && (quota.Type != JTokenType.Integer || (long)quota < 1)) { return unavailable; }
+                    if (quota.Type != JTokenType.Null && (quota.Type != JTokenType.Integer || (long)quota < 1 || (long)quota > 9007199254740991L)) { return unavailable; }
                     if (period.Type != JTokenType.Null && (period.Type != JTokenType.String || Array.IndexOf(periods, (string)period) < 0)) { return unavailable; }
                     if ((quota.Type == JTokenType.Null) != (period.Type == JTokenType.Null)) { return unavailable; }
-                    normalized[scopeName] = new JObject(
-                        new JProperty("tpm", tpm.Type == JTokenType.Null ? 0L : (long)tpm),
-                        new JProperty("quota", quota.Type == JTokenType.Null ? 0L : (long)quota),
-                        new JProperty("period", period.Type == JTokenType.Null ? "" : (string)period));
                 }
-                decision["tokenLimits"] = normalized;
+                decision["decisionVersion"] = 3;
+                decision["classificationGroupId"] = ((string)groupId).ToLowerInvariant();
+                decision["familyPolicy"] = familyPolicy;
+                var displayName = body["classificationGroupDisplayName"];
+                if (displayName != null && displayName.Type == JTokenType.String && ((string)displayName).Length >= 1 && ((string)displayName).Length <= 256) {
+                    decision["classificationGroupDisplayName"] = (string)displayName;
+                }
                 var descriptor = body["backend"];
                 if (descriptor != null && descriptor.Type != JTokenType.Null) {
                     var backend = descriptor as JObject;
@@ -345,20 +426,25 @@
         </choose>
       </when>
     </choose>
-    <!-- 7. The decision's routing and limits; then the backend (a configured one, or one the resolver
-         described: C-8, the gateway routes only to what the resolver returns) and the model
-         allow-list (the person's classification in that project). -->
+    <!-- 7. Validated v3 routing and aggregate limits, then independent ordinal exact model
+         admission. A prefix only checks registration consistency; it never grants access. -->
     <choose>
       <when condition="@((string)context.Variables["ccofRefusal"] == "")">
         <set-variable name="ccofProjectId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["projectId"])" />
         <set-variable name="ccofClassification" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["classification"])" />
+        <set-variable name="ccofClassificationGroupId" value="@(((string)JObject.Parse((string)context.Variables["ccofDecision"])["classificationGroupId"]).ToLowerInvariant())" />
+        <set-variable name="ccofClassificationGroupDisplayName" value="@{
+            var name = JObject.Parse((string)context.Variables["ccofDecision"])["classificationGroupDisplayName"];
+            return name != null && name.Type == JTokenType.String && ((string)name).Length >= 1 && ((string)name).Length <= 256 ? (string)name : "";
+        }" />
         <set-variable name="ccofBackendId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["backendId"])" />
-        <set-variable name="ccofPersonTpm" value="@((int)(long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["tpm"])" />
-        <set-variable name="ccofPersonQuota" value="@((long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["quota"])" />
-        <set-variable name="ccofPersonPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["person"]["period"])" />
-        <set-variable name="ccofGroupTpm" value="@((int)(long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["tpm"])" />
-        <set-variable name="ccofGroupQuota" value="@((long)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["quota"])" />
-        <set-variable name="ccofGroupPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["tokenLimits"]["group"]["period"])" />
+        <set-variable name="ccofFamilyPolicy" value="@(JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"].ToString(Newtonsoft.Json.Formatting.None))" />
+        <set-variable name="ccofPersonTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokensPerMinute"] ?? 0)" />
+        <set-variable name="ccofPersonQuota" value="@((long?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokenQuota"] ?? 0L)" />
+        <set-variable name="ccofPersonPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokenQuotaPeriod"] ?? "")" />
+        <set-variable name="ccofGroupTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["group"]["tokensPerMinute"] ?? 0)" />
+        <set-variable name="ccofGroupQuota" value="@((long?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["group"]["tokenQuota"] ?? 0L)" />
+        <set-variable name="ccofGroupPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["group"]["tokenQuotaPeriod"] ?? "")" />
         <set-variable name="ccofBackendAuthMode" value="@{
             var auth = JObject.Parse((string)context.Variables["ccofDecision"])["auth"] as JObject;
             return auth == null ? "" : (string)auth["mode"];
@@ -376,26 +462,48 @@
             return auth == null || auth["connectionId"] == null ? "" : (string)auth["connectionId"];
         }" />
         <set-variable name="ccofBackendAllowed" value="@(Array.IndexOf(new string[] { %%BACKEND_IDS%% }, (string)context.Variables["ccofBackendId"]) >= 0 || (string)context.Variables["ccofBackendAuthMode"] != "")" />
-        <set-variable name="ccofModelAllowed" value="@{
+        <set-variable name="ccofModelFamily" value="@{
             var model = (string)context.Variables["ccofModel"];
-            foreach (var allowed in (JArray)JObject.Parse((string)context.Variables["ccofDecision"])["modelAllowList"]) {
-                if (string.Equals((string)allowed, model, StringComparison.Ordinal)) { return true; }
+            var classification = (string)context.Variables["ccofClassification"];
+            var admitted = "";
+            var matches = 0;
+            foreach (var family in ((JObject)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"]).Properties()) {
+                if (Array.IndexOf(new string[] { "haiku", "sonnet", "opus", "fable", "mythos" }, family.Name) < 0) { return ""; }
+                if ((family.Name == "fable" || family.Name == "mythos") && classification != "CYB") { return ""; }
+                foreach (var allowed in (JArray)family.Value["models"]) {
+                    if (allowed.Type == JTokenType.String && string.Equals((string)allowed, model, StringComparison.Ordinal)) {
+                        admitted = family.Name;
+                        matches++;
+                    }
+                }
             }
-            return false;
+            return matches == 1 ? admitted : "";
         }" />
+        <set-variable name="ccofModelAllowed" value="@((string)context.Variables["ccofModelFamily"] != "")" />
         <choose>
           <when condition="@(!(bool)context.Variables["ccofBackendAllowed"])">
             <set-variable name="ccofRefusal" value="backend_not_configured" />
           </when>
           <when condition="@(!(bool)context.Variables["ccofModelAllowed"])">
-            <set-variable name="ccofRefusal" value="model_not_allowed" />
+            <set-variable name="ccofRefusal" value="model_family_not_allowed" />
+          </when>
+        </choose>
+        <choose>
+          <when condition="@((string)context.Variables["ccofRefusal"] == "")">
+            <set-variable name="ccofFamilyPersonTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["person"]["tokensPerMinute"] ?? 0)" />
+            <set-variable name="ccofFamilyPersonQuota" value="@((long?)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["person"]["tokenQuota"] ?? 0L)" />
+            <set-variable name="ccofFamilyPersonPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["person"]["tokenQuotaPeriod"] ?? "")" />
+            <set-variable name="ccofFamilyGroupTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["group"]["tokensPerMinute"] ?? 0)" />
+            <set-variable name="ccofFamilyGroupQuota" value="@((long?)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["group"]["tokenQuota"] ?? 0L)" />
+            <set-variable name="ccofFamilyGroupPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofFamilyPolicy"])["families"][(string)context.Variables["ccofModelFamily"]]["group"]["tokenQuotaPeriod"] ?? "")" />
           </when>
         </choose>
       </when>
     </choose>
-    <!-- 8. Token limits from the resolver's tokenLimits (C-2): the group's, then the person's. A null
-         limit is not applied. Counters are per gateway. A rate refusal is 429 and a quota refusal 403;
-         on-error tells them apart by policy id. -->
+    <!-- 8. Aggregate group/person ceilings retain their keys and accounting headers. Selected-family
+         group/person ceilings are additional and share keys across model versions, never headers.
+         Null skips only that ceiling. All four scopes are guarded by exact model admission.
+         Counters remain gateway-local, not globally atomic. -->
     <choose>
       <when condition="@((string)context.Variables["ccofRefusal"] == "")">
         <choose>
@@ -418,6 +526,28 @@
           </when>
           <when condition="@((long)context.Variables["ccofPersonQuota"] > 0)">
             <llm-token-limit id="ccof-limit-person-quota" counter-key="@("p:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"])" token-quota="@((long)context.Variables["ccofPersonQuota"])" token-quota-period="@((string)context.Variables["ccofPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_PERSON_QUOTA%%" tokens-consumed-header-name="%%H_TOKENS_CONSUMED%%" />
+          </when>
+        </choose>
+        <choose>
+          <when condition="@((int)context.Variables["ccofFamilyGroupTpm"] > 0 && (long)context.Variables["ccofFamilyGroupQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-family-group-rate-quota" counter-key="@("gf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassificationGroupId"] + ":" + (string)context.Variables["ccofModelFamily"])" tokens-per-minute="@((int)context.Variables["ccofFamilyGroupTpm"])" token-quota="@((long)context.Variables["ccofFamilyGroupQuota"])" token-quota-period="@((string)context.Variables["ccofFamilyGroupPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+          <when condition="@((int)context.Variables["ccofFamilyGroupTpm"] > 0)">
+            <llm-token-limit id="ccof-limit-family-group-rate" counter-key="@("gf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassificationGroupId"] + ":" + (string)context.Variables["ccofModelFamily"])" tokens-per-minute="@((int)context.Variables["ccofFamilyGroupTpm"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+          <when condition="@((long)context.Variables["ccofFamilyGroupQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-family-group-quota" counter-key="@("gf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassificationGroupId"] + ":" + (string)context.Variables["ccofModelFamily"])" token-quota="@((long)context.Variables["ccofFamilyGroupQuota"])" token-quota-period="@((string)context.Variables["ccofFamilyGroupPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+        </choose>
+        <choose>
+          <when condition="@((int)context.Variables["ccofFamilyPersonTpm"] > 0 && (long)context.Variables["ccofFamilyPersonQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-family-person-rate-quota" counter-key="@("pf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"] + ":" + (string)context.Variables["ccofModelFamily"])" tokens-per-minute="@((int)context.Variables["ccofFamilyPersonTpm"])" token-quota="@((long)context.Variables["ccofFamilyPersonQuota"])" token-quota-period="@((string)context.Variables["ccofFamilyPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+          <when condition="@((int)context.Variables["ccofFamilyPersonTpm"] > 0)">
+            <llm-token-limit id="ccof-limit-family-person-rate" counter-key="@("pf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"] + ":" + (string)context.Variables["ccofModelFamily"])" tokens-per-minute="@((int)context.Variables["ccofFamilyPersonTpm"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+          <when condition="@((long)context.Variables["ccofFamilyPersonQuota"] > 0)">
+            <llm-token-limit id="ccof-limit-family-person-quota" counter-key="@("pf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"] + ":" + (string)context.Variables["ccofModelFamily"])" token-quota="@((long)context.Variables["ccofFamilyPersonQuota"])" token-quota-period="@((string)context.Variables["ccofFamilyPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
           </when>
         </choose>
       </when>
@@ -485,7 +615,7 @@
         <set-variable name="ccofRefusalStatus" value="@{
             switch ((string)context.Variables["ccofRefusal"]) {
                 case "token_identity_missing": return 401;
-                case "token_scope_missing": case "token_client_not_allowed": case "app_token_not_allowed": case "not_authorized": case "model_not_allowed": return 403;
+                case "token_scope_missing": case "token_client_not_allowed": case "app_token_not_allowed": case "not_authorized": case "model_family_not_allowed": return 403;
                 case "budget_exhausted": case "aggregate_budget_exhausted": return 403;
                 case "project_header_invalid": case "request_body_invalid": case "request_model_missing": case "project_selection_required": return 400;
                 default: return 503;
@@ -544,12 +674,9 @@
                     type = "permission_error";
                     message = "The CCU budget shared by classification " + (classification == "" ? "of your group" : classification) + (project == "" ? "" : " in project " + project) + " is used up for this budget period. Your own access is unchanged; ask your platform team to raise the budget, or wait for the next period.";
                     break;
-                case "model_not_allowed":
+                case "model_family_not_allowed":
                     type = "permission_error";
-                    var names = new System.Collections.Generic.List<string>();
-                    foreach (var allowed in (JArray)JObject.Parse((string)context.Variables["ccofDecision"])["modelAllowList"]) { names.Add((string)allowed); }
-                    var shown = System.Text.RegularExpressions.Regex.IsMatch(model, "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$") ? "'" + model + "'" : "requested";
-                    message = "The " + shown + " model is not available to classification " + classification + " in project " + project + ". Choose one of: " + string.Join(", ", names) + ".";
+                    message = "The requested model family is not available to your project classification. Ask your platform team for an approved model.";
                     break;
                 case "entitlement_unavailable":
                     type = "api_error";
@@ -714,6 +841,9 @@
                     new JProperty("personId", (string)context.Variables["ccofOid"]),
                     new JProperty("projectId", (string)context.Variables["ccofProjectId"]),
                     new JProperty("classification", (string)context.Variables["ccofClassification"]),
+                    new JProperty("classificationGroupId", (string)context.Variables["ccofClassificationGroupId"]),
+                    new JProperty("classificationGroupDisplayName", context.Variables.GetValueOrDefault<string>("ccofClassificationGroupDisplayName", "") == "" ? null : (string)context.Variables["ccofClassificationGroupDisplayName"]),
+                    new JProperty("modelFamily", context.Variables.GetValueOrDefault<string>("ccofModelFamily", "") == "" ? null : (string)context.Variables["ccofModelFamily"]),
                     new JProperty("backendId", backendId),
                     new JProperty("deployment", deployment),
                     new JProperty("model", servedModel),
@@ -782,6 +912,8 @@
         if (source == "validate-jwt") { return "jwt"; }
         if (policy == "ccof-admission-person") { return "admission_person"; }
         if (policy == "ccof-admission-resolver" || policy == "ccof-admission-resolver-concurrency") { return "admission_resolver"; }
+        if (policy.StartsWith("ccof-limit-family-group-", StringComparison.Ordinal)) { return status != 429 && (status == 403 || reason.Contains("Quota")) ? "family_group_quota_exceeded" : "family_group_rate_exceeded"; }
+        if (policy.StartsWith("ccof-limit-family-person-", StringComparison.Ordinal)) { return status != 429 && (status == 403 || reason.Contains("Quota")) ? "family_person_quota_exceeded" : "family_person_rate_exceeded"; }
         if (policy.StartsWith("ccof-limit-group", StringComparison.Ordinal)) { return status == 403 || reason.Contains("Quota") ? "group_quota" : "group_rate"; }
         if (policy.StartsWith("ccof-limit-person", StringComparison.Ordinal)) { return status == 403 || reason.Contains("Quota") ? "person_quota" : "person_rate"; }
         if (policy.StartsWith("ccof-backend-credential", StringComparison.Ordinal)) { return "backend_credential"; }
@@ -811,7 +943,9 @@
         var kind = (string)context.Variables["ccofErrorKind"];
         if (kind == "jwt") { return 401; }
         if (kind == "admission_person" || kind == "admission_resolver" || kind == "group_rate" || kind == "person_rate") { return 429; }
+        if (kind == "family_group_rate_exceeded" || kind == "family_person_rate_exceeded") { return 429; }
         if (kind == "group_quota" || kind == "person_quota") { return 403; }
+        if (kind == "family_group_quota_exceeded" || kind == "family_person_quota_exceeded") { return 403; }
         if (kind == "backend_credential") { return 503; }
         if (kind == "backend_unreachable") { return 502; }
         if (kind == "backend_timeout") { return 504; }
@@ -821,7 +955,7 @@
     <set-variable name="ccofErrorRetryAfter" value="@{
         var kind = (string)context.Variables["ccofErrorKind"];
         if (kind == "admission_resolver" || kind == "backend_credential") { return "%%RETRY_AFTER%%"; }
-        if ((kind == "admission_person" || kind.EndsWith("_rate") || kind.EndsWith("_quota")) && context.Variables.ContainsKey("ccofRetryAfter")) {
+        if ((kind == "admission_person" || kind.EndsWith("_rate") || kind.EndsWith("_quota") || kind.EndsWith("_rate_exceeded") || kind.EndsWith("_quota_exceeded")) && context.Variables.ContainsKey("ccofRetryAfter")) {
             return Convert.ToString(context.Variables["ccofRetryAfter"]);
         }
         return "";
@@ -868,6 +1002,22 @@
             case "group_quota":
                 type = "permission_error";
                 message = "The " + adjective + "token quota shared by classification " + classification + " in project " + project + " is used up. It resets at the start of the next " + unit + " (UTC). Your own access is unchanged.";
+                break;
+            case "family_person_rate_exceeded":
+                type = "rate_limit_error";
+                message = "Your token rate limit for this model family is exceeded. Retry after the indicated interval.";
+                break;
+            case "family_group_rate_exceeded":
+                type = "rate_limit_error";
+                message = "Your group's token rate limit for this model family is exceeded. Retry after the indicated interval.";
+                break;
+            case "family_person_quota_exceeded":
+                type = "permission_error";
+                message = "Your token quota for this model family is used up for this quota period.";
+                break;
+            case "family_group_quota_exceeded":
+                type = "permission_error";
+                message = "Your group's token quota for this model family is used up for this quota period.";
                 break;
             case "backend_credential":
                 message = "The gateway could not get a credential for the model service. Your access is unaffected. Retry in %%RETRY_AFTER%% seconds; if this continues, tell your platform team.";

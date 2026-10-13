@@ -1,0 +1,23 @@
+{
+  "_readme": "Calls U-A to U-D and Q1 to Q5 of WP-GW's U-34 run on revision 8 (2026-10-12; docs/status/WP-GW.md, 'U-34, the counters and the person quota'), for tests/usage-cache-estimate.test.ts. The usage counts are the ones recorded from each response. The prompts were synthetic: a system prompt of 190 lines of one template, each line ending with a 12-character random hex salt that differs per prefix, and one user message. The salts were not recorded, so the tests rebuild each prompt with a placeholder salt of the same length: character counts are exact, token counts are the recorded ones. U-A, U-B and U-C share prefix p1; U-D has its own prefix p2; each Q call has its own uncached prefix.",
+  "model": "claude-haiku-4-5",
+  "minCacheableTokens": 4096,
+  "minCacheableTokensSource": "Anthropic 'Prompt caching', Cache limitations: 4,096 tokens for Claude Haiku 4.5, on Microsoft Foundry too (retrieved 2026-10-12)",
+  "prefix": {
+    "lines": 190,
+    "template": "Reference line {n}: the quick brown fox jumps over the lazy dog while the gateway counts tokens for cache test {salt}.",
+    "saltLength": 12
+  },
+  "userMessage": "Reply with the single word: ok",
+  "calls": [
+    { "label": "U-A", "atUtc": "2026-10-12T04:55:49Z", "streamed": false, "system": "cached", "prefix": "p1", "usage": { "input": 13, "cacheWrite5m": 5890, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "U-B", "atUtc": "2026-10-12T04:56:16Z", "streamed": false, "system": "cached", "prefix": "p1", "usage": { "input": 13, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 5890, "output": 4 } },
+    { "label": "U-C", "atUtc": "2026-10-12T04:56:42Z", "streamed": true, "system": "cached", "prefix": "p1", "usage": { "input": 13, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 5890, "output": 4 } },
+    { "label": "U-D", "atUtc": "2026-10-12T04:57:08Z", "streamed": true, "system": "cached", "prefix": "p2", "usage": { "input": 13, "cacheWrite5m": 6650, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "Q1", "atUtc": "2026-10-12T04:57:35Z", "streamed": false, "system": "plain", "prefix": "q1", "usage": { "input": 6093, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "Q2", "atUtc": "2026-10-12T04:58:02Z", "streamed": false, "system": "plain", "prefix": "q2", "usage": { "input": 6473, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "Q3", "atUtc": "2026-10-12T04:58:28Z", "streamed": false, "system": "plain", "prefix": "q3", "usage": { "input": 6473, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "Q4", "atUtc": "2026-10-12T04:58:54Z", "streamed": false, "system": "plain", "prefix": "q4", "usage": { "input": 6283, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } },
+    { "label": "Q5", "atUtc": "2026-10-12T04:59:21Z", "streamed": false, "system": "plain", "prefix": "q5", "usage": { "input": 6473, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 4 } }
+  ]
+}

@@ -7,6 +7,7 @@
 import type { Decimal } from "decimal.js";
 import { budgetInBothUnits, parseBudget, parseOptionalBudget } from "../cost/budget-units.ts";
 import { CostConfigError } from "../cost/errors.ts";
+import { parseFamilyPolicy } from "../contracts/model-families.ts";
 import { GUID } from "./settings.ts";
 
 export type AggregateMode = "strict" | "notify";
@@ -47,24 +48,19 @@ export interface Registry {
 
 // The patterns WP-ONB's Stage 3 schema enforces (scripts/Onboarding.Schemas.psm1).
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isId = (value: unknown): value is string => typeof value === "string" && ID.test(value);
 
-function readAllowList(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  if (!value.every((model) => typeof model === "string" && MODEL.test(model))) return null;
-  return new Set(value).size === value.length ? [...(value as string[])] : null;
-}
-
 // Returns the registration, or the name of the first faulty field.
 function readClassification(projectId: string, classification: string, value: unknown): ScopeRegistration | string {
   if (!isObject(value)) return "(classification)";
-  const modelAllowList = readAllowList(value.modelAllowList);
-  if (!modelAllowList) return "modelAllowList";
+  if (Object.hasOwn(value, "modelAllowList") || Object.hasOwn(value, "tokenLimits")) return "familyPolicy";
+  const policy = parseFamilyPolicy(value.familyPolicy, classification);
+  if (!policy.ok) return "familyPolicy";
+  const modelAllowList = Object.values(policy.value.families).flatMap((family) => family.models);
   if (value.aggregateMode !== "strict" && value.aggregateMode !== "notify") return "aggregateMode";
   let personBudgetCcu: Decimal;
   try {

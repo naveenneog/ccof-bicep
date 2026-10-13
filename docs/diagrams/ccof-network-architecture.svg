@@ -1,0 +1,275 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2500" height="2400" viewBox="0 0 2500 2400" role="img" aria-labelledby="svg-title svg-description">
+<title id="svg-title">Claude Code on Foundry network and trust architecture</title>
+<desc id="svg-description">Customer-neutral source-verified overview of developer identity, gateway authorization, private registry, membership sync, project-specific Foundry backends, optional tenant and ingress wiring, and chargeback telemetry.</desc>
+<defs>
+<marker id="arrow0078d4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0078d4"/></marker>
+<marker id="arrow107c10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#107c10"/></marker>
+<marker id="arrow8764b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8764b8"/></marker>
+<marker id="arrowca5010" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ca5010"/></marker>
+</defs>
+<rect width="2500" height="2400" fill="white"/>
+<g id="title"><rect x="35" y="25" width="2425" height="98" rx="10" fill="#ffffff" stroke="#ffffff" stroke-width="2"/>
+<text x="51" y="57" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="30" font-weight="700">Claude Code on Foundry | identity, routing &amp; private-network architecture</text>
+<text x="51" y="88" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Integrated baseline and optional wiring • Customer-neutral design • Design / wiring requirements, not live acceptance</text>
+</g>
+<g id="tenant"><rect x="450" y="145" width="2005" height="1495" rx="10" fill="#ffffff" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="466" y="177" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">CUSTOMER ENTRA TENANT • identity / token trust boundary</text>
+</g>
+<g id="directory"><rect x="475" y="200" width="1450" height="250" rx="10" fill="#f3f8fc" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="491" y="232" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">DIRECTORY CONTROL PLANE • separate from Azure resource RBAC</text>
+</g>
+<g id="combined"><rect x="500" y="255" width="440" height="165" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="516" y="287" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">Combined developer + Gateway API</text>
+<text x="516" y="318" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Single-tenant public client • token v2</text>
+<text x="516" y="345" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Delegated access_as_user • no secret</text>
+<text x="516" y="372" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">WAM / browser PKCE; device code optional</text>
+<text x="516" y="399" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Consent + Conditional Access apply</text>
+</g>
+<g id="groups"><rect x="970" y="255" width="445" height="165" rx="10" fill="#eaf5ea" stroke="#107c10" stroke-width="2"/>
+<text x="986" y="287" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">Flat Entra security groups → Graph</text>
+<text x="986" y="318" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Direct membership → project / STD / PRM / CYB</text>
+<text x="986" y="345" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Stable group IDs authorize; names are snapshots</text>
+<text x="986" y="372" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Sync UAMI: GroupMember.Read.All</text>
+<text x="986" y="399" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">+ User.Read.All + Application.Read.All</text>
+</g>
+<g id="resolver-app"><rect x="1445" y="255" width="455" height="165" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1461" y="287" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">Separate internal Resolver API</text>
+<text x="1461" y="318" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">No public-client redirects / developer scopes</text>
+<text x="1461" y="345" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">EasyAuth pins APIM MI app ID AND object ID</text>
+<text x="1461" y="372" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">APIM-only audience; no developer access</text>
+<text x="1461" y="399" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Azure Owner ≠ Entra administrator</text>
+</g>
+<g id="workstation"><rect x="35" y="230" width="360" height="480" rx="10" fill="#f3f8fc" stroke="#0078d4" stroke-width="2"/>
+<text x="51" y="262" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">DEVELOPER WORKSTATION</text>
+<text x="51" y="293" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Claude Code CLI</text>
+<text x="51" y="320" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">VS Code Claude Code panel</text>
+<text x="51" y="347" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Claude Desktop</text>
+<text x="51" y="374" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="51" y="401" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Approved ccof-token helper</text>
+<text x="51" y="428" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">MSAL • secure broker / encrypted cache</text>
+<text x="51" y="455" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Gateway API audience only</text>
+<text x="51" y="482" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="51" y="509" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">onboarding.json: strict schemaVersion 1</text>
+<text x="51" y="536" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Config only • no grants / usage metering</text>
+<text x="51" y="563" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">No direct Foundry / resolver permission</text>
+</g>
+<g id="ingress"><rect x="35" y="770" width="360" height="195" rx="10" fill="#fff8ed" stroke="#ca5010" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="51" y="802" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="20" font-weight="700">OPTIONAL CUSTOMER INGRESS</text>
+<text x="51" y="833" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Internal-only ingress / WAF / SIPA controls</text>
+<text x="51" y="860" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Customer-approved access topology</text>
+<text x="51" y="887" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Not universally created by quickstart</text>
+<text x="51" y="914" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Dashed = optional, not proof of deployment</text>
+</g>
+<g id="admin"><rect x="35" y="1045" width="360" height="420" rx="10" fill="#fff8ed" stroke="#ca5010" stroke-width="2"/>
+<text x="51" y="1077" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">ADMINISTRATOR CONTROL PLANE</text>
+<text x="51" y="1108" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Cloud Shell • ARM / Graph / OneDeploy</text>
+<text x="51" y="1135" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Resource-specific Bicep modules</text>
+<text x="51" y="1162" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="51" y="1189" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Network → resources → directory objects</text>
+<text x="51" y="1216" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="16">→ remaining wiring → grants / config / code</text>
+<text x="51" y="1243" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">→ registrySeed → client artifacts / tests</text>
+<text x="51" y="1270" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="51" y="1297" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Entra and Azure roles held separately</text>
+<text x="51" y="1324" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Grant Graph before first timer token</text>
+<text x="51" y="1351" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Cached MI tokens can delay new roles</text>
+<text x="51" y="1378" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="51" y="1405" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Ordinary Cloud Shell: no private data plane</text>
+<text x="51" y="1432" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">No jumpbox / VM assumption</text>
+</g>
+<g id="core"><rect x="475" y="480" width="1290" height="1135" rx="10" fill="#ffffff" stroke="#687787" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="491" y="512" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">CORE AZURE SUBSCRIPTION • core resource group / approved region</text>
+</g>
+<g id="apim"><rect x="500" y="560" width="565" height="225" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="516" y="592" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">AZURE API MANAGEMENT • cloud-managed service</text>
+<text x="516" y="623" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Existing APIM usually • system-assigned MI enabled</text>
+<text x="516" y="650" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">① Validate tenant / audience / client / scope / person</text>
+<text x="516" y="677" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">x-ccof-project is intent, checked against entitlement</text>
+<text x="516" y="704" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Admission cap + cached v3 / d3 resolver decision</text>
+<text x="516" y="731" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Exact model admission; aggregate + family ceilings</text>
+<text x="516" y="758" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Per-person AND group limits • never substitute backend</text>
+</g>
+<g id="resolver"><rect x="1170" y="560" width="565" height="225" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1186" y="592" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">RESOLVER FUNCTION • Flex / system-assigned MI</text>
+<text x="1186" y="623" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">② APIM-only EasyAuth • internal API audience</text>
+<text x="1186" y="650" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Resolve person + project → classification / backendId</text>
+<text x="1186" y="677" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Validated familyPolicy: haiku / sonnet / opus</text>
+<text x="1186" y="704" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Fable / Mythos: exact registration AND CYB only</text>
+<text x="1186" y="731" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Token-limits-only baseline; optional monetary mode</text>
+<text x="1186" y="758" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">③ Least-privilege Cosmos reads over private SQL PE</text>
+</g>
+<g id="sync"><rect x="500" y="855" width="565" height="230" rx="10" fill="#eaf5ea" stroke="#107c10" stroke-width="2"/>
+<text x="516" y="887" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">SYNC FUNCTION • Flex / user-assigned MI</text>
+<text x="516" y="918" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">⑤ Microsoft Graph reads → entitlement projection</text>
+<text x="516" y="945" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Successful run applies membership additions/removals</text>
+<text x="516" y="972" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Freeze affected projects on failed reads; syncLease</text>
+<text x="516" y="999" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Conflict: retain incumbent classification, otherwise none</text>
+<text x="516" y="1026" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">registrySeed timer: create-only projects + backends</text>
+<text x="516" y="1053" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Verify readback; disable timer / clean payload after use</text>
+</g>
+<g id="cosmos"><rect x="1170" y="855" width="565" height="230" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1186" y="887" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">COSMOS DB • private SQL registry, outside VNet</text>
+<text x="1186" y="918" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Public access disabled + local auth off at creation</text>
+<text x="1186" y="945" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">entitlement / projects / backends / subscriptionIndex</text>
+<text x="1186" y="972" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">budgetState / aggregateBudgetState</text>
+<text x="1186" y="999" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">syncLease / reconcilerLease</text>
+<text x="1186" y="1026" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Resolver: reads; sync: scoped writes / seed creates</text>
+<text x="1186" y="1053" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Reconciler: scoped budget writes • never broad keys</text>
+</g>
+<g id="vnet"><rect x="500" y="1140" width="1235" height="300" rx="10" fill="#f5f9fc" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="516" y="1172" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">CUSTOMER VNET • core subscription + region • network boundary</text>
+</g>
+<g id="apim-subnet"><rect x="525" y="1210" width="330" height="185" rx="10" fill="#ffffff" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="541" y="1242" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">APIM outbound subnet</text>
+<text x="541" y="1273" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Microsoft.Web/serverFarms delegation</text>
+<text x="541" y="1300" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Required NSG • approved routes / UDR</text>
+<text x="541" y="1327" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">APIM compute is NOT in this subnet</text>
+<text x="541" y="1354" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Existing APIM is not auto-attached</text>
+<text x="541" y="1381" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Actual caller VNet must resolve / route</text>
+</g>
+<g id="functions-subnet"><rect x="880" y="1210" width="330" height="185" rx="10" fill="#ffffff" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="896" y="1242" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">Functions outbound subnet</text>
+<text x="896" y="1273" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="17">Microsoft.App/environments delegation</text>
+<text x="896" y="1300" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Resolver + sync + optional reconciler</text>
+<text x="896" y="1327" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Flex compute is NOT in this subnet</text>
+<text x="896" y="1354" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18">Outbound integration ≠ inbound PE</text>
+<text x="896" y="1381" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Separate from APIM subnet</text>
+</g>
+<g id="pe-subnet"><rect x="1235" y="1210" width="475" height="185" rx="10" fill="#ffffff" stroke="#0078d4" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1251" y="1242" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">PRIVATE-ENDPOINT SUBNET • NICs only</text>
+<text x="1251" y="1273" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Baseline: Cosmos SQL + each app&#x27;s blob PE</text>
+<text x="1251" y="1300" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Optional: resolver sites PE (inbound only)</text>
+<text x="1251" y="1327" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Optional: Foundry account PE(s), any subscription</text>
+<text x="1251" y="1354" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">PE approval and DNS / route must be verified</text>
+<text x="1251" y="1381" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Target PaaS services remain outside this VNet</text>
+</g>
+<g id="reconciler"><rect x="500" y="1480" width="540" height="125" rx="10" fill="#fff8ed" stroke="#ca5010" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="516" y="1512" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">OPTIONAL RECONCILER • Flex / UAMI</text>
+<text x="516" y="1543" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">LAW usage → budgetState / aggregateBudgetState</text>
+<text x="516" y="1570" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Monetary mode only; baseline has no reconciler timer</text>
+<text x="516" y="1597" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">FunctionAppLogs diagnostics • reconcilerLease</text>
+</g>
+<g id="storage"><rect x="1090" y="1480" width="645" height="125" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1106" y="1512" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">PER-APP BLOB DEPLOYMENT STORAGE • outside VNet</text>
+<text x="1106" y="1543" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Resolver / sync / optional reconciler • identity-based access</text>
+<text x="1106" y="1570" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Public access disabled; shared-key auth off at creation</text>
+<text x="1106" y="1597" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Separate blob private endpoint per app • OneDeploy packages</text>
+</g>
+<g id="backends"><rect x="1810" y="480" width="615" height="450" rx="10" fill="#ffffff" stroke="#687787" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1826" y="512" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">DESIGNATED BACKEND SUBSCRIPTION A • same tenant</text>
+</g>
+<g id="foundry"><rect x="1840" y="590" width="555" height="260" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1856" y="622" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">PROJECT-SPECIFIC FOUNDRY ACCOUNT</text>
+<text x="1856" y="653" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">④ set-backend-service → resolved backendId only</text>
+<text x="1856" y="680" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">APIM system MI → cognitive resource token</text>
+<text x="1856" y="707" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Cognitive Services User grant on each target account</text>
+<text x="1856" y="734" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Accounts can live in different Azure subscriptions</text>
+<text x="1856" y="761" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Anthropic account base: /anthropic</text>
+<text x="1856" y="788" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Messages: /v1/messages • NOT /api/projects</text>
+<text x="1856" y="815" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Public/private exposure is backend-owner policy</text>
+<text x="1856" y="842" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Optional PEs are in caller&#x27;s VNet, not here</text>
+</g>
+<g id="backend-sub-b"><rect x="1810" y="970" width="615" height="235" rx="10" fill="#ffffff" stroke="#687787" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1826" y="1002" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="18" font-weight="700">DESIGNATED BACKEND SUBSCRIPTION B … N • same tenant</text>
+</g>
+<g id="foundry-next"><rect x="1840" y="1030" width="555" height="145" rx="10" fill="#e7f2fc" stroke="#0078d4" stroke-width="2"/>
+<text x="1856" y="1062" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">FOUNDRY ACCOUNT • additional project backend</text>
+<text x="1856" y="1093" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Independent per-account MI grant / model deployments</text>
+<text x="1856" y="1120" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Project backendId maps here, not to account A</text>
+<text x="1856" y="1147" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Public/private per owner • optional caller-VNet PE</text>
+</g>
+<g id="other-tenant"><rect x="1810" y="1680" width="615" height="255" rx="10" fill="#fff8ed" stroke="#ca5010" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1826" y="1712" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">OPTIONAL DIFFERENT ENTRA TENANT</text>
+<text x="1826" y="1743" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Foundry account + backend-tenant application credentials</text>
+<text x="1826" y="1770" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Staged credential path; manual MI helper refuses cross-tenant</text>
+<text x="1826" y="1797" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">APIM-only credential custody / rotation • never client-distributed</text>
+<text x="1826" y="1824" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Cross-tenant PE approval is independent of authentication</text>
+<text x="1826" y="1851" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Not the Resolver API app; not the managed-identity baseline</text>
+</g>
+<g id="telemetry"><rect x="1810" y="1260" width="615" height="355" rx="10" fill="#f3eefb" stroke="#8764b8" stroke-width="2"/>
+<text x="1826" y="1292" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="20" font-weight="700">AZURE MONITOR • core subscription / managed resources</text>
+<text x="1826" y="1323" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">⑥ APIM GatewayLogs + GatewayLlmLogs</text>
+<text x="1826" y="1350" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">+ sanitized trusted usage / resolver traces</text>
+<text x="1826" y="1377" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Resolver + sync App Insights; Function logs</text>
+<text x="1826" y="1404" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">→ Log Analytics → full chargeback workbook + fixed rate card</text>
+<text x="1826" y="1431" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19"></text>
+<text x="1826" y="1458" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Request-time person / group / project / model / family / backend</text>
+<text x="1826" y="1485" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Disjoint input / output / cache read / write 5m / write 1h</text>
+<text x="1826" y="1512" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Stream cache categories unknown, never guessed</text>
+<text x="1826" y="1539" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">No prompts / responses / credentials logged</text>
+<text x="1826" y="1566" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Selectors are NOT authorization; list price ≠ invoice</text>
+</g>
+<g id="dns"><rect x="35" y="1680" width="1730" height="195" rx="10" fill="#f5f9fc" stroke="#0078d4" stroke-width="2"/>
+<text x="51" y="1712" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">PRIVATE DNS + CUSTOMER NETWORK RESPONSIBILITIES</text>
+<text x="51" y="1743" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Baseline: privatelink.documents.azure.com • privatelink.blob.core.windows.net</text>
+<text x="51" y="1770" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Optional inbound resolver: privatelink.azurewebsites.net</text>
+<text x="51" y="1797" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Optional Foundry: privatelink.cognitiveservices.azure.com / openai.azure.com / services.ai.azure.com</text>
+<text x="51" y="1824" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Link / forward from the ACTUAL APIM and Functions caller networks; hub peering does not share DNS</text>
+<text x="51" y="1851" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Customer owns approved custom DNS, firewall, UDR, hub / peering and ingress controls</text>
+</g>
+<g id="revocation"><rect x="35" y="1905" width="1730" height="195" rx="10" fill="#eaf5ea" stroke="#107c10" stroke-width="2"/>
+<text x="51" y="1937" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">REVOCATION / RECLASSIFICATION • bounded, not instantaneous</text>
+<text x="51" y="1968" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">⑦ Group removal → successful sync → resolver / cache refresh → subsequent requests denied</text>
+<text x="51" y="1995" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Baseline allow TTL 120s; refusal 30s; extra last-known-good grace 3600s on resolver failure</text>
+<text x="51" y="2022" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Urgent: verify registry revoke, then deploy policy keyVersion • no eager generation eviction</text>
+<text x="51" y="2049" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Move A → B: remove A / prove deny / add B; dual classifications never silently upgrade</text>
+<text x="51" y="2076" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">New spend stamps B; historical spend remains with A, never rewritten from today&#x27;s directory</text>
+</g>
+<g id="legend"><rect x="35" y="2140" width="2390" height="220" rx="10" fill="#ffffff" stroke="#687787" stroke-width="2"/>
+<text x="51" y="2172" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="21" font-weight="700">READING THIS OVERVIEW</text>
+<text x="51" y="2203" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">BLUE solid arrows ①–④: synchronous auth / request dependency; response returns on the same request path</text>
+<text x="51" y="2230" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">GREEN dashed arrows ⑤ / ⑦: asynchronous membership projection / revocation   •   PURPLE dotted ⑥: telemetry / reporting</text>
+<text x="51" y="2257" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">ORANGE dashed: administrator control plane or optional credential / monetary path   •   GRAY dotted, no arrow: network association</text>
+<text x="51" y="2284" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Solid blue/green service boxes: integrated implementation baseline (not live acceptance); amber dashed: optional production wiring / monetary or cross-tenant path</text>
+<text x="51" y="2311" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Boundaries: dashed labeled tenant / subscription / VNet / subnet containers; cloud-managed PaaS runs OUTSIDE VNet</text>
+<text x="51" y="2338" fill="#101820" font-family="Arial,Segoe UI,sans-serif" font-size="19">Source baseline: ADR-0026 / ADR-0028; manual + quickstart modules, gateway policy, CLIENTS / SYNC / CHARGEBACK (see ARCHITECTURE.md)</text>
+</g>
+<polyline id="signin" points="395,315 500,315" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<rect x="415.0" y="278" width="62.0" height="24" fill="white"/>
+<text x="446" y="296" text-anchor="middle" fill="#0078d4" font-family="Arial,Segoe UI,sans-serif" font-size="17">① SSO</text>
+<polyline id="request" points="395,655 500,655" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<rect x="405.8" y="620" width="80.39999999999999" height="24" fill="white"/>
+<text x="446" y="638" text-anchor="middle" fill="#0078d4" font-family="Arial,Segoe UI,sans-serif" font-size="17">① HTTPS</text>
+<polyline id="ingress-option" points="395,855 445,855 445,750 500,750" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<polyline id="resolve" points="1065,655 1170,655" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<rect x="1090.6" y="620" width="52.8" height="24" fill="white"/>
+<text x="1117" y="638" text-anchor="middle" fill="#0078d4" font-family="Arial,Segoe UI,sans-serif" font-size="17">② MI</text>
+<polyline id="registry-read" points="1452,785 1452,855" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<rect x="1501.0" y="806" width="108.0" height="24" fill="white"/>
+<text x="1555" y="824" text-anchor="middle" fill="#0078d4" font-family="Arial,Segoe UI,sans-serif" font-size="17">③ SQL / PE</text>
+<polyline id="routing" points="1015,560 1015,540 2085,540 2085,590" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<rect x="1389.4" y="512" width="301.2" height="24" fill="white"/>
+<text x="1540" y="530" text-anchor="middle" fill="#0078d4" font-family="Arial,Segoe UI,sans-serif" font-size="17">④ Authorized backend route • MI</text>
+<polyline id="route-sub-b" points="1015,560 1015,540 1800,540 1800,1110 1840,1110" fill="none" stroke="#0078d4" stroke-width="2.5" marker-end="url(#arrow0078d4)"/>
+<polyline id="groups-read" points="1190,420 1190,465 465,465 465,950 500,950" fill="none" stroke="#107c10" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrow107c10)"/>
+<rect x="656.8" y="437" width="126.39999999999999" height="24" fill="white"/>
+<text x="720" y="455" text-anchor="middle" fill="#107c10" font-family="Arial,Segoe UI,sans-serif" font-size="17">⑤ Graph read</text>
+<polyline id="projection" points="1065,965 1170,965" fill="none" stroke="#107c10" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrow107c10)"/>
+<rect x="1077.8" y="930" width="80.39999999999999" height="24" fill="white"/>
+<text x="1118" y="948" text-anchor="middle" fill="#107c10" font-family="Arial,Segoe UI,sans-serif" font-size="17">⑤ Write</text>
+<polyline id="apim-attach" points="780,785 780,825 485,825 485,1110 690,1110 690,1210" fill="none" stroke="#687787" stroke-width="2.5" stroke-dasharray="3 5"/>
+<polyline id="functions-attach" points="980,1085 980,1130 1045,1130 1045,1210" fill="none" stroke="#687787" stroke-width="2.5" stroke-dasharray="3 5"/>
+<polyline id="cosmos-pe" points="1450,1085 1450,1210" fill="none" stroke="#687787" stroke-width="2.5" stroke-dasharray="3 5"/>
+<rect x="1474.4" y="1132" width="71.19999999999999" height="24" fill="white"/>
+<text x="1510" y="1150" text-anchor="middle" fill="#687787" font-family="Arial,Segoe UI,sans-serif" font-size="17">SQL PE</text>
+<polyline id="blob-pe" points="1510,1480 1510,1395" fill="none" stroke="#687787" stroke-width="2.5" stroke-dasharray="3 5"/>
+<rect x="1539.8" y="1444" width="80.39999999999999" height="24" fill="white"/>
+<text x="1580" y="1462" text-anchor="middle" fill="#687787" font-family="Arial,Segoe UI,sans-serif" font-size="17">Blob PE</text>
+<polyline id="cross-tenant-route" points="1065,775 1095,775 1095,1125 1795,1125 1795,1760 1810,1760" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<rect x="1901.8" y="1651" width="356.4" height="24" fill="white"/>
+<text x="2080" y="1669" text-anchor="middle" fill="#ca5010" font-family="Arial,Segoe UI,sans-serif" font-size="17">④ Optional backend-tenant credentials</text>
+<polyline id="telemetry-path" points="1065,745 1115,745 1115,1110 1785,1110 1785,1310 1810,1310" fill="none" stroke="#8764b8" stroke-width="2.5" stroke-dasharray="3 5" marker-end="url(#arrow8764b8)"/>
+<rect x="1287.0" y="1082" width="245.99999999999997" height="24" fill="white"/>
+<text x="1410" y="1100" text-anchor="middle" fill="#8764b8" font-family="Arial,Segoe UI,sans-serif" font-size="17">⑥ Sanitized traces + logs</text>
+<polyline id="function-logs" points="1735,745 1775,745 1775,1440 1810,1440" fill="none" stroke="#8764b8" stroke-width="2.5" stroke-dasharray="3 5" marker-end="url(#arrow8764b8)"/>
+<polyline id="optional-budget-read" points="1810,1570 1775,1570 1775,1630 760,1630 760,1590" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<rect x="1143.2" y="1634" width="273.59999999999997" height="24" fill="white"/>
+<text x="1280" y="1652" text-anchor="middle" fill="#ca5010" font-family="Arial,Segoe UI,sans-serif" font-size="17">Optional monetary usage read</text>
+<polyline id="admin-arm" points="395,1130 440,1130 440,1540 475,1540" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<rect x="392.2" y="1492" width="43.599999999999994" height="24" fill="white"/>
+<text x="414" y="1510" text-anchor="middle" fill="#ca5010" font-family="Arial,Segoe UI,sans-serif" font-size="17">ARM</text>
+<polyline id="admin-graph" points="220,1045 220,1020 420,1020 420,435 475,435" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<polyline id="budget-write" points="750,1480 750,1455 1750,1455 1750,1070 1735,1070" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+<rect x="1148.6" y="1454" width="282.79999999999995" height="24" fill="white"/>
+<text x="1290" y="1472" text-anchor="middle" fill="#ca5010" font-family="Arial,Segoe UI,sans-serif" font-size="17">Optional scoped budget writes</text>
+<polyline id="optional-ingress-request" points="210,710 210,770" fill="none" stroke="#ca5010" stroke-width="2.5" stroke-dasharray="8 5" marker-end="url(#arrowca5010)"/>
+</svg>

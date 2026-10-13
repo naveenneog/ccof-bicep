@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "version": "2026-10-11",
+  "description": "List prices for Claude models, in USD per million tokens, by token category, prompt tier and inference geography, versioned by effective interval. Read by src/cost/rate-card.ts (ADR-0005, ADR-0011). A price change closes the old entry with effectiveTo and adds a new entry with its own source; no entry is edited in place.",
+  "notes": [
+    "Rates: Anthropic pricing page, 'Model pricing' table, https://platform.claude.com/docs/en/about-claude/pricing#model-pricing, retrieved 2026-10-11. Every category is stored as published; none is derived from a multiplier.",
+    "Cache hits: 'Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the base input price.' 'Cache hits and refreshes on Claude Opus 5.5 and Claude Sonnet 5.5 are priced at 0.05x the base input price.' 'All other models use the standard 0.1x multiplier.' (pricing page, footnotes 1-2, retrieved 2026-10-11)",
+    "inferenceGeoMultipliers: 'For Claude 4.6 and later models, specifying US-only inference through the inference_geo parameter incurs a 1.1x multiplier on all token pricing categories, including input tokens, output tokens, cache writes, and cache reads.' 'Earlier models do not support the inference_geo parameter and always use standard pricing' (pricing page, Data residency pricing, retrieved 2026-10-11). On Foundry: US Data Zone Standard 'is equivalent to inference_geo: \"us\" on the Claude API and applies the same 1.1x pricing multiplier' (pricing page, Claude in Microsoft Foundry pricing). Anthropic states the multiplier for Claude 4.6 and later models only, so the Haiku 4.5 entry lists 'global' alone and a 'us' row for it is reported unpriced (U-22).",
+    "Haiku 5.5 prompt tiers: 'Claude Haiku 5.5 is priced by prompt length: a request whose prompt is over 100,000 tokens pays higher prices. A request's prompt length counts all of its input tokens, including cache reads and cache writes. Each request is priced on its own' (pricing page, Long context pricing, retrieved 2026-10-11). 'On Claude Haiku 5.5, the multiplier also applies to the higher prices for prompts over 100,000 tokens' (Data residency pricing).",
+    "Sonnet 5: 'The $2/$10 per million input/output token pricing for Claude Sonnet 5, announced at launch as introductory pricing through August 31, 2026, is now the standard price. The previously scheduled increase to $3/$15 per million input/output tokens on September 1, 2026 will not occur.' (pricing page, footnote 3, retrieved 2026-10-11)",
+    "Model keys: the 'API model name' column of https://platform.claude.com/docs/en/about-claude/model-deprecations, retrieved 2026-10-11. Haiku 4.5 is keyed by its alias claude-haiku-4-5; its API model name claude-haiku-4-5-20251001 matches by removing the trailing date (ADR-0011 decision 3). 'Foundry deployments default to the Claude API model ID (the alias, where one exists)' (https://platform.claude.com/docs/en/models/overview, retrieved 2026-10-11).",
+    "Effective dates: each entry starts on its retrieval date, 2026-10-11. The page shows current prices only, so an earlier effective date is not established, and a row before 2026-10-11 is reported unpriced rather than guessed (docs/status/WP-COST.md, U-new-COST-2)."
+  ],
+  "rateUnit": {
+    "currency": "USD",
+    "perTokens": 1000000,
+    "source": {
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+      "retrieved": "2026-10-11",
+      "quote": "MTok: Million tokens. $5 / MTok is $5 for every million tokens."
+    }
+  },
+  "entries": [
+    {
+      "model": "claude-fable-5-1",
+      "displayName": "Claude Fable 5.1",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "10", "cacheWrite5m": "12.50", "cacheWrite1h": "20", "cacheRead": "0.25", "output": "50" } }
+      ]
+    },
+    {
+      "model": "claude-mythos-5-1",
+      "displayName": "Claude Mythos 5.1 (limited availability)",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "10", "cacheWrite5m": "12.50", "cacheWrite1h": "20", "cacheRead": "0.25", "output": "50" } }
+      ]
+    },
+    {
+      "model": "claude-fable-5",
+      "displayName": "Claude Fable 5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "10", "cacheWrite5m": "12.50", "cacheWrite1h": "20", "cacheRead": "1", "output": "50" } }
+      ]
+    },
+    {
+      "model": "claude-mythos-5",
+      "displayName": "Claude Mythos 5 (limited availability)",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "10", "cacheWrite5m": "12.50", "cacheWrite1h": "20", "cacheRead": "1", "output": "50" } }
+      ]
+    },
+    {
+      "model": "claude-opus-5-5",
+      "displayName": "Claude Opus 5.5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "4", "cacheWrite5m": "5", "cacheWrite1h": "8", "cacheRead": "0.20", "output": "20" } }
+      ]
+    },
+    {
+      "model": "claude-opus-5",
+      "displayName": "Claude Opus 5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "5", "cacheWrite5m": "6.25", "cacheWrite1h": "10", "cacheRead": "0.50", "output": "25" } }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "displayName": "Claude Sonnet 5.5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "2", "cacheWrite5m": "2.50", "cacheWrite1h": "4", "cacheRead": "0.10", "output": "10" } }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5",
+      "displayName": "Claude Sonnet 5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTiers": [
+        { "rates": { "input": "2", "cacheWrite5m": "2.50", "cacheWrite1h": "4", "cacheRead": "0.20", "output": "10" } }
+      ]
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "displayName": "Claude Haiku 5.5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1", "us": "1.1" },
+      "promptTokensCountedCategories": ["input", "cacheWrite5m", "cacheWrite1h", "cacheRead"],
+      "promptTiers": [
+        { "promptTokensUpTo": 100000, "rates": { "input": "0.10", "cacheWrite5m": "0.125", "cacheWrite1h": "0.20", "cacheRead": "0.01", "output": "0.50" } },
+        { "promptTokensOver": 100000, "rates": { "input": "0.50", "cacheWrite5m": "0.625", "cacheWrite1h": "1", "cacheRead": "0.05", "output": "2.50" } }
+      ]
+    },
+    {
+      "model": "claude-haiku-4-5",
+      "displayName": "Claude Haiku 4.5",
+      "effectiveFrom": "2026-10-11T00:00:00Z",
+      "effectiveTo": null,
+      "source": { "url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing", "retrieved": "2026-10-11" },
+      "inferenceGeoMultipliers": { "global": "1" },
+      "promptTiers": [
+        { "rates": { "input": "1", "cacheWrite5m": "1.25", "cacheWrite1h": "2", "cacheRead": "0.10", "output": "5" } }
+      ]
+    }
+  ]
+}

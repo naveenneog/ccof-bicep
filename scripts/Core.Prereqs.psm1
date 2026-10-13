@@ -11,6 +11,7 @@ $script:Arm = 'https://management.azure.com'
 $script:Graph = 'https://graph.microsoft.com/v1.0'
 
 Import-Module (Join-Path $PSScriptRoot 'Core.Schema.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Core.Auth.psm1')
 $script:Apps = @(
     @{ key = 'resolver'; group = 'http'; identity = $null }
     @{ key = 'sync'; group = 'function:syncEntitlement'; identity = 'sync' }
@@ -142,36 +143,32 @@ function Test-CoreD1Registrations {
     param([System.Collections.IDictionary]$Answers, [scriptblock]$Get, $Problems)
     $identity = $Answers.identity
     $result = [ordered]@{}
+    $separation = @(Test-CoreAuthSeparation -Registrations $identity)
+    if ($separation.Count) {
+        foreach ($problem in $separation) { $Problems.Add($problem) }
+        return $result
+    }
+    $applications = @{}
+    $appCache = @{}
+    $spCache = @{}
     foreach ($name in @('gatewayApi', 'developerSignIn', 'resolverApi')) {
         $appId = $identity[$name].appId
-        $app = & $Get "$script:Graph/applications(appId='$appId')?`$select=id,appId,identifierUris,api,publicClient"
-        $sp = & $Get "$script:Graph/servicePrincipals(appId='$appId')?`$select=id,appId"
+        if (-not $appCache.ContainsKey($appId)) {
+            $appCache[$appId] = & $Get "$script:Graph/applications(appId='$appId')?`$select=id,appId,identifierUris,api,publicClient"
+            $spCache[$appId] = & $Get "$script:Graph/servicePrincipals(appId='$appId')?`$select=id,appId"
+        }
+        $app = $appCache[$appId]
+        $sp = $spCache[$appId]
+        $applications[$name] = $app
         $entry = [ordered]@{ appId = $appId; objectId = $null; servicePrincipalId = $null; identifierUri = $null }
         if (-not $app) { Add-CoreD1Problem $Problems "identity.$name" 'not_found' 'the app registration does not exist in the target tenant or cannot be read'; $result[$name] = $entry; continue }
         $entry.objectId = $app.id
         $entry.identifierUri = @($app.identifierUris)[0]
         if ($sp) { $entry.servicePrincipalId = $sp.id }
         elseif ($name -ne 'developerSignIn') { Add-CoreD1Problem $Problems "identity.$name" 'service_principal_missing' 'the enterprise application (service principal) must exist' }
-        $version = if ($null -eq $app.api.requestedAccessTokenVersion) { 1 } else { [int]$app.api.requestedAccessTokenVersion }
-        switch ($name) {
-            'gatewayApi' {
-                $scope = @($app.api.oauth2PermissionScopes | Where-Object { $_.value -eq $identity.gatewayApi.scope -and $_.isEnabled })
-                if ($scope.Count -eq 0) { Add-CoreD1Problem $Problems 'identity.gatewayApi' 'scope_missing' 'Expose an API must publish the enabled scope identity.gatewayApi.scope' }
-                if (-not $entry.identifierUri) { Add-CoreD1Problem $Problems 'identity.gatewayApi' 'identifier_uri_missing' 'an Application ID URI is required' }
-                if ($version -ne [int]$identity.gatewayApi.accessTokenVersion) { Add-CoreD1Problem $Problems 'identity.gatewayApi' 'token_version_mismatch' 'requestedAccessTokenVersion must match identity.gatewayApi.accessTokenVersion' }
-            }
-            'developerSignIn' {
-                $uris = @($app.publicClient.redirectUris)
-                $missing = @($identity.developerSignIn.redirectUris | Where-Object { $uris -cnotcontains $_ })
-                if ($missing.Count) { Add-CoreD1Problem $Problems 'identity.developerSignIn' 'redirect_uri_missing' "public client redirect URIs lack $($missing.Count) answered URI(s)" }
-            }
-            'resolverApi' {
-                if (@($app.identifierUris) -cnotcontains "api://$appId") { Add-CoreD1Problem $Problems 'identity.resolverApi' 'identifier_uri_missing' 'Application ID URI must be api://<appId> (ADR-0009)' }
-                if ($version -ne 2) { Add-CoreD1Problem $Problems 'identity.resolverApi' 'token_version_mismatch' 'requestedAccessTokenVersion must be 2 (ADR-0009)' }
-            }
-        }
         $result[$name] = $entry
     }
+    foreach ($problem in @(Test-CoreAuthRegistrations -Registrations $identity -Applications $applications)) { $Problems.Add($problem) }
     return $result
 }
 

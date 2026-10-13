@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/naveenneog/claude-code-on-foundry/config/stage-roles.schema.json",
+  "$id": "https://github.com/naveenneog/ccof-bicep/config/stage-roles.schema.json",
   "title": "Deployment stages as data for the plan report",
   "description": "config/stage-roles.json: one entry per stage of docs/DEPLOYMENT-STAGES.md, Stage map, in its order. Read by scripts/Plan.Data.psm1.",
   "type": "object",

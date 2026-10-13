@@ -49,11 +49,20 @@ function Invoke-CoreD2ResolverAuth {
     if (-not $d1.apim.appId) { return New-CoreStepResult 'failed' -ReasonCode 'apim_app_id_missing' -Lines @("stage-D1 has no APIM identity application id; run Record-Prerequisites.ps1 -Action Record again.") }
     $inputs = [ordered]@{ tenant = $Ctx.Answers.target.tenantId; resolverAppId = $d1.registrations.resolverApi.appId; apimAppId = $d1.apim.appId; apimPrincipalId = $d1.apim.principalId; site = $d1.apps.resolver.functionAppId }
     $digest = Get-CoreDigest $inputs
-    if ($Ctx.Previous['resolver-auth'] -and $Ctx.Previous['resolver-auth'].digest -eq $digest) { return New-CoreStepResult 'unchanged' -Outputs $Ctx.Previous['resolver-auth'] }
+    $reapply = @()
+    if ($Ctx.Previous['resolver-auth'] -and $Ctx.Previous['resolver-auth'].digest -eq $digest) {
+        # WP-SEC C7: the recorded digest sits in the shared record, so only live settings that WP-RES's
+        # comparison finds equal to the intended ones are unchanged. Any other answer applies them again.
+        $verifyError = $null
+        $verified = try { & $Ctx.Pieces.ResolverAuthVerify $inputs.tenant $inputs.resolverAppId $inputs.apimAppId $inputs.apimPrincipalId $inputs.site } catch { $verifyError = $_.Exception.Message; $false }
+        if ($verified -is [bool] -and $verified) { return New-CoreStepResult 'unchanged' -Outputs $Ctx.Previous['resolver-auth'] }
+        $reapply = @("The resolver's App Service Authentication did not verify against the recorded inputs (it differs, or could not be read), so D2 applied it again.") +
+            @($verifyError | Where-Object { $_ } | ForEach-Object { "The verify piece failed: $_" })
+    }
     try { $ok = & $Ctx.Pieces.ResolverAuth $inputs.tenant $inputs.resolverAppId $inputs.apimAppId $inputs.apimPrincipalId $inputs.site }
-    catch { return New-CoreStepResult 'failed' -ReasonCode 'piece_failed:WP-RES' -Lines @('WP-RES infra/poc/resolver-auth.ps1 failed or is not in this checkout.') }
-    if (-not $ok) { return New-CoreStepResult 'failed' -ReasonCode 'resolver_auth_not_verified' }
-    New-CoreStepResult 'applied' -Outputs @{ digest = $digest; allowedCaller = $d1.apim.principalId } -Writes 1
+    catch { return New-CoreStepResult 'failed' -ReasonCode 'piece_failed:WP-RES' -Lines ($reapply + @('WP-RES infra/poc/resolver-auth.ps1 failed or is not in this checkout.')) }
+    if (-not $ok) { return New-CoreStepResult 'failed' -ReasonCode 'resolver_auth_not_verified' -Lines $reapply }
+    New-CoreStepResult 'applied' -ReasonCode $(if ($reapply.Count) { 'resolver_auth_not_verified_reapplied' }) -Lines $reapply -Outputs @{ digest = $digest; allowedCaller = $d1.apim.principalId } -Writes 1
 }
 
 function Invoke-CoreD2Diagnostics {

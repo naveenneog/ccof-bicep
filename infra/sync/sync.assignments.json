@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-SYNC",
+  "cosmosRoleDefinitions": [
+    {
+      "key": "syncEntitlementWriter",
+      "roleName": "${answers.names.cosmosRoles.syncWriter}",
+      "dataActions": [
+        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace"
+      ]
+    }
+  ],
+  "assignments": [
+    {
+      "id": "sync-storage-blob-data-owner",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.sync.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Storage Blob Data Owner",
+      "roleDefinitionId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+      "scope": "${d1.apps.sync.storageAccountId}",
+      "runtime": true,
+      "why": "Flex deployment storage and AzureWebJobsStorage with the identity; the timer takes its locks on blobs"
+    },
+    {
+      "id": "sync-monitoring-metrics-publisher",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.sync.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Monitoring Metrics Publisher",
+      "roleDefinitionId": "3913510d-42f4-4e42-8a64-420c390055eb",
+      "scope": "${d1.apps.sync.appInsightsId}",
+      "runtime": true,
+      "why": "Entra-authenticated Application Insights ingestion (local auth disabled): the run and refusal lines"
+    },
+    {
+      "id": "sync-entitlement-writer",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.sync.principalId}",
+      "role": "custom:syncEntitlementWriter",
+      "roleDefinitionId": "custom:syncEntitlementWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/entitlement",
+      "why": "writes entitlement documents (C-4): create and replace with etags, no upsert, no delete"
+    },
+    {
+      "id": "sync-lease-writer",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.sync.principalId}",
+      "role": "custom:syncEntitlementWriter",
+      "roleDefinitionId": "custom:syncEntitlementWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/syncLease",
+      "why": "one run at a time; the lease is released by expiring it, so no delete"
+    },
+    {
+      "id": "sync-projects-reader",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.sync.principalId}",
+      "role": "Cosmos DB Built-in Data Reader",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000001",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/projects",
+      "why": "reads the registered classification groups; never writes projects"
+    },
+    {
+      "id": "sync-graph-group-members",
+      "plane": "graph-app-role",
+      "principal": "${d1.apps.sync.principalId}",
+      "role": "${answers.sync.graphPermission.permission}",
+      "appRoleId": "${answers.sync.graphPermission.appRoleId}",
+      "scope": "microsoft-graph",
+      "when": "answers.sync.mode == application-permission",
+      "why": "reads the direct members of registered groups; grant before the timer is enabled (managed identity tokens are cached about 24 hours)"
+    },
+    {
+      "id": "sync-runner-entitlement-writer",
+      "plane": "cosmos-data",
+      "principals": "${answers.permissions.privateRunnerPrincipalIds}",
+      "role": "custom:syncEntitlementWriter",
+      "roleDefinitionId": "custom:syncEntitlementWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/entitlement",
+      "when": "answers.sync.mode == delegated-snapshot",
+      "why": "apply-snapshot inside the VNet writes entitlement with the runner's identity"
+    },
+    {
+      "id": "sync-runner-lease-writer",
+      "plane": "cosmos-data",
+      "principals": "${answers.permissions.privateRunnerPrincipalIds}",
+      "role": "custom:syncEntitlementWriter",
+      "roleDefinitionId": "custom:syncEntitlementWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/syncLease",
+      "when": "answers.sync.mode == delegated-snapshot",
+      "why": "apply-snapshot shares the timer's lease"
+    },
+    {
+      "id": "sync-runner-projects-reader",
+      "plane": "cosmos-data",
+      "principals": "${answers.permissions.privateRunnerPrincipalIds}",
+      "role": "Cosmos DB Built-in Data Reader",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000001",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/projects",
+      "when": "answers.sync.mode == delegated-snapshot",
+      "why": "apply-snapshot checks the snapshot's groups against the registered projects"
+    }
+  ]
+}

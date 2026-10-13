@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "kind": "ccof.assignments",
+  "package": "WP-REC",
+  "description": "The CCU budget reconciler's permissions (docs/PILOT.md C-7), as data for stage D3 (docs/DEPLOYMENT-STAGES.md on wp/core). Least privilege: it reads projects and entitlement, writes budgetState, aggregateBudgetState and its own lease, reads the telemetry workspace, and owns its own deployment storage. Placeholders resolve from the D1 record (${d1.*}) and the answers (${answers.*}).",
+  "cosmosRoleDefinitions": [
+    {
+      "key": "reconcilerStateWriter",
+      "roleName": "${answers.names.cosmosRoles.reconcilerWriter}",
+      "dataActions": [
+        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/upsert"
+      ]
+    }
+  ],
+  "assignments": [
+    {
+      "id": "reconciler-storage-blob-data-owner",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Storage Blob Data Owner",
+      "roleDefinitionId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+      "scope": "${d1.apps.reconciler.storageAccountId}",
+      "runtime": true,
+      "why": "Flex Consumption deployment storage and AzureWebJobsStorage, both with the app's identity"
+    },
+    {
+      "id": "reconciler-log-analytics-reader",
+      "plane": "azure-rbac",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "principalType": "ServicePrincipal",
+      "role": "Log Analytics Reader",
+      "roleDefinitionId": "73c42c96-874c-492b-b04d-ab87d138a893",
+      "scope": "${d1.workspace.id}",
+      "runtime": true,
+      "why": "reads the usage ledger (analytics/ledger.kql) through the Log Analytics query API"
+    },
+    {
+      "id": "reconciler-projects-reader",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "role": "Cosmos DB Built-in Data Reader",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000001",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/projects",
+      "runtime": true,
+      "why": "reads the classification budgets (C-5)"
+    },
+    {
+      "id": "reconciler-entitlement-reader",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "role": "Cosmos DB Built-in Data Reader",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000001",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/entitlement",
+      "runtime": true,
+      "why": "reads the registered memberships (C-4)"
+    },
+    {
+      "id": "reconciler-budget-state-writer",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "role": "custom:reconcilerStateWriter",
+      "roleDefinitionId": "custom:reconcilerStateWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/budgetState",
+      "runtime": true,
+      "why": "writes budgetState (C-7)"
+    },
+    {
+      "id": "reconciler-aggregate-state-writer",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "role": "custom:reconcilerStateWriter",
+      "roleDefinitionId": "custom:reconcilerStateWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/aggregateBudgetState",
+      "runtime": true,
+      "why": "writes aggregateBudgetState (C-7)"
+    },
+    {
+      "id": "reconciler-lease-writer",
+      "plane": "cosmos-data",
+      "principal": "${d1.apps.reconciler.principalId}",
+      "role": "custom:reconcilerStateWriter",
+      "roleDefinitionId": "custom:reconcilerStateWriter",
+      "scope": "/dbs/${answers.names.cosmosDatabase}/colls/reconcilerLease",
+      "runtime": true,
+      "why": "takes and renews the single-writer lease (C-7)"
+    }
+  ]
+}

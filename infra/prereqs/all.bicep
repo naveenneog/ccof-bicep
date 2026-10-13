@@ -1,4 +1,4 @@
-// D1 prerequisites in one deployment, for a single operator (the proof of concept and a validation
+// D1 prerequisites in one deployment, for a single operator (the proof of concept and the Validation
 // validation). It composes the per-resource modules of this folder in the workbook's order; teams
 // that create resources separately use the modules, or the portal steps of
 // docs/PREREQUISITES-WORKBOOK.md, instead. Either way, scripts/Record-Prerequisites.ps1 then reads
@@ -86,6 +86,11 @@ module cosmos 'cosmos-account.bicep' = {
   }
 }
 
+// One app at a time: the three apps join the same Functions subnet, and in parallel two of them failed
+// with "Failed to acquire ServiceAssociationLinkLease" (Validation, 2026-10-13; docs/status/WP-CORE-RUN.md).
+// A loop deploys in parallel unless batchSize says otherwise; batchSize(1) is sequential
+// (https://learn.microsoft.com/azure/azure-resource-manager/bicep/loops#deploy-in-batches, retrieved 2026-10-13).
+@batchSize(1)
 module functionApps 'function-app.bicep' = [for app in apps: {
   name: '${names.deploymentPrefix}-d1-app-${app.key}'
   params: {

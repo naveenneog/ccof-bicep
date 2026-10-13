@@ -16,6 +16,10 @@ $script:Graph = 'https://graph.microsoft.com/v1.0'
 $script:GraphAppId = '00000003-0000-0000-c000-000000000000'
 # Directory role templates that can grant Microsoft Graph app roles (DEPLOYMENT-GUIDE, Step 7b).
 $script:GraphGrantRoles = @{ 'e8611ab8-c189-46e8-94e1-60213ab1f814' = 'Privileged Role Administrator'; '62e90394-69f5-4237-9190-012177145e10' = 'Global Administrator' }
+# The longest D3 waits, in all, for one Cosmos role definition or assignment to read back after its
+# write before it refuses the item (role_definition_not_verified, not_verified). Ten tries 5 s apart
+# were too short in Validation, 2026-10-13 (docs/status/WP-CORE-RUN.md).
+$script:CosmosReadBackSeconds = 600
 
 function Test-CoreActionAllowed {
     <#
@@ -52,9 +56,17 @@ function Get-CoreD3Refusals {
             if (-not [string]::Equals($name, [string]$item.role, 'Ordinal')) { $refusals.Add("$($item.id): role '$($item.role)' does not match role definition $($group.Name)") }
         }
     }
+    # Every action the grants need, per scope, checked from one permissions read of that scope. D3
+    # creates the plan's custom Cosmos role definitions and rewrites them to match the data, before
+    # their grants (Get-CoreCosmosDefinitionWrites), so those need sqlRoleDefinitions/write as well.
+    # The sync timer's app-setting write after the grants is not checked here (advisory A-3).
     $needs = @{}
-    foreach ($item in $azure) { $needs[$item.scope] = 'Microsoft.Authorization/roleAssignments/write' }
-    if (@($Plan.Items | Where-Object plane -eq 'cosmos-data').Count) { $needs[[string]$D1.cosmos.id] = 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments/write' }
+    function Add-Need([string]$Scope, [string]$Action) { if (-not $needs.Contains($Scope)) { $needs[$Scope] = [System.Collections.Generic.List[string]]::new() }; if (-not $needs[$Scope].Contains($Action)) { $needs[$Scope].Add($Action) } }
+    foreach ($item in $azure) { Add-Need $item.scope 'Microsoft.Authorization/roleAssignments/write' }
+    if (@($Plan.Items | Where-Object plane -eq 'cosmos-data').Count) {
+        Add-Need ([string]$D1.cosmos.id) 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments/write'
+        if (@($Plan.RoleDefinitions).Count) { Add-Need ([string]$D1.cosmos.id) 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions/write' }
+    }
     # A Graph app role is granted by its id, but reviewed by its name: the id must be the named
     # application permission in Microsoft Graph's own list, read live; an unreadable list refuses.
     $graphItems = @($Plan.Items | Where-Object plane -eq 'graph-app-role')
@@ -70,8 +82,9 @@ function Get-CoreD3Refusals {
     }
     foreach ($scope in $needs.Keys) {
         $r = & $Send 'GET' "$script:Arm$scope/providers/Microsoft.Authorization/permissions?api-version=2022-04-01" $null
-        if ($r.Status -ne 200 -or -not (Test-CoreActionAllowed -Permissions @($r.Content.value) -Action $needs[$scope])) {
-            $refusals.Add("the signed-in identity cannot perform $($needs[$scope]) at $scope. Needs Role Based Access Control Administrator or User Access Administrator there (Contributor on the Cosmos account for data-plane assignments).")
+        $lacking = @($needs[$scope] | Where-Object { $r.Status -ne 200 -or -not (Test-CoreActionAllowed -Permissions @($r.Content.value) -Action $_) })
+        if ($lacking.Count) {
+            $refusals.Add("the signed-in identity cannot perform $($lacking -join ', ') at $scope. Needs Role Based Access Control Administrator or User Access Administrator there (Contributor on the Cosmos account for data-plane role definitions and assignments).")
         }
     }
     return $refusals.ToArray()
@@ -108,13 +121,22 @@ function Set-CoreAzureAssignment {
 }
 
 function Wait-CoreCosmosResource {
+    <#
+    .SYNOPSIS
+        Reads a Cosmos role definition or assignment back after its write, which Cosmos DB accepts with
+        202 and finishes later: in Validation (2026-10-13) 1 to 3 minutes after the PUT. Waits 5 s, doubling
+        to at most 30 s, for $script:CosmosReadBackSeconds in all; returns the last read.
+    #>
     param([string]$Url, [scriptblock]$Send, [scriptblock]$Sleep)
-    for ($i = 1; $i -le 10; $i++) {
+    $waited = 0; $pause = 5
+    while ($true) {
         $r = & $Send 'GET' $Url $null
-        if ($r.Status -eq 200) { return $r }
-        & $Sleep 5
+        if ($r.Status -eq 200 -or $waited -ge $script:CosmosReadBackSeconds) { return $r }
+        $pause = [Math]::Min($pause, $script:CosmosReadBackSeconds - $waited)
+        & $Sleep $pause
+        $waited += $pause
+        $pause = [Math]::Min($pause * 2, 30)
     }
-    return $r
 }
 
 function Get-CoreCosmosDefinitionWrites {

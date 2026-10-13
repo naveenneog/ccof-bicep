@@ -54,8 +54,8 @@ depend on the terminal environment.
 |---|---|
 | `schemaVersion` | `1`; unknown top-level or nested keys are refused |
 | `tenantId` | Gateway tenant GUID, never `common` or `organizations` |
-| `clientId` | Developer public-client app GUID; not the Azure CLI client ID |
-| `scope` | One delegated gateway API scope, such as C-6's `api://…/access_as_user` |
+| `clientId` | Combined developer/gateway app GUID by default (ADR-0026), or legacy separate developer app; never the Azure CLI client ID |
+| `scope` | One delegated gateway API scope, such as `api://<gatewayAppId>/access_as_user`; GUID self-resource spelling is also supported when the resource is this client |
 | `gatewayUrl` | HTTPS API **base**, without `/v1` or `/v1/messages`, credentials, query or fragment |
 | `helperTtlSeconds` | Cached-helper lifetime used by both Claude clients |
 | `minimumTokenLifetimeSeconds` | Must exceed helper TTL; refuse a token with less lifetime, after one silent forced-refresh attempt |
@@ -73,6 +73,31 @@ lifetime. These are explicit answers, not a claim that every Entra token lives a
 hour. The helper checks MSAL's actual expiry on every acquisition. WAM may ignore
 `forceRefresh`; if it returns another short-lived token, the helper refuses instead
 of allowing either client to cache an expired credential.
+
+### Registration layout and token-to-self
+
+New deployments put Expose an API (identifier URI, enabled delegated scope and v2 access tokens)
+and Authentication (public-client redirects and flows) on the **same** app. Set the client ID to
+that app and retain `api://<appId>/access_as_user` in the profile. The helper and Desktop native
+OIDC profile use `<appId>/access_as_user` when requesting their own resource: Microsoft Learn's
+[AADSTS90009](https://learn.microsoft.com/entra/identity-platform/reference-error-codes) requires
+the GUID resource for token-to-self. All broker, browser, device-code and silent-refresh paths
+use that spelling. Existing separate-client profiles retain their scope unchanged.
+For a combined app with a custom identifier URI, the quick-start exports
+`<appId>/access_as_user` directly; the API's actual identifier URI is not changed.
+
+There are **two mandatory app registrations**, not three developer-facing apps: the combined
+developer/gateway app and the **separate resolver API** (ADR-0009). Only APIM's managed identity
+may call the resolver; developers never request its scope or audience. A backend app registration
+is optional and only for the cross-tenant client-credentials option. It is never distributed to
+developers. Existing separate-client deployments continue to work.
+
+Entra consent/Conditional Access is still a tenant prerequisite. The
+[token-to-self documentation](https://learn.microsoft.com/entra/identity-platform/delegated-access-primer#token-to-self)
+describes conditional no-consent behavior, not an exemption from customer policy. Offline
+compatibility is tested; a new combined app has **not** been live-token-tested by this change.
+Before rollout have the administrator verify `ccof-token login` and an authorized gateway call,
+without printing or recording the token. See [Entra prerequisites](QUICKSTART-PREREQUISITES.md).
 
 ### Administrator only: register the broker redirect
 
@@ -159,7 +184,7 @@ The script backs up and merges `%USERPROFILE%\.claude\settings.json`:
 | Setting | Purpose |
 |---|---|
 | `apiKeyHelper` | Quoted Windows `.cmd` helper running `ccof-token token` through the already-installed Node executable |
-| `env.ANTHROPIC_BASE_URL` | For C-6, `https://ccof-poc-apim.azure-api.net/anthropic`; Claude Code appends `/v1/messages` |
+| `env.ANTHROPIC_BASE_URL` | For C-6, `https://sample-pilot-apim.azure-api.net/anthropic`; Claude Code appends `/v1/messages` |
 | `env.ANTHROPIC_MODEL`, `model` | Explicit initial deployment |
 | `env.ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | Map aliases and background tasks to deployed names |
 | `env.ANTHROPIC_DEFAULT_*_MODEL_SUPPORTED_CAPABILITIES` | Avoid incorrect capability inference for pinned deployments |
@@ -228,7 +253,7 @@ credentials. The default is first in `inferenceModels`; written keys are checked
 2. Open **Settings → Connection**. If unavailable, use **Help → Troubleshooting →
    Enable Developer Mode**, then **Developer → Configure Third-Party Inference**.
 3. Select **CCOF pilot gateway**. Confirm **Gateway**, base
-   `https://ccof-poc-apim.azure-api.net/anthropic`, **Bearer**, **Helper script**,
+   `https://sample-pilot-apim.azure-api.net/anthropic`, **Bearer**, **Helper script**,
    the configured `ccof-token.cmd` helper, and argument `token`. Do not paste a token.
 4. Return to **Chat**, start a new conversation, choose **claude-haiku-4-5**, and send
    **Reply with the single word OK**. This build reuses the existing broker sign-in;
@@ -266,9 +291,9 @@ It replaces the session script `smoke-owner.ps1` cited in
 checkout (section 2) and signed in (section 3).
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Test-OwnerSmoke.ps1 -GatewayConfigPath .\infra\gateway\config\ccof-poc.json
+pwsh -NoProfile -File .\scripts\Test-OwnerSmoke.ps1 -GatewayConfigPath .\infra\gateway\config\sample-pilot.json
 # A non-current revision, with a project selector:
-pwsh -NoProfile -File .\scripts\Test-OwnerSmoke.ps1 -GatewayConfigPath .\infra\gateway\config\ccof-poc.json -Revision 8 -ProjectId CCOFPILOT02
+pwsh -NoProfile -File .\scripts\Test-OwnerSmoke.ps1 -GatewayConfigPath .\infra\gateway\config\sample-pilot.json -Revision 8 -ProjectId CCOFPILOT02
 ```
 
 | Value | Source |

@@ -90,18 +90,19 @@ function copiedFields(reg: ClassificationRegistration) {
     projectId: reg.projectId,
     classification: reg.classification,
     classificationGroupId: reg.groupId,
-    modelAllowList: [...reg.modelAllowList],
+    familyPolicy: structuredClone(reg.familyPolicy),
+    ...(reg.classificationGroupDisplayName !== undefined ? { classificationGroupDisplayName: reg.classificationGroupDisplayName } : {}),
     backendId: reg.backendId,
     aggregateMode: reg.aggregateMode,
-    tokenLimits: reg.tokenLimits,
   };
 }
 
-const COPIED_KEYS = ["projectId", "classification", "classificationGroupId", "modelAllowList", "backendId", "aggregateMode", "tokenLimits", "status"];
+const COPIED_KEYS = ["projectId", "classification", "classificationGroupId", "classificationGroupDisplayName", "familyPolicy", "backendId", "aggregateMode", "status"];
 
 function sameCopiedFields(prior: RawMembership, reg: ClassificationRegistration): boolean {
   const stored = Object.fromEntries(COPIED_KEYS.map((k) => [k, prior[k]]));
-  return canonical(stored) === canonical({ ...copiedFields(reg), status: "active" });
+  return !Object.hasOwn(prior, "modelAllowList") && !Object.hasOwn(prior, "tokenLimits")
+    && canonical(stored) === canonical({ ...copiedFields(reg), status: "active" });
 }
 
 // The membership for one registration. `prior` is the person's existing

@@ -1,6 +1,6 @@
 {
   "_readme": "Example for tests/Test-GatewayLive.ps1. Copy it outside git (or under infra/gateway/out/, which is ignored), fill every value, and run: $env:CCOF_LIVE_TESTS='1'; $env:CCOF_GW_LIVE_CONFIG='<copy>'; pwsh -NoProfile -File tests/Test-GatewayLive.ps1. stage is 'no-app-role' (the test client is not assigned the configuration's entra.testIdentities.appRole: expects its token refused as an application token, 403), 'unseeded' (it holds the role and has no entitlement: expects the not-entitled 403) or 'seeded' (it holds the role and is a pilot member: expects 200 for allowedModel, 403 for disallowedModel, a streamed reply that arrives event by event, and a 403 quota refusal within quotaProbeMaxRequests requests, so its person quota must be low; 0 leaves the quota unprobed and reports it NOT RUN, since the probe uses up the test identity's quota until the period resets). tokenScript is WP-NET's scripts/Get-E2ETestToken.ps1. project is optional: when the test identity is a member of more than one project, it is sent in the configured project-selector header; remove it otherwise.",
-  "gatewayConfigPath": "infra/gateway/config/ccof-poc.json",
+  "gatewayConfigPath": "infra/gateway/config/sample-pilot.json",
   "revision": "<revision under test>",
   "tokenScript": "<path to scripts/Get-E2ETestToken.ps1>",
   "stage": "unseeded",

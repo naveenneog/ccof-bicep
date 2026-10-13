@@ -25,13 +25,13 @@
     is never changed. See docs/GATEWAY.md.
 
 .EXAMPLE
-    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/ccof-poc.json
+    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/sample-pilot.json
 
 .EXAMPLE
-    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/ccof-poc.json -AnswersPath ./answers.json -NonInteractive
+    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/sample-pilot.json -AnswersPath ./answers.json -NonInteractive
 
 .EXAMPLE
-    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/ccof-poc.json -MakeCurrent -Revision 3 -ReleaseNote 'Pilot gateway policy, smoke suite passed'
+    ./infra/gateway/Deploy-GatewayRevision.ps1 -ConfigPath infra/gateway/config/sample-pilot.json -MakeCurrent -Revision 3 -ReleaseNote 'Pilot gateway policy, smoke suite passed'
 #>
 [CmdletBinding(DefaultParameterSetName = 'Create')]
 param(

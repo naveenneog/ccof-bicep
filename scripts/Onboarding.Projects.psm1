@@ -11,10 +11,26 @@ function ConvertTo-OnboardingProjectDocument {
     Assert-OnboardingSchema $document (Get-OnboardingProjectSchema)
     if (-not [string]::Equals($document.id, $document.projectId, 'Ordinal')) { Stop-Onboarding 'Project id must equal projectId ordinally.' }
     $groups = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($entry in $document.classifications.Values) {
+    foreach ($code in $document.classifications.Keys) {
+        $entry=$document.classifications[$code]
+        Assert-OnboardingFamilyPolicy $entry.familyPolicy $code
         if (-not $groups.Add(([guid]$entry.groupId).ToString())) { Stop-Onboarding 'A classification group cannot be reused within the project.' }
     }
     return $document
+}
+
+function Assert-OnboardingFamilyPolicy {
+    param($Policy, [string]$Classification)
+    Assert-OnboardingSchema $Policy (Get-OnboardingFamilyPolicySchema)
+    $models=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($family in $Policy.families.Keys) {
+        if($family -cin @('fable','mythos') -and $Classification -cne 'CYB') {
+            Stop-Onboarding 'family_classification_forbidden: Fable/Mythos require classification exactly CYB.'
+        }
+        foreach($model in $Policy.families[$family].models) {
+            if(-not $models.Add($model)) { Stop-Onboarding 'invalid_family_policy: model IDs must be unique across families.' }
+        }
+    }
 }
 
 function Assert-OnboardingResilience {
@@ -60,4 +76,4 @@ function Assert-OnboardingProjectBackend {
         Stop-Onboarding 'backendId must name a registered Foundry backend in the designated subscription with an /anthropic URL.'
     }
 }
-Export-ModuleMember -Function ConvertTo-OnboardingProjectDocument, Assert-OnboardingResilience, Get-OnboardingProjectGroups, Assert-OnboardingProjectBackend
+Export-ModuleMember -Function ConvertTo-OnboardingProjectDocument, Assert-OnboardingFamilyPolicy, Assert-OnboardingResilience, Get-OnboardingProjectGroups, Assert-OnboardingProjectBackend

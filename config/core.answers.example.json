@@ -6,13 +6,13 @@
   "provenance": {
     "basis": "coordinator-assumption",
     "note": "Example only: every id below is a placeholder. Replace each value; nothing is defaulted.",
-    "decidedBy": "00000000-0000-4000-8000-000000000001",
+    "decidedBy": "REPLACE-00000000-0000-4000-8000-000000000001",
     "decidedAt": "2026-10-11T13:00:00Z",
     "signOffSheet": null
   },
   "target": {
-    "tenantId": "11111111-1111-4111-8111-111111111111",
-    "subscriptionId": "22222222-2222-4222-8222-222222222222",
+    "tenantId": "REPLACE-11111111-1111-4111-8111-111111111111",
+    "subscriptionId": "REPLACE-22222222-2222-4222-8222-222222222222",
     "location": "eastus2",
     "resourceGroup": {
       "name": "ccof-core-example-rg",
@@ -35,7 +35,7 @@
     "provenance": {
       "basis": "coordinator-assumption",
       "note": "Validation sizes: eastus2, Standard v2 x1 non-zonal, Cosmos provisioned autoscale. Coordinator assumption, owner to confirm.",
-      "decidedBy": "00000000-0000-4000-8000-000000000001",
+      "decidedBy": "REPLACE-00000000-0000-4000-8000-000000000001",
       "decidedAt": "2026-10-11T13:05:00Z",
       "signOffSheet": null
     },
@@ -179,19 +179,20 @@
   },
   "identity": {
     "gatewayApi": {
-      "appId": "33333333-3333-4333-8333-333333333333",
+      "appId": "REPLACE-33333333-3333-4333-8333-333333333333",
       "scope": "access_as_user",
-      "accessTokenVersion": 1
+      "accessTokenVersion": 2
     },
     "developerSignIn": {
-      "appId": "44444444-4444-4444-8444-444444444444",
+      "appId": "REPLACE-33333333-3333-4333-8333-333333333333",
       "redirectUris": [
         "https://login.microsoftonline.com/common/oauth2/nativeclient",
-        "http://localhost"
+        "http://localhost",
+        "ms-appx-web://Microsoft.AAD.BrokerPlugin/REPLACE-33333333-3333-4333-8333-333333333333"
       ]
     },
     "resolverApi": {
-      "appId": "55555555-5555-4555-8555-555555555555"
+      "appId": "REPLACE-55555555-5555-4555-8555-555555555555"
     },
     "testClientAppIds": [],
     "allowAppOnlyTestTokens": false,
@@ -202,7 +203,7 @@
     "workbookReaderPrincipalIds": []
   },
   "apim": {
-    "publisherEmail": "platform-team@example.com",
+    "publisherEmail": "platform-team-at-example.com",
     "publisherName": "Example platform team",
     "apiId": "claude-messages",
     "apiPath": "anthropic",
@@ -273,7 +274,7 @@
     "contractSchedulePath": "../config/contract-schedule.json"
   },
   "workbook": {
-    "resourceName": "66666666-6666-4666-8666-666666666666",
+    "resourceName": "REPLACE-66666666-6666-4666-8666-666666666666",
     "displayName": "Claude gateway chargeback",
     "settings": { "defaultProjectId": "*", "maxRows": 1000, "topUsers": 25, "maxQueryDays": 62, "budgetLookbackDays": 31 }
   },
@@ -282,7 +283,7 @@
       "id": "foundry-example",
       "backendMode": "managed-identity",
       "url": "https://example-foundry.services.ai.azure.com/anthropic",
-      "foundryAccountResourceId": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/rg-foundry/providers/Microsoft.CognitiveServices/accounts/example-foundry",
+      "foundryAccountResourceId": "/subscriptions/REPLACE-22222222-2222-4222-8222-222222222222/resourceGroups/rg-foundry/providers/Microsoft.CognitiveServices/accounts/example-foundry",
       "resource": "https://cognitiveservices.azure.com",
       "deploymentInferenceGeo": {}
     }
@@ -319,7 +320,7 @@
       ]
     },
     "desktop": {
-      "profileId": "77777777-7777-4777-8777-777777777777",
+      "profileId": "REPLACE-77777777-7777-4777-8777-777777777777",
       "profileName": "Claude enterprise gateway"
     }
   },

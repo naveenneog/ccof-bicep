@@ -1,0 +1,295 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="local" version="24.7.17">
+  <diagram id="ccof-network-architecture" name="Network and trust overview">
+    <mxGraphModel dx="2500" dy="2160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2500" pageHeight="2400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="&lt;div style=&quot;font-size:30px;font-weight:bold;line-height:32px&quot;&gt;Claude Code on Foundry | identity, routing &amp;amp; private-network architecture&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Integrated baseline and optional wiring • Customer-neutral design • Design / wiring requirements, not live acceptance&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ffffff;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="25" width="2425" height="98" />
+        </mxCell>
+        <mxCell id="tenant" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;CUSTOMER ENTRA TENANT • identity / token trust boundary&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="450" y="145" width="2005" height="1495" />
+        </mxCell>
+        <mxCell id="directory" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;DIRECTORY CONTROL PLANE • separate from Azure resource RBAC&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f8fc;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="tenant">
+          <mxGeometry as="geometry" x="25" y="55" width="1450" height="250" />
+        </mxCell>
+        <mxCell id="combined" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;Combined developer + Gateway API&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Single-tenant public client • token v2&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Delegated access_as_user • no secret&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;WAM / browser PKCE; device code optional&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Consent + Conditional Access apply&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="directory">
+          <mxGeometry as="geometry" x="25" y="55" width="440" height="165" />
+        </mxCell>
+        <mxCell id="groups" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;Flat Entra security groups → Graph&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Direct membership → project / STD / PRM / CYB&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Stable group IDs authorize; names are snapshots&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Sync UAMI: GroupMember.Read.All&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;+ User.Read.All + Application.Read.All&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5ea;strokeColor=#107c10;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="directory">
+          <mxGeometry as="geometry" x="495" y="55" width="445" height="165" />
+        </mxCell>
+        <mxCell id="resolver-app" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;Separate internal Resolver API&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;No public-client redirects / developer scopes&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;EasyAuth pins APIM MI app ID AND object ID&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;APIM-only audience; no developer access&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Azure Owner ≠ Entra administrator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="directory">
+          <mxGeometry as="geometry" x="970" y="55" width="455" height="165" />
+        </mxCell>
+        <mxCell id="workstation" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;DEVELOPER WORKSTATION&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Claude Code CLI&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;VS Code Claude Code panel&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Claude Desktop&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Approved ccof-token helper&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;MSAL • secure broker / encrypted cache&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Gateway API audience only&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;onboarding.json: strict schemaVersion 1&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Config only • no grants / usage metering&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;No direct Foundry / resolver permission&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f8fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="230" width="360" height="480" />
+        </mxCell>
+        <mxCell id="ingress" value="&lt;div style=&quot;font-size:20px;font-weight:bold;line-height:32px&quot;&gt;OPTIONAL CUSTOMER INGRESS&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Internal-only ingress / WAF / SIPA controls&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Customer-approved access topology&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Not universally created by quickstart&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Dashed = optional, not proof of deployment&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8ed;strokeColor=#ca5010;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="770" width="360" height="195" />
+        </mxCell>
+        <mxCell id="admin" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;ADMINISTRATOR CONTROL PLANE&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Cloud Shell • ARM / Graph / OneDeploy&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Resource-specific Bicep modules&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Network → resources → directory objects&lt;/div&gt;&lt;div style=&quot;font-size:16px;line-height:27px&quot;&gt;→ remaining wiring → grants / config / code&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;→ registrySeed → client artifacts / tests&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Entra and Azure roles held separately&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Grant Graph before first timer token&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Cached MI tokens can delay new roles&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Ordinary Cloud Shell: no private data plane&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;No jumpbox / VM assumption&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8ed;strokeColor=#ca5010;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="1045" width="360" height="420" />
+        </mxCell>
+        <mxCell id="core" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;CORE AZURE SUBSCRIPTION • core resource group / approved region&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#687787;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="tenant">
+          <mxGeometry as="geometry" x="25" y="335" width="1290" height="1135" />
+        </mxCell>
+        <mxCell id="apim" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;AZURE API MANAGEMENT • cloud-managed service&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Existing APIM usually • system-assigned MI enabled&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;① Validate tenant / audience / client / scope / person&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;x-ccof-project is intent, checked against entitlement&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Admission cap + cached v3 / d3 resolver decision&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Exact model admission; aggregate + family ceilings&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Per-person AND group limits • never substitute backend&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="25" y="80" width="565" height="225" />
+        </mxCell>
+        <mxCell id="resolver" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;RESOLVER FUNCTION • Flex / system-assigned MI&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;② APIM-only EasyAuth • internal API audience&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Resolve person + project → classification / backendId&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Validated familyPolicy: haiku / sonnet / opus&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Fable / Mythos: exact registration AND CYB only&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Token-limits-only baseline; optional monetary mode&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;③ Least-privilege Cosmos reads over private SQL PE&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="695" y="80" width="565" height="225" />
+        </mxCell>
+        <mxCell id="sync" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;SYNC FUNCTION • Flex / user-assigned MI&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;⑤ Microsoft Graph reads → entitlement projection&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Successful run applies membership additions/removals&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Freeze affected projects on failed reads; syncLease&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Conflict: retain incumbent classification, otherwise none&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;registrySeed timer: create-only projects + backends&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Verify readback; disable timer / clean payload after use&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5ea;strokeColor=#107c10;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="25" y="375" width="565" height="230" />
+        </mxCell>
+        <mxCell id="cosmos" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;COSMOS DB • private SQL registry, outside VNet&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Public access disabled + local auth off at creation&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;entitlement / projects / backends / subscriptionIndex&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;budgetState / aggregateBudgetState&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;syncLease / reconcilerLease&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Resolver: reads; sync: scoped writes / seed creates&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Reconciler: scoped budget writes • never broad keys&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="695" y="375" width="565" height="230" />
+        </mxCell>
+        <mxCell id="vnet" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;CUSTOMER VNET • core subscription + region • network boundary&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f9fc;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="25" y="660" width="1235" height="300" />
+        </mxCell>
+        <mxCell id="apim-subnet" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;APIM outbound subnet&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Microsoft.Web/serverFarms delegation&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Required NSG • approved routes / UDR&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;APIM compute is NOT in this subnet&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Existing APIM is not auto-attached&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Actual caller VNet must resolve / route&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="vnet">
+          <mxGeometry as="geometry" x="25" y="70" width="330" height="185" />
+        </mxCell>
+        <mxCell id="functions-subnet" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;Functions outbound subnet&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:27px&quot;&gt;Microsoft.App/environments delegation&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Resolver + sync + optional reconciler&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Flex compute is NOT in this subnet&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:27px&quot;&gt;Outbound integration ≠ inbound PE&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Separate from APIM subnet&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="vnet">
+          <mxGeometry as="geometry" x="380" y="70" width="330" height="185" />
+        </mxCell>
+        <mxCell id="pe-subnet" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;PRIVATE-ENDPOINT SUBNET • NICs only&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Baseline: Cosmos SQL + each app&amp;#x27;s blob PE&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Optional: resolver sites PE (inbound only)&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Optional: Foundry account PE(s), any subscription&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;PE approval and DNS / route must be verified&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Target PaaS services remain outside this VNet&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0078d4;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="vnet">
+          <mxGeometry as="geometry" x="735" y="70" width="475" height="185" />
+        </mxCell>
+        <mxCell id="reconciler" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;OPTIONAL RECONCILER • Flex / UAMI&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;LAW usage → budgetState / aggregateBudgetState&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Monetary mode only; baseline has no reconciler timer&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;FunctionAppLogs diagnostics • reconcilerLease&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8ed;strokeColor=#ca5010;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="25" y="1000" width="540" height="125" />
+        </mxCell>
+        <mxCell id="storage" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;PER-APP BLOB DEPLOYMENT STORAGE • outside VNet&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Resolver / sync / optional reconciler • identity-based access&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Public access disabled; shared-key auth off at creation&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Separate blob private endpoint per app • OneDeploy packages&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="core">
+          <mxGeometry as="geometry" x="615" y="1000" width="645" height="125" />
+        </mxCell>
+        <mxCell id="backends" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;DESIGNATED BACKEND SUBSCRIPTION A • same tenant&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#687787;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="tenant">
+          <mxGeometry as="geometry" x="1360" y="335" width="615" height="450" />
+        </mxCell>
+        <mxCell id="foundry" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;PROJECT-SPECIFIC FOUNDRY ACCOUNT&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;④ set-backend-service → resolved backendId only&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;APIM system MI → cognitive resource token&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Cognitive Services User grant on each target account&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Accounts can live in different Azure subscriptions&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Anthropic account base: /anthropic&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Messages: /v1/messages • NOT /api/projects&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Public/private exposure is backend-owner policy&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Optional PEs are in caller&amp;#x27;s VNet, not here&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="backends">
+          <mxGeometry as="geometry" x="30" y="110" width="555" height="260" />
+        </mxCell>
+        <mxCell id="backend-sub-b" value="&lt;div style=&quot;font-size:18px;font-weight:bold;line-height:32px&quot;&gt;DESIGNATED BACKEND SUBSCRIPTION B … N • same tenant&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#687787;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;container=1;collapsible=0;recursiveResize=0;pointerEvents=0;" vertex="1" parent="tenant">
+          <mxGeometry as="geometry" x="1360" y="825" width="615" height="235" />
+        </mxCell>
+        <mxCell id="foundry-next" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;FOUNDRY ACCOUNT • additional project backend&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Independent per-account MI grant / model deployments&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Project backendId maps here, not to account A&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Public/private per owner • optional caller-VNet PE&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f2fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="backend-sub-b">
+          <mxGeometry as="geometry" x="30" y="60" width="555" height="145" />
+        </mxCell>
+        <mxCell id="other-tenant" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;OPTIONAL DIFFERENT ENTRA TENANT&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Foundry account + backend-tenant application credentials&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Staged credential path; manual MI helper refuses cross-tenant&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;APIM-only credential custody / rotation • never client-distributed&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Cross-tenant PE approval is independent of authentication&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Not the Resolver API app; not the managed-identity baseline&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8ed;strokeColor=#ca5010;dashed=1;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1810" y="1680" width="615" height="255" />
+        </mxCell>
+        <mxCell id="telemetry" value="&lt;div style=&quot;font-size:20px;font-weight:bold;line-height:32px&quot;&gt;AZURE MONITOR • core subscription / managed resources&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;⑥ APIM GatewayLogs + GatewayLlmLogs&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;+ sanitized trusted usage / resolver traces&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Resolver + sync App Insights; Function logs&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;→ Log Analytics → full chargeback workbook + fixed rate card&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Request-time person / group / project / model / family / backend&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Disjoint input / output / cache read / write 5m / write 1h&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Stream cache categories unknown, never guessed&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;No prompts / responses / credentials logged&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Selectors are NOT authorization; list price ≠ invoice&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3eefb;strokeColor=#8764b8;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="tenant">
+          <mxGeometry as="geometry" x="1360" y="1115" width="615" height="355" />
+        </mxCell>
+        <mxCell id="dns" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;PRIVATE DNS + CUSTOMER NETWORK RESPONSIBILITIES&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Baseline: privatelink.documents.azure.com • privatelink.blob.core.windows.net&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Optional inbound resolver: privatelink.azurewebsites.net&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Optional Foundry: privatelink.cognitiveservices.azure.com / openai.azure.com / services.ai.azure.com&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Link / forward from the ACTUAL APIM and Functions caller networks; hub peering does not share DNS&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Customer owns approved custom DNS, firewall, UDR, hub / peering and ingress controls&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f9fc;strokeColor=#0078d4;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="1680" width="1730" height="195" />
+        </mxCell>
+        <mxCell id="revocation" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;REVOCATION / RECLASSIFICATION • bounded, not instantaneous&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;⑦ Group removal → successful sync → resolver / cache refresh → subsequent requests denied&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Baseline allow TTL 120s; refusal 30s; extra last-known-good grace 3600s on resolver failure&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Urgent: verify registry revoke, then deploy policy keyVersion • no eager generation eviction&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Move A → B: remove A / prove deny / add B; dual classifications never silently upgrade&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;New spend stamps B; historical spend remains with A, never rewritten from today&amp;#x27;s directory&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5ea;strokeColor=#107c10;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="1905" width="1730" height="195" />
+        </mxCell>
+        <mxCell id="legend" value="&lt;div style=&quot;font-size:21px;font-weight:bold;line-height:32px&quot;&gt;READING THIS OVERVIEW&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;BLUE solid arrows ①–④: synchronous auth / request dependency; response returns on the same request path&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;GREEN dashed arrows ⑤ / ⑦: asynchronous membership projection / revocation   •   PURPLE dotted ⑥: telemetry / reporting&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;ORANGE dashed: administrator control plane or optional credential / monetary path   •   GRAY dotted, no arrow: network association&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Solid blue/green service boxes: integrated implementation baseline (not live acceptance); amber dashed: optional production wiring / monetary or cross-tenant path&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Boundaries: dashed labeled tenant / subscription / VNet / subnet containers; cloud-managed PaaS runs OUTSIDE VNet&lt;/div&gt;&lt;div style=&quot;font-size:19px;line-height:27px&quot;&gt;Source baseline: ADR-0026 / ADR-0028; manual + quickstart modules, gateway policy, CLIENTS / SYNC / CHARGEBACK (see ARCHITECTURE.md)&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#687787;dashed=0;dashPattern=8 5;fontFamily=Arial;fontSize=19;fontColor=#101820;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="35" y="2140" width="2390" height="220" />
+        </mxCell>
+        <mxCell id="signin" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.17708333333333334;entryX=0.0;entryY=0.36363636363636365;" edge="1" parent="1" source="workstation" target="combined">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="signin-label" value="① SSO" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#0078d4;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="415.0" y="279" width="62.0" height="23" />
+        </mxCell>
+        <mxCell id="request" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.8854166666666666;entryX=0.0;entryY=0.4222222222222222;" edge="1" parent="1" source="workstation" target="apim">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="request-label" value="① HTTPS" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#0078d4;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="405.8" y="621" width="80.39999999999999" height="23" />
+        </mxCell>
+        <mxCell id="ingress-option" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.4358974358974359;entryX=0.0;entryY=0.8444444444444444;" edge="1" parent="1" source="ingress" target="apim">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="445" y="855" />
+              <mxPoint x="445" y="750" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="resolve" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.4222222222222222;entryX=0.0;entryY=0.4222222222222222;" edge="1" parent="1" source="apim" target="resolver">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="resolve-label" value="② MI" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#0078d4;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1090.6" y="621" width="52.8" height="23" />
+        </mxCell>
+        <mxCell id="registry-read" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=0.49911504424778763;exitY=1.0;entryX=0.49911504424778763;entryY=0.0;" edge="1" parent="1" source="resolver" target="cosmos">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="registry-read-label" value="③ SQL / PE" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#0078d4;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1501.0" y="807" width="108.0" height="23" />
+        </mxCell>
+        <mxCell id="routing" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=0.911504424778761;exitY=0.0;entryX=0.44144144144144143;entryY=0.0;" edge="1" parent="1" source="apim" target="foundry">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1015" y="540" />
+              <mxPoint x="2085" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="routing-label" value="④ Authorized backend route • MI" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#0078d4;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1389.4" y="513" width="301.2" height="23" />
+        </mxCell>
+        <mxCell id="route-sub-b" value="" style="html=1;rounded=0;strokeColor=#0078d4;strokeWidth=2;dashed=0;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#0078d4;labelBackgroundColor=#ffffff;exitX=0.911504424778761;exitY=0.0;entryX=0.0;entryY=0.5517241379310345;" edge="1" parent="1" source="apim" target="foundry-next">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1015" y="540" />
+              <mxPoint x="1800" y="540" />
+              <mxPoint x="1800" y="1110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="groups-read" value="" style="html=1;rounded=0;strokeColor=#107c10;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#107c10;labelBackgroundColor=#ffffff;exitX=0.4943820224719101;exitY=1.0;entryX=0.0;entryY=0.41304347826086957;" edge="1" parent="1" source="groups" target="sync">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1190" y="465" />
+              <mxPoint x="465" y="465" />
+              <mxPoint x="465" y="950" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="groups-read-label" value="⑤ Graph read" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#107c10;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="656.8" y="438" width="126.39999999999999" height="23" />
+        </mxCell>
+        <mxCell id="projection" value="" style="html=1;rounded=0;strokeColor=#107c10;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#107c10;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.4782608695652174;entryX=0.0;entryY=0.4782608695652174;" edge="1" parent="1" source="sync" target="cosmos">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="projection-label" value="⑤ Write" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#107c10;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1077.8" y="931" width="80.39999999999999" height="23" />
+        </mxCell>
+        <mxCell id="apim-attach" value="" style="html=1;rounded=0;strokeColor=#687787;strokeWidth=2;dashed=1;endArrow=none;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#687787;labelBackgroundColor=#ffffff;exitX=0.49557522123893805;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="apim" target="apim-subnet">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="780" y="825" />
+              <mxPoint x="485" y="825" />
+              <mxPoint x="485" y="1110" />
+              <mxPoint x="690" y="1110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="functions-attach" value="" style="html=1;rounded=0;strokeColor=#687787;strokeWidth=2;dashed=1;endArrow=none;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#687787;labelBackgroundColor=#ffffff;exitX=0.8495575221238938;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="sync" target="functions-subnet">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="980" y="1130" />
+              <mxPoint x="1045" y="1130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cosmos-pe" value="" style="html=1;rounded=0;strokeColor=#687787;strokeWidth=2;dashed=1;endArrow=none;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#687787;labelBackgroundColor=#ffffff;exitX=0.49557522123893805;exitY=1.0;entryX=0.45263157894736844;entryY=0.0;" edge="1" parent="1" source="cosmos" target="pe-subnet">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cosmos-pe-label" value="SQL PE" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#687787;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1474.4" y="1133" width="71.19999999999999" height="23" />
+        </mxCell>
+        <mxCell id="blob-pe" value="" style="html=1;rounded=0;strokeColor=#687787;strokeWidth=2;dashed=1;endArrow=none;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#687787;labelBackgroundColor=#ffffff;exitX=0.6511627906976745;exitY=0.0;entryX=0.5789473684210527;entryY=1.0;" edge="1" parent="1" source="storage" target="pe-subnet">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="blob-pe-label" value="Blob PE" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#687787;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1539.8" y="1445" width="80.39999999999999" height="23" />
+        </mxCell>
+        <mxCell id="cross-tenant-route" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.9555555555555556;entryX=0.0;entryY=0.3137254901960784;" edge="1" parent="1" source="apim" target="other-tenant">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1095" y="775" />
+              <mxPoint x="1095" y="1125" />
+              <mxPoint x="1795" y="1125" />
+              <mxPoint x="1795" y="1760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cross-tenant-route-label" value="④ Optional backend-tenant credentials" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#ca5010;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1901.8" y="1652" width="356.4" height="23" />
+        </mxCell>
+        <mxCell id="telemetry-path" value="" style="html=1;rounded=0;strokeColor=#8764b8;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#8764b8;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.8222222222222222;entryX=0.0;entryY=0.14084507042253522;" edge="1" parent="1" source="apim" target="telemetry">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1115" y="745" />
+              <mxPoint x="1115" y="1110" />
+              <mxPoint x="1785" y="1110" />
+              <mxPoint x="1785" y="1310" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="telemetry-path-label" value="⑥ Sanitized traces + logs" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#8764b8;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1287.0" y="1083" width="245.99999999999997" height="23" />
+        </mxCell>
+        <mxCell id="function-logs" value="" style="html=1;rounded=0;strokeColor=#8764b8;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#8764b8;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.8222222222222222;entryX=0.0;entryY=0.5070422535211268;" edge="1" parent="1" source="resolver" target="telemetry">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1775" y="745" />
+              <mxPoint x="1775" y="1440" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="optional-budget-read" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=0.0;exitY=0.8732394366197183;entryX=0.48148148148148145;entryY=0.88;" edge="1" parent="1" source="telemetry" target="reconciler">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1775" y="1570" />
+              <mxPoint x="1775" y="1630" />
+              <mxPoint x="760" y="1630" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="optional-budget-read-label" value="Optional monetary usage read" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#ca5010;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1143.2" y="1635" width="273.59999999999997" height="23" />
+        </mxCell>
+        <mxCell id="admin-arm" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=1.0;exitY=0.20238095238095238;entryX=0.0;entryY=0.933920704845815;" edge="1" parent="1" source="admin" target="core">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="440" y="1130" />
+              <mxPoint x="440" y="1540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="admin-arm-label" value="ARM" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#ca5010;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="392.2" y="1493" width="43.599999999999994" height="23" />
+        </mxCell>
+        <mxCell id="admin-graph" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=0.5138888888888888;exitY=0.0;entryX=0.0;entryY=0.94;" edge="1" parent="1" source="admin" target="directory">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="220" y="1020" />
+              <mxPoint x="420" y="1020" />
+              <mxPoint x="420" y="435" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="budget-write" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=0.46296296296296297;exitY=0.0;entryX=1.0;entryY=0.9347826086956522;" edge="1" parent="1" source="reconciler" target="cosmos">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="750" y="1455" />
+              <mxPoint x="1750" y="1455" />
+              <mxPoint x="1750" y="1070" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="budget-write-label" value="Optional scoped budget writes" style="text;html=1;strokeColor=none;fillColor=#ffffff;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=17;fontColor=#ca5010;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1148.6" y="1455" width="282.79999999999995" height="23" />
+        </mxCell>
+        <mxCell id="optional-ingress-request" value="" style="html=1;rounded=0;strokeColor=#ca5010;strokeWidth=2;dashed=1;endArrow=block;endFill=1;fontFamily=Arial;fontSize=17;fontColor=#ca5010;labelBackgroundColor=#ffffff;exitX=0.4861111111111111;exitY=1.0;entryX=0.4861111111111111;entryY=0.0;" edge="1" parent="1" source="workstation" target="ingress">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

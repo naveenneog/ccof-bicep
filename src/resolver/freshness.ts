@@ -2,7 +2,8 @@
 // of a record and the resolver's clock, so decide.ts can compose them and the
 // tests can drive every boundary without a real clock.
 
-import type { TokenLimit, TokenLimits, TokenQuotaPeriod } from "./decide.ts";
+import { parseFamilyPolicy } from "../contracts/model-families.ts";
+import type { FamilyPolicy } from "../contracts/model-families.ts";
 
 export interface BudgetStalenessPolicy {
   graceSeconds: number;
@@ -73,23 +74,25 @@ export function checkEntitlementRecord(record: EntitlementFreshnessFields, nowMs
 // The identifier patterns onboarding writes (WP-ONB) and the gateway checks
 // (WP-GW), so every 200 passes the gateway's own validation.
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
-const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+const GROUP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type MembershipProblem =
   | "invalid_project_id"
   | "invalid_classification"
   | "invalid_backend_id"
-  | "invalid_model_allow_list"
+  | "invalid_classification_group_id"
   | "invalid_aggregate_mode"
-  | "invalid_token_limits";
+  | "invalid_family_policy"
+  | "family_classification_forbidden";
 
 export interface ValidMembership {
   projectId: string;
   classification: string;
+  classificationGroupId: string;
+  classificationGroupDisplayName?: string;
   backendId: string;
-  modelAllowList: string[];
   aggregateMode: "strict" | "notify";
-  tokenLimits: TokenLimits;
+  familyPolicy: FamilyPolicy;
 }
 
 export const isIdentifier = (value: unknown): value is string => typeof value === "string" && IDENTIFIER.test(value);
@@ -99,25 +102,29 @@ export const isIdentifier = (value: unknown): value is string => typeof value ==
 export function validateMembership(
   membership: Record<string, unknown>,
 ): { ok: true; value: ValidMembership } | { ok: false; detail: MembershipProblem } {
-  const { projectId, classification, backendId, modelAllowList, aggregateMode } = membership;
+  const { projectId, classification, classificationGroupId, classificationGroupDisplayName, backendId, aggregateMode } = membership;
   if (!isIdentifier(projectId)) return { ok: false, detail: "invalid_project_id" };
   if (!isIdentifier(classification)) return { ok: false, detail: "invalid_classification" };
   if (!isIdentifier(backendId)) return { ok: false, detail: "invalid_backend_id" };
-  if (
-    !Array.isArray(modelAllowList) ||
-    modelAllowList.length === 0 ||
-    !modelAllowList.every((model) => typeof model === "string" && MODEL_NAME.test(model))
-  ) {
-    return { ok: false, detail: "invalid_model_allow_list" };
+  if (typeof classificationGroupId !== "string" || !GROUP_ID.test(classificationGroupId)) {
+    return { ok: false, detail: "invalid_classification_group_id" };
   }
   // Anything but the two known modes is malformed, never "notify": reading it
   // as notify would silently skip the aggregate check.
   if (aggregateMode !== "strict" && aggregateMode !== "notify") return { ok: false, detail: "invalid_aggregate_mode" };
-  const tokenLimits = parseTokenLimits(membership.tokenLimits);
-  if (!tokenLimits) return { ok: false, detail: "invalid_token_limits" };
+  const familyPolicy = parseFamilyPolicy(membership.familyPolicy, classification);
+  if (!familyPolicy.ok) return familyPolicy;
   return {
     ok: true,
-    value: { projectId, classification, backendId, modelAllowList: [...modelAllowList], aggregateMode, tokenLimits },
+    value: {
+      projectId,
+      classification,
+      classificationGroupId: classificationGroupId.toLowerCase(),
+      ...(typeof classificationGroupDisplayName === "string" ? { classificationGroupDisplayName } : {}),
+      backendId,
+      aggregateMode,
+      familyPolicy: structuredClone(familyPolicy.value),
+    },
   };
 }
 
@@ -135,34 +142,5 @@ export function classifyBudgetValidity(validUntil: unknown, nowMs: number, polic
   return "stale";
 }
 
-// The periods llm-token-limit accepts (docs/PILOT.md C-2).
-const TOKEN_QUOTA_PERIODS: readonly string[] = ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"];
-
 // APIM types tokens-per-minute as a 32-bit integer (WP-GW, U-35 measurement).
 export const MAX_TOKENS_PER_MINUTE = 2147483647;
-
-const isPositiveIntegerOrNull = (value: unknown): value is number | null =>
-  value === null || (typeof value === "number" && Number.isSafeInteger(value) && value > 0);
-
-function parseTokenLimit(value: unknown): TokenLimit | null {
-  if (typeof value !== "object" || value === null) return null;
-  const { tokensPerMinute, tokenQuota, tokenQuotaPeriod } = value as Record<string, unknown>;
-  if (!isPositiveIntegerOrNull(tokensPerMinute) || !isPositiveIntegerOrNull(tokenQuota)) return null;
-  if (tokensPerMinute !== null && tokensPerMinute > MAX_TOKENS_PER_MINUTE) return null;
-  if (tokenQuotaPeriod !== null && !(typeof tokenQuotaPeriod === "string" && TOKEN_QUOTA_PERIODS.includes(tokenQuotaPeriod))) {
-    return null;
-  }
-  // A quota without a period, or a period without a quota, cannot be applied.
-  if ((tokenQuota === null) !== (tokenQuotaPeriod === null)) return null;
-  return { tokensPerMinute, tokenQuota, tokenQuotaPeriod: tokenQuotaPeriod as TokenQuotaPeriod | null };
-}
-
-// Returns the limits with exactly the contract's fields, or null when the
-// shape is invalid. Unknown extra fields are not copied to the gateway.
-export function parseTokenLimits(value: unknown): TokenLimits | null {
-  if (typeof value !== "object" || value === null) return null;
-  const { person, group } = value as Record<string, unknown>;
-  const personLimit = parseTokenLimit(person);
-  const groupLimit = parseTokenLimit(group);
-  return personLimit && groupLimit ? { person: personLimit, group: groupLimit } : null;
-}

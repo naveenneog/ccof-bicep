@@ -12,7 +12,7 @@ The people who perform each deployment step, and the role each needs, are in
 | # | Identity | What it does | Needs | Type | Who grants it | Friction |
 |---|---|---|---|---|---|---|
 | 1 | Developer's own sign-in (Claude Code / VS Code / Desktop) | Authenticates to the gateway; self-checks their own group membership for fast-path key issuance | `openid`, `profile`, `User.Read`, and reading their own `memberOf` | Microsoft Graph **delegated** | Standard OIDC consent | **None** — already required for sign-in today |
-| 2 | Periodic sync job (bulk, unattended; §4 "slow path"). Proof of concept: user-assigned identity `ccof-poc-sync-id` | Enumerates full membership of every registered classification group, for drift-correction and removals | `GroupMember.Read.All` (or `Group.Read.All`) | Microsoft Graph **application** | Privileged Role Administrator, the least privileged role for Microsoft Graph app roles, or Global Administrator. Procedure: `docs/DEPLOYMENT-GUIDE.md`, Step 7 | **High** — see "What to actually go check" below |
+| 2 | Periodic sync job (bulk, unattended; §4 "slow path"). Proof of concept: user-assigned identity `sample-pilot-sync-id` | Enumerates full membership of every registered classification group, for drift-correction and removals | `GroupMember.Read.All` (or `Group.Read.All`) | Microsoft Graph **application** | Privileged Role Administrator, the least privileged role for Microsoft Graph app roles, or Global Administrator. Procedure: `docs/DEPLOYMENT-GUIDE.md`, Step 7 | **High** — see "What to actually go check" below |
 | 3 | Change-notification subscription (fast path, both directions) | Subscribes to group-membership changes, delivered to a webhook/Event Grid endpoint | `Group.Read.All` — the subscription API accepts `Group.Read.All`, not `GroupMember.Read.All`, for group resources (MS Learn, retrieved 2026-10-11) | Microsoft Graph application | Same admin as #2 | Same as #2 if #2 is granted as `Group.Read.All`; confirm app-only Graph subscriptions aren't blocked by a Conditional Access policy. At most 100 subscriptions per app per tenant, so one subscription on `/groups`, not one per group (`docs/MARKETPLACE-COST.md` §9, U-24) |
 | 4 | Project onboarding (Stage 3, `docs/CHECKPOINT-SETUP.md`) | Writes `projects`/`subscriptionIndex` in Cosmos; resolves a group id to its display name to confirm it | A scoped Cosmos write role; `Group.Read.All` **delegated**, covered by the operator's own Groups Administrator sign-in | Azure RBAC (Cosmos) + Graph delegated | Resource-group Owner (one-time, Stage 0) + the operator's own directory role | Low |
 | 5 | Backend registration (Stage 2) | Creates the private endpoint, approves the connection, registers the APIM Backend entity | Contributor, scoped to the designated subscription's resource group | Azure RBAC | That subscription's own Owner | Low — the real friction is organisational (needs a different person per subscription), not technical |
@@ -29,10 +29,10 @@ entire *automated* add/remove detection path (both the periodic sync and the cha
 fast path) depends on. It needs a Privileged Role Administrator or Global Administrator to consent,
 and the reference repository's own research (its `docs/UNKNOWNS.md` U17, U19 — read-only reference,
 not reused code) found this **not grantable** in its own test tenant. This is not assumable for
-the customer's tenant either — logged as U-7.
+SampleOrg's tenant either — logged as U-7.
 
-**Proof-of-concept tenant, 2026-10-11:** granted. The owner activated an eligible
-role through PIM and assigned `GroupMember.Read.All` to `ccof-poc-sync-id` from Cloud Shell. The
+**Proof-of-concept tenant (`REPLACE-id-...`), 2026-10-11:** granted. The owner activated an eligible
+role through PIM and assigned `GroupMember.Read.All` to `sample-pilot-sync-id` from Cloud Shell. The
 coordinator verified the assignment (`docs/DEPLOYMENT-GUIDE.md`, Step 7). This shows the grant is
 possible; it does not settle it for the customer's tenant (U-7).
 

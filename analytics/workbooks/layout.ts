@@ -107,8 +107,8 @@ not zero. Empty results do not prove zero usage. Cache gaps, ingestion delay, le
 reconciler lag remain visible limitations. No directory lookup, contract discounts, billing settlement,
 immutable archive or automatic price refresh is performed. Workbook access is not project-scoped RBAC.
 
-Sources: [Telemetry contract](https://github.com/naveenneog/claude-code-on-foundry/blob/main/docs/TELEMETRY.md),
-[chargeback guide](https://github.com/naveenneog/claude-code-on-foundry/blob/main/docs/CHARGEBACK.md),
+Sources: [Telemetry contract](https://github.com/naveenneog/ccof-bicep/blob/main/docs/TELEMETRY.md),
+[chargeback guide](https://github.com/naveenneog/ccof-bicep/blob/main/docs/CHARGEBACK.md),
 [Azure Monitor workbooks](https://learn.microsoft.com/azure/azure-monitor/visualize/workbooks-overview).`),
     ],
   };
