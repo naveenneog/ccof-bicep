@@ -294,7 +294,7 @@ param rateCard = { path: '../../config/rate-card.json', contractSchedulePath: '.
 // readerPrincipalIds: optional object ids of the people or groups who open the chargeback workbook.
 // resourceName: a GUID, the workbook's resource name (any new GUID works: New-Guid in PowerShell).
 param workbook = {
-  resourceName: 'REPLACE-00000000-0000-4000-8000-000000010000'
+  resourceName: 'REPLACE-workbook-resource-guid'
   displayName: 'Claude gateway chargeback'
   readerPrincipalIds: []
   settings: { defaultProjectId: '*', maxRows: 1000, topUsers: 25, maxQueryDays: 62, budgetLookbackDays: 31 }

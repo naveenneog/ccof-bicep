@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { buildSnapshot } from "../src/sync/snapshot.ts";
 import { SNAPSHOT_FUNCTION_NAME, SNAPSHOT_SETTING, SNAPSHOT_SHA_SETTING, runSnapshotFunction } from "../src/sync/snapshot-function.ts";
 import type { GroupReadResult } from "../src/sync/graph.ts";
@@ -123,4 +124,25 @@ test("missing snapshot limits are a configuration failure, with no Azure call", 
   assert.equal(summary.outcome, "failed");
   assert.equal(h.calls(), 0);
   assert.match(h.lines.join("\n"), /SYNC_SNAPSHOT_MAX_BYTES/);
+});
+
+test("function-app.ts registers snapshotApply in the sync role block, only while the snapshot setting is set", () => {
+  const source = readFileSync(new URL("../src/sync/function-app.ts", import.meta.url), "utf8");
+  const start = source.indexOf('if (process.env.CCOF_APP_ROLE === "sync") {');
+  assert.ok(start >= 0, "the sync role block");
+  assert.match(
+    source.slice(start),
+    /if \(process\.env\[SNAPSHOT_SETTING\]\?\.trim\(\)\) \{\s*app\.timer\(SNAPSHOT_FUNCTION_NAME, \{ schedule: SNAPSHOT_SCHEDULE, runOnStartup: false, handler: snapshotApplyTimer \}\);/,
+  );
+});
+
+test("the current snapshot operation correlates success and all early refusals", async () => {
+  for (const overrides of [{}, { [SNAPSHOT_SHA_SETTING]: "" }, { SYNC_SNAPSHOT_MAX_BYTES: undefined }]) {
+    const h = harness(withSnapshot({ CCOF_SYNC_SNAPSHOT_OPERATION_ID: "current-operation", ...overrides }));
+    await h.run();
+    const line = JSON.parse(h.lines.at(-1) ?? "{}");
+    assert.equal(line.snapshotOperationId, "current-operation");
+  }
+  const source = readFileSync(new URL("../src/sync/function-app.ts", import.meta.url), "utf8");
+  assert.match(source, /snapshotOperationLog\(process\.env,/);
 });
