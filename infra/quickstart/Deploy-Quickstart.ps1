@@ -82,6 +82,7 @@ function Test-QsPrerequisites {
     if ($account.id -ne $p.names.subscriptionId) { $problems.Add("subscription_mismatch: az uses $($account.id); run az account set --subscription $($p.names.subscriptionId)") }
     $placeholders = @(($Ctx.ParametersText -split "`n") | Where-Object { $_ -match 'REPLACE-' -and $_ -notmatch '^\s*//' })
     if ($placeholders.Count) { $problems.Add("placeholders_left: $($placeholders.Count) value(s) still say REPLACE in the parameters file") }
+    if ($p.sync.mode -eq 'delegated-snapshot' -and -not $p.runner.enabled) { $problems.Add('runner_required_for_delegated_snapshot: sync.mode delegated-snapshot needs the private runner VM; set runner.enabled to true (with a VM image the tenant allows) or use application-permission') }
     $apimId = "/subscriptions/$($p.apim.subscriptionId)/resourceGroups/$($p.apim.resourceGroup)/providers/Microsoft.ApiManagement/service/$($p.apim.name)"
     $apim = Invoke-QsAz @('rest', '--method', 'get', '--url', "https://management.azure.com$apimId`?api-version=2024-05-01")
     $principalId = $apim.identity.principalId
@@ -207,7 +208,7 @@ function Invoke-QsSeed {
     $file = Join-Path $Ctx.GeneratedDir 'seed-documents.json'
     $docs | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
     Write-Host "Seed documents written to $file ($($docs.projects.Count) projects, $($docs.backends.Count) backends)."
-    throw 'seed_not_automated: v1 writes the documents but does not yet send them through the private runner. Write them from inside the VNet (docs/QUICKSTART.md, step 5), then run with -From 6.'
+    throw 'seed_not_automated: this version writes the documents above but does not store them in Cosmos (public access is off; a later version stores them without a VM). Steps 6-8 do not depend on it: run them with -Only 6, -Only 7 and -Only 8. After the update, a run without -Only resumes here.'
 }
 
 function Show-QsGraphStep {

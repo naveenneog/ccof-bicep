@@ -19,8 +19,8 @@ param tenantId = 'REPLACE-tenant-id'
 // Region of every new resource; it must support Flex Consumption:
 //   az functionapp list-flexconsumption-locations -o table
 param location = 'REPLACE-region'
-// Subscription and resource group of the quick-start resources (Cosmos, Function Apps, runner VM,
-// workspace). The resource group exists already (resourceGroupMode 'existing' below).
+// Subscription and resource group of the quick-start resources (Cosmos, Function Apps, workspace).
+// The resource group exists already (resourceGroupMode 'existing' below).
 var subscriptionId = 'REPLACE-subscription-id'
 var resourceGroupName = 'REPLACE-resource-group'
 // Name prefix: 3-12 lowercase letters and digits, no hyphen. Storage account names are the prefix
@@ -57,13 +57,12 @@ param names = {
 }
 
 // ---- 2. NETWORK: every address range or id comes from the customer --------------------------------
-// The VNet must be in the subscription and region of section 1: a private endpoint (and the runner
-// VM's network interface) must be in its VNet's subscription and region
-// (https://learn.microsoft.com/azure/private-link/private-endpoint-overview).
+// The VNet must be in the subscription and region of section 1: a private endpoint must be in its
+// VNet's subscription and region (https://learn.microsoft.com/azure/private-link/private-endpoint-overview).
 // Option A (active below): a NEW VNet from the customer's address ranges, with its own private DNS
-// zones. The tested sample used a /16 address space, /24 private endpoints, /24 functions and a /27
-// runner subnet; smaller ranges are untested. The APIM subnet is created, but the quick-start does
-// not attach the APIM to it. Nothing is peered to the customer's network.
+// zones. The tested sample used a /16 address space, /24 private endpoints and /24 functions;
+// smaller ranges are untested. The APIM subnet is created, but the quick-start does not attach the
+// APIM to it. Nothing is peered to the customer's network. No runner subnet: the form creates no VM.
 // Option B (commented out further down): subnets the customer's network team created in their own
 // VNet, and their private DNS zones. To use it, delete option A and uncomment option B. Option B has
 // not been deployed in a test yet.
@@ -77,7 +76,6 @@ param network = {
       apim: { name: 'snet-apim', prefix: 'REPLACE-apim-subnet-range' }
       privateEndpoints: { name: 'snet-private-endpoints', prefix: 'REPLACE-private-endpoint-subnet-range' }
       functions: { name: 'snet-functions', prefix: 'REPLACE-functions-subnet-range' }
-      runner: { name: 'snet-runner', prefix: 'REPLACE-runner-subnet-range' }
     }
   }
 }
@@ -90,7 +88,6 @@ param network = {
 //   existing: {
 //     privateEndpointSubnetId: 'REPLACE-/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<private endpoint subnet>'
 //     functionsSubnetId: 'REPLACE-/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<functions subnet>'
-//     runnerSubnetId: 'REPLACE-/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<runner subnet>'
 //     privateDnsZoneIds: {
 //       cosmos: 'REPLACE-/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com'
 //       blob: 'REPLACE-/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net'
@@ -211,12 +208,10 @@ param functions = {
 }
 param storageSku = 'Standard_LRS'
 param logRetentionDays = 31
-// Runner VM: no public IP, driven by Run Command; the deployment never uses SSH, but the Linux VM API
-// needs a public key. In Cloud Shell: ssh-keygen -t rsa -b 4096 -f $HOME/.ssh/ccof-runner -N ''
-// then paste the one line of $HOME/.ssh/ccof-runner.pub below. The size must be offered in the region
-// without a restriction for the subscription:
-//   az vm list-skus --location <region> --size Standard_D2as --all -o table
-param runner = { vmSize: 'Standard_D2as_v7', adminUsername: 'ccofadmin', sshPublicKey: 'REPLACE-ssh-public-key' }
+// No VM: runner.enabled false (the default) creates no runner VM, so a tenant whose policy denies
+// marketplace VM images deploys everything else. Only sync.mode 'delegated-snapshot' needs the
+// runner; this form uses application-permission (section 6).
+param runner = { enabled: false }
 
 // ---- 6. DEFAULTS (the tested sample; no customer value needed) ----------------------------------
 param enableAlerts = false

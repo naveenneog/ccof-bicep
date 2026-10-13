@@ -21,8 +21,9 @@ of ADR-0019, which separate teams run (`docs/adr/0024-single-administrator-quick
   the application settings of D2's settings step, and the resolver's App Service Authentication that
   admits only the APIM's managed identity (`infra/quickstart/modules/app-settings.bicep`, ADR-0009);
 - the Azure role assignments of D3's data for these resources (`infra/quickstart/modules/rbac.bicep`);
-- a private runner VM (no public IP, system-assigned identity) for Cosmos data-plane writes
-  (`infra/quickstart/modules/runner.bicep`);
+- optionally (`runner.enabled`, default false), a private runner VM (no public IP, system-assigned
+  identity) for Cosmos data-plane writes (`infra/quickstart/modules/runner.bicep`); only the
+  delegated-snapshot sync mode needs it, and its subnet is optional when it is off;
 - in the EXISTING APIM, only child resources: the API, its operation, one backend per Foundry
   account, the policy (`infra/quickstart/modules/apim-api.bicep`), the logger, the API diagnostics
   and a resource diagnostic setting (`infra/poc/phase4-apim-telemetry.bicep`);
@@ -59,7 +60,7 @@ with a named reason (for example `resolver_api_token_version`); it never creates
 | `registrations` | `gatewayApi` (`appId`, `scope`), `developerSignIn` (`appId`), `resolverApi` (`appId`) |
 | `groups` | One object per group: `groupId`, `projectId`, `classification`, `modelAllowList`, `tokenLimits` (per person and per group: tokens per minute, quota, period), budgets, modes |
 | `backends` | `id`, `subscriptionId`, `resourceGroup`, `accountName`, `url`, `resource`, `deploymentInferenceGeo`, `assignCognitiveServicesUser` |
-| `cosmos`, `functions`, `storageSku`, `logRetentionDays`, `runner` | Sizing: Cosmos serverless or autoscale; Flex maximum instances and memory; VM size and SSH public key |
+| `cosmos`, `functions`, `storageSku`, `logRetentionDays`, `runner` | Sizing: Cosmos serverless or autoscale; Flex maximum instances and memory; `runner.enabled` (default false) and, when true, VM size and SSH public key |
 | `resolver`, `sync`, `reconciler`, `budgetState` | The D2 answers sections (`config/core.answers.schema.json`) |
 | `syncTimerEnabled` | `false` until phase 3 is done |
 | `gateway` | Admission calls per person and period, token-limit headers, cache, resolver timeout |

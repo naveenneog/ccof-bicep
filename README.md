@@ -26,7 +26,8 @@ system-assigned managed identity (`infra/quickstart/main.bicep`):
   containers, and the data-plane role assignments;
 - three Flex Consumption Function Apps (resolver, group sync, reconciler) with their settings and
   the resolver's App Service Authentication;
-- a private runner VM, for writes to the private Cosmos account;
+- optionally (`runner.enabled`, off by default), a private runner VM; only the delegated-snapshot
+  sync mode needs it, so a tenant whose policy denies marketplace VM images deploys without it;
 - in the existing API Management: the API, its operation, the Foundry backends reached with the
   managed identity, the rendered gateway policy, and diagnostics;
 - the chargeback workbook;
@@ -111,14 +112,11 @@ cd ccof-bicep
 npm ci --ignore-scripts --include=dev
 # The form: every customer decision is marked REPLACE. The copy is git-ignored (.env.*).
 cp infra/quickstart/customer-form.bicepparam infra/quickstart/.env.customer.bicepparam
-# The runner VM's SSH public key (the VM has no public IP; the deployment never uses SSH).
-ssh-keygen -t rsa -b 4096 -f $HOME/.ssh/ccof-runner -N ''
-Get-Content $HOME/.ssh/ccof-runner.pub
 code infra/quickstart/.env.customer.bicepparam
 ```
 
-`code` opens the Cloud Shell editor. Fill every `REPLACE` value, paste the public key into
-`runner.sshPublicKey`, and save. Then, from the repository root:
+`code` opens the Cloud Shell editor. Fill every `REPLACE` value and save. The form creates no VM
+(`param runner = { enabled: false }`). Then, from the repository root:
 
 ```powershell
 az account set --subscription <subscription id>

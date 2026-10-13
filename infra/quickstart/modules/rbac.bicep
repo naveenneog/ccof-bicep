@@ -71,7 +71,8 @@ resource reconcilerLogReader 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
-resource runnerRegistryReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// Only when the runner exists (main.bicep passes an empty principal when runner.enabled is false).
+resource runnerRegistryReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(principals.runner)) {
   name: guid(cosmos.id, 'runner', readerRole)
   scope: cosmos
   properties: {

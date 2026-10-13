@@ -25,7 +25,7 @@ param autoscaleMaxThroughput int
 @description('Custom role names: syncWriter, reconcilerWriter, projectWriter (answers names.cosmosRoles).')
 param roleNames object
 
-@description('Principal (object) ids: resolver, sync, reconciler, runner.')
+@description('Principal (object) ids: resolver, sync, reconciler, runner (empty when the runner is off: its assignments are skipped).')
 param principals object
 
 @description('application-permission or delegated-snapshot (answers sync.mode); the runner holds the sync writer roles only in delegated-snapshot.')
@@ -98,7 +98,7 @@ var cosmosAssignments = [
   { id: 'onb-private-runner-project-writer', principal: 'runner', role: 'custom:onbProjectWriter', container: 'projects', when: '' }
 ]
 
-var activeAssignments = filter(cosmosAssignments, a => empty(a.when) || a.when == syncMode)
+var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode) && !empty(principals[a.principal]))
 
 resource account 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = {
   name: accountName

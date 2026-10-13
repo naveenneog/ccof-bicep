@@ -59,7 +59,7 @@ param network = {
       apim: { name: 'snet-apim', prefix: '10.63.1.0/24' }
       privateEndpoints: { name: 'snet-private-endpoints', prefix: '10.63.2.0/24' }
       functions: { name: 'snet-functions', prefix: '10.63.3.0/24' }
-      runner: { name: 'snet-runner', prefix: '10.63.4.0/27' }
+      // runner: { name: 'snet-runner', prefix: '10.63.4.0/27' }   only with runner.enabled true
     }
   }
   // existing: { privateEndpointSubnetId: '', functionsSubnetId: '', runnerSubnetId: '', privateDnsZoneIds: { cosmos: '', blob: '' } }
@@ -148,7 +148,10 @@ param functions = {
 param storageSku = 'Standard_LRS'
 param logRetentionDays = 31
 param enableAlerts = false
-param runner = { vmSize: 'Standard_D2as_v7', adminUsername: 'ccofadmin', sshPublicKey: 'REPLACE-ssh-public-key' }
+// runner.enabled false (the default): no runner VM. Only sync.mode 'delegated-snapshot' needs it; then
+// { enabled: true, vmSize: 'Standard_D2as_v7', adminUsername: 'ccofadmin', sshPublicKey: '<public key>' }
+// with a runner subnet in the network parameter.
+param runner = { enabled: false }
 
 // ---- 8. Application behaviour (the D2 answers sections) ----
 param resolver = { budgetEnforcement: 'token-limits-only', cosmosRequestTimeoutMs: 2000, cosmosRetryAttempts: 2, cosmosRetryMaxWaitSeconds: 2, requestDeadlineMs: 4000 }

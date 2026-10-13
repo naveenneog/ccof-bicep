@@ -59,6 +59,7 @@ param budgetState object = { graceSeconds: 900, hardLimitSeconds: 3600 }
 param gateway object
 
 param rateCard object
+@description('The private runner VM: enabled (default false) creates it; only the delegated-snapshot sync mode needs it. vmSize, adminUsername and sshPublicKey are read only when enabled.')
 param runner object
 param workbook object
 param enableAlerts bool = false
@@ -79,6 +80,9 @@ param apimIdentityAppId string = ''
 
 var prefix = names.deploymentPrefix
 var createNetwork = network.mode == 'create'
+// Off unless runner.enabled is true, so a tenant whose policy denies marketplace VM images can deploy
+// everything else; without the runner, its subnet is optional in both network modes.
+var runnerEnabled = runner.?enabled ?? false
 var appKeys = ['resolver', 'sync', 'reconciler']
 var alwaysReadyNames = { resolver: 'http', sync: 'function:syncEntitlement', reconciler: 'function:reconcileBudgets' }
 
@@ -97,7 +101,8 @@ module net '../prereqs/network.bicep' = if (createNetwork) {
     vnetName: network.create.vnetName
     addressSpace: network.create.addressSpace
     apimNsgName: network.create.apimNsgName
-    subnets: network.create.subnets
+    // A null runner subnet makes infra/prereqs/network.bicep create none.
+    subnets: union(network.create.subnets, { runner: network.create.subnets.?runner })
   }
 }
 
@@ -110,7 +115,7 @@ var subnetIds = createNetwork ? {
 } : {
   privateEndpoints: network.existing.privateEndpointSubnetId
   functions: network.existing.functionsSubnetId
-  runner: network.existing.runnerSubnetId
+  runner: network.existing.?runnerSubnetId ?? ''
   cosmosDnsZone: network.existing.privateDnsZoneIds.cosmos
   blobDnsZone: network.existing.privateDnsZoneIds.blob
 }
@@ -168,16 +173,16 @@ module apps '../prereqs/function-app.bicep' = [for app in appKeys: {
   }
 }]
 
-module privateRunner 'modules/runner.bicep' = {
+module privateRunner 'modules/runner.bicep' = if (runnerEnabled) {
   name: '${prefix}-qs-runner'
   params: {
     location: location
     tags: tags
     vmName: names.runnerVm
     subnetId: subnetIds.runner
-    vmSize: runner.vmSize
-    adminUsername: runner.adminUsername
-    sshPublicKey: runner.sshPublicKey
+    vmSize: runner.?vmSize ?? 'Standard_D2as_v7'
+    adminUsername: runner.?adminUsername ?? 'ccofadmin'
+    sshPublicKey: runner.?sshPublicKey ?? ''
   }
 }
 
@@ -185,7 +190,8 @@ var principals = {
   resolver: apps[0].outputs.systemPrincipalId
   sync: identities.outputs.syncPrincipalId
   reconciler: identities.outputs.reconcilerPrincipalId
-  runner: privateRunner.outputs.principalId
+  // Empty when the runner is off: cosmos-data.bicep and rbac.bicep then skip its assignments.
+  runner: runnerEnabled ? privateRunner!.outputs.principalId : ''
 }
 
 module cosmosData 'modules/cosmos-data.bicep' = {
@@ -305,8 +311,8 @@ output gatewayUrl string = '${gatewayApi.outputs.gatewayUrl}/${apim.apiPath}'
 output resolverHostName string = apps[0].outputs.hostName
 output functionAppIds object = { resolver: apps[0].outputs.functionAppId, sync: apps[1].outputs.functionAppId, reconciler: apps[2].outputs.functionAppId }
 output syncPrincipalId string = identities.outputs.syncPrincipalId
-output runnerPrincipalId string = privateRunner.outputs.principalId
-output runnerVmId string = privateRunner.outputs.vmId
+output runnerPrincipalId string = runnerEnabled ? privateRunner!.outputs.principalId : ''
+output runnerVmId string = runnerEnabled ? privateRunner!.outputs.vmId : ''
 output cosmosEndpoint string = cosmosAccount.outputs.endpoint
 output cosmosAccountId string = cosmosAccount.outputs.id
 output workspaceId string = workspace.outputs.id
