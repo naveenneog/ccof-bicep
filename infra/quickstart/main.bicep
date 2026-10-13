@@ -139,6 +139,10 @@ module cosmosAccount '../prereqs/cosmos-account.bicep' = {
   }
 }
 
+// One app at a time: the three apps join the same Functions subnet, and in parallel two of them failed
+// with "Failed to acquire ServiceAssociationLinkLease" (validation subscription, 2026-10-13).
+// batchSize(1) is sequential (https://learn.microsoft.com/azure/azure-resource-manager/bicep/loops#deploy-in-batches, retrieved 2026-10-13).
+@batchSize(1)
 module apps '../prereqs/function-app.bicep' = [for app in appKeys: {
   name: '${prefix}-qs-app-${app}'
   params: {
