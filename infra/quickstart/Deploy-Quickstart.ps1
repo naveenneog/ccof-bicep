@@ -65,8 +65,20 @@ function Invoke-QsAz {
     # az with arguments free of ( ) | & < > ^ and quotes (Windows); JSON bodies go through files.
     param([string[]]$Arguments)
     foreach ($a in $Arguments) { if ($a -match '[()|&<>^"]') { throw "refused az argument with a shell metacharacter: $($Arguments[0..1] -join ' ')" } }
-    $out = az @Arguments --only-show-errors 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "az $($Arguments[0..1] -join ' ') failed: $(@($out) -join ' ')" }
+    # Azure Cloud Shell gets every token from the browser's Portal session; that broker can answer
+    # "Timeout waiting for token from portal" once and succeed on the next request. Retry those only.
+    $pauses = if ($null -ne $script:QsTokenRetrySeconds) { @($script:QsTokenRetrySeconds) } else { @(10, 30, 60) }
+    for ($try = 0; ; $try++) {
+        $out = az @Arguments --only-show-errors 2>&1
+        if ($LASTEXITCODE -eq 0) { break }
+        $err = @($out) -join ' '
+        if ($try -lt $pauses.Count -and $err -match 'Timeout waiting for token from portal|temporarily_unavailable|AADSTS50196') {
+            Write-Host "WARNING: az $($Arguments[0..1] -join ' '): the sign-in token timed out; retrying in $($pauses[$try]) s ($($try + 1)/$($pauses.Count))." -ForegroundColor Yellow
+            Start-Sleep -Seconds $pauses[$try]; continue
+        }
+        if ($err -match 'Timeout waiting for token from portal') { throw "az $($Arguments[0..1] -join ' ') failed: $err -- Cloud Shell could not get a token from the Portal session after $($pauses.Count) retries. Reload the Azure Portal browser tab (sign in again if asked), reopen Cloud Shell, check with: az account get-access-token --resource https://graph.microsoft.com/ -o none ; then rerun this script (it resumes)." }
+        throw "az $($Arguments[0..1] -join ' ') failed: $err"
+    }
     $text = @($out | Where-Object { $_ -is [string] }) -join "`n"
     if ($text.Trim().StartsWith('{') -or $text.Trim().StartsWith('[')) { return $text | ConvertFrom-Json -AsHashtable -Depth 100 }
     return $text

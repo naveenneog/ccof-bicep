@@ -353,6 +353,7 @@ as a client. Portal: core RG → **Workbooks** → the workbook's display name (
 | `seed_backend_conflict` | Entries of one project use different `backendId` values. |
 | Windows only: `'charmap' codec can't encode '\u2212'` | `$env:PATH = "$PWD/scripts/diagnostics/windows-az-utf8;" + $env:PATH` (makes `az` resolve to the UTF-8 `az.ps1` wrapper), then rerun. Cloud Shell is not affected. |
 | `Audience https://api.applicationinsights.io is not a supported MSI token audience` (step 5) | Fixed in `main`: step 5 then queries through ARM. Update the two scripts (`git fetch origin; git checkout origin/main -- infra/quickstart/Deploy-Quickstart.ps1 infra/sync/Invoke-SnapshotApplyThroughFunction.ps1`) and rerun; it resumes at step 5. |
+| `Timeout waiting for token from portal. Audience: https://graph.microsoft.com/` (any step) | Cloud Shell's Portal sign-in broker did not answer in time. The script retries this three times (10, 30, 60 s). If it persists: reload the Portal browser tab, sign in again if asked, reopen Cloud Shell, check `az account get-access-token --resource https://graph.microsoft.com/ -o none`, then rerun the same command; it resumes. |
 | Token version mismatch in step 1 | Set `gatewayApi.accessTokenVersion` to the app's `requestedAccessTokenVersion` (block 1.5). |
 
 ## Keep private

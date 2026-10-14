@@ -72,6 +72,47 @@ input files, reload the variables in module 13, and run **only the unfinished mo
 The access helper is repeatable and recognizes existing grants. Packages are independent
 per app. UI changes are persistent in Azure; there is no hidden Quickstart resume state.
 
+### Continuing in the UI after a partial Quickstart run
+
+Quickstart steps map to modules. Its local state file does not matter here: check Azure, then
+skip each module whose exit check already passes on the existing resources.
+
+Quickstart never creates the prerequisites of modules **01**, **06** (Entra apps and groups),
+**07** (Foundry account and deployments) or **11** (API Management); step 1 only reads them.
+
+| Quickstart step | What it does in Azure | UI module |
+|---|---|---|
+| 1 checks | Reads only | 01, 06, 07, 11 (verify only) |
+| 2 build | Nothing (local files, including the workbook content) | 14 |
+| 3 deploy | Resource group (create mode); VNet and Cosmos/blob private DNS (network create mode only); LAW and resolver/sync Insights; sync/reconciler UAMIs; Cosmos account, private endpoint, database, containers and native SQL roles; storage, private endpoint and deployment container per app; three VNet-integrated Function Apps; app settings and resolver authentication; APIM API, operation, backends and policy; APIM and Function diagnostics; chargeback workbook; Azure IAM runtime grants; APIM Cognitive Services User on Foundry | 02 (RG), 03, 04, 05, 07 (grant only), 08, 09, 10, 15, 17, 19, 20 |
+| 4 code | Publishes the three app packages | 18 |
+| 5 seed | Creates the registry documents | 21 (seed part) |
+| 6 graph-permission | Nothing: prints the admin command | 16 still required |
+| 7 smoke | Reads only (anonymous gateway call returns 401) | 22 (partial) |
+| 8 client | Nothing in Azure (local client configuration) | 22 |
+
+Not created by Quickstart: the resolver's inbound private endpoint and
+`privatelink.azurewebsites.net` zone (**12**), the Graph permissions (**16**), and the
+sync timer (stays disabled until **16** is done; reconciler timer follows its parameter).
+
+If step 3 (`deploy`) and step 4 (`code`) succeeded, continue with:
+
+1. **Verify, do not recreate:** RG > Deployments shows the quick-start deployment Succeeded;
+   each Function App's Functions blade lists its handlers (18 check); APIM API has the
+   `create-message` operation and the rendered policy (19 check).
+2. **12** resolver private endpoint and network acceptance. Later code republishing then
+   needs the approved network-connected workstation or runner.
+3. **13** private form plus evidence file (values from the existing resources).
+4. **14** generate artifacts (for `seed-payload.txt`, `seed-id.txt`, the workbook JSON).
+5. **15** run only the plan command per app: every grant must show existing; do not `-Apply` unless one is missing.
+6. **16** Graph permissions (privileged admin).
+7. **21** first run the Logs query without the seed-ID line. If an earlier `ccof.seed.result`
+   shows every document **created** or **present-equal**, skip the seed and do only the cleanup
+   check and timer enablement. Otherwise seed through the UI as written.
+8. **20** verify logs arrive; **22** client and acceptance.
+
+If step 3 never succeeded, follow the modules in order from 01.
+
 ## 01. Decide names, capacity and operator access
 
 **UI:** Subscription > Access control (IAM); Entra admin center > Identity
