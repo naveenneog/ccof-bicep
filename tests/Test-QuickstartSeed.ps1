@@ -165,6 +165,7 @@ function Invoke-QsAz {
     $joined = $Arguments -join ' '
     $script:Az.Add($joined)
     if ($joined -match '^rest --method get --url https://management\.azure\.com/.+/providers/Microsoft\.Insights/components/') { return @{ properties = @{ AppId = $script:AppInsightsAppId } } }
+    if ($joined -match '^account get-access-token --resource https://api\.applicationinsights\.io$' -and $script:AiTokenFails) { throw 'az account get-access-token failed: ERROR: Audience https://api.applicationinsights.io is not a supported MSI token audience.' }
     if ($joined -match '^account get-access-token ') { return @{ accessToken = 'fake-ai-token'; tokenType = 'Bearer' } }
     if ($joined -match '^rest --method get --url https://management\.azure\.com/.+/providers/Microsoft\.Web/sites/[^/]+/functions\?') {
         # The sync app's function list: registrySeed is absent for the first $script:SeedUnlistedReads reads.
@@ -251,6 +252,22 @@ Assert-True 'once registrySeed is listed, no further trigger sync is asked for' 
 $ctx = New-FunctionSeedContext @({ @(New-SeedLine 'failed' (New-SeedDocumentResults 'failed' | ForEach-Object { $_.code = 'create_http_403'; $_ })) }, { @((New-SeedLine 'failed' (New-SeedDocumentResults 'failed' | ForEach-Object { $_.code = 'create_http_403'; $_ })), (New-SeedLine 'succeeded' (New-SeedDocumentResults 'created'))) })
 $out = $null; $message = ''; try { $out = Invoke-QsSeed $ctx } catch { $message = $_.Exception.Message }
 Assert-True 'a failed run followed by a successful one passes with the later outcome' ($null -ne $out -and -not $message -and @($out.documents | Where-Object { $_ -match ': created$' }).Count -eq $entries.Count) $message
+
+# Cloud Shell's managed-identity sign-in cannot get an https://api.applicationinsights.io token (live,
+# 2026-10-14): the poll falls back to the ARM query route, which answers the Kusto v1 shape.
+$script:AiTokenFails = $true
+$ctx = New-FunctionSeedContext @({ @() }, { @(New-SeedLine 'succeeded' (New-SeedDocumentResults 'created')) })
+$ctx.InvokeRest = {
+    param($Uri, $Body, $Token)
+    $script:Queries.Add(@{ Uri = $Uri; Body = $Body; Token = $Token; AzCallsBefore = $script:Az.Count })
+    $answer = $script:Answers[[Math]::Min($script:Queries.Count, $script:Answers.Count) - 1]
+    $rows = @(@(& $answer) | ForEach-Object { , @('2026-10-14T07:00:00Z', $_) })
+    (@{ Tables = @(@{ TableName = 'Table_0'; Columns = @(@{ ColumnName = 'timestamp'; DataType = 'DateTime' }, @{ ColumnName = 'message'; DataType = 'String' }); Rows = $rows }) } | ConvertTo-Json -Depth 10 | ConvertFrom-Json)
+}
+$out = $null; $message = ''; try { $out = Invoke-QsSeed $ctx } catch { $message = $_.Exception.Message }
+$armUri = "https://management.azure.com/subscriptions/$($P.names.subscriptionId)/resourceGroups/$($P.names.resourceGroup)/providers/Microsoft.Insights/components/$($P.names.apps.sync.appInsights)/api/query?api-version=2020-02-02"
+Assert-True 'without an Application Insights token, step 5 queries through ARM with an ARM token and passes' ($null -ne $out -and -not $message -and $script:Queries.Count -ge 2 -and $script:Queries[0].Uri -ceq $armUri -and (Get-AzIndex '^account get-access-token --resource https://management\.azure\.com/$') -ge 0 -and @($out.documents | Where-Object { $_ -match ': created$' }).Count -eq $entries.Count) "$message uri=$(if ($script:Queries.Count) { $script:Queries[0].Uri })"
+$script:AiTokenFails = $false
 
 # Timeout: no line within the polls.
 $ctx = New-FunctionSeedContext @({ @() })

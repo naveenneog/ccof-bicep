@@ -465,11 +465,11 @@ function Get-QsSeedResultLines {
         2026-10-13). The query travels in a JSON body, so no quote passes through a shell. A 400, 401,
         403 or 404 answer throws seed_query_failed; any other error is the caller's to retry.
     #>
-    param([Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId, [Parameter(Mandatory)] [string]$Token, [scriptblock]$InvokeRest)
+    param([Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId, [Parameter(Mandatory)] [string]$Token, [scriptblock]$InvokeRest, [string]$Uri)
     if ($SeedId -cnotmatch '^[0-9a-f]{32}$') { throw "seed_id_invalid: '$SeedId'" }
     $query = "traces | where timestamp > ago(1h) | where message has '$SeedId' and message contains 'ccof.seed.result' | project timestamp, message | order by timestamp asc | take 50"
     $body = @{ query = $query; timespan = 'PT1H' } | ConvertTo-Json -Compress
-    $uri = "https://api.applicationinsights.io/v1/apps/$AppId/query"
+    $uri = if ($Uri) { $Uri } else { "https://api.applicationinsights.io/v1/apps/$AppId/query" }
     $invoke = if ($InvokeRest) { $InvokeRest } else { { param($Uri, $Body, $Token) Invoke-RestMethod -Method Post -Uri $Uri -Body $Body -ContentType 'application/json' -Headers @{ Authorization = "Bearer $Token" } -TimeoutSec 60 } }
     try { $response = & $invoke $uri $body $Token }
     catch {
@@ -477,12 +477,43 @@ function Get-QsSeedResultLines {
         if ($status -in 400, 401, 403, 404) { throw "seed_query_failed: Application Insights answered HTTP $status to the query of app $AppId; the deployer needs read access to the sync app's Application Insights (Reader on the resource group is enough)." }
         throw
     }
-    $table = @($response.tables)[0]
-    $column = [array]::IndexOf(@($table.columns | ForEach-Object { [string]$_.name }), 'message')
-    if ($column -lt 0) { return }
-    foreach ($row in @($table.rows)) {
-        $line = try { [string]@($row)[$column] | ConvertFrom-Json -AsHashtable -Depth 20 } catch { $null }
+    foreach ($message in @(Get-QsQueryMessages $response)) {
+        $line = try { $message | ConvertFrom-Json -AsHashtable -Depth 20 } catch { $null }
         if ($line -is [System.Collections.IDictionary] -and $line.schema -ceq 'ccof.seed.result.v1' -and $line.seedId -ceq $SeedId) { $line }
+    }
+}
+
+function Get-QsQueryMessages {
+    <#
+    .SYNOPSIS
+        The message column of the first table of a query answer. The data-plane API answers
+        { tables: [{ columns: [{ name }], rows }] }; the ARM route answers the Kusto v1 shape
+        { Tables: [{ Columns: [{ ColumnName }], Rows }] } (PowerShell property names are case-insensitive).
+    #>
+    param($Response)
+    $table = @($Response.tables)[0]
+    if (-not $table) { return }
+    $column = [array]::IndexOf(@($table.columns | ForEach-Object { if ($_.name) { [string]$_.name } else { [string]$_.ColumnName } }), 'message')
+    if ($column -lt 0) { return }
+    foreach ($row in @($table.rows)) { [string]@($row)[$column] }
+}
+
+function Get-QsLogQueryAccess {
+    <#
+    .SYNOPSIS
+        Where and with which token to query an Application Insights component. First the data-plane API
+        (token for https://api.applicationinsights.io). Where that token cannot be issued (Azure Cloud
+        Shell's managed-identity sign-in answers "Audience https://api.applicationinsights.io is not a
+        supported MSI token audience", and device-code sign-in may be blocked by policy), the same query
+        through ARM: POST https://management.azure.com{componentId}/api/query?api-version=2020-02-02
+        with the ARM token every sign-in has (verified 2026-10-14). Same RBAC: read on the component.
+    #>
+    param([Parameter(Mandatory)] [string]$AppId, [string]$ComponentId, [scriptblock]$Az = { param($a) Invoke-QsAz $a })
+    try { return @{ Uri = "https://api.applicationinsights.io/v1/apps/$AppId/query"; Token = [string](& $Az @('account', 'get-access-token', '--resource', 'https://api.applicationinsights.io')).accessToken; Route = 'data-plane' } }
+    catch {
+        if (-not $ComponentId) { throw }
+        $token = [string](& $Az @('account', 'get-access-token', '--resource', 'https://management.azure.com/')).accessToken
+        return @{ Uri = "https://management.azure.com$ComponentId/api/query?api-version=2020-02-02"; Token = $token; Route = 'arm' }
     }
 }
 
@@ -499,14 +530,15 @@ function Wait-QsSeedResult {
         settings registers no registrySeed, and Flex Consumption wakes an app only for the triggers the
         last sync recorded (live run 2026-10-13: the app scaled to zero and the seed never ran).
     #>
-    param([Parameter(Mandatory)] $Ctx, [Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId, [string]$FunctionsUrl, [string]$SyncUrl)
+    param([Parameter(Mandatory)] $Ctx, [Parameter(Mandatory)] [string]$AppId, [Parameter(Mandatory)] [string]$SeedId, [string]$FunctionsUrl, [string]$SyncUrl, [string]$ComponentId)
     $attempts = if ($Ctx.SeedPollAttempts -is [int]) { $Ctx.SeedPollAttempts } else { 30 }
     $pause = if ($Ctx.PollSeconds -is [int]) { $Ctx.PollSeconds } else { 20 }
-    $latest = $null; $lastError = $null
+    $latest = $null; $lastError = $null; $route = $null
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
-        $token = [string](Invoke-QsAz @('account', 'get-access-token', '--resource', 'https://api.applicationinsights.io')).accessToken
+        $access = Get-QsLogQueryAccess -AppId $AppId -ComponentId $ComponentId
+        if ($access.Route -cne $route) { $route = $access.Route; if ($route -ceq 'arm') { Write-Host 'Querying Application Insights through ARM (this sign-in cannot get a https://api.applicationinsights.io token).' } }
         $lines = @()
-        try { $lines = @(Get-QsSeedResultLines -AppId $AppId -SeedId $SeedId -Token $token -InvokeRest $Ctx.InvokeRest); $lastError = $null }
+        try { $lines = @(Get-QsSeedResultLines -AppId $AppId -SeedId $SeedId -Token $access.Token -Uri $access.Uri -InvokeRest $Ctx.InvokeRest); $lastError = $null }
         catch {
             if ($_.Exception.Message -like 'seed_query_failed*') { throw }
             $lastError = $_.Exception.Message
@@ -571,7 +603,8 @@ function Invoke-QsSeedThroughFunction {
         $site = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$app"
         try { $null = Invoke-QsAz @('rest', '--method', 'post', '--url', "$site/syncfunctiontriggers?api-version=2024-04-01") }
         catch { Write-Host "WARNING: the trigger sync failed ($($_.Exception.Message)); the app's own sync after its restart has to do." -ForegroundColor Yellow }
-        $result = Wait-QsSeedResult -Ctx $Ctx -AppId $appId -SeedId $seedId -FunctionsUrl "$site/functions?api-version=2024-04-01" -SyncUrl "$site/syncfunctiontriggers?api-version=2024-04-01"
+        $componentId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Insights/components/$($p.names.apps.sync.appInsights)"
+        $result = Wait-QsSeedResult -Ctx $Ctx -AppId $appId -SeedId $seedId -FunctionsUrl "$site/functions?api-version=2024-04-01" -SyncUrl "$site/syncfunctiontriggers?api-version=2024-04-01" -ComponentId $componentId
         Write-QsSeedOutcomes $result
     }
     catch { $failure = $_.Exception.Message }

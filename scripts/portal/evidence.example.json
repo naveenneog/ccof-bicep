@@ -1,0 +1,44 @@
+{
+  "target": { "subscriptionId": "REPLACE-subscription-id" },
+  "cosmos": {
+    "id": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.DocumentDB/databaseAccounts/REPLACE-cosmos-name",
+    "endpoint": "https://REPLACE-cosmos-name.documents.azure.com:443/"
+  },
+  "workspace": {
+    "id": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.OperationalInsights/workspaces/REPLACE-law",
+    "customerId": "REPLACE-workspace-id-not-resource-id"
+  },
+  "apim": {
+    "id": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-apim-rg/providers/Microsoft.ApiManagement/service/REPLACE-apim",
+    "principalId": "REPLACE-apim-system-identity-object-id",
+    "appId": "REPLACE-apim-managed-identity-client-id",
+    "gatewayUrl": "https://REPLACE-apim.azure-api.net",
+    "gatewayIdentifierUri": "api://REPLACE-gateway-registration-client-id"
+  },
+  "apps": {
+    "resolver": {
+      "defaultHostName": "REPLACE-actual-default-domain.azurewebsites.net",
+      "functionAppId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Web/sites/REPLACE-resolver",
+      "storageAccountId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Storage/storageAccounts/REPLACE-resolver-storage",
+      "appInsightsId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Insights/components/REPLACE-resolver-ai",
+      "principalId": "REPLACE-resolver-system-identity-object-id",
+      "clientId": "",
+      "connectionString": "REPLACE-resolver-application-insights-connection-string"
+    },
+    "sync": {
+      "functionAppId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Web/sites/REPLACE-sync",
+      "storageAccountId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Storage/storageAccounts/REPLACE-sync-storage",
+      "appInsightsId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Insights/components/REPLACE-sync-ai",
+      "principalId": "REPLACE-sync-user-assigned-identity-object-id",
+      "clientId": "REPLACE-sync-user-assigned-identity-client-id",
+      "connectionString": "REPLACE-sync-application-insights-connection-string"
+    },
+    "reconciler": {
+      "functionAppId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Web/sites/REPLACE-reconciler",
+      "storageAccountId": "/subscriptions/REPLACE-subscription-id/resourceGroups/REPLACE-rg/providers/Microsoft.Storage/storageAccounts/REPLACE-reconciler-storage",
+      "appInsightsId": "",
+      "principalId": "REPLACE-reconciler-user-assigned-identity-object-id",
+      "clientId": "REPLACE-reconciler-user-assigned-identity-client-id"
+    }
+  }
+}

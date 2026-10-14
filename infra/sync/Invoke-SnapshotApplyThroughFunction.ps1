@@ -118,12 +118,16 @@ function Invoke-SnapshotApplyThroughFunction {
         & $wakeCall $wakeUrl
         $kql = "traces | where timestamp > datetime($started) | where message contains 'ccof.sync.run.v1' and message contains '$operationId' | project timestamp, message | order by timestamp desc | take 50"
         $body = @{ query = $kql; timespan = 'PT2H' } | ConvertTo-Json -Compress
+        $componentPath = "/subscriptions/$Subscription/resourceGroups/$ResourceGroup/providers/Microsoft.Insights/components/$AppInsights"
         for ($attempt = 1; $attempt -le $PollAttempts -and -not $result; $attempt++) {
-            $token = [string](& $azCall @('account', 'get-access-token', '--resource', 'https://api.applicationinsights.io')).accessToken
+            # Cloud Shell's managed-identity sign-in cannot get a https://api.applicationinsights.io token;
+            # the same query then goes through ARM (components/{name}/api/query, api-version 2020-02-02).
+            try { $token = [string](& $azCall @('account', 'get-access-token', '--resource', 'https://api.applicationinsights.io')).accessToken; $queryUri = "https://api.applicationinsights.io/v1/apps/$appId/query" }
+            catch { $token = [string](& $azCall @('account', 'get-access-token', '--resource', 'https://management.azure.com/')).accessToken; $queryUri = "https://management.azure.com$componentPath/api/query?api-version=2020-02-02" }
             try {
-                $response = & $query "https://api.applicationinsights.io/v1/apps/$appId/query" $body $token
+                $response = & $query $queryUri $body $token
                 $table = @($response.tables)[0]
-                $column = [array]::IndexOf(@($table.columns | ForEach-Object { [string]$_.name }), 'message')
+                $column = [array]::IndexOf(@($table.columns | ForEach-Object { if ($_.name) { [string]$_.name } else { [string]$_.ColumnName } }), 'message')
                 $messages = if ($column -ge 0) { @($table.rows | ForEach-Object { [string]@($_)[$column] }) } else { @() }
                 $result = Select-SnapshotRunLine -Messages $messages -Sha256 $sha -OperationId $operationId
             }
