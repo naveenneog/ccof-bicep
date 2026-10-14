@@ -1,5 +1,10 @@
 # Manual modular deployment
 
+For resource creation through Portal wizards rather than Bicep module deployment,
+use the separate [Azure Portal-first workbook](runbooks/AZURE-PORTAL-DEPLOYMENT.md).
+It includes UI configuration, one-app code publishing, per-app runtime-access grants,
+and Cloud Shell disconnect recovery. Quickstart and this modular path remain available.
+
 ## Contract and integration boundary
 
 Packet: new staged entrypoints at frozen baseline

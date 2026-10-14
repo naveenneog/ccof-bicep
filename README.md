@@ -28,8 +28,10 @@ This repository contains sanitized source and synthetic examples—not a running
 
 1. Read [prerequisites](docs/QUICKSTART-PREREQUISITES.md) and
    [permissions](docs/PERMISSIONS.md).
-2. Choose [quickstart](docs/QUICKSTART.md) or
-   [manual deployment](docs/MANUAL-DEPLOYMENT.md).
+2. Choose [quickstart](docs/QUICKSTART.md),
+   [manual deployment](docs/MANUAL-DEPLOYMENT.md), or the
+   [Azure Portal-first workbook](docs/runbooks/AZURE-PORTAL-DEPLOYMENT.md)
+   for UI resource creation with only necessary, individually scoped CLI steps.
 3. Copy `infra\quickstart\customer-form.bicepparam` and replace every placeholder
    with your own approved tenant, subscriptions, identities, groups and backend deployments.
    Never deploy the synthetic examples unchanged.
