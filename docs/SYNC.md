@@ -288,8 +288,8 @@ pwsh -File infra/sync/Invoke-SnapshotApplyThroughFunction.ps1 -Subscription <sub
 ```
 
 The helper checks the file's SHA-256 before any Azure call, sets the temporary base64
-snapshot/hash and explicit limits, enables snapshotApply, resynchronizes triggers,
-polls for that snapshot's run line, and always disables the function and removes
+snapshot/hash, a fresh operation ID and explicit limits, enables snapshotApply, resynchronizes triggers,
+polls for that operation's snapshot run line, and always disables the function and removes
 temporary settings. The function revalidates tenant, age, schema, size and hash,
 then uses the same registered-group, lease, generation and removal safeguards.
 Keep the ordinary sync timer disabled when its Graph application permission is absent.
@@ -299,6 +299,22 @@ described above; SHA-256 is integrity binding, not proof of directory membership
 Windows command-line transport is limited to 7,000 base64 characters; Cloud Shell's
 helper limit is 96 KiB. This is not a large-fleet transport guarantee. Offline tests
 do not establish this path's live acceptance.
+
+The operator helper wakes the app using an anonymous HTTPS GET after setting the
+snapshot and synchronizing triggers, and repeats the wake while `snapshotApply`
+is unlisted. A live attempt showed that settings changes and trigger synchronization
+alone did not start a scaled-to-zero Flex host. The response can be 404; polling
+still requires the matching snapshot run outcome. Restricted inbound access must
+permit the operator's wake request; this does not bypass network policy.
+
+Hostname lookup is retried at most three times before any settings mutation; a missing host
+refuses with `snapshot_hostname_unavailable` and a permission/connectivity check.
+The default is 30 polls with 20-second sleeps between attempts, not a ten-minute elapsed
+deadline: serial query/wake requests and Azure CLI time add to the sleep budget.
+Queries and wakes each have a 60-second request timeout; allow additional request time.
+Current-attempt telemetry uses the temporary operation ID, including hashless refusals.
+A successful apply is retained over later timer replay refusals. Deploy matching current
+sync code and operator helper together: older Function code lacks the required operation ID.
 
 ## Telemetry
 

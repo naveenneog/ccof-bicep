@@ -24,6 +24,11 @@ function Assert-True {
 . (Join-Path $root 'infra' 'quickstart' 'Deploy-Quickstart.ps1') -DotSourceOnly
 $built = az bicep build-params --file (Join-Path $root 'infra' 'quickstart' 'main.bicepparam') --stdout 2>$null | ConvertFrom-Json -AsHashtable
 $P = @{}; $parameters = ($built.parametersJson | ConvertFrom-Json -AsHashtable -Depth 100).parameters; foreach ($k in $parameters.Keys) { $P[$k] = $parameters[$k].value }
+$P.tenantId = '00000000-0000-4000-8000-000000000aaa'
+$P.names.subscriptionId = '11111111-1111-4111-8111-111111111111'
+$P.workbook.resourceName = '00000000-0000-4000-8000-000000010000'
+foreach ($backend in $P.backends) { $backend.subscriptionId = $P.names.subscriptionId }
+foreach ($group in $P.groups) { $group.groupId = $group.groupId.Replace('REPLACE-', '') }
 $P.registrations.gatewayApi.appId = '00000000-0000-4000-8000-000001110100'
 $P.registrations.developerSignIn.appId = '00000000-0000-4000-8000-000001110101'
 $P.registrations.resolverApi.appId = '00000000-0000-4000-8000-000001110110'

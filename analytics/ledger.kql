@@ -87,7 +87,7 @@ let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceId:string) {
         inference_geo = iff(traceKnown and payload.inferenceGeoSource == "deployment"
             and gettype(payload.inferenceGeo) == "string" and isnotempty(tostring(payload.inferenceGeo)),
             tostring(payload.inferenceGeo), "unknown"),
-        bodyInferenceGeo = iff(bodyUsageKnown, tostring(usage.inference_geo), ""),
+        bodyInferenceGeo = iff(bodyUsageKnown and tostring(usage.inference_geo) != "not_available", tostring(usage.inference_geo), ""),
         usageSource = iff(noBackendCall, "no-backend-call", iff(bodyUsageKnown, "body", "log")),
         traceObservedAt = iff(traceKnown, todatetime(payload.observedAt), datetime(null)),
         ingestedAt = iff(isnotnull(gatewayIngestedAt) and gatewayIngestedAt > llmIngestedAt, gatewayIngestedAt, llmIngestedAt)

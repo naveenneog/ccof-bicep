@@ -21,7 +21,7 @@ import { createAzureDependencies, createSeedStore } from "./azure.ts";
 import { readHostSettings, readSyncConfig } from "./config.ts";
 import { SEED_FUNCTION_NAME, SEED_SCHEDULE, SEED_SETTING, runRegistrySeed } from "./registry-seed.ts";
 import { configFailure, runSync } from "./run.ts";
-import { SNAPSHOT_FUNCTION_NAME, SNAPSHOT_SCHEDULE, SNAPSHOT_SETTING, runSnapshotFunction } from "./snapshot-function.ts";
+import { SNAPSHOT_FUNCTION_NAME, SNAPSHOT_SCHEDULE, SNAPSHOT_SETTING, runSnapshotFunction, snapshotOperationLog } from "./snapshot-function.ts";
 
 // No hyphen: a function whose name has one cannot be disabled on Linux (Learn,
 // "How to disable functions in Azure Functions").
@@ -55,7 +55,7 @@ async function registrySeedTimer(_timer: Timer, context: InvocationContext): Pro
 
 // The delegated snapshot apply without a runner VM (snapshot-function.ts; docs/SYNC.md).
 async function snapshotApplyTimer(_timer: Timer, context: InvocationContext): Promise<void> {
-  const log = (line: string) => context.log(line);
+  const log = snapshotOperationLog(process.env, (line: string) => context.log(line));
   const host = readHostSettings(process.env);
   if (!host.ok) {
     configFailure(host.problems, { trigger: "timer", now: () => new Date(), newRunId: () => randomUUID(), log });
@@ -77,5 +77,10 @@ if (process.env.CCOF_APP_ROLE === "sync") {
   // quick-start's settings keep true outside step 5.
   if (process.env[SEED_SETTING]?.trim()) {
     app.timer(SEED_FUNCTION_NAME, { schedule: SEED_SCHEDULE, runOnStartup: false, handler: registrySeedTimer });
+  }
+  // Only while Invoke-SnapshotApplyThroughFunction.ps1 has set a snapshot; it also keeps
+  // AzureWebJobs.snapshotApply.Disabled true outside its run.
+  if (process.env[SNAPSHOT_SETTING]?.trim()) {
+    app.timer(SNAPSHOT_FUNCTION_NAME, { schedule: SNAPSHOT_SCHEDULE, runOnStartup: false, handler: snapshotApplyTimer });
   }
 }

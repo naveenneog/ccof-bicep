@@ -43,6 +43,7 @@ Assert-True 'no setting carries a shell metacharacter' (-not @($settings | Where
 $big = 'x' * 6000
 $threw = $null; try { $null = New-SnapshotApplySettings -Text $big -Sha256 $sha -Limit 7000 } catch { $threw = $_.Exception.Message }
 Assert-True 'a snapshot longer than the command line takes is refused by name' ($threw -like 'snapshot_too_large*') $threw
+Assert-True 'oversize remedy preserves the complete registry catalog' ($threw -like '*complete registered-group catalog*' -and $threw -notlike '*snapshot fewer groups*') $threw
 
 # --- 2. The run line ---
 $lines = @(
@@ -61,14 +62,19 @@ Assert-True 'a graph run is not this snapshot' ($null -eq $none)
 function New-Fake {
     param([string[]]$Messages)
     $calls = [System.Collections.Generic.List[string]]::new()
-    $az = { param([string[]]$Arguments) $calls.Add($Arguments -join ' '); if ($Arguments -contains 'get-access-token') { return @{ accessToken = 'tok' } }; if ($Arguments[0] -eq 'rest' -and $Arguments -contains 'get' -and ($Arguments -join ' ') -match 'components') { return @{ properties = @{ AppId = '11111111-1111-4111-8111-111111111111' } } }; if ($Arguments[0] -eq 'rest' -and ($Arguments -join ' ') -match '/functions\?') { return @{ value = @(@{ name = 'app/snapshotApply' }) } }; return '' }.GetNewClosure()
-    $query = { param($Uri, $Body, $Token) @{ tables = @(@{ columns = @(@{ name = 'timestamp' }, @{ name = 'message' }); rows = @($Messages | ForEach-Object { , @('t', $_) }) }) } }.GetNewClosure()
+    $operation = @{ id = '' }
+    $az = { param([string[]]$Arguments) $calls.Add($Arguments -join ' '); foreach ($arg in $Arguments) { if ($arg -like 'CCOF_SYNC_SNAPSHOT_OPERATION_ID=*') { $operation.id = $arg.Substring('CCOF_SYNC_SNAPSHOT_OPERATION_ID='.Length) } }; if ($Arguments -contains 'get-access-token') { return @{ accessToken = 'tok' } }; if ($Arguments[0] -eq 'rest' -and $Arguments -contains 'get' -and ($Arguments -join ' ') -match 'components') { return @{ properties = @{ AppId = '11111111-1111-4111-8111-111111111111' } } }; if ($Arguments[0] -eq 'rest' -and ($Arguments -join ' ') -match '/functions\?') { return @{ value = @(@{ name = 'app/snapshotApply' }) } }; if ($Arguments[0] -eq 'rest' -and ($Arguments -join ' ') -match 'Microsoft.Web/sites/app\?') { return @{ properties = @{ defaultHostName = 'example-app.azurewebsites.net' } } }; return '' }.GetNewClosure()
+    $query = { param($Uri, $Body, $Token) @{ tables = @(@{ columns = @(@{ name = 'timestamp' }, @{ name = 'message' }); rows = @($Messages | ForEach-Object { $line = $_ | ConvertFrom-Json -AsHashtable; $line.snapshotOperationId = $operation.id; , @('t', ($line | ConvertTo-Json -Compress -Depth 20)) }) }) } }.GetNewClosure()
     [pscustomobject]@{ Calls = $calls; Az = $az; Query = $query }
 }
-$common = @{ Subscription = '00000000-0000-0000-0000-000000000001'; ResourceGroup = 'rg'; FunctionApp = 'app'; AppInsights = 'ai'; SnapshotPath = $snapshotPath; ExpectedSnapshotSha256 = $sha; PollSeconds = 0; PollAttempts = 2 }
+$common = @{ Subscription = '00000000-0000-0000-0000-000000000001'; ResourceGroup = 'rg'; FunctionApp = 'app'; AppInsights = 'ai'; SnapshotPath = $snapshotPath; ExpectedSnapshotSha256 = $sha; PollSeconds = 0; PollAttempts = 2; Wake = { param($Url) } }
 
 $ok = New-Fake @('{"schema":"ccof.sync.run.v1","runId":"r","outcome":"succeeded","source":"snapshot","snapshotSha256":"' + $sha + '","counts":{"added":1}}')
-$result = Invoke-SnapshotApplyThroughFunction @common -Az $ok.Az -QueryRest $ok.Query
+$woken = [System.Collections.Generic.List[string]]::new()
+$wake = { param($Url) $woken.Add($Url) }.GetNewClosure()
+$okArgs = $common.Clone(); $okArgs.Wake = $wake
+$result = Invoke-SnapshotApplyThroughFunction @okArgs -Az $ok.Az -QueryRest $ok.Query
+Assert-True 'wakes the app over HTTP after setting the snapshot (Flex Consumption scaled to zero)' ($woken.Count -ge 1 -and $woken[0] -eq 'https://example-app.azurewebsites.net/') ($woken -join ',')
 Assert-True 'a succeeded run is returned' ($result.outcome -eq 'succeeded')
 $joined = $ok.Calls -join "`n"
 Assert-True 'sets the settings on the sync app' ($joined -match 'appsettings set .*CCOF_SYNC_SNAPSHOT=')

@@ -228,7 +228,7 @@ param gateway = {
 param rateCard = { path: '../../config/rate-card.json', contractSchedulePath: '../../config/contract-schedule.json' }
 param workbook = {
   // A GUID: the workbook resource name.
-  resourceName: 'REPLACE-00000000-0000-4000-8000-000000010000'
+  resourceName: 'REPLACE-workbook-resource-guid'
   displayName: 'Claude gateway chargeback (quick-start)'
   readerPrincipalIds: []
   settings: { defaultProjectId: '*', maxRows: 1000, topUsers: 25, maxQueryDays: 62, budgetLookbackDays: 31 }

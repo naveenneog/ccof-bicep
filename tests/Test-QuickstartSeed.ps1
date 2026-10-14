@@ -76,6 +76,10 @@ $wrapper = Join-Path $root 'infra' 'quickstart' 'Deploy-Quickstart.ps1'
 . $wrapper -DotSourceOnly
 $built = az bicep build-params --file (Join-Path $root 'infra' 'quickstart' 'main.bicepparam') --stdout 2>$null | ConvertFrom-Json -AsHashtable
 $P = @{}; $parameters = ($built.parametersJson | ConvertFrom-Json -AsHashtable -Depth 100).parameters; foreach ($k in $parameters.Keys) { $P[$k] = $parameters[$k].value }
+$P.tenantId = '00000000-0000-4000-8000-000000000aaa'
+$P.names.subscriptionId = '11111111-1111-4111-8111-111111111111'
+foreach ($backend in $P.backends) { $backend.subscriptionId = $P.names.subscriptionId }
+foreach ($group in $P.groups) { $group.groupId = $group.groupId.Replace('REPLACE-', '') }
 
 # --- 2. The documents ---
 $docs = New-QsSeedDocuments -P $P
@@ -101,7 +105,7 @@ Assert-True 'seed entries name the container and partition key of each document'
 $endpoint = 'https://example-sampleqs-cosmos.documents.azure.com:443/'
 $script = New-QsSeedScript -Entries $entries -Endpoint $endpoint -Database 'ccof'
 Assert-True 'the script is bash with LF line endings only' ($script.StartsWith("#!/bin/bash`n") -and -not $script.Contains("`r"))
-Assert-True 'the script runs the runner script with python3, the endpoint and the database' ($script -match "python3 seed-cosmos\.py 'https://sampleqs-cosmos\.documents\.azure\.com:443/' 'ccof' documents\.json")
+Assert-True 'the script runs the runner script with python3, the endpoint and the database' ($script -match "python3 seed-cosmos\.py '$([regex]::Escape($endpoint))' 'ccof' documents\.json")
 $blocks = [regex]::Matches($script, "<<'CCOF_B64'\n(?<b>[A-Za-z0-9+/=\n]+?)\nCCOF_B64")
 $decoded = @($blocks | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($_.Groups['b'].Value -replace '\n', ''))) })
 Assert-True 'the script carries the runner script unchanged (LF line endings)' ($decoded.Count -eq 2 -and $decoded[0] -ceq (Get-Content $seedPy -Raw).Replace("`r`n", "`n"))

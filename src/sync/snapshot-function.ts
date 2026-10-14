@@ -15,7 +15,23 @@ import { snapshotReader, validateSnapshot } from "./snapshot.ts";
 export const SNAPSHOT_FUNCTION_NAME = "snapshotApply";
 export const SNAPSHOT_SETTING = "CCOF_SYNC_SNAPSHOT";
 export const SNAPSHOT_SHA_SETTING = "CCOF_SYNC_SNAPSHOT_SHA256";
+export const SNAPSHOT_OPERATION_SETTING = "CCOF_SYNC_SNAPSHOT_OPERATION_ID";
 export const SNAPSHOT_SCHEDULE = "0 */1 * * * *";
+
+export function snapshotOperationLog(env: Readonly<Record<string, string | undefined>>, log: (line: string) => void) {
+  const operationId = env[SNAPSHOT_OPERATION_SETTING]?.trim();
+  return (line: string) => {
+    if (!operationId) { log(line); return; }
+    let event;
+    try { event = JSON.parse(line); } catch { log(line); return; }
+    if (event && typeof event === "object" && event.schema === "ccof.sync.run.v1") {
+      event.snapshotOperationId = operationId;
+      log(JSON.stringify(event));
+    } else {
+      log(line);
+    }
+  };
+}
 
 export interface SnapshotFunctionDependencies {
   // Called only after every input is valid, so a refused apply makes no Azure call.
@@ -26,7 +42,7 @@ export interface SnapshotFunctionDependencies {
 }
 
 export async function runSnapshotFunction(env: Readonly<Record<string, string | undefined>>, deps: SnapshotFunctionDependencies) {
-  const context = { trigger: "timer" as const, now: deps.now, newRunId: deps.newRunId, log: deps.log };
+  const context = { trigger: "timer" as const, now: deps.now, newRunId: deps.newRunId, log: snapshotOperationLog(env, deps.log) };
   const config = readSyncConfig(env);
   const limits = readSnapshotLimits(env);
   if (!config.ok || !limits.ok) {

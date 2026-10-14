@@ -14,6 +14,10 @@ export interface Workbook {
   "$schema": string;
 }
 
+// The portal sends timeContext as ?timespan=; durationMs 0 becomes PT0S and clips every row.
+// Queries retain their own UTC periods and the supported retention guards.
+export const QUERY_TIME_CONTEXT = { durationMs: 730 * 86_400_000 };
+
 export function layout(answers: WorkbookAnswers, card: CompiledCard, queries: Record<string, string>): Workbook {
   const note = (name: string, json: string): WorkbookItem => ({ type: 1, name, content: { json } });
   const query = (name: string, title: string): WorkbookItem => ({
@@ -22,7 +26,7 @@ export function layout(answers: WorkbookAnswers, card: CompiledCard, queries: Re
       version: "KqlItem/1.0", query: queries[name], title, size: 0,
       queryType: 0, resourceType: "microsoft.operationalinsights/workspaces",
       crossComponentResources: [answers.workspaceResourceId],
-      visualization: "table", timeContext: { durationMs: 0 },
+      visualization: "table", timeContext: QUERY_TIME_CONTEXT,
       showExportToExcel: true, exportToExcelOptions: "all",
       gridSettings: { filter: true },
       noDataMessage: "No matching observations. This is not evidence of zero usage or a zero budget. Check the period, project, diagnostics and workspace access.",
