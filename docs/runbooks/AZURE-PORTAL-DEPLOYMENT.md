@@ -72,6 +72,24 @@ input files, reload the variables in module 13, and run **only the unfinished mo
 The access helper is repeatable and recognizes existing grants. Packages are independent
 per app. UI changes are persistent in Azure; there is no hidden Quickstart resume state.
 
+### Graph sign-in failure in the Quickstart does not require restarting this guide
+
+`Timedout waiting for token from portal. Audience: https://graph.microsoft.com/`
+is a token-acquisition failure, not evidence that your groups or app registrations
+are missing. The Quickstart tries the existing Azure PowerShell Graph token when
+Azure CLI reports this specific failure; both routes still require directory read
+permissions. Neither route bypasses Conditional Access or grants administrator rights.
+If both fail, stop the Quickstart rather than skipping step 1.
+
+For this UI-first guide, verify apps and groups in module 06 and record actual IDs
+in module 13. The artifact exporter in module 14 does not query Graph. Module 16
+still needs separately authorized Graph consent; use its UI path where shell
+authentication is unavailable. Do not run `az logout`, reset Cloud Shell settings,
+or try blocked device-code sign-in as a repair. Keep private files in durable storage.
+If a shell-based Graph operation is necessary, use the customer's approved workstation
+with browser sign-in, or have their administrator resolve the portal-token/Conditional
+Access issue. An ARM token cannot replace a Microsoft Graph token.
+
 ## 01. Decide names, capacity and operator access
 
 **UI:** Subscription > Access control (IAM); Entra admin center > Identity
@@ -809,6 +827,8 @@ Official documentation consulted 2026-10-14:
 - [APIM v2 outbound networking](https://learn.microsoft.com/en-us/azure/api-management/integrate-vnet-outbound)
 - [Cosmos management and native data RBAC](https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-connect-role-based-access-control)
 - [Resolver Authentication controls](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-provider-aad)
+- [Existing Azure PowerShell Graph token](https://learn.microsoft.com/en-us/powershell/module/az.accounts/get-azaccesstoken)
+- [Cloud Shell authentication troubleshooting](https://learn.microsoft.com/en-us/azure/cloud-shell/faq-troubleshooting)
 
 Repository contracts: `infra/prereqs/function-app.bicep`,
 `infra/quickstart/modules/app-settings.bicep`, `infra/quickstart/modules/cosmos-data.bicep`,
