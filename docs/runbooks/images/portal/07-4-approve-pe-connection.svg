@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Step 07.4 - Approve private endpoint connection (screenshot pending)</title>
+  <rect x="0" y="0" width="1280" height="720" fill="#f3f4f6"/>
+  <rect x="20" y="20" width="1240" height="680" fill="none" stroke="#8c959f" stroke-width="4" stroke-dasharray="16 10" rx="12"/>
+  <text x="80" y="150" font-size="40" font-weight="bold" fill="#1f2328">Step 07.4 - Approve private endpoint connection</text>
+  <text x="80" y="234" font-size="22" fill="#424a53">Portal path: Azure Portal &gt; Foundry account &gt; Networking &gt; Private endpoint connections &gt;</text>
+  <text x="80" y="266" font-size="22" fill="#424a53">select the Pending connection &gt; Approve &gt; Description &gt; Yes.</text>
+  <text x="640" y="650" font-size="26" fill="#9a6700" text-anchor="middle">Screenshot pending - capture in lab tenant, redact identifiers</text>
+</svg>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Step 21.4 - Seed result (screenshot pending)</title>
+  <rect x="0" y="0" width="1280" height="720" fill="#f3f4f6"/>
+  <rect x="20" y="20" width="1240" height="680" fill="none" stroke="#8c959f" stroke-width="4" stroke-dasharray="16 10" rx="12"/>
+  <text x="80" y="150" font-size="40" font-weight="bold" fill="#1f2328">Step 21.4 - Seed result</text>
+  <text x="80" y="234" font-size="22" fill="#424a53">Portal path: Sync Insights &gt; Logs &gt; the Step 21.1 query, replacing the correlation ID with</text>
+  <text x="80" y="266" font-size="22" fill="#424a53">seed-id.txt. The function runs every minute once the app restarted with the new settings.</text>
+  <text x="640" y="650" font-size="26" fill="#9a6700" text-anchor="middle">Screenshot pending - capture in lab tenant, redact identifiers</text>
+</svg>

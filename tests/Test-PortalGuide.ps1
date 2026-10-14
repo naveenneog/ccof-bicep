@@ -167,10 +167,6 @@ try {
     foreach ($link in [regex]::Matches($guide, '\[[^\]]*\]\(([^)]+)\)')) {
         $target = $link.Groups[1].Value
         if ($target -match '^https?://' -or $target.StartsWith('#')) { continue }
-        if ($target -like './images/portal/*.png') {
-            $next = $guide.Substring($link.Index + $link.Length).TrimStart("`r", "`n")
-            if ($next.StartsWith('<!-- screenshot pending:')) { continue }
-        }
         Assert (Test-Path -LiteralPath (Join-Path (Split-Path $guidePath -Parent) $target.Split('#')[0])) "Broken guide link: $target"
     }
     Write-Host 'Real exporter, generated settings/policy/seed/workbook and copy-paste block parsing: PASS'

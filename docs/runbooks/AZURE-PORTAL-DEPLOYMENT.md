@@ -2,9 +2,9 @@
 
 **Create and connect resources in the UI. Deploy application code separately.**
 
-> **Screenshots are being added.** Each step has a `Screenshot:` slot: an image link under
-> `./images/portal/` with a `screenshot pending` comment marks where a sanitized lab-tenant capture
-> will go. Until it lands, the image does not render; follow the **Where** path and field table.
+> **Screenshots are being added.** Each step has a `Screenshot:` slot: a placeholder image under
+> `./images/portal/` (with a `screenshot pending` comment) marks where a sanitized lab-tenant capture
+> will go. Until it lands, follow the **Where** path and field table.
 
 ## Quick path: where am I?
 
@@ -176,7 +176,7 @@ Azure resources (or Microsoft Entra roles) > eligible role > **Activate**.
 | Duration / Reason | Customer policy; change or ticket reference | Customer approval process |
 
 **Screenshot:**
-![Step 01.1 - Activate PIM role](./images/portal/01-1-activate-pim-role.png)
+![Step 01.1 - Activate PIM role](./images/portal/01-1-activate-pim-role.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none. There is no `az` command for PIM activation; activate in the UI.
@@ -203,7 +203,7 @@ if ($LASTEXITCODE) { throw 'role assignment listing failed' }
 | Expected roles | Contributor plus an RBAC-granting role where you grant (modules 07, 15, 20) | Step 01.1 |
 
 **Screenshot:**
-![Step 01.2 - View my access](./images/portal/01-2-view-my-access.png)
+![Step 01.2 - View my access](./images/portal/01-2-view-my-access.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only.
@@ -258,7 +258,7 @@ each provider below > **Register**.
 | Subscription | Target subscription | form `names.subscriptionId` |
 
 **Screenshot:**
-![Step 02.1 - Register resource providers](./images/portal/02-1-register-providers.png)
+![Step 02.1 - Register resource providers](./images/portal/02-1-register-providers.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -299,7 +299,7 @@ For an existing RG, inspect it; do not create a replacement.
 | Tags | `workload`, `environment` | form `tags` |
 
 **Screenshot:**
-![Step 02.2 - Create resource group](./images/portal/02-2-create-resource-group.png)
+![Step 02.2 - Create resource group](./images/portal/02-2-create-resource-group.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** only when form `names.resourceGroupMode` is `create`.
@@ -368,7 +368,7 @@ backend destinations. Review customer firewall, routes and DNS rules. Classic
 APIM VNet-injection NSG rules are not automatically the rules for v2 outbound integration.
 
 **Screenshot:**
-![Step 03.1 - APIM NSG rules](./images/portal/03-1-apim-nsg-rules.png)
+![Step 03.1 - APIM NSG rules](./images/portal/03-1-apim-nsg-rules.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** create mode only.
@@ -423,7 +423,7 @@ default subnet; subnets are added in Steps 03.3-03.5) > Review + create.
 | IPv4 address space | Approved CIDR | form `network.create.addressSpace` |
 
 **Screenshot:**
-![Step 03.2 - Create virtual network](./images/portal/03-2-create-vnet.png)
+![Step 03.2 - Create virtual network](./images/portal/03-2-create-vnet.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** create mode only; refuses to touch an existing VNet.
@@ -458,7 +458,7 @@ if ($LASTEXITCODE) { throw 'VNet not found' }
 | Subnet delegation | `Microsoft.Web/serverFarms` | `infra/prereqs/network.bicep` |
 
 **Screenshot:**
-![Step 03.3 - APIM subnet](./images/portal/03-3-apim-subnet.png)
+![Step 03.3 - APIM subnet](./images/portal/03-3-apim-subnet.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -493,7 +493,7 @@ if ($LASTEXITCODE) { throw 'APIM subnet not found' }
 | Subnet delegation | `Microsoft.App/environments` | `infra/prereqs/network.bicep` |
 
 **Screenshot:**
-![Step 03.4 - Functions subnet](./images/portal/03-4-functions-subnet.png)
+![Step 03.4 - Functions subnet](./images/portal/03-4-functions-subnet.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -526,7 +526,7 @@ if ($LASTEXITCODE) { throw 'Functions subnet not found' }
 | Private endpoint network policy | Disabled (or the customer-approved setting) | `infra/prereqs/network.bicep` |
 
 **Screenshot:**
-![Step 03.5 - Private endpoint subnet](./images/portal/03-5-private-endpoint-subnet.png)
+![Step 03.5 - Private endpoint subnet](./images/portal/03-5-private-endpoint-subnet.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -560,7 +560,7 @@ competing zones for a namespace.
 | RG | Platform RG (create mode) | form `names.resourceGroup` |
 
 **Screenshot:**
-![Step 03.6 - Private DNS zone](./images/portal/03-6-private-dns-zone.png)
+![Step 03.6 - Private DNS zone](./images/portal/03-6-private-dns-zone.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** create mode only.
@@ -597,7 +597,7 @@ With custom DNS, arrange conditional forwarding through the customer's private D
 resolver.
 
 **Screenshot:**
-![Step 03.7 - Virtual network link](./images/portal/03-7-dns-vnet-link.png)
+![Step 03.7 - Virtual network link](./images/portal/03-7-dns-vnet-link.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** create mode only (existing zones: the DNS team links them).
@@ -636,7 +636,7 @@ Portal > Network security groups and Route tables to review.
 | APIM egress | `AzureKeyVault` TCP 443 and approved backend destinations | APIM platform dependency |
 
 **Screenshot:**
-![Step 03.8 - Egress review](./images/portal/03-8-egress-review.png)
+![Step 03.8 - Egress review](./images/portal/03-8-egress-review.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none for customer firewalls and forwarders (customer-specific design).
@@ -673,7 +673,7 @@ Do not invent a third connection string or populate its evidence `appInsightsId`
 | Pricing tier | Pay-as-you-go (`PerGB2018`) | `infra/prereqs/log-analytics.bicep` |
 
 **Screenshot:**
-![Step 04.1 - Create Log Analytics workspace](./images/portal/04-1-create-workspace.png)
+![Step 04.1 - Create Log Analytics workspace](./images/portal/04-1-create-workspace.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** deploys only the repository's workspace module (`PerGB2018`, retention,
@@ -707,7 +707,7 @@ if ($LASTEXITCODE) { throw 'workspace not found' }
 | Data retention (days) | Approved period (30-730) | form `logRetentionDays` |
 
 **Screenshot:**
-![Step 04.2 - Data retention](./images/portal/04-2-data-retention.png)
+![Step 04.2 - Data retention](./images/portal/04-2-data-retention.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the Step 04.1 block already sets `retentionInDays`; rerun it after changing the form.
@@ -725,7 +725,7 @@ JSON view). **Workspace ID** (customer ID GUID) and **Resource ID** are differen
 | Workspace ID | GUID | evidence `workspace.customerId` |
 
 **Screenshot:**
-![Step 04.3 - Workspace properties](./images/portal/04-3-workspace-properties.png)
+![Step 04.3 - Workspace properties](./images/portal/04-3-workspace-properties.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** reads the IDs and saves them in the private evidence file.
@@ -758,7 +758,7 @@ If the tenant UI omits the local-auth control, an administrator must set the res
 do not leave it enabled silently.
 
 **Screenshot:**
-![Step 04.4 - Create Application Insights](./images/portal/04-4-create-app-insights.png)
+![Step 04.4 - Create Application Insights](./images/portal/04-4-create-app-insights.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** same resource shape as `infra/prereqs/function-app.bicep`.
@@ -794,7 +794,7 @@ if ($LASTEXITCODE) { throw "component not found: $app" }
 | Other fields | As Step 04.4 | As Step 04.4 |
 
 **Screenshot:**
-![Step 04.5 - Sync Application Insights](./images/portal/04-5-sync-app-insights.png)
+![Step 04.5 - Sync Application Insights](./images/portal/04-5-sync-app-insights.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -825,7 +825,7 @@ Overview > JSON view > Resource ID. Both components.
 | Reconciler | Leave `appInsightsId` empty | evidence `apps.reconciler.appInsightsId` |
 
 **Screenshot:**
-![Step 04.6 - Connection string](./images/portal/04-6-connection-string.png)
+![Step 04.6 - Connection string](./images/portal/04-6-connection-string.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** reads both components into the private evidence file.
@@ -856,7 +856,7 @@ strings stay in the private evidence file; generated configuration is never comm
 | Name | Sync identity | form `names.identities.sync` |
 
 **Screenshot:**
-![Step 05.1 - Create managed identity](./images/portal/05-1-create-managed-identity.png)
+![Step 05.1 - Create managed identity](./images/portal/05-1-create-managed-identity.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -886,7 +886,7 @@ if ($LASTEXITCODE) { throw "identity not found: $app" }
 | Name | Reconciler identity | form `names.identities.reconciler` |
 
 **Screenshot:**
-![Step 05.2 - Reconciler managed identity](./images/portal/05-2-reconciler-identity.png)
+![Step 05.2 - Reconciler managed identity](./images/portal/05-2-reconciler-identity.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -913,7 +913,7 @@ Settings > **Properties** (Resource ID).
 | Resource ID | `/subscriptions/.../userAssignedIdentities/<name>` | Used in Step 10.3 |
 
 **Screenshot:**
-![Step 05.3 - Identity IDs](./images/portal/05-3-identity-ids.png)
+![Step 05.3 - Identity IDs](./images/portal/05-3-identity-ids.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** reads both identities into the private evidence file.
@@ -958,7 +958,7 @@ After each registration, write its Application (client) ID into the private form
 | Application (client) ID (after Register) | Copy | form `registrations.gatewayApi.appId` and `registrations.developerSignIn.appId` (same value) |
 
 **Screenshot:**
-![Step 06.1 - New app registration](./images/portal/06-1-new-app-registration.png)
+![Step 06.1 - New app registration](./images/portal/06-1-new-app-registration.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -995,7 +995,7 @@ then **Manifest** > `api.requestedAccessTokenVersion` > Save.
 | `api.requestedAccessTokenVersion` | `2` | form `registrations.gatewayApi.accessTokenVersion` |
 
 **Screenshot:**
-![Step 06.2 - Application ID URI](./images/portal/06-2-application-id-uri.png)
+![Step 06.2 - Application ID URI](./images/portal/06-2-application-id-uri.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1027,7 +1027,7 @@ if ($LASTEXITCODE) { throw 'gateway registration not found' }
 | State | Enabled | This guide |
 
 **Screenshot:**
-![Step 06.3 - Add a scope](./images/portal/06-3-add-scope.png)
+![Step 06.3 - Add a scope](./images/portal/06-3-add-scope.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none. The repository has no reviewed Graph body for a delegated scope
@@ -1055,7 +1055,7 @@ client flows** only if approved device-code use needs it. No secret; no implicit
 | Allow public client flows | No, unless device-code use is approved | Customer approval |
 
 **Screenshot:**
-![Step 06.4 - Public client redirect URIs](./images/portal/06-4-redirect-uris.png)
+![Step 06.4 - Public client redirect URIs](./images/portal/06-4-redirect-uris.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1093,7 +1093,7 @@ URI or secret.
 | Application (client) ID | Copy; must differ from Step 06.1 | form `registrations.resolverApi.appId` |
 
 **Screenshot:**
-![Step 06.5 - Resolver API registration](./images/portal/06-5-resolver-api-registration.png)
+![Step 06.5 - Resolver API registration](./images/portal/06-5-resolver-api-registration.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the repository's registration helper (creates once, sets the URI and token
@@ -1138,7 +1138,7 @@ same registered `backendId`; different projects can use different backends.
 Group display names are labels, not IDs or authorization.
 
 **Screenshot:**
-![Step 06.6 - New security group](./images/portal/06-6-new-security-group.png)
+![Step 06.6 - New security group](./images/portal/06-6-new-security-group.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** one group per run.
@@ -1172,7 +1172,7 @@ foreach ($g in $p.groups) {
 | Members | Real test developer(s) for the acceptance test (module 22) | Customer QA |
 
 **Screenshot:**
-![Step 06.7 - Group owners and members](./images/portal/06-7-group-owners-members.png)
+![Step 06.7 - Group owners and members](./images/portal/06-7-group-owners-members.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1221,7 +1221,7 @@ A model catalog name is not necessarily a deployment ID. Check subscription/mode
 the gateway cannot manufacture Foundry capacity.
 
 **Screenshot:**
-![Step 07.1 - Deploy model](./images/portal/07-1-deploy-model.png)
+![Step 07.1 - Deploy model](./images/portal/07-1-deploy-model.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none. Model name, version, format and SKU of a Claude deployment are
@@ -1249,7 +1249,7 @@ Keys and Endpoint / Endpoints (custom subdomain endpoint; do not copy keys).
 | Backend ID | Registry backend identifier | form `backends[].id` |
 
 **Screenshot:**
-![Step 07.2 - Foundry account overview](./images/portal/07-2-foundry-account.png)
+![Step 07.2 - Foundry account overview](./images/portal/07-2-foundry-account.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only.
@@ -1278,7 +1278,7 @@ Network > DNS > Review + create.
 | Private DNS integration | Offered Foundry zone configuration (Step 07.5); not the Cosmos zone | [network guide](../NETWORK.md) |
 
 **Screenshot:**
-![Step 07.3 - Foundry private endpoint](./images/portal/07-3-foundry-private-endpoint.png)
+![Step 07.3 - Foundry private endpoint](./images/portal/07-3-foundry-private-endpoint.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** from [manual deployment](../MANUAL-DEPLOYMENT.md); one backend per run.
@@ -1318,7 +1318,7 @@ Pending connection > **Approve** > Description > Yes.
 | Description | `Reviewed gateway PE` | Backend owner |
 
 **Screenshot:**
-![Step 07.4 - Approve private endpoint connection](./images/portal/07-4-approve-pe-connection.png)
+![Step 07.4 - Approve private endpoint connection](./images/portal/07-4-approve-pe-connection.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** backend owner; approve the **target-side connection ID**, not the PE ID.
@@ -1359,7 +1359,7 @@ work from APIM's outbound network.
 | Zone owner | Central DNS team zones where they exist | Network team |
 
 **Screenshot:**
-![Step 07.5 - Foundry DNS configuration](./images/portal/07-5-foundry-dns.png)
+![Step 07.5 - Foundry DNS configuration](./images/portal/07-5-foundry-dns.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** for a simple new hub where VNet/PE/zones all live in this RG, the repository's
@@ -1402,7 +1402,7 @@ Do not grant the app Owner, and do not use an account key.
 | Member | APIM system-assigned identity (principal ID) | evidence `apim.principalId` |
 
 **Screenshot:**
-![Step 07.6 - Cognitive Services User for APIM](./images/portal/07-6-apim-cognitive-services-user.png)
+![Step 07.6 - Cognitive Services User for APIM](./images/portal/07-6-apim-cognitive-services-user.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** same-tenant backends only; skips a backend whose form entry says the
@@ -1453,7 +1453,7 @@ Global Distribution > Networking > Backup Policy > Encryption > Security > Revie
 Availability/zones/throughput follow the approved decision.
 
 **Screenshot:**
-![Step 08.1 - Create Cosmos DB account](./images/portal/08-1-create-cosmos-account.png)
+![Step 08.1 - Create Cosmos DB account](./images/portal/08-1-create-cosmos-account.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** deploys only the repository's account module (Session consistency, local
@@ -1491,7 +1491,7 @@ private endpoint > DNS configuration.
 | DNS zone | `privatelink.documents.azure.com` | form network zone ID |
 
 **Screenshot:**
-![Step 08.2 - Cosmos private access](./images/portal/08-2-cosmos-private-access.png)
+![Step 08.2 - Cosmos private access](./images/portal/08-2-cosmos-private-access.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** created by the Step 08.1 block; nothing else to run.
@@ -1527,7 +1527,7 @@ variables). It does not enable public access or keys; item seeding remains insid
 Function App.
 
 **Screenshot:**
-![Step 08.3 - New database](./images/portal/08-3-new-database.png)
+![Step 08.3 - New database](./images/portal/08-3-new-database.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1564,7 +1564,7 @@ Partition keys are case-sensitive and cannot be changed in place.
 | backends | `/backendId` | same |
 
 **Screenshot:**
-![Step 08.4 - New container](./images/portal/08-4-new-container.png)
+![Step 08.4 - New container](./images/portal/08-4-new-container.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the management-plane fallback; container names and keys come from the
@@ -1612,7 +1612,7 @@ One storage account per Function App. Do steps 09.1-09.3 for `resolver`, `sync` 
 | Public network access (Networking) | **Disabled** | same bicep |
 
 **Screenshot:**
-![Step 09.1 - Create storage account](./images/portal/09-1-create-storage-account.png)
+![Step 09.1 - Create storage account](./images/portal/09-1-create-storage-account.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1653,7 +1653,7 @@ foreach ($app in 'resolver', 'sync', 'reconciler') {
 | Private DNS zone | `privatelink.blob.core.windows.net` | form network blob zone ID |
 
 **Screenshot:**
-![Step 09.2 - Blob private endpoint](./images/portal/09-2-blob-private-endpoint.png)
+![Step 09.2 - Blob private endpoint](./images/portal/09-2-blob-private-endpoint.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -1700,7 +1700,7 @@ container over their approved private path, or use the blob container management
 access helper is not an operator-role grant.
 
 **Screenshot:**
-![Step 09.3 - Deployment container](./images/portal/09-3-deployment-container.png)
+![Step 09.3 - Deployment container](./images/portal/09-3-deployment-container.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** management plane; works without data-plane access or a private path.
@@ -1762,7 +1762,7 @@ result and explicitly align it with this repository (Step 10.2):
 | reconciler | Attach approved reconciler UAMI; host settings select its client ID; deployment auth UserAssignedIdentity using its resource ID | LAW diagnostics, module 20 |
 
 **Screenshot:**
-![Step 10.1 - Create Flex Consumption app](./images/portal/10-1-create-flex-function-app.png)
+![Step 10.1 - Create Flex Consumption app](./images/portal/10-1-create-flex-function-app.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** deploys the repository's per-app module (plan FC1, Node 22, HTTPS only,
@@ -1815,7 +1815,7 @@ wizard-created user-assigned identity only after Step 10.3 no longer references 
 | reconciler | User assigned: reconciler UAMI | form `names.identities.reconciler` |
 
 **Screenshot:**
-![Step 10.2 - Function App identity](./images/portal/10-2-function-app-identity.png)
+![Step 10.2 - Function App identity](./images/portal/10-2-function-app-identity.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** not needed after the Step 10.1 CLI block (it sets the identity). For a
@@ -1852,7 +1852,7 @@ own storage account/container and correct managed identity > Save.
 | Authentication | resolver: System assigned identity; sync/reconciler: User assigned identity (its **resource ID**, not its client ID) | Step 05.3 |
 
 **Screenshot:**
-![Step 10.3 - Deployment storage](./images/portal/10-3-deployment-storage.png)
+![Step 10.3 - Deployment storage](./images/portal/10-3-deployment-storage.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the UI does not expose this choice, use only this deployment-storage
@@ -1902,7 +1902,7 @@ Identity > System assigned > Object (principal) ID (resolver).
 | Resolver default domain | Actual default hostname (may include a unique suffix) | evidence `apps.resolver.defaultHostName` |
 
 **Screenshot:**
-![Step 10.4 - Function App overview](./images/portal/10-4-function-app-overview.png)
+![Step 10.4 - Function App overview](./images/portal/10-4-function-app-overview.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** Step 13.6 fills every app's evidence from Azure (read-only).
@@ -1943,7 +1943,7 @@ open it and go to Step 11.2.
 | System assigned managed identity | **On** | This guide |
 
 **Screenshot:**
-![Step 11.1 - Create API Management](./images/portal/11-1-create-apim.png)
+![Step 11.1 - Create API Management](./images/portal/11-1-create-apim.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** **new instance only**. Never deploy this module over an existing APIM.
@@ -1986,7 +1986,7 @@ integration > dedicated APIM subnet > **Apply**.
 | Virtual network / subnet | Dedicated APIM subnet | Step 03.3 |
 
 **Screenshot:**
-![Step 11.2 - APIM outbound integration](./images/portal/11-2-apim-outbound-integration.png)
+![Step 11.2 - APIM outbound integration](./images/portal/11-2-apim-outbound-integration.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none for an existing instance. `az apim update` is forbidden here and
@@ -2003,7 +2003,7 @@ integration > dedicated APIM subnet > **Apply**.
 | Status | On | This guide |
 
 **Screenshot:**
-![Step 11.3 - APIM system identity](./images/portal/11-3-apim-system-identity.png)
+![Step 11.3 - APIM system identity](./images/portal/11-3-apim-system-identity.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none for an existing instance (same reason as Step 11.2).
@@ -2025,7 +2025,7 @@ identities/application-type filter > locate that object ID > record its **Applic
 | Gateway URL | `https://<apim>.azure-api.net` (or custom) | evidence `apim.gatewayUrl` |
 
 **Screenshot:**
-![Step 11.4 - APIM identity IDs](./images/portal/11-4-apim-identity-ids.png)
+![Step 11.4 - APIM identity IDs](./images/portal/11-4-apim-identity-ids.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the UI cannot find it, this read-only CLI lookup is sufficient
@@ -2061,7 +2061,7 @@ turn public access back on.
 | Private DNS | `privatelink.azurewebsites.net` (Step 12.2) | Network team |
 
 **Screenshot:**
-![Step 12.1 - Resolver private endpoint](./images/portal/12-1-resolver-private-endpoint.png)
+![Step 12.1 - Resolver private endpoint](./images/portal/12-1-resolver-private-endpoint.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the `private-endpoint create` pattern of [manual deployment](../MANUAL-DEPLOYMENT.md),
@@ -2098,7 +2098,7 @@ only when the DNS team says none exists.
 | Private DNS zone | `privatelink.azurewebsites.net` (existing approved zone ID) | Network/DNS team |
 
 **Screenshot:**
-![Step 12.2 - Resolver DNS configuration](./images/portal/12-2-resolver-dns-configuration.png)
+![Step 12.2 - Resolver DNS configuration](./images/portal/12-2-resolver-dns-configuration.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2135,7 +2135,7 @@ if ($LASTEXITCODE) { throw 'zone group listing failed' }
 | Enable auto registration | Off | This guide |
 
 **Screenshot:**
-![Step 12.3 - Sites zone link](./images/portal/12-3-sites-zone-link.png)
+![Step 12.3 - Sites zone link](./images/portal/12-3-sites-zone-link.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2173,7 +2173,7 @@ and code publishing has an approved private path.
 | Public network access | Disabled | Customer ingress design |
 
 **Screenshot:**
-![Step 12.4 - Resolver public access](./images/portal/12-4-resolver-public-access.png)
+![Step 12.4 - Resolver public access](./images/portal/12-4-resolver-public-access.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** an explicit minimal PATCH from [manual deployment](../MANUAL-DEPLOYMENT.md),
@@ -2206,7 +2206,7 @@ outbound VNet integration is not an inbound firewall.
 | Inbound controls | Customer-approved design | Network/security team |
 
 **Screenshot:**
-![Step 12.5 - Sync and reconciler inbound](./images/portal/12-5-sync-reconciler-inbound.png)
+![Step 12.5 - Sync and reconciler inbound](./images/portal/12-5-sync-reconciler-inbound.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none; the controls are customer-specific (no repository default).
@@ -2232,7 +2232,7 @@ Functions' network and the operator workstation, as the network team arranges.
 | Expected | Approved private endpoint IPs | Steps 07.5, 08.2, 09.2, 12.2 |
 
 **Screenshot:**
-![Step 12.6 - Private DNS resolution](./images/portal/12-6-private-dns-resolution.png)
+![Step 12.6 - Private DNS resolution](./images/portal/12-6-private-dns-resolution.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none in `az`; DNS and reachability must be tested from the caller networks
@@ -2274,7 +2274,7 @@ workstation) > repository root.
 | Repository ref | Reviewed commit or tag containing this guide | Platform reviewer |
 
 **Screenshot:**
-![Step 13.1 - Cloud Shell PowerShell](./images/portal/13-1-cloud-shell-powershell.png)
+![Step 13.1 - Cloud Shell PowerShell](./images/portal/13-1-cloud-shell-powershell.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2314,7 +2314,7 @@ if ($LASTEXITCODE) { throw 'not a repository checkout' }
 | Private evidence | `./.env.portal-evidence.json` | Copy of `scripts/portal/evidence.example.json` |
 
 **Screenshot:**
-![Step 13.2 - Copy private files](./images/portal/13-2-copy-private-files.png)
+![Step 13.2 - Copy private files](./images/portal/13-2-copy-private-files.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2358,7 +2358,7 @@ Set `runner.enabled=false`, `sync.mode='application-permission'`,
 network IDs, real resource names, exact models and explicit classification/backend entries.
 
 **Screenshot:**
-![Step 13.3 - Edit private form](./images/portal/13-3-edit-private-form.png)
+![Step 13.3 - Edit private form](./images/portal/13-3-edit-private-form.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none beyond opening the editor; values are typed by the operator.
@@ -2381,7 +2381,7 @@ if ($LASTEXITCODE) { throw 'editor did not open; use the Cloud Shell editor butt
 | `$sub`, `$rg` | `names.subscriptionId`, `names.resourceGroup` | Private form |
 
 **Screenshot:**
-![Step 13.4 - Load variables](./images/portal/13-4-load-variables.png)
+![Step 13.4 - Load variables](./images/portal/13-4-load-variables.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2425,7 +2425,7 @@ if ($LASTEXITCODE) { throw 'not signed in' }
 | `Save-CcofEvidence` | Writes `$e` back to the private evidence file | This guide |
 
 **Screenshot:**
-![Step 13.5 - Load CLI helpers](./images/portal/13-5-load-cli-helpers.png)
+![Step 13.5 - Load CLI helpers](./images/portal/13-5-load-cli-helpers.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2500,7 +2500,7 @@ Leave reconciler `appInsightsId` empty for the baseline configuration.
 Cosmos evidence URI uses `https://<account>.documents.azure.com:443/`.
 
 **Screenshot:**
-![Step 13.6 - Fill evidence](./images/portal/13-6-fill-evidence.png)
+![Step 13.6 - Fill evidence](./images/portal/13-6-fill-evidence.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only; fills every value from the existing resources and saves the
@@ -2569,7 +2569,7 @@ state/resume dispatcher, Azure discovery, seed execution or code publication.
 | When | First checkout or lockfile change | This guide |
 
 **Screenshot:**
-![Step 14.1 - npm ci](./images/portal/14-1-npm-ci.png)
+![Step 14.1 - npm ci](./images/portal/14-1-npm-ci.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2598,7 +2598,7 @@ if ($LASTEXITCODE) { throw 'dependency tree incomplete' }
 | `-OutputDirectory` | `$artifacts` (`./.env.portal-artifacts`, git-ignored) | Step 13.4 |
 
 **Screenshot:**
-![Step 14.2 - Export artifacts](./images/portal/14-2-export-artifacts.png)
+![Step 14.2 - Export artifacts](./images/portal/14-2-export-artifacts.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2634,7 +2634,7 @@ if ($LASTEXITCODE) { throw 'artifact directory is not git-ignored' }
 | `chargeback.workbook.json` | LAW > Workbooks > New > Advanced Editor |
 
 **Screenshot:**
-![Step 14.3 - Review artifacts](./images/portal/14-3-review-artifacts.png)
+![Step 14.3 - Review artifacts](./images/portal/14-3-review-artifacts.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none; this is a human review of local files.
@@ -2682,7 +2682,7 @@ IAM grants above. Do not add Owner/Contributor or broad Cosmos Data Contributor 
 | Member | App identity | evidence `apps.<app>.principalId` |
 
 **Screenshot:**
-![Step 15.1 - Add role assignment](./images/portal/15-1-add-role-assignment.png)
+![Step 15.1 - Add role assignment](./images/portal/15-1-add-role-assignment.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** Steps 15.2-15.3 (the helper plans, creates or reuses exactly these grants).
@@ -2705,7 +2705,7 @@ if ($LASTEXITCODE) { throw "assignment listing failed: $app" }
 | `-App` | `resolver`, then `sync`, then `reconciler` | This guide |
 
 **Screenshot:**
-![Step 15.2 - Access plan](./images/portal/15-2-access-plan.png)
+![Step 15.2 - Access plan](./images/portal/15-2-access-plan.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2730,7 +2730,7 @@ and no Owner/Contributor/Data Contributor.
 | `-Apply` | Present | Approval |
 
 **Screenshot:**
-![Step 15.3 - Access apply receipt](./images/portal/15-3-access-apply-receipt.png)
+![Step 15.3 - Access apply receipt](./images/portal/15-3-access-apply-receipt.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2781,7 +2781,7 @@ Then sign out and back in (Cloud Shell: `az login`) so the token carries the rol
 | Role | Privileged Role Administrator or Global Administrator | [permissions](../PERMISSIONS.md) |
 
 **Screenshot:**
-![Step 16.1 - Activate Privileged Role Administrator](./images/portal/16-1-activate-privileged-role.png)
+![Step 16.1 - Activate Privileged Role Administrator](./images/portal/16-1-activate-privileged-role.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none (no `az` command for PIM activation).
@@ -2797,7 +2797,7 @@ Then sign out and back in (Cloud Shell: `az login`) so the token carries the rol
 | `-SyncPrincipalId` | Sync UAMI principal/object ID | evidence `apps.sync.principalId` |
 
 **Screenshot:**
-![Step 16.2 - Graph permission plan](./images/portal/16-2-graph-permission-plan.png)
+![Step 16.2 - Graph permission plan](./images/portal/16-2-graph-permission-plan.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2819,7 +2819,7 @@ if ($LASTEXITCODE) { throw 'Graph permission plan failed' }
 | `-SyncPrincipalId` | Sync UAMI principal/object ID | evidence `apps.sync.principalId` |
 
 **Screenshot:**
-![Step 16.3 - Graph permission grant](./images/portal/16-3-graph-permission-grant.png)
+![Step 16.3 - Graph permission grant](./images/portal/16-3-graph-permission-grant.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -2862,7 +2862,7 @@ copy the JSON into a private file. Export/back up existing settings privately fi
 | Backup file | `$artifacts/<app>-settings.backup.json` (git-ignored) | This guide |
 
 **Screenshot:**
-![Step 17.1 - App settings advanced edit](./images/portal/17-1-app-settings-advanced-edit.png)
+![Step 17.1 - App settings advanced edit](./images/portal/17-1-app-settings-advanced-edit.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only (writes only the private backup file).
@@ -2900,7 +2900,7 @@ generated resolver/sync/reconciler parameters. Reconciler workspace setting is
 the LAW **Workspace ID GUID**, not an ARM resource ID.
 
 **Screenshot:**
-![Step 17.2 - Merge generated settings](./images/portal/17-2-merge-generated-settings.png)
+![Step 17.2 - Merge generated settings](./images/portal/17-2-merge-generated-settings.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** one app per run; adds/updates the generated names only.
@@ -2943,7 +2943,7 @@ foreach ($s in $generated) {
 | `AzureWebJobs.reconcileBudgets.Disabled` | `true` on reconciler | form `reconciler.timerEnabled=false` |
 
 **Screenshot:**
-![Step 17.3 - Timers disabled](./images/portal/17-3-timers-disabled.png)
+![Step 17.3 - Timers disabled](./images/portal/17-3-timers-disabled.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** sets them explicitly (they are timers disabled until module 21).
@@ -2979,7 +2979,7 @@ if present) > **Delete** > Apply. Only after Step 17.2 saved the identity-based 
 | Setting to delete | `AzureWebJobsStorage` (not the `AzureWebJobsStorage__*` settings) | This guide |
 
 **Screenshot:**
-![Step 17.4 - Remove key-based storage setting](./images/portal/17-4-remove-key-based-storage.png)
+![Step 17.4 - Remove key-based storage setting](./images/portal/17-4-remove-key-based-storage.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3027,7 +3027,7 @@ foreach ($app in 'resolver', 'sync', 'reconciler') {
 No excluded path or empty allow-list. Do not select automatic app registration/browser login.
 
 **Screenshot:**
-![Step 17.5 - Resolver authentication](./images/portal/17-5-resolver-authentication.png)
+![Step 17.5 - Resolver authentication](./images/portal/17-5-resolver-authentication.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the UI cannot expose both allow-lists, the necessary **auth-only**
@@ -3079,7 +3079,7 @@ Keep rate-card inputs consistent with the workbook artifact. Do not publish unre
 prices or mistake list-price reporting for negotiated Azure billing.
 
 **Screenshot:**
-![Step 18.1 - Build package](./images/portal/18-1-build-package.png)
+![Step 18.1 - Build package](./images/portal/18-1-build-package.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3112,7 +3112,7 @@ to Function App** > select the **existing intended app** > confirm code overwrit
 | Package | `$artifacts/<app>.zip` / `packages/<app>` | Step 18.1 |
 
 **Screenshot:**
-![Step 18.2 - Deploy to Function App](./images/portal/18-2-deploy-to-function-app.png)
+![Step 18.2 - Deploy to Function App](./images/portal/18-2-deploy-to-function-app.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the extension/build path is unsuitable, use this single upload from
@@ -3139,7 +3139,7 @@ if ($LASTEXITCODE) { throw "function discovery failed: $app" }
 | Functions listed | Only that app's handlers | Package |
 
 **Screenshot:**
-![Step 18.3 - Functions list](./images/portal/18-3-functions-list.png)
+![Step 18.3 - Functions list](./images/portal/18-3-functions-list.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only, as below.
@@ -3179,7 +3179,7 @@ supplies developer authentication, not a subscription key.
 | Subscription required | **Off** | same |
 
 **Screenshot:**
-![Step 19.1 - Add API](./images/portal/19-1-add-api.png)
+![Step 19.1 - Add API](./images/portal/19-1-add-api.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3211,7 +3211,7 @@ if ($LASTEXITCODE) { throw 'API not found' }
 | URL method / path | **POST** `/v1/messages` | same |
 
 **Screenshot:**
-![Step 19.2 - Add operation](./images/portal/19-2-add-operation.png)
+![Step 19.2 - Add operation](./images/portal/19-2-add-operation.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3245,7 +3245,7 @@ Do not add a secret for same-tenant MI.
 | Credentials | None | This guide |
 
 **Screenshot:**
-![Step 19.3 - Create backend](./images/portal/19-3-create-backend.png)
+![Step 19.3 - Create backend](./images/portal/19-3-create-backend.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the backend body of `apim-api.bicep` (the `az apim backend` command has no
@@ -3283,7 +3283,7 @@ Do not paste the unrendered template or remove token validation/limit/cache/tele
 sections.
 
 **Screenshot:**
-![Step 19.4 - Policy code editor](./images/portal/19-4-policy-code-editor.png)
+![Step 19.4 - Policy code editor](./images/portal/19-4-policy-code-editor.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3326,7 +3326,7 @@ prompt/response bodies.
 | Destination table | **Resource specific** where offered | same bicep (`Dedicated`) |
 
 **Screenshot:**
-![Step 20.1 - APIM diagnostic setting](./images/portal/20-1-apim-diagnostic-setting.png)
+![Step 20.1 - APIM diagnostic setting](./images/portal/20-1-apim-diagnostic-setting.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the same diagnostic setting body as the telemetry module.
@@ -3365,7 +3365,7 @@ if ($LASTEXITCODE) { throw 'diagnostic setting listing failed' }
 | Large language model logs | On where the UI offers it (no prompt/response bodies) | same |
 
 **Screenshot:**
-![Step 20.2 - API diagnostics](./images/portal/20-2-api-diagnostics.png)
+![Step 20.2 - API diagnostics](./images/portal/20-2-api-diagnostics.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the UI does not expose APIM's LLM API diagnostic setting, deploy only the
@@ -3403,7 +3403,7 @@ Save. Resolver/sync also use their Insights resources.
 | Destination | Same LAW, resource-specific | evidence `workspace.id` |
 
 **Screenshot:**
-![Step 20.3 - Function App diagnostic setting](./images/portal/20-3-function-diagnostic-setting.png)
+![Step 20.3 - Function App diagnostic setting](./images/portal/20-3-function-diagnostic-setting.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3443,7 +3443,7 @@ Record the **actual saved workbook Resource ID**; the Portal can allocate a diff
 GUID than the form's candidate. Do not create/redeploy an empty workbook shell over this content.
 
 **Screenshot:**
-![Step 20.4 - Workbook advanced editor](./images/portal/20-4-workbook-advanced-editor.png)
+![Step 20.4 - Workbook advanced editor](./images/portal/20-4-workbook-advanced-editor.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** deploys the repository workbook module with the **complete** generated
@@ -3483,7 +3483,7 @@ members; then LAW > Access control (IAM) > **Log Analytics Reader** > same membe
 | Members | Intended readers | form `workbook.readerPrincipalIds` |
 
 **Screenshot:**
-![Step 20.5 - Workbook readers](./images/portal/20-5-workbook-readers.png)
+![Step 20.5 - Workbook readers](./images/portal/20-5-workbook-readers.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3519,7 +3519,7 @@ if ($LASTEXITCODE) { throw 'assignment listing failed' }
 | Tables | `ApiManagementGatewayLogs`, `ApiManagementGatewayLlmLog`, `FunctionAppLogs` | Steps 20.1-20.3 |
 
 **Screenshot:**
-![Step 20.6 - Log tables](./images/portal/20-6-log-tables.png)
+![Step 20.6 - Log tables](./images/portal/20-6-log-tables.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only, as below.
@@ -3565,7 +3565,7 @@ After a Quickstart run, first run it **without** the seed-ID line and with a lon
 | Seed ID | Correlation ID | `$artifacts/seed-id.txt` |
 
 **Screenshot:**
-![Step 21.1 - Seed result query](./images/portal/21-1-seed-result-query.png)
+![Step 21.1 - Seed result query](./images/portal/21-1-seed-result-query.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** the same query through ARM (works in Cloud Shell, read access on the component).
@@ -3602,7 +3602,7 @@ If a payload exceeds the platform's setting limits, stop and use the reviewed
 private-runner onboarding path; do not truncate it.
 
 **Screenshot:**
-![Step 21.2 - Seed settings](./images/portal/21-2-seed-settings.png)
+![Step 21.2 - Seed settings](./images/portal/21-2-seed-settings.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** passes the payload through a private file, so no command-line length limit applies.
@@ -3636,7 +3636,7 @@ after this settings change.
 | Function | `registrySeed` | `src/sync/registry-seed.ts` |
 
 **Screenshot:**
-![Step 21.3 - registrySeed listed](./images/portal/21-3-registry-seed-listed.png)
+![Step 21.3 - registrySeed listed](./images/portal/21-3-registry-seed-listed.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** if the Functions blade lacks `registrySeed`, this necessary short management
@@ -3667,7 +3667,7 @@ if (-not ($names | Where-Object { $_ -like '*registrySeed' })) { throw 'registry
 | Seed ID | Correlation ID | `$artifacts/seed-id.txt` |
 
 **Screenshot:**
-![Step 21.4 - Seed result](./images/portal/21-4-seed-result.png)
+![Step 21.4 - Seed result](./images/portal/21-4-seed-result.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** read-only; the Step 21.1 query for this seed only.
@@ -3699,7 +3699,7 @@ is relied upon.
 | `CCOF_SEED_DOCUMENTS` | Deleted | This guide |
 
 **Screenshot:**
-![Step 21.5 - Seed cleanup](./images/portal/21-5-seed-cleanup.png)
+![Step 21.5 - Seed cleanup](./images/portal/21-5-seed-cleanup.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3736,7 +3736,7 @@ Only after verified seed, Graph grant (module 16) and test group membership (Ste
 | `AzureWebJobs.syncEntitlement.Disabled` | `false` | This guide |
 
 **Screenshot:**
-![Step 21.6 - Enable sync timer](./images/portal/21-6-enable-sync-timer.png)
+![Step 21.6 - Enable sync timer](./images/portal/21-6-enable-sync-timer.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3768,7 +3768,7 @@ No timer should be enabled merely because the app resource exists.
 | `AzureWebJobs.reconcileBudgets.Disabled` | `false` | Budget enforcement decision (Step 01.3) |
 
 **Screenshot:**
-![Step 21.7 - Enable reconciler timer](./images/portal/21-7-enable-reconciler-timer.png)
+![Step 21.7 - Enable reconciler timer](./images/portal/21-7-enable-reconciler-timer.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3811,7 +3811,7 @@ the private file before handing it to a developer.
 | Models | Exact admitted aliases | form `client.models`, `groups[].familyPolicy` |
 
 **Screenshot:**
-![Step 22.1 - Validate client config](./images/portal/22-1-validate-client-config.png)
+![Step 22.1 - Validate client config](./images/portal/22-1-validate-client-config.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3833,7 +3833,7 @@ if ($LASTEXITCODE) { throw 'client config invalid' }
 | `-ConfigPath` | `./.env.onboarding.json` | Step 22.1 |
 
 **Screenshot:**
-![Step 22.2 - Configure client](./images/portal/22-2-configure-client.png)
+![Step 22.2 - Configure client](./images/portal/22-2-configure-client.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:**
@@ -3864,7 +3864,7 @@ Verify silent sign-in refresh and membership-removal behavior separately.
 Test requests can incur Foundry charges; get approval before traffic.
 
 **Screenshot:**
-![Step 22.3 - Acceptance evidence](./images/portal/22-3-acceptance-evidence.png)
+![Step 22.3 - Acceptance evidence](./images/portal/22-3-acceptance-evidence.svg)
 <!-- screenshot pending: capture from a lab tenant, redact IDs -->
 
 **CLI alternative:** none; acceptance is run by the test developer through the client, not by `az`.
