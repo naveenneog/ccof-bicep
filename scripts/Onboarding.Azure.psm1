@@ -69,7 +69,7 @@ function Invoke-OnboardingRest {
     catch { throw 'Provider transport failed. Verify private routing and provider health.' }
     if ($response.StatusCode -eq 404 -and $Method -eq 'GET') { return $null }
     if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) { throw "Provider request failed (HTTP $($response.StatusCode))." }
-    if ($response.Content) { $response.Content | ConvertFrom-Json -AsHashtable -ErrorAction Stop }
+    if ($response.Content) { ([string]$response.Content).TrimStart([char]0xfeff) | ConvertFrom-Json -AsHashtable -ErrorAction Stop }
 }
 
 function Get-OnboardingPages {

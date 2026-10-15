@@ -1,0 +1,46 @@
+{
+  "projects": [
+    {
+      "id": "REPLACE-project-id",
+      "projectId": "REPLACE-project-id",
+      "displayName": "REPLACE-approved-project-display-name",
+      "status": "active",
+      "backendId": "REPLACE-backend-id",
+      "designatedSubscriptionId": "REPLACE-foundry-subscription-guid",
+      "supersedes": null,
+      "retiredAt": null,
+      "classifications": {
+        "REPLACE-classification-code": {
+          "groupId": "REPLACE-entra-group-object-guid",
+          "classificationGroupDisplayName": "REPLACE-exact-group-display-name",
+          "familyPolicy": {
+            "aggregateLimits": {
+              "person": { "tokensPerMinute": 10000, "tokenQuota": 100000, "tokenQuotaPeriod": "Monthly" },
+              "group": { "tokensPerMinute": 30000, "tokenQuota": 300000, "tokenQuotaPeriod": "Monthly" }
+            },
+            "families": {
+              "sonnet": {
+                "models": ["REPLACE-exact-sonnet-deployment-name"],
+                "person": { "tokensPerMinute": 10000, "tokenQuota": 100000, "tokenQuotaPeriod": "Monthly" },
+                "group": { "tokensPerMinute": 30000, "tokenQuota": 300000, "tokenQuotaPeriod": "Monthly" }
+              }
+            }
+          },
+          "personBudget": { "amount": 10, "currency": "USD", "period": "monthly" },
+          "aggregateBudget": { "amount": 100, "currency": "USD", "period": "monthly" },
+          "aggregateMode": "strict",
+          "onboardingMode": "block"
+        }
+      }
+    }
+  ],
+  "backends": [
+    {
+      "id": "REPLACE-backend-id",
+      "backendId": "REPLACE-backend-id",
+      "status": "active",
+      "apiFormat": "anthropic-messages",
+      "auth": { "mode": "managed-identity", "resource": "https://cognitiveservices.azure.com" }
+    }
+  ]
+}

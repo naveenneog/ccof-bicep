@@ -199,6 +199,14 @@ export function generateChargebackFiles(answersPath: string, groupsPath: string)
   return { contentSha256: artifact.contentSha256 };
 }
 
+export function reportingInputDiagnostic(error: unknown): { field?: string; detail?: string } {
+  if (error instanceof SyntaxError) return { detail: "json_invalid" };
+  if (error instanceof Error && "code" in error && error.code === "ENOENT") return { detail: "local_input_file_missing" };
+  const message = error instanceof Error ? error.message : "";
+  const match = /^(schemaVersion|subscriptionId|tenantId|resourceGroupName|location|deploymentName|workbookResourceName|workbookDisplayName|workspaceResourceId|gatewayResourceId|reconcilerResourceId|rateCardPath|ledgerPath|outputDirectory|defaultProjectId|maxRows|topUsers|maxQueryDays|budgetLookbackDays|retentionDays|groups|group\.(?:projectId|classification|groupId|displayName)): ([a-z_]+)$/.exec(message);
+  return match ? { field: match[1], detail: match[2] } : {};
+}
+
 if (isMain(import.meta.url)) {
   try {
     if (process.argv[2] === "--verify" && process.argv.length === 4) {
@@ -209,8 +217,9 @@ if (isMain(import.meta.url)) {
       if (flag !== "--answers" || !answers || groupFlag !== "--groups" || !groups || extra.length) throw new Error("use --answers PATH --groups PATH");
       console.log(JSON.stringify({ schema: "ccof.chargeback.build.v1", outcome: "validated", ...generateChargebackFiles(answers, groups) }));
     }
-  } catch {
-    console.error(JSON.stringify({ schema: "ccof.chargeback.build.v1", outcome: "refused", reason: "reporting_input_invalid" }));
+  } catch (error) {
+    console.error(JSON.stringify({ schema: "ccof.chargeback.build.v1", outcome: "refused",
+      reason: "reporting_input_invalid", ...reportingInputDiagnostic(error) }));
     process.exitCode = 1;
   }
 }

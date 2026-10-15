@@ -20,6 +20,7 @@ $script:GraphGrantRoles = @{ 'e8611ab8-c189-46e8-94e1-60213ab1f814' = 'Privilege
 # write before it refuses the item (role_definition_not_verified, not_verified). Ten tries 5 s apart
 # were too short in Validation, 2026-10-13 (docs/status/WP-CORE-RUN.md).
 $script:CosmosReadBackSeconds = 600
+Import-Module (Join-Path $PSScriptRoot 'Azure.Response.psm1') -DisableNameChecking
 
 function Test-CoreActionAllowed {
     <#
@@ -221,10 +222,10 @@ function Set-CoreCosmosAssignment {
     $scope = if ($Item.scope -eq '/') { $account } else { "$account$($Item.scope)" }
     foreach ($a in @($Existing)) {
         if (-not [string]::Equals([string]$a.properties.principalId, $Item.principalId, 'OrdinalIgnoreCase') -or -not (Test-CoreSameId $a.properties.roleDefinitionId $roleId)) { continue }
-        if (Test-CoreSameId $a.properties.scope $scope) { return @{ state = 'existing'; assignmentId = $a.id } }
-        if (Test-CoreScopeCovers $a.properties.scope $scope) { return @{ state = 'inherited'; assignmentId = $a.id } }
+        if (Test-CcofCosmosScopeEqual $a.properties.scope $scope) { return @{ state = 'existing'; assignmentId = $a.id } }
+        if (Test-CcofCosmosScopeCovers $a.properties.scope $scope) { return @{ state = 'inherited'; assignmentId = $a.id } }
     }
-    $name = New-CoreDeterministicGuid @($scope, $Item.principalId, $roleId)
+    $name = New-CcofCosmosAssignmentId -Scope $scope -PrincipalId $Item.principalId -RoleId $roleId
     $url = "$script:Arm$account/sqlRoleAssignments/$name`?api-version=2024-11-15"
     $put = Invoke-CoreRetry -Sleep $Sleep -Call { & $Send 'PUT' $url @{ properties = @{ roleDefinitionId = $roleId; principalId = $Item.principalId; scope = $scope } } }.GetNewClosure()
     if ($put.Status -notin @(200, 201, 202)) { return @{ state = 'failed'; reasonCode = "cosmos_$($put.Status)_$($put.ErrorCode)" } }

@@ -1,0 +1,348 @@
+{
+  "version": 1,
+  "images": [
+    {
+      "file": "02-2-middle-masked.png",
+      "caption": "Historical resource-group creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "f0295dfe6ed71092c4dc119d34f90ab0905766bc63fa7478f2f12caf5e4df771"
+    },
+    {
+      "file": "03-1-middle-masked.png",
+      "caption": "Historical outbound Key Vault and Monitor rules; not a complete production egress policy",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "03ea57abc9d39597396adb7458b61bb46680c0fdf9a720f58373872deb494ccc"
+    },
+    {
+      "file": "03-2-middle-masked.png",
+      "caption": "Historical VNet creation form; use approved customer address space",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "e08d34076085951026e17f2b8dcb2facd49b7aa8ad62a9841b082b32eecea096"
+    },
+    {
+      "file": "03-3-middle-masked.png",
+      "caption": "Historical APIM subnet edit form; not proof of current APIM integration",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 15,
+      "sha256": "649a0069207377f8211db940dcf6e113221ad390fe5adca47f62ea24d50822fd"
+    },
+    {
+      "file": "03-4-middle-masked.png",
+      "caption": "Historical Functions subnet edit form",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 14,
+      "sha256": "ffa72a1c5b2b802493528d245330faa7a4fdde8bd684a6f344a153899c02b8ed"
+    },
+    {
+      "file": "03-5-middle-masked.png",
+      "caption": "Historical private-endpoint subnet form; endpoints are NICs, not the target PaaS services",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 14,
+      "sha256": "cfcf6f0feb50833d1d9895847730e929b50a93fe952adef2b1a24f18fc010145"
+    },
+    {
+      "file": "03-6-middle-masked.png",
+      "caption": "Historical private DNS zone creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "ba7ce3ee362ea7816dd38ef3837589aada0219822327189fc1768822f52bf133"
+    },
+    {
+      "file": "03-7-middle-masked.png",
+      "caption": "Historical DNS VNet link form; not a DNS resolution test",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "379daa6bd2202c8d06a56f41cc6109100df4c03f1485f024b938c763d1194ce6"
+    },
+    {
+      "file": "03-8-middle-masked.png",
+      "caption": "Historical subnet inventory; verify the actual caller network and approved egress",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 9,
+      "sha256": "c273238eb14c1bc40a3576051a2586585d97020e9f6db45fb772cb44e8766f1f"
+    },
+    {
+      "file": "04-1-middle-masked.png",
+      "caption": "Historical workspace creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "0a6f4ea595bb44f9f4dfeb101e641c6ed7c5ca8d9eb6f0992e29e6fae5179b18"
+    },
+    {
+      "file": "04-4-middle-masked.png",
+      "caption": "Historical resolver Application Insights form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "2f043527425125993be625c25a4f0e657608724a5b9a6678f8bb6b2355153bea"
+    },
+    {
+      "file": "04-5-middle-masked.png",
+      "caption": "Historical sync Application Insights form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "d9da12bed2e13dec940e9428e0022e37f83b0fb4d9c08e3eba70ac3f18f4b11b"
+    },
+    {
+      "file": "05-1-middle-masked.png",
+      "caption": "Historical sync managed-identity creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "694841386528f969f13654bbb392d79d54feba4a5525dd364ce3e1326d585732"
+    },
+    {
+      "file": "05-2-middle-masked.png",
+      "caption": "Historical reconciler managed-identity creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "0742ffe6652772672f81eb367b8c9c2ca297e4d6617801d4331bfb9259c19f17"
+    },
+    {
+      "file": "06-4-middle-masked.png",
+      "caption": "Combined app Authentication reference; API exposure and redirects belong on that same gateway/developer registration",
+      "kind": "customer-ui-reference",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "467aeb3824841aabd5d8f1cbe568147c99431be171991b48efed56a1c7a67aad"
+    },
+    {
+      "file": "06-7-middle-masked.png",
+      "caption": "Group Members page showing one direct user; not entitlement or synchronization proof",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 8,
+      "sha256": "dced06ce615480391fdb992177e21eb1cb1954d9fb526db4fad383c70aa83d03"
+    },
+    {
+      "file": "07-6-middle-masked.png",
+      "caption": "Foundry IAM showing APIM identity Cognitive Services User; values are middle-masked",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "baecd574db4866fc2199c159e8faac93eaa7add8bbac8f58c2fed69dfebadf7d"
+    },
+    {
+      "file": "08-1-middle-masked.png",
+      "caption": "Historical Cosmos basics form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "b43417910b5546a1ffa8277dd2a17b929587b1647be4c6e3e502c1fc6c1e53e5"
+    },
+    {
+      "file": "08-2-middle-masked.png",
+      "caption": "Historical Cosmos private access showing an approved endpoint",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "f7567055da606f66728682eca3db26feda9f66712d6f366acf46f05371b16499"
+    },
+    {
+      "file": "09-1-middle-masked.png",
+      "caption": "Historical storage creation form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "395a992dc69703bd44fbb864fd3a8d4ab4c19b0727dce63525ba13efd469ea7c"
+    },
+    {
+      "file": "09-2-middle-masked.png",
+      "caption": "Historical blob private-endpoint form",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 10,
+      "sha256": "a85004ca125e18f7905fa459eb9615d22ba973d36492cd922f61ac4848eaea64"
+    },
+    {
+      "file": "09-3-middle-masked.png",
+      "caption": "Storage Containers navigation reference; review the actual deployment container",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "4cacb3ef7a7d7c2c885178a09550f454d3785af454623764b0df10ea7ca7f39d"
+    },
+    {
+      "file": "10-2-middle-masked.png",
+      "caption": "Resolver system-assigned identity On; no user credentials",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "5dd9569852743962389c8b9e58105b89e023aaafbe0a967a2c7f5cb8315d0a4a"
+    },
+    {
+      "file": "10-2-sync-middle-masked.png",
+      "caption": "Sync attached user-assigned identity reference",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "96a35ba68b6aed1dfa56340611ef04c8d5e518c228998e1c9c2ca08c6eae9342"
+    },
+    {
+      "file": "10-3-middle-masked.png",
+      "caption": "Sync deployment storage uses a user-assigned identity; visible access warning is not connectivity proof",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 6,
+      "sha256": "fb2a19684734f058dae0b0b2f7c56412bfd623f0f1b25942497e8a70d1a53e1f"
+    },
+    {
+      "file": "11-1-middle-masked.png",
+      "caption": "Historical APIM creation form; verify the actual SKU before private outbound integration",
+      "kind": "creation-form",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 6,
+      "sha256": "b3912cc916a408ca1d94a2db4be17d5ebe86cf2621c7898544e041e7739acedc"
+    },
+    {
+      "file": "15-1-middle-masked.png",
+      "caption": "Storage IAM showing resolver Blob Data Owner; not queue/table role proof",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "d172767a3cfb813cad3ec956198e98269534ce1db4e7f4f950f2a552448b4e51"
+    },
+    {
+      "file": "17-1-middle-masked.png",
+      "caption": "Resolver environment-variable names; values are hidden",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "1255b0656e5981842fd936a3341d1ba6417d948df6642bdeaba5f59f072d9538"
+    },
+    {
+      "file": "17-1-sync-middle-masked.png",
+      "caption": "Sync environment-variable names; hidden values do not prove timers are disabled",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "e166694cbeeab4f3a1db198b4e6fdaf57aaaa7c483a813612069cbe85d558249"
+    },
+    {
+      "file": "17-1-reconciler-middle-masked.png",
+      "caption": "Reconciler environment-variable names; values are hidden",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "260a240c8d012a3822d4985f07231b5e656d99bb8ae5158ccfa2680d678cbd76"
+    },
+    {
+      "file": "17-3-middle-masked.png",
+      "caption": "Sync timer listed Disabled; not a successful sync run",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "37e053acdc862c7098a24180c3e7f46dd6f0002d299f5d5a5c44ce06055376b2"
+    },
+    {
+      "file": "17-5-middle-masked.png",
+      "caption": "Resolver requires authentication and returns anonymous 401; caller allow-lists still need verification",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 6,
+      "sha256": "69d706e2180362be400c3569e51e86814bd9c723f766bfe533c92e30df0ede16"
+    },
+    {
+      "file": "18-3-middle-masked.png",
+      "caption": "Resolver health and resolve HTTP functions; not inference acceptance",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "737a67eec03c8ccdc888baf49505475ac3799c7ca74d3f62f187b9685bdf4bbd"
+    },
+    {
+      "file": "18-3-reconciler-middle-masked.png",
+      "caption": "Reconciler timer listed Disabled before optional activation",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 7,
+      "sha256": "b959babcb6e3a492e2c31fa8c98be4d17414f021803dd36110be3ac4582599c5"
+    },
+    {
+      "file": "19-1-middle-masked.png",
+      "caption": "APIM APIs inventory after creation; not a creation-form or operation view",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "92e3e1ea43109c1ff32ca6ea1ce9f9f0adff503e828dbfb9c373b7411d566d7e"
+    },
+    {
+      "file": "19-2-middle-masked.png",
+      "caption": "Selected POST /v1/messages operation",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "379ba9bf0514c8f6670ecdcc8bc684f3966d24e929e5c4660625add51056af7a"
+    },
+    {
+      "file": "19-4-middle-masked.png",
+      "caption": "API Design navigation: select All operations before the inbound code editor",
+      "kind": "customer-ui-reference",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "e1e87c132fcd17add242555c324473edb2b178e74cbcd6e4a7591f14a36667ae"
+    },
+    {
+      "file": "20-1-middle-masked.png",
+      "caption": "Diagnostic settings BEFORE configuration: no settings defined; not successful logging proof",
+      "kind": "historical-gap",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "63fc141367dd1d408971f16d64f02505fa7434500f4fba122a720383a5354d99"
+    },
+    {
+      "file": "20-4-gallery-middle-masked.png",
+      "caption": "Archival workspace Workbooks gallery navigation; not the current report's content or saved-state proof",
+      "kind": "archival-navigation",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "c9049c75e4b60945a5ae4de431807160ff81d1877aae4eca9bdbd56c39ad66e4"
+    },
+    {
+      "file": "21-4-middle-masked.png",
+      "caption": "Historical create-only seed result with two created documents; identifiers middle-masked, not another deployment's seed acceptance",
+      "kind": "customer-ui-reference",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 6,
+      "sha256": "a3a45890488b3ed16a56ebc3501e643e406261eedbf08dc9535487b43f1f63c2"
+    },
+    {
+      "file": "21-6-reader-middle-masked.png",
+      "caption": "Data Explorer native data-role denial for the operator; this is not evidence that entitlement storage is empty",
+      "kind": "customer-ui-reference",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "3ca368b6f758ec3f84403ca7a6c285a234fd654740cdfa96ac22df42bb0455b1"
+    },
+    {
+      "file": "22-2-middle-masked.png",
+      "caption": "VS Code User settings before gateway configuration; empty array is not a working sign-in",
+      "kind": "customer-ui-reference",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "5e1cc290e0b1c3750f69a11203a2234ddd5e18057d19c4e41a1538c25969d68e"
+    }
+  ],
+  "boundary": "UI references only; no claim of current deployment acceptance",
+  "pending": [
+    "new Entra Azure CLI preauthorization capture",
+    "new APIM client-policy editor capture",
+    "current workbook Advanced Editor and reader-role grant captures; see gallery reference",
+    "current optional budget-state and completed private cutover proof"
+  ]
+}

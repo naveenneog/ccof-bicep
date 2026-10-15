@@ -197,7 +197,7 @@ app settings themselves (redirect URIs, scope, public client flows), see
 
 ```powershell
 $groupPrefix = '<group-name-prefix>'     # for example PROJ01 for PROJ01STD, PROJ01PRM, PROJ01CYB
-az ad group list --filter "startswith(displayName,'$groupPrefix')" --query "[].{name:displayName, id:id, security:securityEnabled}" -o table
+az ad group list --filter "startswith(displayName,'$groupPrefix')" --query "[].{name:displayName, objectId:id, security:securityEnabled}" -o table
 (New-Guid).Guid                          # workbook.resourceName
 ```
 

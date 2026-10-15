@@ -21,6 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'SyncDeploy.psm1') -Force
+Import-Module (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts/Azure.Response.psm1') -DisableNameChecking
 $answers = Read-SyncAnswers -Path $AnswersFile
 $problems = Test-SyncAnswers $answers
 if ($problems.Count -gt 0) { throw "The answers file is incomplete or invalid: $($problems -join ', ')" }
@@ -41,4 +42,4 @@ AppTraces
 $body = @{ query = $query; timespan = "PT$($Minutes)M" } | ConvertTo-Json
 $result = Invoke-RestMethod -Method Post -Uri "https://api.loganalytics.azure.com/v1/workspaces/$customerId/query" `
     -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body $body
-foreach ($row in $result.tables[0].rows) { $row[1] }
+Get-CcofQueryMessages -Response $result

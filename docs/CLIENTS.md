@@ -1,7 +1,10 @@
 # Claude clients through the enterprise gateway
 
-This setup uses **Entra single sign-on**, not an Anthropic subscription, an API key,
-or the Azure CLI's developer login. The standalone `client/` Node package contains
+The default setup uses **Entra single sign-on**, not an Anthropic subscription or an API key.
+An ordinary Azure CLI login is not automatically accepted: the separately approved
+[manual Azure CLI route](runbooks/PUBLIC-ACCESS-WORKBOOK.md#13-hand-configurable-developer-sign-in-and-gateway-testing)
+requires both gateway scope authorization and an APIM allowed-client entry.
+The standalone `client/` Node package contains
 `ccof-token`. Its dependencies are separate from the gateway's server dependencies.
 The PowerShell workstation scripts target Windows; the token helper also supports
 macOS and Linux secure storage.
@@ -23,6 +26,16 @@ installing missing software.
 On the pilot workstation, the detected versions are CLI **2.1.272**, extension
 **2.1.289**, and Desktop **2.2553.1.0**. The Desktop bundle has 171 configuration
 keys but no `external-idp` credential kind or `inferenceIdpOidc` key.
+
+That does not mean it has no native gateway OIDC UI. A build declaring the legacy
+`interactive` kind with `inferenceGatewayOidc`/`inferenceGatewayOidcAuthFlow` can
+support the vendor's native Desktop sign-in. The automated helper-selection
+script below uses its documented helper fallback on that older-key schema.
+For a separately approved manual native profile, follow the
+[vendor gateway configuration](https://claude.com/docs/third-party/claude-desktop/gateway),
+request the actual gateway API scope and explicitly select `bearerTokenType: "access_token"`;
+the generic default OIDC ID token does not satisfy APIM's delegated-scope checks.
+Native Desktop OIDC is not Claude Code's separate Cloud gateway `/login` protocol.
 
 ## 2. Prepare the helper and configuration
 

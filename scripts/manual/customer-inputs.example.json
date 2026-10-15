@@ -1,0 +1,34 @@
+{
+  "subscriptionId": "REPLACE-subscription-guid",
+  "tenantId": "REPLACE-tenant-guid",
+  "resourceGroup": "rg-claude-pilot",
+  "cosmosAccount": "REPLACE-cosmos-account-name",
+  "database": "registry",
+  "workspaceResourceId": "REPLACE-log-analytics-workspace-resource-id",
+  "apimResourceId": "REPLACE-apim-resource-id",
+  "gatewayAppId": "REPLACE-combined-gateway-developer-client-guid",
+  "gatewayIdentifierUri": "REPLACE-actual-gateway-application-id-uri",
+  "resolverApiAppId": "REPLACE-resolver-api-client-guid",
+  "apiId": "claude-messages",
+  "apiPath": "anthropic",
+  "apps": {
+    "resolver": {
+      "name": "sample-resolver-func",
+      "storageAccount": "REPLACE-resolver-storage-name",
+      "appInsightsResourceId": "REPLACE-resolver-insights-resource-id",
+      "identityResourceId": null
+    },
+    "sync": {
+      "name": "sample-sync-func",
+      "storageAccount": "REPLACE-sync-storage-name",
+      "appInsightsResourceId": "REPLACE-sync-insights-resource-id",
+      "identityResourceId": "REPLACE-sync-uami-resource-id"
+    },
+    "reconciler": {
+      "name": "sample-reconciler-func",
+      "storageAccount": "REPLACE-reconciler-storage-name",
+      "appInsightsResourceId": null,
+      "identityResourceId": "REPLACE-reconciler-uami-resource-id"
+    }
+  }
+}

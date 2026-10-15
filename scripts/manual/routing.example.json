@@ -1,0 +1,12 @@
+{
+  "backends": [
+    {
+      "backendId": "REPLACE-backend-id",
+      "foundryResourceId": "REPLACE-full-same-tenant-foundry-account-resource-id",
+      "url": "https://REPLACE-approved-foundry-host.services.ai.azure.com/anthropic",
+      "deploymentInferenceGeo": {
+        "REPLACE-exact-sonnet-deployment-name": "global"
+      }
+    }
+  ]
+}
