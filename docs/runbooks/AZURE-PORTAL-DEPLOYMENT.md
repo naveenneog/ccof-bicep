@@ -456,6 +456,12 @@ if ($LASTEXITCODE) { throw 'VNet not found' }
 | Starting address / size | APIM subnet CIDR | form `network.create.subnets.apim.prefix` |
 | Network security group | APIM NSG | Step 03.1 |
 | Subnet delegation | `Microsoft.Web/serverFarms` | `infra/prereqs/network.bicep` |
+| Enable private subnet | **Off**, unless a NAT gateway or firewall gives this subnet egress | `infra/prereqs/network.bicep` `defaultOutboundAccess` |
+
+VNets created after 31 March 2026 make every subnet private (`defaultOutboundAccess=false`),
+even when the create form showed the box unchecked. A private subnet without a NAT gateway or
+firewall has no internet egress, so APIM and the Functions cannot reach their dependencies.
+Set it explicitly here and in Step 03.4, and verify it with the check below.
 
 **Screenshot:**
 ![Step 03.3 - APIM subnet](./images/portal/03-3-apim-subnet.svg)
@@ -467,7 +473,8 @@ if ($LASTEXITCODE) { throw 'VNet not found' }
 $c = $p.network.create
 # WRITE: adds one subnet; other subnets are untouched.
 az network vnet subnet create --subscription $sub -g $rg --vnet-name $c.vnetName -n $c.subnets.apim.name `
-    --address-prefixes $c.subnets.apim.prefix --nsg $c.apimNsgName --delegations Microsoft.Web/serverFarms -o none
+    --address-prefixes $c.subnets.apim.prefix --nsg $c.apimNsgName --delegations Microsoft.Web/serverFarms `
+    --default-outbound-access true -o none
 if ($LASTEXITCODE) { throw 'APIM subnet creation failed' }
 ```
 
@@ -478,7 +485,7 @@ APIM subnet ID the network team gave you):
 # EDIT: in existing network mode only, the APIM integration subnet resource ID.
 $apimSubnetId = if ($net.apimSubnetId) { $net.apimSubnetId } else { '<existing-apim-subnet-resource-id>' }
 az network vnet subnet show --ids $apimSubnetId `
-    --query '{prefix:addressPrefix,nsg:networkSecurityGroup.id,delegation:delegations[0].serviceName}' -o json
+    --query '{prefix:addressPrefix || addressPrefixes[0],nsg:networkSecurityGroup.id,delegation:delegations[0].serviceName,defaultOutbound:defaultOutboundAccess}' -o json
 if ($LASTEXITCODE) { throw 'APIM subnet not found' }
 ```
 
@@ -491,6 +498,7 @@ if ($LASTEXITCODE) { throw 'APIM subnet not found' }
 | Name | Functions subnet name | form `network.create.subnets.functions.name` |
 | Starting address / size | Functions subnet CIDR | form `network.create.subnets.functions.prefix` |
 | Subnet delegation | `Microsoft.App/environments` | `infra/prereqs/network.bicep` |
+| Enable private subnet | **Off**, unless a NAT gateway or firewall gives this subnet egress | `infra/prereqs/network.bicep` `defaultOutboundAccess` |
 
 **Screenshot:**
 ![Step 03.4 - Functions subnet](./images/portal/03-4-functions-subnet.svg)
@@ -502,7 +510,8 @@ if ($LASTEXITCODE) { throw 'APIM subnet not found' }
 $c = $p.network.create
 # WRITE: adds one subnet.
 az network vnet subnet create --subscription $sub -g $rg --vnet-name $c.vnetName -n $c.subnets.functions.name `
-    --address-prefixes $c.subnets.functions.prefix --delegations Microsoft.App/environments -o none
+    --address-prefixes $c.subnets.functions.prefix --delegations Microsoft.App/environments `
+    --default-outbound-access true -o none
 if ($LASTEXITCODE) { throw 'Functions subnet creation failed' }
 ```
 
@@ -510,7 +519,7 @@ if ($LASTEXITCODE) { throw 'Functions subnet creation failed' }
 
 ```powershell
 az network vnet subnet show --ids $net.functionsSubnetId `
-    --query '{prefix:addressPrefix,delegation:delegations[0].serviceName}' -o json
+    --query '{prefix:addressPrefix || addressPrefixes[0],delegation:delegations[0].serviceName,defaultOutbound:defaultOutboundAccess}' -o json
 if ($LASTEXITCODE) { throw 'Functions subnet not found' }
 ```
 
@@ -543,7 +552,7 @@ if ($LASTEXITCODE) { throw 'private endpoint subnet creation failed' }
 
 ```powershell
 az network vnet subnet show --ids $net.peSubnetId `
-    --query '{prefix:addressPrefix,policies:privateEndpointNetworkPolicies,delegations:delegations}' -o json
+    --query '{prefix:addressPrefix || addressPrefixes[0],policies:privateEndpointNetworkPolicies,delegations:delegations}' -o json
 if ($LASTEXITCODE) { throw 'private endpoint subnet not found' }
 ```
 
@@ -551,7 +560,8 @@ if ($LASTEXITCODE) { throw 'private endpoint subnet not found' }
 
 **Where:** Portal > Private DNS zones > **+ Create** > Basics > Review + create. Once per zone.
 Use existing authoritative zones where supplied by the network team; do not link two
-competing zones for a namespace.
+competing zones for a namespace. The create form's **Virtual Network Links** tab can add the
+Step 03.7 link in the same form (same values as the Step 03.7 table).
 
 | Field | Value | Source of value |
 |---|---|---|
@@ -647,11 +657,13 @@ Outbound rules must allow sync to `graph.microsoft.com`, reconciler to the appro
 Log Analytics query endpoint (normally `api.loganalytics.io`), and each telemetry
 app to its Application Insights ingestion endpoint. These are egress dependencies,
 not values to invent as private DNS-zone IDs. Customer Azure Monitor Private Link
-Scope designs require their own corresponding DNS/endpoints.
+Scope designs require their own corresponding DNS/endpoints. On the APIM and Functions
+integration subnets, `defaultOutbound` must be `true` unless `natGateway` or a route table to a
+firewall provides egress (a private subnet with neither has no internet egress).
 
 ```powershell
-foreach ($subnetId in $net.functionsSubnetId, $net.peSubnetId) {
-    az network vnet subnet show --ids $subnetId --query '{subnet:name,routeTable:routeTable.id,nsg:networkSecurityGroup.id}' -o json
+foreach ($subnetId in @($net.apimSubnetId, $net.functionsSubnetId, $net.peSubnetId) | Where-Object { $_ }) {
+    az network vnet subnet show --ids $subnetId --query '{subnet:name,routeTable:routeTable.id,nsg:networkSecurityGroup.id,natGateway:natGateway.id,defaultOutbound:defaultOutboundAccess}' -o json
     if ($LASTEXITCODE) { throw "subnet read failed: $subnetId" }
 }
 ```
@@ -1598,7 +1610,7 @@ One storage account per Function App. Do steps 09.1-09.3 for `resolver`, `sync` 
 
 #### Step 09.1 - Create the private, keyless storage account
 
-**Where:** Portal > Storage accounts > **+ Create** > Basics > Advanced > Networking > Review + create.
+**Where:** Portal > Storage accounts > **+ Create** > Basics > Advanced > Security > Networking > Review + create.
 
 | Field | Value | Source of value |
 |---|---|---|
@@ -1606,9 +1618,9 @@ One storage account per Function App. Do steps 09.1-09.3 for `resolver`, `sync` 
 | Region / RG | Platform | form `location`, `names.resourceGroup` |
 | Primary service / kind | StorageV2 (general purpose v2) | `infra/prereqs/function-app.bicep` |
 | Redundancy | Approved LRS/ZRS | form `storageSku` |
-| Minimum TLS version | TLS 1.2 | same bicep |
-| Allow storage account key access (Advanced) | **Disabled** | same bicep |
-| Allow anonymous blob access (Advanced) | **Disabled** | same bicep |
+| Minimum TLS version (Security) | TLS 1.2 | same bicep |
+| Allow storage account key access (Security) | **Disabled** | same bicep |
+| Allow anonymous blob access (Security) | **Disabled** | same bicep |
 | Public network access (Networking) | **Disabled** | same bicep |
 
 **Screenshot:**
@@ -2769,6 +2781,13 @@ A managed identity has no ordinary app-registration API-permissions page where
 you can configure these Graph application roles. The Entra privileged administrator
 activates PIM, refreshes their sign-in if needed, and runs this existing narrow helper
 with the **sync identity's principal/object ID**. No Quickstart state file is needed.
+
+**Without the grant:** where no privileged administrator can grant the application permission,
+skip this module, keep `AzureWebJobs.syncEntitlement.Disabled` = `true`, and load the group members
+from a person's delegated snapshot (an ordinary `az login`, no privileged role) through the sync
+Function App: [CLOUD-SHELL-QUICKSTART.md section 5](./CLOUD-SHELL-QUICKSTART.md) and
+[SYNC.md, Apply through the sync Function App without a runner VM](../SYNC.md). Repeat it whenever
+group membership changes.
 
 #### Step 16.1 - Activate the privileged directory role
 

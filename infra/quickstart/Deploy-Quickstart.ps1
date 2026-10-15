@@ -681,7 +681,7 @@ function Show-QsGraphStep {
     Write-Host "  pwsh -File infra/quickstart/Grant-SyncGraphPermissions.ps1 -SyncPrincipalId $sync"
     Write-Host '  then set syncTimerEnabled = true in the parameters file and run: pwsh -File infra/quickstart/Deploy-Quickstart.ps1 -Only 3'
     Write-Host '  (-Only 3 redeploys the template alone, which writes the sync timer setting; the code and the seed stay as they are).'
-    Write-Host 'Until then the sync cannot read the groups; or use sync.mode delegated-snapshot (docs/SYNC.md), which needs no application permission.'
+    Write-Host 'Until then the sync cannot read the groups. Without the grant, keep syncTimerEnabled = false and load the members from a delegated snapshot through the sync Function App (docs/runbooks/CLOUD-SHELL-QUICKSTART.md section 5), which needs no application permission.'
     return @{ syncPrincipalId = $sync }
 }
 

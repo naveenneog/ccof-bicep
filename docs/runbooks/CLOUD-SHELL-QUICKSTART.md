@@ -131,8 +131,13 @@ existing network.
 block shows whether anything restricts outbound traffic:
 
 ```powershell
-az network vnet subnet show --ids $fnSubnetId --query "{routeTable:routeTable.id, nat:natGateway.id, nsg:networkSecurityGroup.id}" -o table
+az network vnet subnet show --ids $fnSubnetId --query "{routeTable:routeTable.id, nat:natGateway.id, nsg:networkSecurityGroup.id, defaultOutbound:defaultOutboundAccess}" -o table
 ```
+
+If `defaultOutbound` is `False` (a private subnet; VNets created after 31 March 2026 default every
+subnet to this) and there is neither a NAT gateway nor a route table to a firewall, the subnet has no
+internet egress: ask the network team for NAT/firewall egress, or to set default outbound access on.
+Check the APIM integration subnet the same way.
 
 If a route table or NAT points at a firewall, allow `graph.microsoft.com`,
 `login.microsoftonline.com`, `api.loganalytics.io`, `*.in.applicationinsights.azure.com` and

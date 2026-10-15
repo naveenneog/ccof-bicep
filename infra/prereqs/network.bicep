@@ -28,6 +28,9 @@ param apimNsgName string
 @description('Subnets: apim, privateEndpoints, functions, each { name, prefix }; runner { name, prefix }, null or absent.')
 param subnets object
 
+@description('Default outbound access of the APIM and Functions integration subnets. VNets created after 2026-03-31 default every subnet to private (false), which leaves APIM and the Functions without internet egress (Graph, Log Analytics, Application Insights). Set false only where a NAT gateway or firewall provides egress.')
+param defaultOutboundAccess bool = true
+
 // .? reads an absent runner as null: a caller may omit it, and a null-valued property is not relied on.
 var runnerSubnets = subnets.?runner == null ? [] : [
   {
@@ -69,6 +72,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         name: subnets.apim.name
         properties: {
           addressPrefix: subnets.apim.prefix
+          defaultOutboundAccess: defaultOutboundAccess
           networkSecurityGroup: { id: nsgApim.id }
           // APIM v2 outbound VNet integration uses this delegation (infra/poc/main.bicep).
           delegations: [{ name: 'apim-delegation', properties: { serviceName: 'Microsoft.Web/serverFarms' } }]
@@ -85,6 +89,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         name: subnets.functions.name
         properties: {
           addressPrefix: subnets.functions.prefix
+          defaultOutboundAccess: defaultOutboundAccess
           // Flex Consumption needs Microsoft.App/environments, not Microsoft.Web/serverFarms: the live
           // ARM error of 2026-10-09 (infra/poc/phase3-cosmos-function.bicep). Several Flex apps may
           // share one subnet (Learn, flex-consumption-plan, Virtual network integration).

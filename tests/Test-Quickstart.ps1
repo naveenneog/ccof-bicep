@@ -259,6 +259,13 @@ if ($netCompiled) {
     Assert-True 'a present runner subnet is the same subnet: name and addressPrefix from subnets.runner' ($runnerSubnetsVar -ceq "[if(equals(tryGet(parameters('subnets'), 'runner'), null()), createArray(), createArray(createObject('name', parameters('subnets').runner.name, 'properties', createObject('addressPrefix', parameters('subnets').runner.prefix))))]") $runnerSubnetsVar
     $runnerOut = [string]$netCompiled.outputs.runnerSubnetId.value
     Assert-True 'a present runner subnet gives the same output: its subnet resource id' ($runnerOut -ceq "[if(equals(tryGet(parameters('subnets'), 'runner'), null()), '', resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnets').runner.name))]") $runnerOut
+    # VNets created after 2026-03-31 default subnets to private (no egress): the APIM and Functions
+    # integration subnets set defaultOutboundAccess explicitly, true unless the caller has NAT/firewall egress.
+    Assert-True 'network.bicep defaultOutboundAccess parameter defaults to true' ($netCompiled.parameters['defaultOutboundAccess'].type -eq 'bool' -and $netCompiled.parameters['defaultOutboundAccess'].defaultValue -eq $true)
+    $vnetRes = @($netCompiled.resources | Where-Object { $_.type -eq 'Microsoft.Network/virtualNetworks' })[0]
+    $subnetText = [string]$vnetRes.properties.subnets
+    $setCount = [regex]::Matches($subnetText, [regex]::Escape("'defaultOutboundAccess', parameters('defaultOutboundAccess')")).Count
+    Assert-True 'the APIM and Functions subnets set defaultOutboundAccess explicitly' ($setCount -eq 2) $subnetText
 }
 $null = az bicep build --file (Join-Path $root 'infra' 'prereqs' 'all.bicep') --stdout 2>&1
 Assert-True 'infra/prereqs/all.bicep (the staged path''s caller of network.bicep) still compiles' ($LASTEXITCODE -eq 0)
