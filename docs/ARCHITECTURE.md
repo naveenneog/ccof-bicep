@@ -2,6 +2,12 @@
 
 ## Current integrated network and trust overview
 
+[![Azure-icon architecture overview and network boundaries](diagrams/ccof-architecture-overview.svg)](diagrams/ccof-architecture-overview.svg)
+
+The editable draw.io file has an **Overview** page and a **Detailed network and trust**
+page. Both use [unmodified Microsoft Azure icons](diagrams/icons/azure/ATTRIBUTION.md),
+embedded locally with their source hashes; no remote icon fetch is needed.
+
 ![Claude Code on Foundry: components, tenant and subscription boundaries, private-network wiring, authorization, sync and reporting flows](diagrams/ccof-network-architecture.svg)
 
 [Open full-size SVG](diagrams/ccof-network-architecture.svg) ·
@@ -18,12 +24,20 @@ amber dashed components are optional, not universally deployed.
 
 ### Working flows
 
-1. **Developer authentication.** CLI, VS Code's Claude Code panel and Desktop use the approved
-   `ccof-token` helper and secure MSAL storage/broker. The default combined single-tenant
+1. **Developer authentication.** CLI and VS Code can use an explicitly approved Azure CLI
+   delegated-client route (manual session token, or a small CLI-backed helper), or the
+   original `ccof-token` helper with secure MSAL storage/broker. Azure CLI uses its own
+   OAuth client ID and requires **both** API-scope preauthorization and APIM's allowed-client
+   entry; it does not become the gateway audience or a resolver caller. Entra policy still
+   applies. Manual token sessions do not refresh inside an already-running client.
+   Desktop remains a separately configured, schema-checked supported profile.
+   The default combined single-tenant
    developer/Gateway API registration exposes delegated `access_as_user`, issues v2 tokens and
    has no client secret. WAM/browser PKCE and explicitly approved optional device code obtain
    the **gateway** audience. Strict schema-version-1 `onboarding.json` is configuration only:
    it neither grants entitlement nor meters usage.
+   This APIM design does not implement the separate Claude apps gateway's native `/login`
+   and bootstrap endpoints. See the complete [manual client routes](runbooks/PUBLIC-ACCESS-WORKBOOK.md#13-hand-configurable-developer-sign-in-and-gateway-testing).
 2. **Gateway admission and resolution.** APIM validates tenant, audience, authorized client,
    delegated scope and person, applies a per-person admission cap, and checks `x-ccof-project`
    against membership. On a decision-cache miss/refresh, its system identity calls the separate

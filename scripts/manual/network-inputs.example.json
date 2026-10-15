@@ -1,0 +1,31 @@
+{
+  "_note": "Filled by the customer network owner. Private. Do not assume or invent values.",
+  "networkOwner": "REPLACE-name-or-team",
+  "changeApprovalId": "REPLACE-change-id",
+  "maintenanceWindow": "REPLACE-window",
+  "functionSubnetIds": {
+    "resolver": "REPLACE-subnet-resource-id",
+    "sync": "REPLACE-subnet-resource-id",
+    "reconciler": "REPLACE-subnet-resource-id"
+  },
+  "privateEndpointSubnetId": "REPLACE-subnet-resource-id",
+  "privateEndpointTargets": [
+    "REPLACE-cosmos/storage/resolver/foundry-as-approved"
+  ],
+  "dnsModel": "REPLACE-azure-private-dns|customer-dns|forwarders",
+  "privateDnsZoneIds": {
+    "cosmos": "REPLACE-zone-id",
+    "blob": "REPLACE-zone-id",
+    "sites": null,
+    "foundry": null
+  },
+  "egress": {
+    "nextHop": "REPLACE-firewall-or-none",
+    "allowedFqdnsOrServiceTags": "REPLACE-list"
+  },
+  "apimNetworkMode": "REPLACE-none|standard-v2-outbound-integration|approved-other-mode",
+  "apimSubnetId": "REPLACE-or-not-applicable",
+  "privatePublishingHost": "REPLACE-host-or-agent",
+  "cutoverOrder": "REPLACE-ordered-resource-list",
+  "rollbackOwner": "REPLACE-name"
+}

@@ -4,6 +4,19 @@ Deploy an identity-aware Claude gateway on Microsoft Foundry, with project routi
 per-family quotas, directory synchronization and fixed-price usage reporting.
 This repository contains sanitized source and synthetic examples—not a running service.
 
+## Architecture
+
+[![Azure architecture: Entra trust, APIM, Functions, private registry, Foundry and network boundaries](docs/diagrams/ccof-architecture-overview.svg)](docs/diagrams/ccof-architecture-overview.svg)
+
+[Editable draw.io — overview and detailed network pages](docs/diagrams/ccof-network-architecture.drawio) ·
+[Detailed network SVG](docs/diagrams/ccof-network-architecture.svg) ·
+[Architecture and evidence limits](docs/ARCHITECTURE.md) ·
+[Microsoft Azure icon attribution](docs/diagrams/icons/azure/ATTRIBUTION.md)
+
+Cloud-managed PaaS services are outside the subnet containing their private-endpoint
+NICs. Outbound integration, private ingress, DNS/routing and identity authorization are
+separate controls. Optional reconciliation is not an inference-path dependency.
+
 ## What v0.2.0 contains
 
 - Strict family-policy contracts shared by the resolver, sync and reconciler.
@@ -32,6 +45,9 @@ This repository contains sanitized source and synthetic examples—not a running
    [manual deployment](docs/MANUAL-DEPLOYMENT.md), or the
    [Azure Portal-first workbook](docs/runbooks/AZURE-PORTAL-DEPLOYMENT.md)
    for UI resource creation with only necessary, individually scoped CLI steps.
+   If resources already exist, use the [no-Bicep public-access completion workbook](docs/runbooks/PUBLIC-ACCESS-WORKBOOK.md):
+   manual client sign-in with full plain source (13), complete chargeback/report access (14),
+   separately approved budget-state activation (15), and customer-owned private cutover (16).
 3. Copy `infra\quickstart\customer-form.bicepparam` and replace every placeholder
    with your own approved tenant, subscriptions, identities, groups and backend deployments.
    Never deploy the synthetic examples unchanged.
@@ -44,6 +60,12 @@ permissions. No public test command deploys resources or sends paid Foundry traf
 Conditional Access, consent, tenant policy and private-network reachability remain
 operator prerequisites. Optional network features are distinguished from historical
 mandatory-WAF/private-network diagrams in the architecture page.
+
+[Manual deployment fixes](docs/MANUAL-PORTAL-FIXES.md) explain the region/path,
+identity/role and seed-query fixes and distinguish code defects from permission or
+acceptance prerequisites. The [Portal screenshot inventory](docs/runbooks/images/portal/README.md)
+labels historical forms, navigation references and pending captures. Identifier
+middles are masked; screenshots are not deployment values or live acceptance.
 
 ## Local verification
 

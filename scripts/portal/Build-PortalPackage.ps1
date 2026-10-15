@@ -14,8 +14,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Import-Module (Join-Path $root 'scripts/Core.D2Code.psm1') -DisableNameChecking
 $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
-$rateCard = (Resolve-Path -LiteralPath $RateCardPath).Path
-$contracts = (Resolve-Path -LiteralPath $ContractSchedulePath).Path
+$rateCard = (Resolve-Path -LiteralPath $(if ([IO.Path]::IsPathRooted($RateCardPath)) { $RateCardPath } else { Join-Path $root $RateCardPath })).Path
+$contracts = (Resolve-Path -LiteralPath $(if ([IO.Path]::IsPathRooted($ContractSchedulePath)) { $ContractSchedulePath } else { Join-Path $root $ContractSchedulePath })).Path
 Push-Location $root
 try {
     npm run build

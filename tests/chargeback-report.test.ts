@@ -9,6 +9,15 @@ const groups = [{ projectId: "SYNTHETIC", classification: "STD",
 const card = JSON.parse(readFileSync(new URL("../config/rate-card.json", import.meta.url), "utf8"));
 const ledger = readFileSync(new URL("../analytics/ledger.kql", import.meta.url), "utf8");
 
+test("chargeback build errors identify safe configuration fields without leaking input values", async () => {
+  const { reportingInputDiagnostic } = await import("../analytics/workbooks/chargeback.ts");
+  assert.deepEqual(reportingInputDiagnostic(new Error("location: invalid_format")), { field: "location", detail: "invalid_format" });
+  assert.deepEqual(reportingInputDiagnostic(new SyntaxError('Unexpected token in private input')), { detail: "json_invalid" });
+  assert.deepEqual(reportingInputDiagnostic(Object.assign(new Error("private-path"), { code: "ENOENT" })), { detail: "local_input_file_missing" });
+  assert.deepEqual(reportingInputDiagnostic(new Error("Authorization: Bearer private-value")), {});
+  assert.deepEqual(reportingInputDiagnostic(new Error("location: private value with spaces")), {});
+});
+
 test("chargeback workbook uses exact Graph names with stable IDs, not classification as label", async () => {
   const { buildChargebackWorkbook } = await import("../analytics/workbooks/chargeback.ts");
   const built = buildChargebackWorkbook(workbookAnswers(), card, ledger, groups);

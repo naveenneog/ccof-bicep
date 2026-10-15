@@ -32,6 +32,7 @@ $script:QsDirectory = $PSScriptRoot
 Import-Module (Join-Path $script:RepoRoot 'scripts/Core.D2Code.psm1') -DisableNameChecking
 Import-Module (Join-Path $script:RepoRoot 'scripts/Onboarding.Projects.psm1') -DisableNameChecking
 Import-Module (Join-Path $script:RepoRoot 'scripts/Core.Auth.psm1') -DisableNameChecking
+Import-Module (Join-Path $script:RepoRoot 'scripts/Azure.Response.psm1') -DisableNameChecking
 
 function Invoke-QuickstartSteps {
     <#
@@ -234,7 +235,7 @@ function New-QsWorkbookAnswers {
         workspaceResourceId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.OperationalInsights/workspaces/$($P.names.logAnalyticsWorkspace)"
         gatewayResourceId = $ApimId
         reconcilerResourceId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$($P.names.apps.reconciler.functionApp)"
-        rateCardPath = [IO.Path]::GetFullPath((Join-Path $script:QsDirectory $P.rateCard.path))
+        rateCardPath = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($P.rateCard.path)) { $P.rateCard.path } else { Join-Path $script:QsDirectory $P.rateCard.path }))
         ledgerPath = (Join-Path $script:RepoRoot 'analytics' 'ledger.kql'); outputDirectory = '.env.qs-workbook'
         defaultProjectId = $s.defaultProjectId; maxRows = $s.maxRows; topUsers = $s.topUsers
         maxQueryDays = $s.maxQueryDays; budgetLookbackDays = $s.budgetLookbackDays
@@ -500,14 +501,10 @@ function Get-QsQueryMessages {
     .SYNOPSIS
         The message column of the first table of a query answer. The data-plane API answers
         { tables: [{ columns: [{ name }], rows }] }; the ARM route answers the Kusto v1 shape
-        { Tables: [{ Columns: [{ ColumnName }], Rows }] } (PowerShell property names are case-insensitive).
+        { Tables: [{ Columns: [{ ColumnName }], Rows }] }. Ordered JSON dictionaries preserve case.
     #>
     param($Response)
-    $table = @($Response.tables)[0]
-    if (-not $table) { return }
-    $column = [array]::IndexOf(@($table.columns | ForEach-Object { if ($_.name) { [string]$_.name } else { [string]$_.ColumnName } }), 'message')
-    if ($column -lt 0) { return }
-    foreach ($row in @($table.rows)) { [string]@($row)[$column] }
+    Get-CcofQueryMessages -Response $Response
 }
 
 function Get-QsLogQueryAccess {

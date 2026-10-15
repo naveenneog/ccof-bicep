@@ -67,7 +67,10 @@ function New-CoreAppPackage {
         Stages one app's package (without node_modules) and returns Directory, Digest and Missing
         (files the app needs that are not in this checkout: a package not merged yet).
     #>
-    param([string]$RepositoryRoot, [string]$App, [System.Collections.IDictionary]$Answers, [string]$AnswersDirectory, [string]$StageRoot)
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+          [Parameter(Mandatory)][ValidateSet('resolver','sync','reconciler')][string]$App,
+          [Parameter(Mandatory)][System.Collections.IDictionary]$Answers,
+          [Parameter(Mandatory)][string]$AnswersDirectory, [Parameter(Mandatory)][string]$StageRoot)
     $def = $script:Packages[$App]
     $dir = Join-Path $StageRoot $App
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -78,7 +81,12 @@ function New-CoreAppPackage {
     $copies += @{ from = (Join-Path $RepositoryRoot $def.hostJson); to = 'host.json' }
     $copies += @{ from = (Join-Path $RepositoryRoot 'package-lock.json'); to = 'package-lock.json' }
     foreach ($extra in $def.files) {
-        $from = if ($extra.answer) { $value = $Answers; foreach ($part in $extra.answer.Split('.')) { $value = $value[$part] }; [System.IO.Path]::GetFullPath((Join-Path $AnswersDirectory $value)) } else { Join-Path $RepositoryRoot $extra.repo }
+        $from = if ($extra.answer) {
+            $value = $Answers
+            foreach ($part in $extra.answer.Split('.')) { $value = $value[$part] }
+            if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) { throw "package_source_path_missing: $($extra.answer)" }
+            [System.IO.Path]::GetFullPath($(if ([System.IO.Path]::IsPathRooted($value)) { $value } else { Join-Path $AnswersDirectory $value }))
+        } else { Join-Path $RepositoryRoot $extra.repo }
         $copies += @{ from = $from; to = $extra.to }
     }
     foreach ($c in $copies) {
