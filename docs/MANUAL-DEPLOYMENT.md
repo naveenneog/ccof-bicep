@@ -198,7 +198,7 @@ foreach ($app in @('resolver','sync','reconciler')) {
         --query '{subnet:properties.virtualNetworkSubnetId,identity:identity.type}' --output json
 }
 az network private-endpoint list --subscription $sub -g $rg `
-    --query '[].{name:name,status:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status}' --output table
+    --query '[].{name:name,status:(privateLinkServiceConnections[0] || manualPrivateLinkServiceConnections[0]).privateLinkServiceConnectionState.status}' --output table
 ```
 
 Require Cosmos Disabled/true; each storage Disabled/false; all expected PE connections Approved;

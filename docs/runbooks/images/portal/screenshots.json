@@ -2,6 +2,22 @@
   "version": 1,
   "images": [
     {
+      "file": "01-2-cli-middle-masked.png",
+      "caption": "Step 01.2 check: the operator's effective roles at the lab resource-group scope, including inherited ones.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "1384f0024d0aa253214ca1eb3e7885d4105a63165149942195b8e71e3a4f115f"
+    },
+    {
+      "file": "02-1-cli-middle-masked.png",
+      "caption": "Step 02.1 check: all nine required resource providers show Registered in the lab subscription.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "30753a919f6dac4812422b6bc8a6451c2fa12568b3761b72af4e02407047038a"
+    },
+    {
       "file": "02-2-middle-masked.png",
       "caption": "Historical resource-group creation form",
       "kind": "creation-form",
@@ -82,6 +98,14 @@
       "sha256": "0a6f4ea595bb44f9f4dfeb101e641c6ed7c5ca8d9eb6f0992e29e6fae5179b18"
     },
     {
+      "file": "04-3-cli-middle-masked.png",
+      "caption": "Step 04.3 CLI alternative: workspace resource ID, Workspace ID (customerId) GUID and retention, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "2cc2e3858f12b675fb81066d68a16d6367874ac8f13fee437da4bec4f1f06852"
+    },
+    {
       "file": "04-4-middle-masked.png",
       "caption": "Historical resolver Application Insights form",
       "kind": "creation-form",
@@ -114,6 +138,38 @@
       "sha256": "0742ffe6652772672f81eb367b8c9c2ca297e4d6617801d4331bfb9259c19f17"
     },
     {
+      "file": "05-3-cli-middle-masked.png",
+      "caption": "Step 05.3 CLI alternative: sync and reconciler identity client, principal and resource IDs, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 10,
+      "sha256": "d24674dd434e8f8e79cd86da7f791c201874a91e70e67b3fa503e1fb4e7bce0c"
+    },
+    {
+      "file": "06-1-cli-middle-masked.png",
+      "caption": "Step 06.1 check: combined gateway registration is single-tenant (AzureADMyOrg) and has a service principal.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "56152aac38684f7672090c594b35ed11fd72872f00e15d51fed067cf1888b536"
+    },
+    {
+      "file": "06-2-cli-middle-masked.png",
+      "caption": "Step 06.2 check: gateway Application ID URI and access token version 2.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "8d02165b22a5552261bff48f179868ef783316faa11755863f703d8becbc542e"
+    },
+    {
+      "file": "06-3-cli-middle-masked.png",
+      "caption": "Step 06.3 check: enabled access_as_user scope on the gateway registration.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "e6533a957536017909f52af09da11207d079fde2883a01117ed6f5c7ad6b92dd"
+    },
+    {
       "file": "06-4-middle-masked.png",
       "caption": "Combined app Authentication reference; API exposure and redirects belong on that same gateway/developer registration",
       "kind": "customer-ui-reference",
@@ -122,12 +178,68 @@
       "sha256": "467aeb3824841aabd5d8f1cbe568147c99431be171991b48efed56a1c7a67aad"
     },
     {
+      "file": "06-5-cli-middle-masked.png",
+      "caption": "Step 06.5 check: separate resolver API registration with api:// URI, token version 2, no scopes and no redirects.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "281c02df547b83dc50e8b5e30b3a6b7bd84e8f8c8c5af52cba2ec6fbb444fa4b"
+    },
+    {
+      "file": "06-6-cli-middle-masked.png",
+      "caption": "Step 06.6 check: lab classification group is a security group, not mail-enabled.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "f9bce2db717bcdf69238b2d11a776c87ecadcfe01f7edb7ca12272959c024e35"
+    },
+    {
       "file": "06-7-middle-masked.png",
       "caption": "Group Members page showing one direct user; not entitlement or synchronization proof",
       "kind": "historical-settings",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 8,
       "sha256": "dced06ce615480391fdb992177e21eb1cb1954d9fb526db4fad383c70aa83d03"
+    },
+    {
+      "file": "07-1-cli-middle-masked.png",
+      "caption": "Step 07.1 check on a shared lab Foundry account: deployment list including the Claude deployments. Other models on that shared account are not part of this design.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "5c921582e4561e7562a2ad831396d8f9397bf98bb31a5537b39fdfa7af84b372"
+    },
+    {
+      "file": "07-2-cli-middle-masked.png",
+      "caption": "Step 07.2 CLI alternative: Foundry account ID, custom subdomain and public network access, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "82befe4dd45c77a242acfddc1c272c7a47fe40ffbfe3f40bcff3e8ab5882ee1a"
+    },
+    {
+      "file": "07-3-cli-middle-masked.png",
+      "caption": "Step 07.3 check on the lab private Foundry endpoint: provisioning Succeeded, connection Approved.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "f678701d478b22e28d760669b0d6cd510c105254b5b03b7cf2b59aa1e685acc9"
+    },
+    {
+      "file": "07-4-cli-middle-masked.png",
+      "caption": "Step 07.4 check from the Foundry account side: private endpoint connections Approved.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "c7a979d07a484820f5b658e879cfd0eb9243c52b7ff422b14dad37b27a33db8e"
+    },
+    {
+      "file": "07-5-cli-middle-masked.png",
+      "caption": "Step 07.5 check: Foundry private endpoint zone group with its privatelink.services.ai.azure.com record.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "9ec432e97731538a87db706c76a19bfee34e6c223a2d92a4223cd8b6e16cc261"
     },
     {
       "file": "07-6-middle-masked.png",
@@ -154,6 +266,22 @@
       "sha256": "f7567055da606f66728682eca3db26feda9f66712d6f366acf46f05371b16499"
     },
     {
+      "file": "08-3-cli-middle-masked.png",
+      "caption": "Step 08.3 check: the Cosmos SQL database exists (ARM ID middle-masked).",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "d22077e5ba18db068dda3448ef81a0f8b145c2f38ff41d62f1295fdcd10a63bd"
+    },
+    {
+      "file": "08-4-cli-middle-masked.png",
+      "caption": "Step 08.4 check: the eight containers with their partition key paths.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "a0cc753d1fde25639ea0b12e29fad87a0592b72c8bf73af798193fc13a1c1596"
+    },
+    {
       "file": "09-1-middle-masked.png",
       "caption": "Historical storage creation form",
       "kind": "creation-form",
@@ -176,6 +304,14 @@
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 4,
       "sha256": "4cacb3ef7a7d7c2c885178a09550f454d3785af454623764b0df10ea7ca7f39d"
+    },
+    {
+      "file": "10-1-cli-middle-masked.png",
+      "caption": "Step 10.1 check: resolver Flex app Running, Node 22, functions subnet, scale settings and system-assigned identity.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "daca9d4501b08555ae069158b8d946c9db47f61f6f8d1380fe4407bc85c5d532"
     },
     {
       "file": "10-2-middle-masked.png",
@@ -202,12 +338,108 @@
       "sha256": "fb2a19684734f058dae0b0b2f7c56412bfd623f0f1b25942497e8a70d1a53e1f"
     },
     {
+      "file": "10-4-cli-middle-masked.png",
+      "caption": "Step 10.4 check: resolver ID, default host name and principal ID, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "36b7837d287168e7255225a733a5dffdaa35e9c56c7c701427eb9b1f5b4c64e6"
+    },
+    {
       "file": "11-1-middle-masked.png",
       "caption": "Historical APIM creation form; verify the actual SKU before private outbound integration",
       "kind": "creation-form",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 6,
       "sha256": "b3912cc916a408ca1d94a2db4be17d5ebe86cf2621c7898544e041e7739acedc"
+    },
+    {
+      "file": "11-4-cli-middle-masked.png",
+      "caption": "Step 11.4 CLI alternative: APIM managed-identity client ID read from its service principal, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "dd44eff85ca5acb32d60b4d0f40e6b7cbeee4173057b4e380c1ee49e5382b9a1"
+    },
+    {
+      "file": "12-6-cli-middle-masked.png",
+      "caption": "Step 12.6 private endpoint status listing in the lab: storage, Cosmos and Foundry endpoints Approved. The lab has no resolver inbound endpoint, and DNS resolution from caller networks is not shown.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 8,
+      "sha256": "17bfef7d4c717707a6fa30e617b7e0d5db8acf5bdb7cd9e14727b501c679d06c"
+    },
+    {
+      "file": "13-1-cli-middle-masked.png",
+      "caption": "Step 13.1 check from the operator PowerShell 7 session: reviewed commit, Node and Azure CLI versions. Same commands as Cloud Shell; host was the operator workstation.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "5873f7d482b726ee9d46af58f4d079e1b285a460c220a35d3bed706878e586fa"
+    },
+    {
+      "file": "13-2-cli-middle-masked.png",
+      "caption": "Step 13.2: private form and evidence copied from the templates and confirmed git-ignored by the .env.* rule.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "baa30397cf7056041abfd0f765ea9175c8186bff62e117a49edc7e5e8349e5f5"
+    },
+    {
+      "file": "13-3-cli-middle-masked.png",
+      "caption": "Step 13.3 result: key lines of the filled private lab form, values middle-masked. The editing itself happens in an editor.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 8,
+      "sha256": "4526ce5357c7f8371f9007759dc7a5dc01fc4814665b482e84455750a890cf60"
+    },
+    {
+      "file": "13-4-cli-middle-masked.png",
+      "caption": "Step 13.4: form compiled with az bicep build-params; tenant and subscription confirmed, middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "40a78fdbd87db160d7576be832abc00e15e307b89958b957f67cfd41fea6a581"
+    },
+    {
+      "file": "13-5-cli-middle-masked.png",
+      "caption": "Step 13.5: helpers loaded, Bicep CLI present, functions subnet resolved.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "a3fbc4414d1ef4c96937757e34c1d0d2a168ca5073bd61245055fea7c1eab0f6"
+    },
+    {
+      "file": "13-6-cli-middle-masked.png",
+      "caption": "Step 13.6: evidence filled from read-only Azure reads; no placeholders remain and the form compiles.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "ae1c22c56606b8fd8850118400a08dbb8bb0fea63261bd2e89be7f058621c8d7"
+    },
+    {
+      "file": "14-1-cli-middle-masked.png",
+      "caption": "Step 14.1 dependency restore and npm ls on the reviewed commit.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 1,
+      "sha256": "5a8c7611c0bc31efc6a47d93d530b49a636fe5815c9e16e6ff8550aa5d7a5592"
+    },
+    {
+      "file": "14-2-cli-middle-masked.png",
+      "caption": "Step 14.2: artifacts exported locally (policy, settings, registry, seed, workbook); all nine present and git-ignored. No Azure write.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 8,
+      "sha256": "22651489a83616b80912daa8d638ed82d0236a1a4bcee806c0219f0a65fa3041"
+    },
+    {
+      "file": "14-3-cli-middle-masked.png",
+      "caption": "Step 14.3 review aid: exported artifact list and the registry's admitted families and quota for the lab classification.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "8ad2ffc4f2e4b4947d47f5a6d8682c5c7b647b537121c10c94dbf54a3e8f01d0"
     },
     {
       "file": "15-1-middle-masked.png",
@@ -218,20 +450,36 @@
       "sha256": "d172767a3cfb813cad3ec956198e98269534ce1db4e7f4f950f2a552448b4e51"
     },
     {
+      "file": "15-2-cli-middle-masked.png",
+      "caption": "Step 15.2 read-only access plan for the resolver: Cosmos reader, Storage Blob Data Owner, Monitoring Metrics Publisher. The scope column is truncated by console width.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 3,
+      "sha256": "94a271291cec25319a797381e22acd677f68174f66d58c61b7ca36d29e51e3ec"
+    },
+    {
+      "file": "15-3-cli-middle-masked.png",
+      "caption": "Step 15.3 apply on the lab resolver: all three assignments already existed, receipt verified, nothing else changed.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 13,
+      "sha256": "64d78d19dcfbbe369e6e864ad740d71f344aacfa3599b357d6bb020e2e8c5aee"
+    },
+    {
+      "file": "16-2-cli-middle-masked.png",
+      "caption": "Step 16.2 read-only Graph permission plan for the sync identity: the three application permissions are still to grant. Nothing was granted.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "972531cffbe1faacf54b2765cb7d405593222712b0b5a43f52b7bdfeac041ced"
+    },
+    {
       "file": "17-1-middle-masked.png",
       "caption": "Resolver environment-variable names; values are hidden",
       "kind": "historical-settings",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 4,
       "sha256": "1255b0656e5981842fd936a3341d1ba6417d948df6642bdeaba5f59f072d9538"
-    },
-    {
-      "file": "17-1-sync-middle-masked.png",
-      "caption": "Sync environment-variable names; hidden values do not prove timers are disabled",
-      "kind": "historical-settings",
-      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
-      "maskedRegions": 4,
-      "sha256": "e166694cbeeab4f3a1db198b4e6fdaf57aaaa7c483a813612069cbe85d558249"
     },
     {
       "file": "17-1-reconciler-middle-masked.png",
@@ -242,6 +490,22 @@
       "sha256": "260a240c8d012a3822d4985f07231b5e656d99bb8ae5158ccfa2680d678cbd76"
     },
     {
+      "file": "17-1-sync-middle-masked.png",
+      "caption": "Sync environment-variable names; hidden values do not prove timers are disabled",
+      "kind": "historical-settings",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "e166694cbeeab4f3a1db198b4e6fdaf57aaaa7c483a813612069cbe85d558249"
+    },
+    {
+      "file": "17-2-cli-middle-masked.png",
+      "caption": "Step 17.2 read-only check: every exporter-generated resolver setting matches the live app.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "2a55008a8a68e8dd73db4f03146741b18936eb2ef3773fe20965f5752c588a23"
+    },
+    {
       "file": "17-3-middle-masked.png",
       "caption": "Sync timer listed Disabled; not a successful sync run",
       "kind": "historical-settings",
@@ -250,12 +514,36 @@
       "sha256": "37e053acdc862c7098a24180c3e7f46dd6f0002d299f5d5a5c44ce06055376b2"
     },
     {
+      "file": "17-4-cli-middle-masked.png",
+      "caption": "Step 17.4 read-only check on the lab apps: only identity-based AzureWebJobsStorage__* settings remain; no key-based AzureWebJobsStorage.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "823920d8edd3a4ed4a52053e18d261f946613827972a6cd1cde53e83f2725d47"
+    },
+    {
       "file": "17-5-middle-masked.png",
       "caption": "Resolver requires authentication and returns anonymous 401; caller allow-lists still need verification",
       "kind": "historical-settings",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 6,
       "sha256": "69d706e2180362be400c3569e51e86814bd9c723f766bfe533c92e30df0ede16"
+    },
+    {
+      "file": "18-1-cli-middle-masked.png",
+      "caption": "Step 18.1 local resolver package build, SHA-256 and git-ignore check. No Azure call.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 5,
+      "sha256": "ebf1c009cbd27d80e065859012861ca379983ca2c6425dab1f8517208f08a058"
+    },
+    {
+      "file": "18-2-cli-middle-masked.png",
+      "caption": "Step 18.2 function discovery after publish: resolver lists health and resolve. The upload itself is not re-run in this capture.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "c88854269d5e060bb08660fedfa1cbc9545cec8428d5e12b415d630fa4b74cb7"
     },
     {
       "file": "18-3-middle-masked.png",
@@ -290,6 +578,14 @@
       "sha256": "379ba9bf0514c8f6670ecdcc8bc684f3966d24e929e5c4660625add51056af7a"
     },
     {
+      "file": "19-3-cli-middle-masked.png",
+      "caption": "Step 19.3 check: one Foundry backend with HTTPS /anthropic URL and certificate chain/name validation True.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "9728fc9e859c0abcc1b1a2e5e372da784a6084cf6a3c6b35800653c0eb646f37"
+    },
+    {
       "file": "19-4-middle-masked.png",
       "caption": "API Design navigation: select All operations before the inbound code editor",
       "kind": "customer-ui-reference",
@@ -306,12 +602,44 @@
       "sha256": "63fc141367dd1d408971f16d64f02505fa7434500f4fba122a720383a5354d99"
     },
     {
+      "file": "20-2-cli-middle-masked.png",
+      "caption": "Step 20.2 applied in the lab, then read back: API diagnostics with LLM logs enabled, request and response bodies off, client IP not logged.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "70d3cbe587b0a8409544f4821e7aab21057b7b69931e78ebeff62292474c82eb"
+    },
+    {
+      "file": "20-3-cli-middle-masked.png",
+      "caption": "Step 20.3 applied in the lab, then read back: FunctionAppLogs diagnostic setting on each app. One extra setting was created by a tenant policy.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 6,
+      "sha256": "daddb92b63e2abe9c83d0bb42f5b062d447eccffd9b3765b1f40bcc250fe18c8"
+    },
+    {
       "file": "20-4-gallery-middle-masked.png",
       "caption": "Archival workspace Workbooks gallery navigation; not the current report's content or saved-state proof",
       "kind": "archival-navigation",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 1,
       "sha256": "c9049c75e4b60945a5ae4de431807160ff81d1877aae4eca9bdbd56c39ad66e4"
+    },
+    {
+      "file": "20-6-cli-middle-masked.png",
+      "caption": "Step 20.6 lab check: ApiManagementGatewayLogs and ApiManagementGatewayLlmLog now return rows. The only traffic was anonymous 401 test requests, with no authorized inference. FunctionAppLogs rows had not been ingested yet.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "e7be2345c3f075af064c73d9fd609515b034842f98efe162864d4e7a41740f29"
+    },
+    {
+      "file": "21-1-cli-middle-masked.png",
+      "caption": "Step 21.1 CLI alternative against the lab sync Insights: earlier ccof.seed.result lines with outcome succeeded.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 4,
+      "sha256": "b5c91120283c1c474b689662388d509906a949c6f082008ee1006751d48e66a8"
     },
     {
       "file": "21-4-middle-masked.png",
@@ -322,6 +650,14 @@
       "sha256": "a3a45890488b3ed16a56ebc3501e643e406261eedbf08dc9535487b43f1f63c2"
     },
     {
+      "file": "21-5-cli-middle-masked.png",
+      "caption": "Step 21.5 read-only cleanup check on the lab sync app: payload absent and registrySeed disabled.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 0,
+      "sha256": "4dab9b6febe7a3b319f94f8a8f838446874ba7888ae8a4a63d9eda55ba625ec2"
+    },
+    {
       "file": "21-6-reader-middle-masked.png",
       "caption": "Data Explorer native data-role denial for the operator; this is not evidence that entitlement storage is empty",
       "kind": "customer-ui-reference",
@@ -330,12 +666,28 @@
       "sha256": "3ca368b6f758ec3f84403ca7a6c285a234fd654740cdfa96ac22df42bb0455b1"
     },
     {
+      "file": "22-1-cli-middle-masked.png",
+      "caption": "Step 22.1 client config validation on the lab config; values middle-masked.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 8,
+      "sha256": "e290098a3a29eae8e8f2f85c5ccea594823c09ad38bf1b10dbc876d49781083c"
+    },
+    {
       "file": "22-2-middle-masked.png",
       "caption": "VS Code User settings before gateway configuration; empty array is not a working sign-in",
       "kind": "customer-ui-reference",
       "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
       "maskedRegions": 0,
       "sha256": "5e1cc290e0b1c3750f69a11203a2234ddd5e18057d19c4e41a1538c25969d68e"
+    },
+    {
+      "file": "22-3-cli-middle-masked.png",
+      "caption": "Step 22.3 read-only checks: test developer group membership true; anonymous gateway request 401. Authorized-request evidence is not shown here.",
+      "kind": "command-output",
+      "masking": "opaque middle-only identifier masks; visible prefix/suffix retained; no credential-bearing screenshots selected",
+      "maskedRegions": 2,
+      "sha256": "a2b2df395c69408ccfeb925770a94a7a18c4abdf4a239430acaf1f9cac840936"
     }
   ],
   "boundary": "UI references only; no claim of current deployment acceptance",

@@ -20,6 +20,9 @@ resource creation remains in [the Portal guide](runbooks/AZURE-PORTAL-DEPLOYMENT
 | Conditional seed registration | Document payload/startup/trigger-sync checks and mandatory cleanup; an enabled flag is not a completed seed |
 | Project correlation | Compare the approved project and actual seed ID; a prior success for another project is not acceptance. Do not reseed or overwrite data solely to fix a query |
 | Operator Cosmos read denial | Native data access belongs to the operator separately from Function App identities. Use an approved data reader; do not substitute Azure Contributor, write access or keys |
+| Function App check queries | Azure CLI 2.91 nests site fields under `properties`; Steps 10.1/10.4 queries and the Step 13.6 evidence host-name read accept both shapes, and evidence refuses an empty resolver host name instead of rendering a null resolver URL |
+| Private endpoint status queries | Checks read `manualPrivateLinkServiceConnections` or `privateLinkServiceConnections`, so manual-approval and auto-approved endpoints both report their real status instead of a blank |
+| Telemetry deployment arguments | Step 20.2 wraps member access in `$(...)`; unquoted `name=$obj.prop` arguments sent `System.Collections.Hashtable...` to ARM |
 | Manual client delivery | Full plain CMD/MJS source and approved Azure CLI options are documented. A one-file launcher is not standalone authentication and no native gateway protocol is implied |
 
 ## What these fixes do not do

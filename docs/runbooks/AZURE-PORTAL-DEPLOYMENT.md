@@ -223,8 +223,9 @@ if ($LASTEXITCODE) { throw 'role assignment listing failed' }
 | Expected roles | Contributor plus an RBAC-granting role where you grant (modules 07, 15, 20) | Step 01.1 |
 
 **Screenshot:**
-![Step 01.2 - View my access](./images/portal/01-2-view-my-access.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 01.2 check: the operator's effective roles at the lab resource-group scope, including inherited ones.](./images/portal/01-2-cli-middle-masked.png)
+
+*Reference only: Step 01.2 check: the operator's effective roles at the lab resource-group scope, including inherited ones. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** read-only.
 
@@ -278,8 +279,9 @@ each provider below > **Register**.
 | Subscription | Target subscription | form `names.subscriptionId` |
 
 **Screenshot:**
-![Step 02.1 - Register resource providers](./images/portal/02-1-register-providers.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 02.1 check: all nine required resource providers show Registered in the lab subscription.](./images/portal/02-1-cli-middle-masked.png)
+
+*Reference only: Step 02.1 check: all nine required resource providers show Registered in the lab subscription. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:**
 
@@ -767,8 +769,9 @@ JSON view). **Workspace ID** (customer ID GUID) and **Resource ID** are differen
 | Workspace ID | GUID | evidence `workspace.customerId` |
 
 **Screenshot:**
-![Step 04.3 - Workspace properties](./images/portal/04-3-workspace-properties.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 04.3 CLI alternative: workspace resource ID, Workspace ID (customerId) GUID and retention, middle-masked.](./images/portal/04-3-cli-middle-masked.png)
+
+*Reference only: Step 04.3 CLI alternative: workspace resource ID, Workspace ID (customerId) GUID and retention, middle-masked. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** reads the IDs and saves them in the private evidence file.
 
@@ -959,8 +962,9 @@ Settings > **Properties** (Resource ID).
 | Resource ID | `/subscriptions/.../userAssignedIdentities/<name>` | Used in Step 10.3 |
 
 **Screenshot:**
-![Step 05.3 - Identity IDs](./images/portal/05-3-identity-ids.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 05.3 CLI alternative: sync and reconciler identity client, principal and resource IDs, middle-masked.](./images/portal/05-3-cli-middle-masked.png)
+
+*Reference only: Step 05.3 CLI alternative: sync and reconciler identity client, principal and resource IDs, middle-masked. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** reads both identities into the private evidence file.
 
@@ -1004,8 +1008,9 @@ After each registration, write its Application (client) ID into the private form
 | Application (client) ID (after Register) | Copy | form `registrations.gatewayApi.appId` and `registrations.developerSignIn.appId` (same value) |
 
 **Screenshot:**
-![Step 06.1 - New app registration](./images/portal/06-1-new-app-registration.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 06.1 check: combined gateway registration is single-tenant (AzureADMyOrg) and has a service principal.](./images/portal/06-1-cli-middle-masked.png)
+
+*Reference only: Step 06.1 check: combined gateway registration is single-tenant (AzureADMyOrg) and has a service principal. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:**
 
@@ -1041,8 +1046,9 @@ then **Manifest** > `api.requestedAccessTokenVersion` > Save.
 | `api.requestedAccessTokenVersion` | `2` | form `registrations.gatewayApi.accessTokenVersion` |
 
 **Screenshot:**
-![Step 06.2 - Application ID URI](./images/portal/06-2-application-id-uri.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 06.2 check: gateway Application ID URI and access token version 2.](./images/portal/06-2-cli-middle-masked.png)
+
+*Reference only: Step 06.2 check: gateway Application ID URI and access token version 2. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:**
 
@@ -1073,8 +1079,9 @@ if ($LASTEXITCODE) { throw 'gateway registration not found' }
 | State | Enabled | This guide |
 
 **Screenshot:**
-![Step 06.3 - Add a scope](./images/portal/06-3-add-scope.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 06.3 check: enabled access_as_user scope on the gateway registration.](./images/portal/06-3-cli-middle-masked.png)
+
+*Reference only: Step 06.3 check: enabled access_as_user scope on the gateway registration. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** none. The repository has no reviewed Graph body for a delegated scope
 (a new scope needs a generated ID and consent wording); add it in the UI.
@@ -1140,8 +1147,9 @@ URI or secret.
 | Application (client) ID | Copy; must differ from Step 06.1 | form `registrations.resolverApi.appId` |
 
 **Screenshot:**
-![Step 06.5 - Resolver API registration](./images/portal/06-5-resolver-api-registration.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 06.5 check: separate resolver API registration with api:// URI, token version 2, no scopes and no redirects.](./images/portal/06-5-cli-middle-masked.png)
+
+*Reference only: Step 06.5 check: separate resolver API registration with api:// URI, token version 2, no scopes and no redirects. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** the repository's registration helper (creates once, sets the URI and token
 version, creates the service principal, verifies by reading back).
@@ -1185,8 +1193,9 @@ same registered `backendId`; different projects can use different backends.
 Group display names are labels, not IDs or authorization.
 
 **Screenshot:**
-![Step 06.6 - New security group](./images/portal/06-6-new-security-group.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 06.6 check: lab classification group is a security group, not mail-enabled.](./images/portal/06-6-cli-middle-masked.png)
+
+*Reference only: Step 06.6 check: lab classification group is a security group, not mail-enabled. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** one group per run.
 
@@ -1269,8 +1278,9 @@ A model catalog name is not necessarily a deployment ID. Check subscription/mode
 the gateway cannot manufacture Foundry capacity.
 
 **Screenshot:**
-![Step 07.1 - Deploy model](./images/portal/07-1-deploy-model.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 07.1 check on a shared lab Foundry account: deployment list including the Claude deployments. Other models on that shared account are not part of this design.](./images/portal/07-1-cli-middle-masked.png)
+
+*Reference only: Step 07.1 check on a shared lab Foundry account: deployment list including the Claude deployments. Other models on that shared account are not part of this design. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** none. Model name, version, format and SKU of a Claude deployment are
 not recorded in this repository; deploy in the Foundry UI.
@@ -1297,8 +1307,9 @@ Keys and Endpoint / Endpoints (custom subdomain endpoint; do not copy keys).
 | Backend ID | Registry backend identifier | form `backends[].id` |
 
 **Screenshot:**
-![Step 07.2 - Foundry account overview](./images/portal/07-2-foundry-account.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 07.2 CLI alternative: Foundry account ID, custom subdomain and public network access, middle-masked.](./images/portal/07-2-cli-middle-masked.png)
+
+*Reference only: Step 07.2 CLI alternative: Foundry account ID, custom subdomain and public network access, middle-masked. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** read-only.
 
@@ -1326,8 +1337,9 @@ Network > DNS > Review + create.
 | Private DNS integration | Offered Foundry zone configuration (Step 07.5); not the Cosmos zone | [network guide](../NETWORK.md) |
 
 **Screenshot:**
-![Step 07.3 - Foundry private endpoint](./images/portal/07-3-foundry-private-endpoint.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 07.3 check on the lab private Foundry endpoint: provisioning Succeeded, connection Approved.](./images/portal/07-3-cli-middle-masked.png)
+
+*Reference only: Step 07.3 check on the lab private Foundry endpoint: provisioning Succeeded, connection Approved. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** from [manual deployment](../MANUAL-DEPLOYMENT.md); one backend per run.
 
@@ -1351,7 +1363,7 @@ if ($LASTEXITCODE) { throw 'Foundry private endpoint creation failed' }
 # EDIT: the reviewed hub PE name.
 $foundryPe = '<your-foundry-pe-name>'
 az network private-endpoint show --subscription $sub -g $rg -n $foundryPe `
-    --query '{state:provisioningState,status:manualPrivateLinkServiceConnections[0].privateLinkServiceConnectionState.status}' -o json
+    --query '{state:provisioningState,status:(manualPrivateLinkServiceConnections[0] || privateLinkServiceConnections[0]).privateLinkServiceConnectionState.status}' -o json
 if ($LASTEXITCODE) { throw 'private endpoint not found' }
 ```
 
@@ -1366,8 +1378,9 @@ Pending connection > **Approve** > Description > Yes.
 | Description | `Reviewed gateway PE` | Backend owner |
 
 **Screenshot:**
-![Step 07.4 - Approve private endpoint connection](./images/portal/07-4-approve-pe-connection.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 07.4 check from the Foundry account side: private endpoint connections Approved.](./images/portal/07-4-cli-middle-masked.png)
+
+*Reference only: Step 07.4 check from the Foundry account side: private endpoint connections Approved. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** backend owner; approve the **target-side connection ID**, not the PE ID.
 
@@ -1407,8 +1420,9 @@ work from APIM's outbound network.
 | Zone owner | Central DNS team zones where they exist | Network team |
 
 **Screenshot:**
-![Step 07.5 - Foundry DNS configuration](./images/portal/07-5-foundry-dns.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 07.5 check: Foundry private endpoint zone group with its privatelink.services.ai.azure.com record.](./images/portal/07-5-cli-middle-masked.png)
+
+*Reference only: Step 07.5 check: Foundry private endpoint zone group with its privatelink.services.ai.azure.com record. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** for a simple new hub where VNet/PE/zones all live in this RG, the repository's
 DNS module creates/links all three zones and one zone group (NxDomainRedirect fallback). For
@@ -1578,8 +1592,9 @@ variables). It does not enable public access or keys; item seeding remains insid
 Function App.
 
 **Screenshot:**
-![Step 08.3 - New database](./images/portal/08-3-new-database.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 08.3 check: the Cosmos SQL database exists (ARM ID middle-masked).](./images/portal/08-3-cli-middle-masked.png)
+
+*Reference only: Step 08.3 check: the Cosmos SQL database exists (ARM ID middle-masked). Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:**
 
@@ -1615,8 +1630,9 @@ Partition keys are case-sensitive and cannot be changed in place.
 | backends | `/backendId` | same |
 
 **Screenshot:**
-![Step 08.4 - New container](./images/portal/08-4-new-container.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 08.4 check: the eight containers with their partition key paths.](./images/portal/08-4-cli-middle-masked.png)
+
+*Reference only: Step 08.4 check: the eight containers with their partition key paths. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** the management-plane fallback; container names and keys come from the
 shared module, not retyped.
@@ -1816,8 +1832,9 @@ result and explicitly align it with this repository (Step 10.2):
 | reconciler | Attach approved reconciler UAMI; host settings select its client ID; deployment auth UserAssignedIdentity using its resource ID | LAW diagnostics, module 20 |
 
 **Screenshot:**
-![Step 10.1 - Create Flex Consumption app](./images/portal/10-1-create-flex-function-app.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 10.1 check: resolver Flex app Running, Node 22, functions subnet, scale settings and system-assigned identity.](./images/portal/10-1-cli-middle-masked.png)
+
+*Reference only: Step 10.1 check: resolver Flex app Running, Node 22, functions subnet, scale settings and system-assigned identity. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** deploys the repository's per-app module (plan FC1, Node 22, HTTPS only,
 FTPS off, VNet integration, identity-based deployment storage). It also re-applies the same
@@ -1852,7 +1869,7 @@ if ($LASTEXITCODE) { throw "Function App deployment failed or timed out: $app; i
 # EDIT: which app to check.
 $app = 'resolver'
 az functionapp show --subscription $sub -g $rg -n $p.names.apps[$app].functionApp `
-    --query '{state:state,subnet:virtualNetworkSubnetId,runtime:functionAppConfig.runtime,scale:functionAppConfig.scaleAndConcurrency,identity:identity.type}' -o json
+    --query '{state:properties.state || state,subnet:properties.virtualNetworkSubnetId || virtualNetworkSubnetId,runtime:properties.functionAppConfig.runtime || functionAppConfig.runtime,scale:properties.functionAppConfig.scaleAndConcurrency || functionAppConfig.scaleAndConcurrency,identity:identity.type}' -o json
 if ($LASTEXITCODE) { throw "Function App not found: $app" }
 ```
 
@@ -1958,8 +1975,9 @@ Identity > System assigned > Object (principal) ID (resolver).
 | Resolver default domain | Actual default hostname (may include a unique suffix) | evidence `apps.resolver.defaultHostName` |
 
 **Screenshot:**
-![Step 10.4 - Function App overview](./images/portal/10-4-function-app-overview.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 10.4 check: resolver ID, default host name and principal ID, middle-masked.](./images/portal/10-4-cli-middle-masked.png)
+
+*Reference only: Step 10.4 check: resolver ID, default host name and principal ID, middle-masked. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** Step 13.6 fills every app's evidence from Azure (read-only).
 
@@ -1971,7 +1989,7 @@ complete module 12 before disabling its public access. Read-only:
 
 ```powershell
 az functionapp show --subscription $sub -g $rg -n $p.names.apps.resolver.functionApp `
-    --query '{id:id,host:defaultHostName,principalId:identity.principalId}' -o json
+    --query '{id:id,host:properties.defaultHostName || defaultHostName,principalId:identity.principalId}' -o json
 if ($LASTEXITCODE) { throw 'resolver not found' }
 ```
 
@@ -2082,8 +2100,9 @@ identities/application-type filter > locate that object ID > record its **Applic
 | Gateway URL | `https://<apim>.azure-api.net` (or custom) | evidence `apim.gatewayUrl` |
 
 **Screenshot:**
-![Step 11.4 - APIM identity IDs](./images/portal/11-4-apim-identity-ids.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 11.4 CLI alternative: APIM managed-identity client ID read from its service principal, middle-masked.](./images/portal/11-4-cli-middle-masked.png)
+
+*Reference only: Step 11.4 CLI alternative: APIM managed-identity client ID read from its service principal, middle-masked. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** if the UI cannot find it, this read-only CLI lookup is sufficient
 (Step 13.6 also fills the other APIM evidence):
@@ -2289,8 +2308,9 @@ Functions' network and the operator workstation, as the network team arranges.
 | Expected | Approved private endpoint IPs | Steps 07.5, 08.2, 09.2, 12.2 |
 
 **Screenshot:**
-![Step 12.6 - Private DNS resolution](./images/portal/12-6-private-dns-resolution.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 12.6 private endpoint status listing in the lab: storage, Cosmos and Foundry endpoints Approved. The lab has no resolver inbound endpoint, and DNS resolution from caller networks is not shown.](./images/portal/12-6-cli-middle-masked.png)
+
+*Reference only: Step 12.6 private endpoint status listing in the lab: storage, Cosmos and Foundry endpoints Approved. The lab has no resolver inbound endpoint, and DNS resolution from caller networks is not shown. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** none in `az`; DNS and reachability must be tested from the caller networks
 (`Resolve-DnsName` on a Windows private runner or `nslookup` in network-isolated Cloud Shell).
@@ -2302,7 +2322,7 @@ their approved Graph/Monitor egress. Read-only (lists every PE and its connectio
 
 ```powershell
 az network private-endpoint list --subscription $sub -g $rg `
-    --query '[].{name:name,status:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status}' -o table
+    --query '[].{name:name,status:(privateLinkServiceConnections[0] || manualPrivateLinkServiceConnections[0]).privateLinkServiceConnectionState.status}' -o table
 if ($LASTEXITCODE) { throw 'private endpoint listing failed' }
 ```
 
@@ -2331,8 +2351,9 @@ workstation) > repository root.
 | Repository ref | Reviewed commit or tag containing this guide | Platform reviewer |
 
 **Screenshot:**
-![Step 13.1 - Cloud Shell PowerShell](./images/portal/13-1-cloud-shell-powershell.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.1 check from the operator PowerShell 7 session: reviewed commit, Node and Azure CLI versions. Same commands as Cloud Shell; host was the operator workstation.](./images/portal/13-1-cli-middle-masked.png)
+
+*Reference only: Step 13.1 check from the operator PowerShell 7 session: reviewed commit, Node and Azure CLI versions. Same commands as Cloud Shell; host was the operator workstation. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2371,8 +2392,9 @@ if ($LASTEXITCODE) { throw 'not a repository checkout' }
 | Private evidence | `./.env.portal-evidence.json` | Copy of `scripts/portal/evidence.example.json` |
 
 **Screenshot:**
-![Step 13.2 - Copy private files](./images/portal/13-2-copy-private-files.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.2: private form and evidence copied from the templates and confirmed git-ignored by the .env.* rule.](./images/portal/13-2-cli-middle-masked.png)
+
+*Reference only: Step 13.2: private form and evidence copied from the templates and confirmed git-ignored by the .env.* rule. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2415,8 +2437,9 @@ Set `runner.enabled=false`, `sync.mode='application-permission'`,
 network IDs, real resource names, exact models and explicit classification/backend entries.
 
 **Screenshot:**
-![Step 13.3 - Edit private form](./images/portal/13-3-edit-private-form.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.3 result: key lines of the filled private lab form, values middle-masked. The editing itself happens in an editor.](./images/portal/13-3-cli-middle-masked.png)
+
+*Reference only: Step 13.3 result: key lines of the filled private lab form, values middle-masked. The editing itself happens in an editor. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:** none beyond opening the editor; values are typed by the operator.
 
@@ -2438,8 +2461,9 @@ if ($LASTEXITCODE) { throw 'editor did not open; use the Cloud Shell editor butt
 | `$sub`, `$rg` | `names.subscriptionId`, `names.resourceGroup` | Private form |
 
 **Screenshot:**
-![Step 13.4 - Load variables](./images/portal/13-4-load-variables.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.4: form compiled with az bicep build-params; tenant and subscription confirmed, middle-masked.](./images/portal/13-4-cli-middle-masked.png)
+
+*Reference only: Step 13.4: form compiled with az bicep build-params; tenant and subscription confirmed, middle-masked. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2482,8 +2506,9 @@ if ($LASTEXITCODE) { throw 'not signed in' }
 | `Save-CcofEvidence` | Writes `$e` back to the private evidence file | This guide |
 
 **Screenshot:**
-![Step 13.5 - Load CLI helpers](./images/portal/13-5-load-cli-helpers.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.5: helpers loaded, Bicep CLI present, functions subnet resolved.](./images/portal/13-5-cli-middle-masked.png)
+
+*Reference only: Step 13.5: helpers loaded, Bicep CLI present, functions subnet resolved. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2557,8 +2582,9 @@ Leave reconciler `appInsightsId` empty for the baseline configuration.
 Cosmos evidence URI uses `https://<account>.documents.azure.com:443/`.
 
 **Screenshot:**
-![Step 13.6 - Fill evidence](./images/portal/13-6-fill-evidence.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 13.6: evidence filled from read-only Azure reads; no placeholders remain and the form compiles.](./images/portal/13-6-cli-middle-masked.png)
+
+*Reference only: Step 13.6: evidence filled from read-only Azure reads; no placeholders remain and the form compiles. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:** read-only; fills every value from the existing resources and saves the
 private file (the connection strings stay in that private file only).
@@ -2592,7 +2618,8 @@ foreach ($app in 'resolver', 'sync', 'reconciler') {
     } else { $e.apps[$app].appInsightsId = '' }
     if ($app -eq 'resolver') {
         $e.apps[$app].principalId = $site.identity.principalId; $e.apps[$app].clientId = ''
-        $e.apps[$app].defaultHostName = $site.defaultHostName
+        $e.apps[$app].defaultHostName = if ($site.properties.defaultHostName) { $site.properties.defaultHostName } else { $site.defaultHostName }
+        if (-not $e.apps[$app].defaultHostName) { throw 'resolver default host name could not be read' }
     } else {
         $mi = az identity show --subscription $sub -g $rg -n $p.names.identities[$app] -o json | ConvertFrom-Json
         if ($LASTEXITCODE) { throw "identity not found: $app" }
@@ -2626,8 +2653,9 @@ state/resume dispatcher, Azure discovery, seed execution or code publication.
 | When | First checkout or lockfile change | This guide |
 
 **Screenshot:**
-![Step 14.1 - npm ci](./images/portal/14-1-npm-ci.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 14.1 dependency restore and npm ls on the reviewed commit.](./images/portal/14-1-cli-middle-masked.png)
+
+*Reference only: Step 14.1 dependency restore and npm ls on the reviewed commit. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2655,8 +2683,9 @@ if ($LASTEXITCODE) { throw 'dependency tree incomplete' }
 | `-OutputDirectory` | `$artifacts` (`./.env.portal-artifacts`, git-ignored) | Step 13.4 |
 
 **Screenshot:**
-![Step 14.2 - Export artifacts](./images/portal/14-2-export-artifacts.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 14.2: artifacts exported locally (policy, settings, registry, seed, workbook); all nine present and git-ignored. No Azure write.](./images/portal/14-2-cli-middle-masked.png)
+
+*Reference only: Step 14.2: artifacts exported locally (policy, settings, registry, seed, workbook); all nine present and git-ignored. No Azure write. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2691,8 +2720,9 @@ if ($LASTEXITCODE) { throw 'artifact directory is not git-ignored' }
 | `chargeback.workbook.json` | LAW > Workbooks > New > Advanced Editor |
 
 **Screenshot:**
-![Step 14.3 - Review artifacts](./images/portal/14-3-review-artifacts.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 14.3 review aid: exported artifact list and the registry's admitted families and quota for the lab classification.](./images/portal/14-3-cli-middle-masked.png)
+
+*Reference only: Step 14.3 review aid: exported artifact list and the registry's admitted families and quota for the lab classification. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:** none; this is a human review of local files.
 
@@ -2763,8 +2793,9 @@ if ($LASTEXITCODE) { throw "assignment listing failed: $app" }
 | `-App` | `resolver`, then `sync`, then `reconciler` | This guide |
 
 **Screenshot:**
-![Step 15.2 - Access plan](./images/portal/15-2-access-plan.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 15.2 read-only access plan for the resolver: Cosmos reader, Storage Blob Data Owner, Monitoring Metrics Publisher. The scope column is truncated by console width.](./images/portal/15-2-cli-middle-masked.png)
+
+*Reference only: Step 15.2 read-only access plan for the resolver: Cosmos reader, Storage Blob Data Owner, Monitoring Metrics Publisher. The scope column is truncated by console width. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2788,8 +2819,9 @@ and no Owner/Contributor/Data Contributor.
 | `-Apply` | Present | Approval |
 
 **Screenshot:**
-![Step 15.3 - Access apply receipt](./images/portal/15-3-access-apply-receipt.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 15.3 apply on the lab resolver: all three assignments already existed, receipt verified, nothing else changed.](./images/portal/15-3-cli-middle-masked.png)
+
+*Reference only: Step 15.3 apply on the lab resolver: all three assignments already existed, receipt verified, nothing else changed. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2862,8 +2894,9 @@ Then sign out and back in (Cloud Shell: `az login`) so the token carries the rol
 | `-SyncPrincipalId` | Sync UAMI principal/object ID | evidence `apps.sync.principalId` |
 
 **Screenshot:**
-![Step 16.2 - Graph permission plan](./images/portal/16-2-graph-permission-plan.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 16.2 read-only Graph permission plan for the sync identity: the three application permissions are still to grant. Nothing was granted.](./images/portal/16-2-cli-middle-masked.png)
+
+*Reference only: Step 16.2 read-only Graph permission plan for the sync identity: the three application permissions are still to grant. Nothing was granted. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -2966,8 +2999,9 @@ generated resolver/sync/reconciler parameters. Reconciler workspace setting is
 the LAW **Workspace ID GUID**, not an ARM resource ID.
 
 **Screenshot:**
-![Step 17.2 - Merge generated settings](./images/portal/17-2-merge-generated-settings.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 17.2 read-only check: every exporter-generated resolver setting matches the live app.](./images/portal/17-2-cli-middle-masked.png)
+
+*Reference only: Step 17.2 read-only check: every exporter-generated resolver setting matches the live app. Lab command output from one Cloud Shell-equivalent session with a lab private form; not current deployment acceptance.*
 
 **CLI alternative:** one app per run; adds/updates the generated names only.
 
@@ -3046,8 +3080,9 @@ if present) > **Delete** > Apply. Only after Step 17.2 saved the identity-based 
 | Setting to delete | `AzureWebJobsStorage` (not the `AzureWebJobsStorage__*` settings) | This guide |
 
 **Screenshot:**
-![Step 17.4 - Remove key-based storage setting](./images/portal/17-4-remove-key-based-storage.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 17.4 read-only check on the lab apps: only identity-based AzureWebJobsStorage__* settings remain; no key-based AzureWebJobsStorage.](./images/portal/17-4-cli-middle-masked.png)
+
+*Reference only: Step 17.4 read-only check on the lab apps: only identity-based AzureWebJobsStorage__* settings remain; no key-based AzureWebJobsStorage. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -3147,8 +3182,9 @@ Keep rate-card inputs consistent with the workbook artifact. Do not publish unre
 prices or mistake list-price reporting for negotiated Azure billing.
 
 **Screenshot:**
-![Step 18.1 - Build package](./images/portal/18-1-build-package.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 18.1 local resolver package build, SHA-256 and git-ignore check. No Azure call.](./images/portal/18-1-cli-middle-masked.png)
+
+*Reference only: Step 18.1 local resolver package build, SHA-256 and git-ignore check. No Azure call. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -3180,8 +3216,9 @@ to Function App** > select the **existing intended app** > confirm code overwrit
 | Package | `$artifacts/<app>.zip` / `packages/<app>` | Step 18.1 |
 
 **Screenshot:**
-![Step 18.2 - Deploy to Function App](./images/portal/18-2-deploy-to-function-app.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 18.2 function discovery after publish: resolver lists health and resolve. The upload itself is not re-run in this capture.](./images/portal/18-2-cli-middle-masked.png)
+
+*Reference only: Step 18.2 function discovery after publish: resolver lists health and resolve. The upload itself is not re-run in this capture. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** if the extension/build path is unsuitable, use this single upload from
 Cloud Shell or the approved workstation (a private-only app needs the approved private path):
@@ -3316,8 +3353,9 @@ Do not add a secret for same-tenant MI.
 | Credentials | None | This guide |
 
 **Screenshot:**
-![Step 19.3 - Create backend](./images/portal/19-3-create-backend.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 19.3 check: one Foundry backend with HTTPS /anthropic URL and certificate chain/name validation True.](./images/portal/19-3-cli-middle-masked.png)
+
+*Reference only: Step 19.3 check: one Foundry backend with HTTPS /anthropic URL and certificate chain/name validation True. Lab output of this step's read-only check, not the Portal blade; not current deployment acceptance. Portal blade capture pending.*
 
 **CLI alternative:** the backend body of `apim-api.bicep` (the `az apim backend` command has no
 TLS validation flags).
@@ -3445,8 +3483,9 @@ if ($LASTEXITCODE) { throw 'diagnostic setting listing failed' }
 | Large language model logs | On where the UI offers it (no prompt/response bodies) | same |
 
 **Screenshot:**
-![Step 20.2 - API diagnostics](./images/portal/20-2-api-diagnostics.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 20.2 applied in the lab, then read back: API diagnostics with LLM logs enabled, request and response bodies off, client IP not logged.](./images/portal/20-2-cli-middle-masked.png)
+
+*Reference only: Step 20.2 applied in the lab, then read back: API diagnostics with LLM logs enabled, request and response bodies off, client IP not logged. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** if the UI does not expose APIM's LLM API diagnostic setting, deploy only the
 reviewed telemetry child-resource module; it does not create the core infrastructure (it also
@@ -3458,8 +3497,8 @@ re-asserts Step 20.1):
 az deployment group create --subscription $p.apim.subscriptionId -g $p.apim.resourceGroup `
     --name "$($p.names.deploymentPrefix)-portal-telemetry" `
     --template-file ./infra/poc/phase4-apim-telemetry.bicep `
-    --parameters workspaceResourceId=$e.workspace.id apimServiceName=$p.apim.name `
-    apiName=$p.apim.apiId location=$p.location enableAlerts=false -o none
+    --parameters workspaceResourceId=$($e.workspace.id) apimServiceName=$($p.apim.name) `
+    apiName=$($p.apim.apiId) location=$($p.location) enableAlerts=false -o none
 if ($LASTEXITCODE) { throw 'telemetry child configuration failed' }
 ```
 
@@ -3483,8 +3522,9 @@ Save. Resolver/sync also use their Insights resources.
 | Destination | Same LAW, resource-specific | evidence `workspace.id` |
 
 **Screenshot:**
-![Step 20.3 - Function App diagnostic setting](./images/portal/20-3-function-diagnostic-setting.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 20.3 applied in the lab, then read back: FunctionAppLogs diagnostic setting on each app. One extra setting was created by a tenant policy.](./images/portal/20-3-cli-middle-masked.png)
+
+*Reference only: Step 20.3 applied in the lab, then read back: FunctionAppLogs diagnostic setting on each app. One extra setting was created by a tenant policy. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -3607,8 +3647,9 @@ if ($LASTEXITCODE) { throw 'assignment listing failed' }
 | Tables | `ApiManagementGatewayLogs`, `ApiManagementGatewayLlmLog`, `FunctionAppLogs` | Steps 20.1-20.3 |
 
 **Screenshot:**
-![Step 20.6 - Log tables](./images/portal/20-6-log-tables.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 20.6 lab check: ApiManagementGatewayLogs and ApiManagementGatewayLlmLog now return rows. The only traffic was anonymous 401 test requests, with no authorized inference. FunctionAppLogs rows had not been ingested yet.](./images/portal/20-6-cli-middle-masked.png)
+
+*Reference only: Step 20.6 lab check: ApiManagementGatewayLogs and ApiManagementGatewayLlmLog now return rows. The only traffic was anonymous 401 test requests, with no authorized inference. FunctionAppLogs rows had not been ingested yet. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** read-only, as below.
 
@@ -3653,8 +3694,9 @@ After a Quickstart run, first run it **without** the seed-ID line and with a lon
 | Seed ID | Correlation ID | `$artifacts/seed-id.txt` |
 
 **Screenshot:**
-![Step 21.1 - Seed result query](./images/portal/21-1-seed-result-query.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 21.1 CLI alternative against the lab sync Insights: earlier ccof.seed.result lines with outcome succeeded.](./images/portal/21-1-cli-middle-masked.png)
+
+*Reference only: Step 21.1 CLI alternative against the lab sync Insights: earlier ccof.seed.result lines with outcome succeeded. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** the same query through ARM (works in Cloud Shell, read access on the component).
 
@@ -3797,8 +3839,9 @@ is relied upon.
 | `CCOF_SEED_DOCUMENTS` | Deleted | This guide |
 
 **Screenshot:**
-![Step 21.5 - Seed cleanup](./images/portal/21-5-seed-cleanup.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 21.5 read-only cleanup check on the lab sync app: payload absent and registrySeed disabled.](./images/portal/21-5-cli-middle-masked.png)
+
+*Reference only: Step 21.5 read-only cleanup check on the lab sync app: payload absent and registrySeed disabled. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -3911,8 +3954,9 @@ the private file before handing it to a developer.
 | Models | Exact admitted aliases | form `client.models`, `groups[].familyPolicy` |
 
 **Screenshot:**
-![Step 22.1 - Validate client config](./images/portal/22-1-validate-client-config.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 22.1 client config validation on the lab config; values middle-masked.](./images/portal/22-1-cli-middle-masked.png)
+
+*Reference only: Step 22.1 client config validation on the lab config; values middle-masked. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:**
 
@@ -3965,8 +4009,9 @@ Verify silent sign-in refresh and membership-removal behavior separately.
 Test requests can incur Foundry charges; get approval before traffic.
 
 **Screenshot:**
-![Step 22.3 - Acceptance evidence](./images/portal/22-3-acceptance-evidence.svg)
-<!-- screenshot pending: capture from a lab tenant, redact IDs -->
+![Step 22.3 read-only checks: test developer group membership true; anonymous gateway request 401. Authorized-request evidence is not shown here.](./images/portal/22-3-cli-middle-masked.png)
+
+*Reference only: Step 22.3 read-only checks: test developer group membership true; anonymous gateway request 401. Authorized-request evidence is not shown here. Lab command output; not current deployment acceptance.*
 
 **CLI alternative:** none; acceptance is run by the test developer through the client, not by `az`.
 
