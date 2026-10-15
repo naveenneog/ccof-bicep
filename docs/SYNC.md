@@ -194,8 +194,10 @@ the groups on a workstation with their own delegated sign-in, and a runner insid
 the snapshot with the same plan, lease and removal limits as the timer. No interactive sign-in
 happens inside the VNet, and no credential travels.
 
-**1. Snapshot, on the workstation** (the Azure CLI signed in to the groups' tenant; reading group
-members needs a role such as Global Reader):
+**1. Snapshot, on the workstation** (the Azure CLI signed in to the groups' tenant). No privileged
+directory role is needed: with the default user permissions, a member user can read groups and their
+members. Only where an administrator restricted the default user permissions, or for groups with
+hidden membership, does the person need to own the groups or hold a directory reader role:
 
 ```powershell
 # groups.json: {"groupIds": ["<group object id>", ...]}, the registered classification groups

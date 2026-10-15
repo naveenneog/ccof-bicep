@@ -15,8 +15,10 @@
     3. resolves each permission's app role id from the Microsoft Graph service principal by value;
     4. skips an assignment that exists, posts the others with a body file (no quotes in az arguments);
     5. reads the assignments back (Step 7c) and prints the rollback (DELETE) for each.
-    Until it runs, the sync reports that it cannot read the groups; or the administrator uses
-    sync.mode delegated-snapshot (docs/SYNC.md), which needs no application permission.
+    Until it runs, the sync reports that it cannot read the groups; or, with no application permission
+    and no runner VM, keep sync.mode application-permission and the timer disabled, and load the
+    members from a delegated snapshot through the sync Function App (docs/runbooks/CLOUD-SHELL-QUICKSTART.md
+    section 5; docs/SYNC.md, Apply through the sync Function App without a runner VM).
     Then set syncTimerEnabled = true in the parameters file and run Deploy-Quickstart.ps1 -Only 3
     (the template alone; the code and the seed stay as they are).
 #>

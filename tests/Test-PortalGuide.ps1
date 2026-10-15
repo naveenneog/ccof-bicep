@@ -169,6 +169,11 @@ try {
         if ($target -match '^https?://' -or $target.StartsWith('#')) { continue }
         Assert (Test-Path -LiteralPath (Join-Path (Split-Path $guidePath -Parent) $target.Split('#')[0])) "Broken guide link: $target"
     }
+    # Recent network API versions return addressPrefixes (array) instead of addressPrefix, and VNets
+    # created after 2026-03-31 default subnets to private (no egress) unless set explicitly.
+    Assert (-not [regex]::IsMatch($guide, '\{prefix:addressPrefix,')) 'A subnet check reads addressPrefix without the addressPrefixes[0] fallback.'
+    Assert ([regex]::Matches($guide, '--default-outbound-access true').Count -ge 2) 'APIM/Functions subnet creation does not set default outbound access.'
+    Assert (-not $guide.Contains('access (Advanced)')) 'Storage key/anonymous access are on the Security tab, not Advanced.'
     Write-Host 'Real exporter, generated settings/policy/seed/workbook and copy-paste block parsing: PASS'
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force
