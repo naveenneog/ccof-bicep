@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: CCOF project admin API
+  version: 0.1.0
+  description: >
+    Phase 1. Manage CCOF projects in the private Cosmos `projects` registry through the admin Function App.
+    All writes go through the Function App's managed identity; callers never reach Cosmos. Directory lookups
+    (Entra group names, members) are the UI's concern and are not part of this API.
+servers:
+  - url: https://{functionAppHost}/api
+    variables:
+      functionAppHost: { default: example-admin.azurewebsites.net }
+security:
+  - entra: []
+paths:
+  /projects:
+    get:
+      summary: List projects (reader)
+      responses:
+        "200": { description: Project summaries, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectList" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      summary: Create a project (editor). Create-only; an existing id returns 409.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+      responses:
+        "201": { description: Created, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      summary: Read one project (reader). Returns its ETag for later updates.
+      responses:
+        "200": { description: Project, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/classifications/{code}/family-policy:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/Code" }, { $ref: "#/components/parameters/IfMatch" }]
+    put:
+      summary: Replace one classification's family policy - admitted models and token limits (editor)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/FamilyPolicy" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/classifications/{code}/limits:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/Code" }, { $ref: "#/components/parameters/IfMatch" }]
+    patch:
+      summary: Change token limits only (editor). Supplied limit fields replace those fields; the result is validated as a whole.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                aggregateLimits: { $ref: "#/components/schemas/ScopePatch" }
+                families: { type: object, additionalProperties: { $ref: "#/components/schemas/ScopePatch" } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    entra:
+      type: oauth2
+      description: Entra delegated access token for the admin API app registration (ADMIN_AUDIENCE / ADMIN_SCOPE).
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes: { "api://ccof-admin/Projects.Manage": Manage CCOF projects }
+  parameters:
+    ProjectId: { name: projectId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" } }
+    Code: { name: code, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" } }
+    IfMatch: { name: If-Match, in: header, required: true, description: ETag from the last read; "*" is refused., schema: { type: string } }
+  responses:
+    Updated:
+      description: Updated, or unchanged when the request matches the stored policy
+      headers: { ETag: { schema: { type: string } } }
+      content: { application/json: { schema: { type: object, properties: { projectId: { type: string }, changed: { type: boolean }, project: { $ref: "#/components/schemas/Project" } } } } }
+    Error:
+      description: "400 body, 401 token, 403 permission, 404 not found, 405 unsupported, 409 exists, 412 stale ETag, 413 too large, 422 invalid (problems lists field paths), 428 If-Match missing, 503 not configured"
+      content: { application/json: { schema: { type: object, properties: { error: { type: string }, requestId: { type: string }, problems: { type: array, items: { type: string } } } } } }
+  schemas:
+    Limit:
+      type: object
+      additionalProperties: false
+      description: Positive integers or null. tokenQuota and tokenQuotaPeriod are both null or both set.
+      properties:
+        tokensPerMinute: { type: integer, minimum: 1, nullable: true }
+        tokenQuota: { type: integer, minimum: 1, nullable: true }
+        tokenQuotaPeriod: { type: string, enum: [Hourly, Daily, Weekly, Monthly, Yearly], nullable: true }
+    ScopePatch:
+      type: object
+      additionalProperties: false
+      properties: { person: { $ref: "#/components/schemas/Limit" }, group: { $ref: "#/components/schemas/Limit" } }
+    FamilyPolicy:
+      type: object
+      required: [aggregateLimits, families]
+      properties:
+        aggregateLimits: { type: object, properties: { person: { $ref: "#/components/schemas/Limit" }, group: { $ref: "#/components/schemas/Limit" } } }
+        families:
+          type: object
+          description: Keys haiku, sonnet, opus (fable and mythos only for classification CYB).
+          additionalProperties:
+            type: object
+            properties:
+              models: { type: array, items: { type: string } }
+              person: { $ref: "#/components/schemas/Limit" }
+              group: { $ref: "#/components/schemas/Limit" }
+    Budget:
+      type: object
+      properties: { amount: { type: number, minimum: 0 }, currency: { type: string, enum: [USD, CCU] }, period: { type: string, enum: [monthly] } }
+    Classification:
+      type: object
+      required: [groupId, familyPolicy, personBudget, aggregateBudget, aggregateMode, onboardingMode]
+      properties:
+        groupId: { type: string, format: uuid, description: Entra security group object id }
+        classificationGroupDisplayName: { type: string }
+        familyPolicy: { $ref: "#/components/schemas/FamilyPolicy" }
+        personBudget: { $ref: "#/components/schemas/Budget" }
+        aggregateBudget: { allOf: [{ $ref: "#/components/schemas/Budget" }], nullable: true }
+        aggregateMode: { type: string, enum: [strict, notify] }
+        onboardingMode: { type: string, enum: [block, warn] }
+    Project:
+      type: object
+      required: [id, projectId, displayName, status, backendId, designatedSubscriptionId, supersedes, retiredAt, classifications]
+      properties:
+        id: { type: string, description: Must equal projectId }
+        projectId: { type: string }
+        displayName: { type: string, maxLength: 200 }
+        status: { type: string, enum: [active] }
+        backendId: { type: string }
+        designatedSubscriptionId: { type: string, format: uuid }
+        supersedes: { type: string, nullable: true, enum: [null] }
+        retiredAt: { type: string, nullable: true, enum: [null] }
+        classifications: { type: object, additionalProperties: { $ref: "#/components/schemas/Classification" } }
+    ProjectList:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            type: object
+            properties:
+              projectId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              backendId: { type: string }
+              classifications: { type: array, items: { type: string } }
+              etag: { type: string }

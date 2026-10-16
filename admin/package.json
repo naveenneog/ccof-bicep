@@ -1,0 +1,21 @@
+{
+  "name": "ccof-project-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/admin/src/function-app.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.10.1",
+    "@azure/functions": "^4.16.5",
+    "@azure/identity": "^4.13.3",
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
