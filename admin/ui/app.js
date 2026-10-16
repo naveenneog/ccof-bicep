@@ -601,63 +601,117 @@ function renderCreate() {
     displayName: field("displayName", "Display name", { hint: "Shown to admins, for example Payments platform.", validate: required("Required.") }),
     backendId: field("backendId", "Backend ID", { value: state.projects[0]?.backendId ?? "", hint: "Usually the same as your existing project.", validate: vId }),
     subscription: field("subscription", "Foundry subscription ID", { hint: "Subscription that pays for this project's model use.", validate: vGuid }),
-    code: field("code", "Classification", { value: "STD", hint: "Short code such as STD or INT.", validate: vId }),
-    groupId: field("groupId", "Entra group Object ID", { hint: "Entra admin center → Groups → your group → Overview → Object ID.", validate: vGuid }),
-    groupName: field("groupName", "Group display name", { hint: "Shown in records; access uses the Object ID.", validate: required("Required.") }),
-    models: field("models", "Model deployment names", { hint: "Exact Foundry deployment names, for example claude-sonnet-4-5. Separate several with commas.", validate: required("Add at least one deployment.") }),
-    pTpm: field("pTpm", "Tokens per minute", { num: true, value: "10000", validate: vCount }),
-    pQuota: field("pQuota", "Quota", { num: true, value: "1000000", validate: vCount }),
-    gTpm: field("gTpm", "Tokens per minute", { num: true, value: "50000", validate: vCount }),
-    gQuota: field("gQuota", "Quota", { num: true, value: "10000000", validate: vCount }),
-    pBudget: field("pBudget", "Per person (USD / month)", { num: true, value: "10", validate: vMoney }),
-    gBudget: field("gBudget", "Whole group (USD / month)", { num: true, value: "100", validate: vMoney }),
   };
-  const family = el("select", { class: "select", id: "family" }, ["sonnet", "opus", "haiku"].map((k) => el("option", { value: k, text: FAMILY_LABELS[k] })));
-  const pPeriod = periodSelect("pPeriod", "Quota period");
-  const gPeriod = periodSelect("gPeriod", "Quota period");
   const status = el("div", { "aria-live": "polite" });
   const submit = el("button", { class: "btn btn-primary", type: "submit", text: "Create project" });
-
   const count = (input) => { const v = input.value.replaceAll(",", "").trim(); return v === "" ? null : Number(v); };
-  const limit = (tpm, quota, periodId) => {
-    const period = document.getElementById(periodId)?.value || null;
+  const limit = (tpm, quota, period) => {
     return { tokensPerMinute: count(tpm), tokenQuota: period ? count(quota) : null, tokenQuotaPeriod: period };
   };
+  const classificationForms = ["STD", "PRM", "CYB"].map((code) => {
+    const groupId = field(`${code}-groupId`, "Entra group Object ID", {
+      hint: "Entra admin center → Groups → your group → Overview → Object ID.", validate: vGuid,
+    });
+    const groupName = field(`${code}-groupName`, "Group display name", {
+      hint: `For example PROJECT02-${code}. Access uses the Object ID.`, validate: required("Required."),
+    });
+    const models = field(`${code}-models`, "Model deployment names", {
+      hint: "Exact deployment names, separated by commas.", validate: required("Add at least one deployment."),
+    });
+    const quotaCheck = (periodId) => (v) => {
+      const basic = vCount(v);
+      return basic || (document.getElementById(periodId)?.value && !v ? "Enter a quota, or choose No quota." : "");
+    };
+    const pTpm = field(`${code}-pTpm`, "Tokens per minute", { num: true, value: "10000", validate: vCount });
+    const pQuota = field(`${code}-pQuota`, "Quota", { num: true, value: "1000000", validate: quotaCheck(`${code}-pPeriod`) });
+    const gTpm = field(`${code}-gTpm`, "Tokens per minute", { num: true, value: "50000", validate: vCount });
+    const gQuota = field(`${code}-gQuota`, "Quota", { num: true, value: "10000000", validate: quotaCheck(`${code}-gPeriod`) });
+    const pBudget = field(`${code}-pBudget`, "Per person (USD / month)", { num: true, value: "10", validate: vMoney });
+    const gBudget = field(`${code}-gBudget`, "Whole group (USD / month)", { num: true, value: "100", validate: vMoney });
+    const fields = { groupId, groupName, models, pTpm, pQuota, gTpm, gQuota, pBudget, gBudget };
+    const families = code === "CYB" ? ["sonnet", "opus", "haiku", "fable", "mythos"] : ["sonnet", "opus", "haiku"];
+    const family = el("select", { class: "select", id: `${code}-family` },
+      families.map((k) => el("option", { value: k, text: FAMILY_LABELS[k] })));
+    const pPeriod = periodSelect(`${code}-pPeriod`, "Quota period");
+    const gPeriod = periodSelect(`${code}-gPeriod`, "Quota period");
+    const enabled = el("input", { type: "checkbox", id: `include-${code}`, checked: code === "STD",
+      "aria-controls": `settings-${code}` });
+    const panel = el("fieldset", { class: "fieldset classification-settings", id: `settings-${code}`,
+      disabled: !enabled.checked, hidden: !enabled.checked },
+      el("legend", { class: "visually-hidden", text: `${code} settings` }),
+      el("div", { class: "fields" }, groupId.node, groupName.node),
+      el("h3", { text: "Models" }),
+      el("div", { class: "fields" },
+        el("div", { class: "field" }, el("label", { for: `${code}-family`, text: "Model family" }), family), models.node),
+      el("h3", { text: "Each person" }),
+      el("div", { class: "limit-grid" }, pTpm.node, pQuota.node, pPeriod),
+      el("h3", { text: "Whole group combined" }),
+      el("div", { class: "limit-grid" }, gTpm.node, gQuota.node, gPeriod),
+      el("h3", { text: "Budgets" }),
+      el("p", { class: "section-note", text: "Reported, not enforced, while the gateway is in token-limits-only mode." }),
+      el("div", { class: "fields" }, pBudget.node, gBudget.node));
+    enabled.addEventListener("change", () => {
+      panel.hidden = !enabled.checked;
+      panel.disabled = !enabled.checked;
+      enabled.setAttribute("aria-expanded", String(enabled.checked));
+      status.replaceChildren();
+      refresh();
+    });
+    enabled.setAttribute("aria-expanded", String(enabled.checked));
+    const section = el("section", { class: "classification-create", "aria-label": `${code} classification` },
+      el("label", { class: "check classification-toggle", for: enabled.id }, enabled,
+        el("strong", { text: code }), el("span", { class: "muted", text: `Include ${code} access group` })),
+      panel);
+    const buildClassification = () => {
+      const person = limit(pTpm.input, pQuota.input, pPeriod.querySelector("select").value || null);
+      const group = limit(gTpm.input, gQuota.input, gPeriod.querySelector("select").value || null);
+      return {
+        groupId: groupId.input.value.trim(),
+        classificationGroupDisplayName: groupName.input.value.trim(),
+        familyPolicy: {
+          aggregateLimits: { person, group },
+          families: { [family.value]: {
+            models: models.input.value.split(",").map((m) => m.trim()).filter(Boolean),
+            person: { ...person }, group: { ...group },
+          } },
+        },
+        personBudget: { amount: Number(pBudget.input.value || 0), currency: "USD", period: "monthly" },
+        aggregateBudget: { amount: Number(gBudget.input.value || 0), currency: "USD", period: "monthly" },
+        aggregateMode: "strict", onboardingMode: "block",
+      };
+    };
+    return { code, enabled, fields, section, buildClassification };
+  });
   const build = () => {
     const id = f.projectId.input.value.trim();
-    const code = f.code.input.value.trim();
-    const person = limit(f.pTpm.input, f.pQuota.input, "pPeriod");
-    const group = limit(f.gTpm.input, f.gQuota.input, "gPeriod");
     return {
       id, projectId: id, displayName: f.displayName.input.value.trim(), status: "active",
       backendId: f.backendId.input.value.trim(), designatedSubscriptionId: f.subscription.input.value.trim(),
       supersedes: null, retiredAt: null,
-      classifications: {
-        [code || "STD"]: {
-          groupId: f.groupId.input.value.trim(),
-          classificationGroupDisplayName: f.groupName.input.value.trim(),
-          familyPolicy: {
-            aggregateLimits: { person, group },
-            families: { [family.value]: { models: f.models.input.value.split(",").map((m) => m.trim()).filter(Boolean), person: { ...person }, group: { ...group } } },
-          },
-          personBudget: { amount: Number(f.pBudget.input.value || 0), currency: "USD", period: "monthly" },
-          aggregateBudget: { amount: Number(f.gBudget.input.value || 0), currency: "USD", period: "monthly" },
-          aggregateMode: "strict",
-          onboardingMode: "block",
-        },
-      },
+      classifications: Object.fromEntries(classificationForms.filter((c) => c.enabled.checked).map((c) => [c.code, c.buildClassification()])),
     };
   };
   const refresh = () => { preview.textContent = JSON.stringify(build(), null, 2); };
-  for (const x of Object.values(f)) x.input.addEventListener("input", refresh);
 
   const form = el("form", { class: "form", novalidate: true,
     onsubmit: async (e) => {
       e.preventDefault();
-      const ok = Object.values(f).map((x) => x.check()).every(Boolean);
+      const selected = classificationForms.filter((c) => c.enabled.checked);
+      if (selected.length === 0) {
+        status.replaceChildren(notice("danger", "Select at least one classification", [el("p", { text: "Include STD, PRM or CYB before creating the project." })]));
+        classificationForms[0].enabled.focus();
+        return;
+      }
+      const activeFields = [...Object.values(f), ...selected.flatMap((c) => Object.values(c.fields))];
+      const ok = activeFields.map((x) => x.check()).every(Boolean);
       if (!ok) {
         status.replaceChildren(notice("danger", "Some values need fixing", [el("p", { text: "Check the highlighted fields. Nothing was saved." })]));
-        form.querySelector('[aria-invalid="true"]')?.focus();
+        form.querySelector('[aria-invalid="true"]:not(:disabled)')?.focus();
+        return;
+      }
+      const groupIds = selected.map((c) => c.fields.groupId.input.value.trim().toLowerCase());
+      if (new Set(groupIds).size !== groupIds.length) {
+        status.replaceChildren(notice("danger", "Use a different group for each classification", [el("p", { text: "STD, PRM and CYB cannot share the same Entra group Object ID." })]));
         return;
       }
       submit.disabled = true;
@@ -679,23 +733,17 @@ function renderCreate() {
     } },
     el("fieldset", { class: "fieldset" }, el("legend", { text: "Project" }),
       el("div", { class: "fields" }, f.projectId.node, f.displayName.node, f.backendId.node, f.subscription.node)),
-    el("fieldset", { class: "fieldset" }, el("legend", { text: "Access group" }),
-      el("p", { class: "section-note", text: "Everyone in this Entra group gets access. Use a security group with assigned (not dynamic) membership." }),
-      el("div", { class: "fields" }, f.code.node, f.groupId.node, f.groupName.node)),
-    el("fieldset", { class: "fieldset" }, el("legend", { text: "Models and token limits" }),
-      el("div", { class: "fields" }, el("div", { class: "field" }, el("label", { for: "family", text: "Model family" }), family), f.models.node),
-      el("h3", { text: "Each person" }), el("div", { class: "limit-grid" }, f.pTpm.node, f.pQuota.node, pPeriod),
-      el("h3", { text: "Whole group combined" }), el("div", { class: "limit-grid" }, f.gTpm.node, f.gQuota.node, gPeriod),
-      el("p", { class: "section-note", text: "These limits apply to the family and to all models. You can add families and fine-tune limits after creating the project." })),
-    el("fieldset", { class: "fieldset" }, el("legend", { text: "Budgets" }),
-      el("p", { class: "section-note", text: "Reported, not enforced, while the gateway is in token-limits-only mode." }),
-      el("div", { class: "fields" }, f.pBudget.node, f.gBudget.node)),
+    el("section", { class: "section", "aria-labelledby": "create-classifications" },
+      el("h2", { id: "create-classifications", text: "Classification groups" }),
+      el("p", { class: "section-note", text: "Include one, two or all three groups in this project. Each has its own Object ID, models, token limits and budgets. Use assigned security groups; a person must not belong to more than one classification in the same project." }),
+      el("p", { class: "section-note", text: "The numbers below are examples, not approved quotas. Each group's initial limits apply both across all models and to its selected model family." }),
+      ...classificationForms.map((c) => c.section)),
     el("details", { class: "json" }, el("summary", { text: "Preview the registry document" }), preview),
     status,
     el("div", { class: "toolbar" }, submit, el("button", { class: "btn btn-quiet", type: "button", text: "Cancel", onclick: () => navigate("#/") })));
 
-  for (const id of ["pPeriod", "gPeriod"]) form.querySelector(`#${id}`)?.addEventListener("change", refresh);
-  family.addEventListener("change", refresh);
+  form.addEventListener("input", refresh);
+  form.addEventListener("change", refresh);
   setDetail(el("header", { class: "page-head" }, el("h1", { text: "New project" }),
     el("p", { class: "section-note", text: "Project ID and access group can't be changed after creation." })), form);
   refresh();

@@ -40,6 +40,9 @@ needs confidence before saving.
   - If someone else saved in the meantime, the console says so and offers *Load latest version*.
     Nothing is overwritten.
 - **New project:**
+  - Include **STD, PRM and CYB** in the same project. Each classification has its own Entra group
+    Object ID, display name, model family, deployments, limits and budgets. Unchecked groups are
+    omitted from the document; at least one is required, and group Object IDs must be distinct.
   - Fields are validated when you leave them (ID pattern, GUIDs, whole numbers).
   - You can preview the exact registry document before creating it.
   - The server re-validates with the deployed sync's own rules.

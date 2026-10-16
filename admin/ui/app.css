@@ -265,6 +265,10 @@ table.limits { width: 100%; border-collapse: collapse; font-size: var(--text-sm)
 .form { display: grid; gap: var(--s6); max-width: 760px; }
 .fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s4); }
 .fieldset legend { font-size: var(--text-lg); font-weight: 620; padding: 0; margin-bottom: var(--s1); }
+.classification-create { border-top: 1px solid var(--line); }
+.classification-toggle { min-height: 52px; cursor: pointer; gap: var(--s3); }
+.classification-toggle input { width: 18px; height: 18px; accent-color: var(--primary); }
+.classification-settings { padding-bottom: var(--s5); }
 .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s4); }
 .field { display: grid; gap: var(--s1); align-content: start; }
 .field label { font-size: var(--text-sm); font-weight: 560; }

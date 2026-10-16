@@ -244,6 +244,35 @@ test("family-policy replace changes models and limits only; ids, groups and back
   assert.equal(((stored.classifications as Doc).STD as Doc).groupId, GROUP_A);
 });
 
+test("STD, PRM and CYB are created together and keep independent limits", async () => {
+  const { call, store } = setup();
+  const doc = project("THREE01");
+  const classifications = doc.classifications as Doc;
+  for (const [code, groupId, tpm] of [
+    ["PRM", GROUP_B, 25000],
+    ["CYB", "00000000-0000-4000-8000-0000000000c3", 40000],
+  ] as const) {
+    const classification = structuredClone(classifications.STD as Doc);
+    classification.groupId = groupId;
+    classification.classificationGroupDisplayName = `THREE01-${code}`;
+    (((classification.familyPolicy as Doc).aggregateLimits as Doc).person as Doc).tokensPerMinute = tpm;
+    classifications[code] = classification;
+  }
+  assert.equal((await call("POST", "/api/projects", { body: doc })).status, 201);
+  const saved = await call("GET", "/api/projects/THREE01");
+  assert.equal(saved.status, 200);
+  assert.deepEqual((saved.jsonBody as Doc).classifications, classifications);
+  const updated = await call("PATCH", "/api/projects/THREE01/classifications/PRM/limits", {
+    ifMatch: saved.headers!.etag,
+    body: { aggregateLimits: { person: { tokensPerMinute: 35000 } } },
+  });
+  assert.equal(updated.status, 200);
+  const stored = store.docs.get("THREE01")!.doc.classifications as Doc;
+  assert.deepEqual(stored.STD, classifications.STD);
+  assert.deepEqual(stored.CYB, classifications.CYB);
+  assert.equal(((((stored.PRM as Doc).familyPolicy as Doc).aggregateLimits as Doc).person as Doc).tokensPerMinute, 35000);
+});
+
 test("duplicate groups across classifications are refused", async () => {
   const { call } = setup();
   const doc = project("DUP01");
