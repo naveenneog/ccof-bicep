@@ -120,6 +120,13 @@ If any required value is missing, the API returns 503 and the console shows its 
 
 ## Deploy
 
+For **granular hand configuration**, follow the appended
+[Public Access Workbook Modules 17-24](runbooks/PUBLIC-ACCESS-WORKBOOK.md#admin-hand-configuration).
+They preserve the existing Modules 00-16, consolidate the Step 13 client/desktop material,
+and give individually numbered Portal/CLI alternatives and checks for new resources, grants,
+Entra sign-in, publishing, private Cosmos access and UI restrictions. The condensed deployment
+and Bash commands below are alternative references, not the customer's default hand-config path.
+
 ```powershell
 # 1. New app, storage and logs (resource group of your choice)
 az deployment group create -g <rg> -n ccof-admin-api --template-file infra/admin/admin-resources.bicep `
