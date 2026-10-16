@@ -81,11 +81,25 @@ function New-Fixtures {
             virtualNetwork = @{ id = $i.vnet }; provisioningState = 'Succeeded'; virtualNetworkLinkState = 'Completed'
         } })
     }
-    $global:CcofPrivatePathTest = @{ resources = $script:resources; ids = $script:ids; denied = ''; invalidJson = ''; pages = 0 }
+    $global:CcofPrivatePathTest = @{ resources = $script:resources; ids = $script:ids; denied = ''; invalidJson = ''; pages = 0
+        subscriptions = @(
+            @{ id = '11111111-1111-1111-1111-111111111111'; name = 'Gateway Prod' }
+            @{ id = '33333333-3333-3333-3333-333333333333'; name = 'Connectivity-DNS' }
+        ) }
+    $dnsZoneList = @{ value = @(
+        @{ id = $script:ids.zone; name = 'privatelink.services.ai.azure.com' }
+        @{ id = "$central/Microsoft.Network/privateDnsZones/privatelink.openai.azure.com"; name = 'privatelink.openai.azure.com' }
+    ) }
+    $script:resources['/subscriptions/33333333-3333-3333-3333-333333333333/providers/Microsoft.Network/privateDnsZones'] = $dnsZoneList
+    $script:resources['/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/central-dns/providers/Microsoft.Network/privateDnsZones'] = $dnsZoneList
 }
 function global:az {
     $fixture = $global:CcofPrivatePathTest
     $argv = @($args)
+    if ($argv[0] -eq 'account' -and $argv[1] -eq 'list') {
+        $global:LASTEXITCODE = 0
+        return ($fixture.subscriptions | ConvertTo-Json -Depth 5 -AsArray -Compress)
+    }
     if ($argv[0] -ne 'rest' -or $argv[2] -ne 'get') { throw 'Checker attempted a non-GET Azure command.' }
     $url = $argv[[array]::IndexOf($argv, '--url') + 1]
     $id = ([uri]$url).AbsolutePath
@@ -219,6 +233,25 @@ try {
     $script:resources["$($ids.zone)/A-page"] = @{ value = @(@{ name = 'foundry'; properties = @{ aRecords = @(@{ ipv4Address = '172.20.1.4' }) } }) }
     Run-Case 'Paginated ARM list reads the second page' $false @('[PASS] Private DNS A record')
     if ($global:CcofPrivatePathTest.pages -ne 1) { throw 'Second ARM page was not queried.' }
+    $subList = '/subscriptions/33333333-3333-3333-3333-333333333333/providers/Microsoft.Network/privateDnsZones'
+    New-Fixtures
+    $script:resources["$($ids.pe)/privateDnsZoneGroups"].value = @()
+    Run-Case 'DNS subscription by display name finds the central zone' $false @("'Connectivity-DNS' = 33333333-3333-3333-3333-333333333333", 'found 1', '[PASS] Private DNS A record') @{ DnsSubscription = 'connectivity-dns' }
+    New-Fixtures
+    $script:resources["$($ids.pe)/privateDnsZoneGroups"].value = @()
+    Run-Case 'DNS subscription plus resource group narrows discovery' $false @('resourceGroups/central-dns', '[PASS] Private DNS A record') @{ DnsSubscription = '33333333-3333-3333-3333-333333333333'; DnsResourceGroup = 'central-dns' }
+    New-Fixtures
+    $global:CcofPrivatePathTest.subscriptions += @{ id = '44444444-4444-4444-4444-444444444444'; name = 'Connectivity-DNS' }
+    Run-Case 'Ambiguous DNS subscription name asks for the GUID' $true @('Pass the GUID instead') @{ DnsSubscription = 'Connectivity-DNS' } -ExpectedExit 1
+    New-Fixtures
+    Run-Case 'Unknown DNS subscription name is explicit' $true @('not visible to this login') @{ DnsSubscription = 'No-Such-Sub' } -ExpectedExit 1
+    New-Fixtures
+    $global:CcofPrivatePathTest.denied = $subList
+    Run-Case 'Denied DNS subscription listing is unverified, zone group still used' $true @('[UNVERIFIED] Central DNS access', '[PASS] Private DNS A record') @{ DnsSubscription = 'Connectivity-DNS' } -ExpectedExit 2
+    New-Fixtures
+    $script:resources[$subList] = @{ value = @() }
+    $script:resources["$($ids.pe)/privateDnsZoneGroups"].value = @()
+    Run-Case 'Zone absent from named DNS subscription fails' $true @('[FAIL] Private DNS zone') @{ DnsSubscription = 'Connectivity-DNS' } -ExpectedExit 1
     Write-Output "$script:cases offline cases passed. No Azure calls made."
 } finally {
     Remove-Item Function:\az

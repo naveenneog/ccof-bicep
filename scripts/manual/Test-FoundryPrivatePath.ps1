@@ -15,6 +15,10 @@ param(
     [string]$BackendHost,
     [string]$PrivateEndpointId,
     [Alias('PrivateDnsZoneId')][string[]]$PrivateDnsZoneIds = @(),
+    # Central DNS subscription, by display name or GUID; the matching zone is found there.
+    [string]$DnsSubscription,
+    # Optional: narrows zone discovery to one resource group in -DnsSubscription.
+    [string]$DnsResourceGroup,
     [string]$DnsVnetResourceId
 )
 $ErrorActionPreference = 'Stop'
@@ -26,7 +30,7 @@ function Report([string]$State, [string]$Check, [string]$Detail) {
     Write-Output "[$State] ${Check}: $Detail"
 }
 function Read-Arm([string]$Id, [string]$Version = '2024-05-01', [string]$Query) {
-    if ($Id -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/[^/]+/.+') {
+    if ($Id -notmatch '^/subscriptions/[^/]+/(resourceGroups/[^/]+/)?providers/[^/]+/.+') {
         throw "Expected a full ARM resource ID: $Id"
     }
     $url = "https://management.azure.com${Id}?api-version=$Version"
@@ -51,6 +55,15 @@ function Read-Arm([string]$Id, [string]$Version = '2024-05-01', [string]$Query) 
             if ($url -and $url -notlike 'https://management.azure.com/*') { throw 'Unexpected ARM pagination host.' }
         } else { $data; $url = $null }
     } while ($url)
+}
+function Resolve-SubscriptionId([string]$NameOrId) {
+    $raw = @(& az account list --all --only-show-errors --output json 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not list subscriptions; run az login first.' }
+    $all = @(($raw -join "`n") | ConvertFrom-Json -Depth 20)
+    $hit = @($all | Where-Object { $_.id -ieq $NameOrId -or $_.name -ieq $NameOrId } | Sort-Object id -Unique)
+    if ($hit.Count -eq 0) { throw "DNS subscription '$NameOrId' not visible to this login. Check the name, or ask for Reader on it." }
+    if ($hit.Count -gt 1) { throw "DNS subscription name '$NameOrId' matches $($hit.Count) subscriptions ($(($hit.id) -join ', ')). Pass the GUID instead." }
+    $hit[0]
 }
 function Vnet-Id([string]$SubnetId) {
     if ($SubnetId -notmatch '^(.+)/subnets/[^/]+$') { throw "Invalid subnet ID: $SubnetId" }
@@ -210,6 +223,21 @@ try {
     $attached = @($groups | ForEach-Object { $_.properties.privateDnsZoneConfigs } |
         ForEach-Object { $_.properties.privateDnsZoneId } | Where-Object { $_ -like '/subscriptions/*' })
     Report 'INFO' 'Attached private DNS zones' ($attached -join ', ')
+    if ($DnsSubscription -and -not $PrivateDnsZoneIds.Count) {
+        $dnsSub = Resolve-SubscriptionId $DnsSubscription
+        $dnsSubId = $dnsSub.id
+        $scope = if ($DnsResourceGroup) { "/subscriptions/$dnsSubId/resourceGroups/$DnsResourceGroup" } else { "/subscriptions/$dnsSubId" }
+        try {
+            $found = @(Read-Arm "$scope/providers/Microsoft.Network/privateDnsZones" '2024-06-01' |
+                Where-Object { $_.name -ieq $zoneName } | ForEach-Object { $_.id })
+            Report 'INFO' 'DNS subscription' "'$($dnsSub.name)' = $dnsSubId; searched $scope for $zoneName; found $($found.Count)"
+            if ($found.Count) { $PrivateDnsZoneIds = $found }
+            else { Report 'FAIL' 'Private DNS zone' "No $zoneName zone in $scope. Check -DnsSubscription/-DnsResourceGroup with the DNS team." }
+        } catch [UnauthorizedAccessException] {
+            $script:permissionGaps++
+            Report 'UNVERIFIED' 'Central DNS access' $_.Exception.Message
+        }
+    }
     if ($PrivateDnsZoneIds.Count) {
         $candidates = @($PrivateDnsZoneIds | Where-Object { ($_ -split '/')[-1] -ieq $zoneName } | Sort-Object -Unique)
     } else {

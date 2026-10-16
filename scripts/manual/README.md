@@ -79,6 +79,19 @@ $options = @{
 & .\scripts\manual\Test-FoundryPrivatePath.ps1 -ApimResourceId $apimId -FoundryResourceId $foundryId @options
 ```
 
+**Simplest for central DNS:** pass just the DNS subscription **name** (or GUID),
+optionally its resource group. The checker finds the `privatelink.*` zone matching
+the backend hostname there; no zone IDs needed:
+
+```powershell
+& .\scripts\manual\Test-FoundryPrivatePath.ps1 -ApimResourceId $apimId -FoundryResourceId $foundryId `
+    -BackendHost '<ACCOUNT-NAME>.services.ai.azure.com' `
+    -DnsSubscription '<Central DNS subscription name>' -DnsResourceGroup '<central-dns-rg>'  # RG optional
+```
+
+The name must be visible in `az account list --all`; if two subscriptions share
+the name, pass the GUID. `-PrivateDnsZoneIds`, when given, takes precedence.
+
 Use `cognitiveservices.azure.com` or `openai.azure.com` and its corresponding
 `privatelink.*` zone **instead** when that is the actual backend suffix. The check
 requires only that hostname's zone, not all three. Cross-subscription/RG IDs are
