@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 
 const FAMILY_KEYS = ["haiku", "sonnet", "opus", "fable", "mythos"];
-const SECTIONS = { projects: "Projects", inventory: "Foundry inventory", pricing: "Cost definitions", operations: "Health & operations", audit: "Audit" };
+const SECTIONS = { projects: "Projects", budgets: "Group budgets", inventory: "Foundry inventory", pricing: "Cost definitions", operations: "Health & operations", audit: "Audit" };
 let api;
 const drafts = new Map();
 export const hasV2Draft = () => [...drafts.values()].some(Boolean);
@@ -23,7 +23,7 @@ function useData(path, version = 0) {
   }, [path, version]);
   return value;
 }
-const text = (v) => v == null || v === "" ? "Unknown" : typeof v === "object" ? JSON.stringify(v) : String(v);
+const text = (v) => v == null || v === "" ? "Unknown" : React.isValidElement(v) ? v : typeof v === "object" ? JSON.stringify(v) : String(v);
 const readable = (v) => text(v).replaceAll("_", " ");
 function Notice({ children, danger = false }) {
   return <div className={`notice notice-${danger ? "danger" : "info"}`} role={danger ? "alert" : "status"}>{children}</div>;
@@ -76,23 +76,57 @@ function Inventory({ projects, version }) {
     </DataState>
   </>;
 }
+const usd = (v) => v == null ? "—" : String(v).startsWith("-") ? `-$${String(v).slice(1)}` : `$${v}`;
+function UsedMeter({ percent }) {
+  if (percent == null) return <span>No cap</span>;
+  const value = Number(percent);
+  return <span className="usage"><meter min="0" max="100" low="75" high="90" optimum="0" value={Math.min(value, 100)} aria-label={`${percent}% of group budget used`}/> {percent}%</span>;
+}
 function BudgetRows({ project, value }) {
-  const rows = value.data?.data ?? [];
+  const rows = value.data?.data?.groups ?? [];
   return <DataState value={value}>
     <p className="section-note">Month-to-date reconciler calculation, not an Azure invoice. 100 CCU = USD 1. Unknown or partial usage is never treated as zero.</p>
-    <Table columns={[["classification", "Access group"], ["configured", "Configured group budget"], ["spentCcu", "Calculated CCU"], ["usd", "Calculated USD"], ["completeness", "Coverage"], ["computedAt", "Calculated at"], ["freshness", "Freshness"]]}
+    <Table columns={[["classification", "Access group"], ["configured", "Configured group budget"], ["consumed", "Consumed (CCU / USD)"], ["used", "Used"], ["remaining", "Remaining"], ["completeness", "Coverage"], ["freshness", "Freshness"]]}
       rows={Object.entries(project.classifications ?? {}).map(([code, c]) => {
         const row = rows.find((r) => r.projectId === project.projectId && r.classification === code);
-        const amount = row && typeof row.spentCcu === "string" && /^\d+(\.\d+)?$/.test(row.spentCcu) ? Number(row.spentCcu) : null;
         return {
           classification: `${code} / ${c.classificationGroupDisplayName ?? c.groupId}`,
           configured: c.aggregateBudget ? `${c.aggregateBudget.amount} ${c.aggregateBudget.currency} / month` : "No cap",
-          spentCcu: row?.spentCcu ?? "Unavailable", usd: amount == null ? "Unavailable" : `$${(amount / 100).toFixed(4)}`,
-          completeness: row?.completeness ?? "Unknown", computedAt: row?.computedAt ?? "Unavailable",
-          freshness: !row ? "No observation" : Date.parse(row.validUntil) > Date.now() ? "Within validity" : "Stale / invalid validity",
+          consumed: row ? `${row.spentCcu} CCU / ${usd(row.spentUsd)}` : "Unavailable",
+          used: row ? <UsedMeter percent={row.usedPercent}/> : "Unavailable",
+          remaining: row?.remainingCcu != null ? `${row.remainingCcu} CCU / ${usd(row.remainingUsd)}` : row ? "No cap" : "Unavailable",
+          completeness: row?.completeness ?? "Unknown",
+          freshness: !row ? "No observation" : row.fresh ? `Within validity (calculated ${row.computedAt})` : "Stale / invalid validity",
         };
       })}/>
   </DataState>;
+}
+function Budgets({ version }) {
+  const value = useData("/v2/budgets", version);
+  const [filter, setFilter] = useState("");
+  const totals = value.data?.data?.totals;
+  const groups = (value.data?.data?.groups ?? []).filter((g) => `${g.projectId} ${g.classification}`.toLowerCase().includes(filter.toLowerCase()));
+  return <><h1>Group budgets</h1><p className="section-note">Every project access group's month-to-date consumption against its group budget, from the reconciler. Not an Azure invoice.</p>
+    <DataState value={value}>
+      {totals && <div className="v2-summary" role="group" aria-label="Budget totals across groups">
+        <div><span className="muted">Consumed, all groups</span><strong>{usd(totals.spentUsd)}</strong><span className="muted">{totals.spentCcu} CCU</span></div>
+        <div><span className="muted">Capped group budgets</span><strong>{usd(totals.cappedBudgetUsd)}</strong><span className="muted">{totals.cappedBudgetCcu} CCU</span></div>
+        <div><span className="muted">Used of capped budgets</span><strong>{totals.cappedUsedPercent == null ? "—" : `${totals.cappedUsedPercent}%`}</strong><span className="muted">{totals.groups} groups, {totals.uncappedGroups} uncapped</span></div>
+        <div><span className="muted">Exhausted</span><strong>{totals.exhaustedGroups}</strong><span className="muted">{totals.staleGroups} stale, {totals.partialGroups} partial</span></div>
+      </div>}
+      {totals?.lowerBound && <Notice>Totals are a lower bound: some observations are partial, stale or could not be read.</Notice>}
+      <Field label="Filter by project or group" value={filter} onChange={setFilter}/>
+      <Table columns={[["projectId", "Project"], ["classification", "Group"], ["budget", "Group budget"], ["consumed", "Consumed"], ["used", "Used"], ["remaining", "Remaining"], ["mode", "Mode"], ["state", "Coverage / freshness"]]}
+        rows={groups.map((g) => ({
+          id: `${g.projectId}/${g.classification}`, projectId: g.projectId, classification: g.classification,
+          budget: g.budgetCcu == null ? "No cap" : `${g.budgetCcu} CCU / ${usd(g.budgetUsd)}`,
+          consumed: `${g.spentCcu} CCU / ${usd(g.spentUsd)}`, used: <UsedMeter percent={g.usedPercent}/>,
+          remaining: g.remainingCcu == null ? "—" : `${g.remainingCcu} CCU / ${usd(g.remainingUsd)}`,
+          mode: g.exhausted ? `${g.mode} — exhausted` : g.mode,
+          state: `${g.completeness}, ${g.fresh ? "fresh" : "stale"}`,
+        }))} empty="No group budget observations this month."/>
+    </DataState>
+  </>;
 }
 function ProjectTools({ project, canWrite, saved }) {
   const [tags, setTags] = useState((project.doc.adminTags ?? []).join(", "));
@@ -256,8 +290,9 @@ export function mountV2({ call, state, saved }) {
     const extras = document.getElementById("project-extras");
     return <><nav className="v2-nav" aria-label="Console sections">{Object.entries(SECTIONS).map(([key, label]) =>
       <a key={key} className="btn btn-quiet" aria-current={active === key ? "page" : undefined} href={key === "projects" ? "#/" : `#/${key}`}>{label}</a>)}
-      <span className="muted">v2.0.0</span></nav>
+      <span className="muted">v2.0.1</span></nav>
       {active !== "projects" && createPortal(<div className="detail-inner"><button className="btn btn-small v2-refresh" onClick={() => setVersion(version + 1)}>Refresh observations</button>
+        {active === "budgets" && <Budgets version={version}/>}
         {active === "inventory" && <Inventory projects={state.projects} version={version}/>}
         {active === "pricing" && <Pricing canWrite={state.canWrite} version={version}/>}
         {active === "operations" && <Operations version={version}/>}

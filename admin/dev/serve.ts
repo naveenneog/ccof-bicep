@@ -108,7 +108,24 @@ const catalogStore: CatalogStore = {
     return catalog.etag;
   },
 };
-const operations = createOperations({}, { getToken: async () => { throw new Error("Demo must not acquire real tokens"); } }, console.log);
+const realOperations = createOperations({}, { getToken: async () => { throw new Error("Demo must not acquire real tokens"); } }, console.log);
+// Demo-only synthetic reconciler group lines so the budget views render populated; never used in Azure.
+const demoBudgetRows = () => {
+  const now = new Date();
+  const period = now.toISOString().slice(0, 7);
+  const row = (projectId: string, classification: string, spentCcu: string, budgetCcu: string | null, extra: Doc = {}): Doc => ({
+    scope: "group", scopeId: `${projectId}:${classification}`, projectId, classification, spentCcu, budgetCcu,
+    exhausted: budgetCcu !== null && Number(spentCcu) >= Number(budgetCcu), mode: "strict", completeness: "complete",
+    activeMemberCount: 6, rateCardVersion: "demo", period, computedAt: new Date(now.getTime() - 3600_000).toISOString(),
+    validUntil: new Date(now.getTime() + 3600_000).toISOString(), ...extra,
+  });
+  return [row("PROJECT01", "STD", "112450.5", "150000"), row("PROJECT01", "INT", "151200", "150000"),
+    row("PROJECT02", "STD", "38210.0004", "150000", { completeness: "partial" })];
+};
+const operations = mode === "seeded"
+  ? { ...realOperations, logs: async (kind: "budgets" | "audit" | "runs") => kind === "budgets"
+    ? { state: "available" as const, observedAt: new Date().toISOString(), data: demoBudgetRows() } : realOperations.logs(kind) }
+  : realOperations;
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);

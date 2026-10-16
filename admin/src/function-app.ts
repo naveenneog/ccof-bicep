@@ -33,14 +33,20 @@ const store = container ? createCosmosProjectStore(container) : null;
 const catalogContainer = cosmos && process.env.ADMIN_CONFIG_CONTAINER
   ? openContainer({ ...cosmos, container: process.env.ADMIN_CONFIG_CONTAINER }, credential) : null;
 const catalogStore = catalogContainer ? createCatalogStore(catalogContainer) : null;
-let defaultCatalogPromise: Promise<Doc> | null = null;
-function defaultCatalog(): Promise<Doc> {
+let defaultCatalogPromise: Promise<Doc | null> | null = null;
+// A missing or invalid packaged rate card degrades only the cost-definitions view, and is retried
+// on the next request rather than cached as a permanent failure.
+function defaultCatalog(log: (line: string) => void): Promise<Doc | null> {
   defaultCatalogPromise ??= readFile(new URL("../../../ui-dist/rate-card.json", import.meta.url), "utf8").then((raw) => {
     const rateCard: unknown = JSON.parse(raw);
     if (!isObject(rateCard) || !Array.isArray(rateCard.entries)) throw new Error("packaged_rate_card_invalid");
     return { schemaVersion: 1, rateCard, models: [...new Map(rateCard.entries.filter(isObject).map((entry) => [entry.model, {
       family: String(entry.model).split("-")[1], model: entry.model, deployment: entry.model, backendId: "",
-    }])).values()] };
+    }])).values()] } as Doc;
+  }).catch(() => {
+    log(JSON.stringify({ schema: "ccof.admin.integration.v2", capability: "packaged_rate_card", outcome: "unavailable" }));
+    defaultCatalogPromise = null;
+    return null;
   });
   return defaultCatalogPromise;
 }
@@ -62,7 +68,7 @@ async function healthHandler(_request: HttpRequest, context: InvocationContext):
   return {
     status: ready ? 200 : 503,
     headers: { "cache-control": "no-store" },
-    jsonBody: { version: "2.0.0", status: ready ? "ready" : "not_ready", checks: { auth: authenticate ? "configured" : authProblem, cosmos: cosmosState } },
+    jsonBody: { version: "2.0.1", status: ready ? "ready" : "not_ready", checks: { auth: authenticate ? "configured" : authProblem, cosmos: cosmosState } },
   };
 }
 
@@ -82,7 +88,7 @@ app.http("adminV2", {
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
       headers: (name) => request.headers.get(name), body: request.method === "PUT" ? await request.text() : null,
     }, {
-      authenticate, projects: store, catalogStore, defaultCatalog: await defaultCatalog(),
+      authenticate, projects: store, catalogStore, defaultCatalog: await defaultCatalog((line) => context.log(line)),
       operations: createOperations(process.env, credential, (line) => context.log(line)),
       now: () => new Date(), newId: randomUUID, log: (line) => context.log(line),
     });

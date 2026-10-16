@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: CCOF project admin API
-  version: 2.0.0
+  version: 2.0.1
   description: >
     Manage projects through the admin app managed identity. V2 adds optional capability-gated
     directory lookup, inventory, cost definitions, health and telemetry. No permission grants,
@@ -112,7 +112,7 @@ paths:
         - { name: q, in: query, schema: { type: string }, description: Group name prefix for groups (2-80 characters) }
         - { name: resourceId, in: query, schema: { type: string }, description: Deployments require a Foundry account ID within server-configured scopes }
       responses:
-        "200": { description: Capability state with observedAt, optional reason/permission/data; version returns version metadata }
+        "200": { description: "Capability state with observedAt, optional reason/permission/data; version returns version metadata. For budgets, data is { groups[], totals, basis }: per group spentCcu/spentUsd, budgetCcu/budgetUsd (null = no cap), remainingCcu/remainingUsd, usedPercent, completeness, fresh; totals across groups with lowerBound." }
         default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:

@@ -1,6 +1,6 @@
 # Admin console v2: private-VDI upgrade and optional capabilities
 
-Release source: `feat/admin-console-v2`; package version `2.0.0`.
+Release source: `feat/admin-console-v2`; package version `2.0.1`.
 This is an **admin-app-only** upgrade. It does not deploy to the customer's
 environment, change the gateway/sync/reconciler binaries, grant permissions,
 create networks, or enable public access. Keep the deployed v1 ZIP.
@@ -32,6 +32,14 @@ create networks, or enable public access. Keep the deployed v1 ZIP.
 - Audit shows the latest 200 change/refusal events in the last 31 days from
   configured log resources. Log ingestion/sampling can delay or omit events;
   this is not an immutable or transactional audit store.
+- **Group budgets** (new in 2.0.1) lists every project access group's
+  month-to-date consumption against its group budget, across all projects:
+  consumed CCU and USD, % used (with a meter), remaining (negative = over
+  budget), mode/exhausted, coverage and freshness, plus totals across groups.
+  The project view shows the same per-group figures for the selected project.
+- Each optional capability fails independently (2.0.1): a missing or invalid
+  packaged rate card now disables only Cost definitions instead of every v2
+  panel, and is retried on the next request.
 
 React renders the new operator panels using native controls and the existing
 static CSS. The existing limits editor remains in place. Same-origin assets,
@@ -44,6 +52,7 @@ remain the security controls; using React is not a security certification.
 | --- | --- |
 | Configured budget | Existing project classification `personBudget` / `aggregateBudget`, USD or CCU, monthly. Changing a displayed unit does not convert an amount automatically; review it. |
 | Group consumption | Latest current-UTC-month `ccof.reconciler.budget.v1` **group** observation; project/classification and freshness remain visible. This is the reconciler's calculated estimate, not an invoice. |
+| Group budget roll-up | Computed server-side with exact decimals from those group lines: `spentCcu`, `budgetCcu` (null = no cap), USD at 100 CCU = USD 1, % used = spent ÷ budget, remaining = budget − spent. "Used of capped budgets" sums only capped groups; uncapped groups are counted separately. Malformed lines are counted as rejected, never guessed. Totals are flagged as a **lower bound** whenever any group is partial, stale (past `validUntil`) or rejected. |
 | USD equivalent | Existing repository definition: **100 CCU = USD 1**. Token prices remain USD per million tokens and include distinct cache categories, effective dates and geography. |
 | Coverage | `complete`, `partial`, unpriced request counts and validity. Missing telemetry is unavailable, never zero. |
 | Azure billed cost | Optional Cost Management **ActualCost**, month to date, before tax, in the returned currency. Resource totals can lag and are not allocated to Entra groups sharing that resource. No invented per-group invoice reconciliation. |
@@ -68,7 +77,7 @@ continue to authorize users. The deployment procedure grants none of these.
 | `ADMIN_GRAPH_ENABLED=true` | Microsoft Graph **application** `GroupMember.Read.All` (or an approved sufficient group-read permission) on the managed identity, tenant-admin consent; outbound Graph HTTPS | Directory search alone shows disabled/permission required; manual group IDs remain usable. No membership writes or automatic consent. |
 | `ADMIN_RESOURCE_IDS` | Comma-separated full APIM, Foundry **account**, Function App IDs; Reader on those resources and child backend/deployment resources | Inventory disabled/unavailable; existing project IDs/models remain editable manually. |
 | `ADMIN_DISCOVERY_SCOPES` | Optional comma-separated subscription or RG IDs; Reader on those discovery scopes | Only approved scopes are scanned. Prefer RG scope; no tenant-wide discovery. |
-| `ADMIN_WORKSPACE_ID` and `ADMIN_LOG_RESOURCE_IDS` | Workspace GUID plus comma-separated originating Function App/Application Insights ARM IDs as present in `_ResourceId`; Log Analytics Reader on the workspace | Budget/operations/audit views alone show disabled/permission required. Existing telemetry must already route to this workspace. |
+| `ADMIN_WORKSPACE_ID` and `ADMIN_LOG_RESOURCE_IDS` | Workspace GUID plus comma-separated originating Function App/Application Insights ARM IDs as present in `_ResourceId`; Log Analytics Reader on the workspace. **Include the reconciler Function App ID** for Group budgets and runs. | Group budgets/operations/audit views alone show disabled/permission required. Existing telemetry must already route to this workspace. |
 | `ADMIN_CONFIG_CONTAINER=adminConfig` | Optional Cosmos SQL container, partition key **`/scopeId`**, in existing `COSMOS_DATABASE`; native data role scoped to this container: readMetadata, executeQuery, readChangeFeed, item read/create/replace. No delete. | Packaged catalog readable; saving cost definitions disabled. If configured but denied, the panel reports failure; other features continue. |
 | `ADMIN_RETAIL_PRICES_ENABLED=true` | No Azure role; outbound HTTPS to `prices.azure.com` | Live retail discovery only disabled. Configured rates remain available. |
 | `ADMIN_COST_SCOPE` | Subscription or RG ARM ID; Cost Management Reader at that scope, subject to billing-agreement access; Foundry accounts must also be in inventory | Billed-cost comparison alone disabled/unavailable. |
@@ -137,7 +146,7 @@ $ErrorActionPreference = 'Stop'
 $repo = (Get-Location).Path
 $release = Join-Path $HOME 'ccof-admin-releases'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
-$zip = Join-Path $release 'ccof-admin-v2.0.0.zip'
+$zip = Join-Path $release 'ccof-admin-v2.0.1.zip'
 & (Join-Path $repo 'admin\Build-AdminPackage.ps1') -OutFile $zip
 if (-not (Test-Path $zip)) { throw 'Admin v2 package was not built.' }
 Get-FileHash $zip -Algorithm SHA256
@@ -185,9 +194,9 @@ the PoC. Do **not** set `WEBSITE_RUN_FROM_PACKAGE`.
 
 ### 5. Read back and accept
 
-- Open `https://<exact-host>/api/console` from the VDI; confirm v2.0.0.
+- Open `https://<exact-host>/api/console` from the VDI; confirm v2.0.1.
 - Call the existing function-key-protected `/api/health` with
-  `x-functions-key`; expect `version: "2.0.0"`, `auth: "configured"`,
+  `x-functions-key`; expect `version: "2.0.1"`, `auth: "configured"`,
   `cosmos: "ok"`. Never print or screenshot the key.
 - Reader: inspect projects; confirm editing cannot be performed.
 - Editor: review and save an approved test tag/limit change; verify the audit

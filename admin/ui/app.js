@@ -253,7 +253,7 @@ function navigate(hash) {
 
 async function route() {
   const r = currentRoute();
-  const extended = /^#\/(inventory|pricing|operations|audit)$/.test(location.hash);
+  const extended = /^#\/(budgets|inventory|pricing|operations|audit)$/.test(location.hash);
   $("detail").hidden = extended;
   $("v2-content").hidden = !extended;
   if (extended) return;

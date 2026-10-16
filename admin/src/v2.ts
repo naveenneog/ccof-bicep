@@ -5,8 +5,62 @@ import type { ApiRequest, ApiResponse, ProjectStore } from "./api.ts";
 import { canonical, isIdentifier, isObject, stripSystem } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 import { parseRateCard } from "../../src/cost/rate-card.ts";
+import { ccuToUsd } from "../../src/cost/budget-units.ts";
+import { Money } from "../../src/cost/money.ts";
 import type { Capability, Operations } from "./operations.ts";
 export const MAX_CATALOG_BYTES = 1024 * 1024;
+const DECIMAL_TEXT = /^\d{1,30}(\.\d{1,30})?$/;
+
+// Group budget roll-up from the reconciler's own ccof.reconciler.budget.v1 group lines.
+// Exact decimals; 100 CCU = USD 1 (src/cost/budget-units.ts). Rows that are malformed are
+// counted, never guessed. Totals are lower bounds whenever any group is partial or stale.
+export function summarizeGroupBudgets(rows: unknown[], now: Date): Doc {
+  const groups: Doc[] = [];
+  let rejected = 0;
+  let spent = new Money(0);
+  let cappedBudget = new Money(0);
+  let cappedSpent = new Money(0);
+  let uncapped = 0, stale = 0, partial = 0, exhausted = 0;
+  for (const row of rows) {
+    if (!isObject(row) || row.scope !== "group" || typeof row.projectId !== "string" || typeof row.classification !== "string" ||
+      typeof row.spentCcu !== "string" || !DECIMAL_TEXT.test(row.spentCcu) ||
+      row.budgetCcu !== null && (typeof row.budgetCcu !== "string" || !DECIMAL_TEXT.test(row.budgetCcu))) { rejected++; continue; }
+    const s = new Money(row.spentCcu);
+    const b = row.budgetCcu === null ? null : new Money(row.budgetCcu);
+    const validUntil = typeof row.validUntil === "string" ? Date.parse(row.validUntil) : NaN;
+    const fresh = Number.isFinite(validUntil) && validUntil > now.getTime();
+    const complete = row.completeness === "complete";
+    spent = spent.plus(s);
+    if (b) { cappedBudget = cappedBudget.plus(b); cappedSpent = cappedSpent.plus(s); } else uncapped++;
+    if (!fresh) stale++;
+    if (!complete) partial++;
+    if (row.exhausted === true) exhausted++;
+    groups.push({
+      projectId: row.projectId, classification: row.classification, scopeId: row.scopeId ?? null, mode: row.mode ?? null,
+      spentCcu: s.toFixed(), spentUsd: ccuToUsd(s).toFixed(2),
+      budgetCcu: b ? b.toFixed() : null, budgetUsd: b ? ccuToUsd(b).toFixed(2) : null,
+      remainingCcu: b ? b.minus(s).toFixed() : null, remainingUsd: b ? ccuToUsd(b.minus(s)).toFixed(2) : null,
+      usedPercent: b && b.gt(0) ? s.dividedBy(b).times(100).toFixed(1) : null,
+      exhausted: row.exhausted === true, completeness: complete ? "complete" : "partial", fresh,
+      activeMemberCount: typeof row.activeMemberCount === "number" ? row.activeMemberCount : null,
+      rateCardVersion: row.rateCardVersion ?? null, period: row.period ?? null,
+      computedAt: row.computedAt ?? null, validUntil: row.validUntil ?? null, observedAt: row.observedAt ?? null,
+    });
+  }
+  groups.sort((a, b) => Number(b.usedPercent ?? -1) - Number(a.usedPercent ?? -1) || String(a.projectId).localeCompare(String(b.projectId)));
+  return {
+    groups,
+    totals: {
+      groups: groups.length, spentCcu: spent.toFixed(), spentUsd: ccuToUsd(spent).toFixed(2),
+      cappedBudgetCcu: cappedBudget.toFixed(), cappedBudgetUsd: ccuToUsd(cappedBudget).toFixed(2),
+      cappedSpentCcu: cappedSpent.toFixed(),
+      cappedUsedPercent: cappedBudget.gt(0) ? cappedSpent.dividedBy(cappedBudget).times(100).toFixed(1) : null,
+      uncappedGroups: uncapped, staleGroups: stale, partialGroups: partial, exhaustedGroups: exhausted, rejectedRows: rejected,
+      lowerBound: stale > 0 || partial > 0 || rejected > 0,
+    },
+    basis: "Reconciler month-to-date calculation at the approved rate card (100 CCU = USD 1); not an Azure invoice. Partial, stale or rejected observations make totals a lower bound.",
+  };
+}
 
 export interface CatalogStore {
   read(): Promise<{ doc: Doc; etag: string } | null>;
@@ -16,7 +70,8 @@ export interface V2Dependencies {
   authenticate: Authenticator | null;
   projects: ProjectStore | null;
   catalogStore: CatalogStore | null;
-  defaultCatalog: Doc;
+  // Null when the packaged rate card could not be read; only cost definitions degrade.
+  defaultCatalog: Doc | null;
   operations: Operations;
   now(): Date;
   newId(): string;
@@ -75,13 +130,14 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       try { value = JSON.parse(request.body); } catch { throw new ApiError(400, "body_not_json"); }
       const doc = validateCatalog(value);
       const current = await deps.catalogStore.read();
-      validateRateHistory(current?.doc.rateCard ?? deps.defaultCatalog.rateCard, doc.rateCard);
+      const history = current?.doc.rateCard ?? deps.defaultCatalog?.rateCard;
+      if (history !== undefined) validateRateHistory(history, doc.rateCard);
       const match = request.headers("if-match");
       if (current && (!match || match === "*")) throw new ApiError(428, "if_match_required");
       if (current && current.etag !== match || !current && request.headers("if-none-match") !== "*") throw new ApiError(412, "etag_mismatch");
       const etag = await deps.catalogStore.save(doc, current?.etag ?? null);
       if (!etag) throw new ApiError(412, "etag_mismatch");
-      const before = current?.doc ?? deps.defaultCatalog;
+      const before = current?.doc ?? deps.defaultCatalog ?? { models: [] };
       const oldModels = new Map((Array.isArray(before.models) ? before.models : []).filter(isObject).map((m) => [`${m.backendId}/${m.deployment}`, m]));
       const newModels = new Map((doc.models as Doc[]).map((m) => [`${m.backendId}/${m.deployment}`, m]));
       const mappingChanges = [...new Set([...oldModels.keys(), ...newModels.keys()])].filter((key) => canonical(oldModels.get(key)) !== canonical(newModels.get(key)))
@@ -110,6 +166,10 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
     }
     if (path === "catalog") {
       const current = deps.catalogStore ? await deps.catalogStore.read() : null;
+      if (!current && !deps.defaultCatalog) {
+        return response(200, { state: "unavailable", reason: "packaged_rate_card_unavailable", observedAt: deps.now().toISOString(),
+          permission: "Redeploy the admin package (ui-dist/rate-card.json) or save a catalog with ADMIN_CONFIG_CONTAINER configured." });
+      }
       return response(200, {
         catalog: current ? { schemaVersion: current.doc.schemaVersion, models: current.doc.models, rateCard: current.doc.rateCard } : deps.defaultCatalog,
         editable: Boolean(deps.catalogStore && actor.canWrite),
@@ -123,13 +183,16 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       case "groups": cap = await deps.operations.groups(url.searchParams.get("q") ?? ""); break;
       case "inventory": cap = await deps.operations.inventory(); break;
       case "deployments": cap = await deps.operations.deployments(url.searchParams.get("resourceId") ?? ""); break;
-      case "budgets": cap = await deps.operations.logs("budgets"); break;
+      case "budgets":
+        cap = await deps.operations.logs("budgets");
+        if ((cap.state === "available" || cap.state === "partial") && Array.isArray(cap.data)) cap = { ...cap, data: summarizeGroupBudgets(cap.data, deps.now()) };
+        break;
       case "audit": cap = await deps.operations.logs("audit"); break;
       case "runs": cap = await deps.operations.logs("runs"); break;
       case "health": cap = await deps.operations.health(); break;
       case "prices": cap = await deps.operations.retail(); break;
       case "billed-cost": cap = await deps.operations.billed(); break;
-      case "version": return response(200, { version: "2.0.0", api: "v2", projectApi: "v1-compatible" });
+      case "version": return response(200, { version: "2.0.1", api: "v2", projectApi: "v1-compatible" });
       default: throw new ApiError(404, "route_not_found");
     }
     return response(200, cap);
