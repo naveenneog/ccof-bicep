@@ -3635,6 +3635,234 @@ Modules 18-24 is required simply to keep those developer clients working.
 References: [Desktop Gateway](https://claude.com/docs/third-party/claude-desktop/gateway),
 [in-app configuration](https://claude.com/docs/third-party/claude-desktop/in-app-configuration).
 
+### Step 17.8a - Choose the automatic Azure CLI sign-in variant
+
+This optional variant **replaces only the four-line CMD file in 13.A-refresh** and
+removes the need for a developer to type `az login`. Keep all existing Step 13
+configuration until this change is approved; do not run both helpers.
+
+**Path A:** approve Azure CLI as the delegated OAuth client, as in **13.2A/13.3A**.
+This is the **existing inference gateway registration and APIM policy**, not the
+new admin-console app from Module 20. No Graph lookup permission is requested.
+**Path B:** record the existing tenant GUID, gateway client GUID/Application ID URI,
+full `access_as_user` scope, gateway URL, project ID and admitted deployment names.
+
+**Check:** the helper tries a cached/refreshed gateway token first. If that fails,
+it attempts **one interactive Azure CLI sign-in**, then requests the token again.
+On current Windows Azure CLI, the interactive UI is normally **WAM/account picker**;
+on an approved browser-login configuration it is the browser. SSO can still require
+account selection, MFA, device compliance or consent. Do not disable broker or CA to
+force a password-free browser flow.
+
+Claude Code's **`/login` is not wired to this CMD file**. Starting Claude Code or a
+request that invokes `apiKeyHelper` triggers it. The CMD file contains the `az login
+--tenant ...` command; no login command is added to the Entra application manifest.
+
+### Step 17.8b - Authorize Azure CLI on the existing gateway API
+
+**Path A:** Entra > App registrations > existing gateway/user-sign-in app >
+**Expose an API > Authorized client applications > Add a client application**.
+Enter **`04b07795-8ddb-461a-bbee-02f9e1bf7b46`**, select the enabled
+**access_as_user** scope and save. Preserve original clients/scopes/redirects.
+**Path B:** run the complete preserve-and-merge CLI block in **13.2A** once under
+an approved application administrator. If already granted, verify and skip.
+
+**Check:** Azure CLI's entry is bound to the gateway's actual scope GUID. Do not
+replace the gateway `clientId`, add a new tenant, create another Azure CLI app, add
+Graph permissions or put Azure CLI into the internal resolver's MI allow-list.
+
+### Step 17.8c - Add Azure CLI to the existing APIM caller allow-list
+
+**Path A:** back up the current API policy; APIM > APIs > Claude Messages >
+**All operations** > inbound policy editor. Add Azure CLI's client ID to the
+existing `delegatedClients` array without removing its current values:
+
+```csharp
+var delegatedClients = new string[] {
+    "REPLACE-actual-existing-gateway-client-guid",
+    "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+};
+```
+
+**Path B:** use the complete checked API-policy edit block in **13.3A**, preserving
+the policy and change/revision process. Don't replace a full policy with this fragment.
+
+**Check:** the token audience still identifies the gateway; only the permitted caller
+client list expands. Preserve issuer/tenant, scope, resolver, entitlement, model and quota
+checks. Record the same approved client in `entra.delegatedClientAppIds` in the private
+gateway-render config so a later regeneration does not remove it.
+Neither this nor Entra preauthorization grants project membership.
+
+### Step 17.8d - Hand-create the auto-sign-in CMD helper
+
+**Path A:** on each approved **Windows developer machine**, confirm Azure CLI is
+installed and on PATH. In Explorer create `C:\ccof-client` if needed. Back up the
+previous `az-gateway-token.cmd`. Open Notepad, paste **all** code below, set the two
+values and save as **All files**, name **az-gateway-token.cmd**, not `.cmd.txt`.
+**Path B (read-only prerequisites, PowerShell 5.1 or 7):**
+
+```powershell
+where.exe az.cmd
+if ($LASTEXITCODE -ne 0) { throw 'Azure CLI is missing from PATH. Obtain it through IT.' }
+az.cmd version
+if ($LASTEXITCODE -ne 0) { throw 'Azure CLI cannot run.' }
+```
+
+Complete file (same as the public example
+[`az-gateway-token-auto-login.cmd`](../examples/az-gateway-token-auto-login.cmd)):
+
+```bat
+@echo off
+setlocal DisableDelayedExpansion
+set "TENANT=REPLACE-tenant-guid"
+set "SCOPE=api://REPLACE-gateway-app-client-guid/access_as_user"
+set "AZURE_CORE_LOGIN_EXPERIENCE_V2=off"
+if "%TENANT:~0,8%"=="REPLACE-" (
+  >&2 echo Configure the customer TENANT and SCOPE in this file first.
+  exit /b 1
+)
+if "%SCOPE:~0,14%"=="api://REPLACE-" (
+  >&2 echo Configure the gateway SCOPE in this file first.
+  exit /b 1
+)
+where az.cmd >nul 2>nul
+if errorlevel 1 (
+  >&2 echo Azure CLI az.cmd is not on PATH. Contact your desktop administrator.
+  exit /b 1
+)
+call az.cmd account get-access-token --tenant "%TENANT%" --scope "%SCOPE%" --query accessToken --output tsv --only-show-errors 2>nul
+if not errorlevel 1 exit /b 0
+>&2 echo Gateway token unavailable. Starting Microsoft interactive sign-in.
+call az.cmd login --tenant "%TENANT%" --scope "%SCOPE%" --allow-no-subscriptions --output none --only-show-errors <nul 1>&2
+if errorlevel 1 exit /b 1
+call az.cmd account get-access-token --tenant "%TENANT%" --scope "%SCOPE%" --query accessToken --output tsv --only-show-errors
+exit /b %errorlevel%
+```
+
+**Check:** `TENANT` is the customer's tenant; `SCOPE` is the **existing full gateway
+scope**, not Azure CLI's client ID or the admin console's Projects.Manage scope.
+If the exposed Application ID URI differs from `api://<guid>`, use that exact URI.
+`setlocal` keeps the subscription-selector override local to this helper. It does
+not change broker configuration, log out the user or clear the shared Azure cache.
+Interactive login can update the user's existing Azure CLI context; coordinate if
+they use the same profile for Azure administration.
+
+Only the token goes to stdout. The initial cache-probe error is suppressed;
+interactive/final errors go to stderr and return nonzero. This fallback attempts
+sign-in on any failed initial acquisition, so a network/service/permission problem
+can also produce one unnecessary prompt. It is not a sign-in-error classifier.
+No infinite retries; token values are never written to a helper-owned file.
+
+### Step 17.8e - Merge the Claude Code user settings
+
+**Path A:** back up and edit **`%USERPROFILE%\.claude\settings.json`** in Notepad or
+VS Code. Merge these fields, preserving unrelated keys and environment entries.
+`apiKeyHelper` belongs at the top level of this file, not in VS Code User settings.
+**Path B:** no installer is needed; the complete JSON fragment is:
+
+```json
+{
+  "apiKeyHelper": "\"C:\\ccof-client\\az-gateway-token.cmd\"",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://sample-apim.azure-api.net/anthropic",
+    "ANTHROPIC_CUSTOM_HEADERS": "x-ccof-project: PROJECT01",
+    "ANTHROPIC_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_USE_FOUNDRY": "0",
+    "CLAUDE_CODE_USE_BEDROCK": "0",
+    "CLAUDE_CODE_USE_VERTEX": "0",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS": "0",
+    "CLAUDE_CODE_USE_MANTLE": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "60000"
+  }
+}
+```
+
+**Check:** substitute the actual existing gateway URL/project/deployments. Do not
+copy sample aliases to enable a model the project does not admit. Preserve other
+required custom headers using newline-separated headers. Keep one `apiKeyHelper`.
+The TTL is helper-output cache time, not token lifetime or a guarantee of silent refresh.
+
+### Step 17.8f - Remove only old credential overrides and retain VS Code routing
+
+**Path A:** after backup, remove this gateway route's stale `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` values from the Claude/VS Code settings
+and any customer-owned persistent environment overrides. Do not inspect or share
+their values or change IT-managed settings. Keep the noncredential routing settings
+in **13.4**. Leave `claudeCode.disableLoginPrompt=true`; it suppresses the irrelevant
+Anthropic account prompt, not Microsoft authentication.
+
+**Path B (current PowerShell process only):**
+
+```powershell
+Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
+```
+
+**Check:** no static credential still takes precedence over the helper. A process-only
+removal doesn't clear user/machine environment or a managed profile; review the correct
+source with the desktop administrator. Do not run `az logout` or `az account clear`.
+
+### Step 17.8g - Launch, allow interactive SSO, then verify each client
+
+**Path A:** start Claude Code or send its first request. When the helper needs a token,
+it starts Microsoft WAM/browser sign-in itself; the user completes the required
+account/MFA/device interaction. They **do not type az login** and **do not use /login**
+to invoke this helper. A valid existing CLI session can avoid showing any sign-in UI.
+
+**Path B (actual short request; no token printed):**
+
+```powershell
+claude -p "Reply with exactly: gateway OK"
+```
+
+Fully quit/reopen VS Code through its normal menus and test a real extension
+conversation separately. Native Claude Desktop remains on **17.3-17.6**, not this CLI setting.
+
+**Check:** actual admitted-model reply, gateway route/credential source and APIM
+correlation. Group membership and a successful Module 12 entitlement projection remain
+mandatory. Never treat a Microsoft account picker or successful CLI login as inference acceptance.
+
+### Step 17.8h - Handle slow SSO or failures without exposing tokens
+
+**Path A:** if the client terminates the helper during a slow interactive sign-in,
+run **the same CMD helper itself** once with stdout discarded, outside the client's
+helper timeout. This still requires no user-written `az login` command. Don't assume
+a failed request left a completed sign-in behind.
+**Path B (PowerShell 5.1/7):**
+
+```powershell
+& 'C:\ccof-client\az-gateway-token.cmd' > $null
+if ($LASTEXITCODE -ne 0) { throw 'Gateway sign-in failed. Review the Microsoft/Azure CLI error; do not bypass policy.' }
+```
+
+**Check:** login completes, helper exits 0 without displaying a token, then retry Claude.
+For a managed environment, distribute an approved sign-in shortcut that calls the same
+helper with stdout redirected, rather than putting an access token in a file.
+The interactive UI remains subject to the installed CLI/OS/session; a headless or
+blocked broker/browser environment is not verified by the mocked helper tests.
+
+| Symptom | Step to revisit |
+|---|---|
+| Consent/preauthorization refusal | 17.8b / 13.2A; exact client, scope and tenant approval |
+| Token obtained, gateway 401/403 | 17.8c plus JWT audience/scope/client, then entitlement/model checks |
+| Repeated sign-in prompts | Exact CLI error, profile/session access, CA and failed silent refresh; don't weaken CA |
+| No helper invocation | Conflicting credential source, managed settings, helper path and VS Code restart |
+| Helper timeout | Complete 17.8h outside the client timeout, then retry; no guarantee of auto-retry |
+| User runs /login | Explain that this is Anthropic login, not this gateway's SSO entry point |
+
+**Rollback:** restore the previous helper/settings bytes. Restore Entra/APIM client
+trust only through the separate approved **13.2A/13.3A** rollback, preserving concurrent
+administrator edits. Nothing here changes a Function App or requests Graph permissions.
+Sources: [Azure CLI interactive sign-in/WAM](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively),
+[Claude Code gateway helper contract](https://code.claude.com/docs/en/llm-gateway-connect#rotate-credentials-with-apikeyhelper).
+The helper's control flow is tested with mock Azure CLI; real managed-device SSO and
+gateway inference require the acceptance above.
+
 ## 18. Separate admin resources - inventory and one resource per step
 
 ### Step 18.1 - Record authority and approved new names
