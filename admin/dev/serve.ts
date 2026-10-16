@@ -9,6 +9,7 @@
 
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { handleAdminRequest } from "../src/api.ts";
 import type { ProjectStore, StoredProject } from "../src/api.ts";
@@ -16,6 +17,9 @@ import { ApiError } from "../src/auth.ts";
 import type { Authenticator } from "../src/auth.ts";
 import { serveUi } from "../src/ui.ts";
 import type { Doc } from "../src/validation.ts";
+import { handleV2Request } from "../src/v2.ts";
+import type { CatalogStore } from "../src/v2.ts";
+import { createOperations } from "../src/operations.ts";
 
 const PORT = Number(process.env.PORT ?? 7171);
 const UI = fileURLToPath(new URL("../ui-dist/", import.meta.url));
@@ -49,6 +53,12 @@ class MemoryStore implements ProjectStore {
   tag() { return `"demo-${++this.n}"`; }
   fail() { if (mode === "down") throw Object.assign(new Error("Request blocked by network rules"), { code: 403 }); }
   async list() { this.fail(); return [...this.docs.values()].map((p) => structuredClone(p)); }
+  async listPage(query: { search: string; tag: string; backendId: string; limit: number; cursor?: string }) {
+    const all = (await this.list()).filter((p) => `${p.doc.projectId} ${p.doc.displayName}`.toLowerCase().includes(query.search.toLowerCase()) &&
+      (!query.tag || Array.isArray(p.doc.adminTags) && p.doc.adminTags.includes(query.tag)) && (!query.backendId || p.doc.backendId === query.backendId));
+    const start = Number(query.cursor ?? 0);
+    return { items: all.slice(start, start + query.limit), cursor: start + query.limit < all.length ? String(start + query.limit) : undefined };
+  }
   async read(id: string) { this.fail(); const p = this.docs.get(id); return p ? structuredClone(p) : null; }
   async create(doc: Doc) {
     this.fail();
@@ -85,6 +95,20 @@ const authenticate: Authenticator = async (authorization) => {
   if (authorization === "Bearer demo-reader") return { oid: "00000000-0000-4000-8000-0000000000a1", canWrite: false };
   throw new ApiError(401, "bearer_token_required");
 };
+const rateCard = JSON.parse(await readFile(new URL("../ui-dist/rate-card.json", import.meta.url), "utf8"));
+const defaultCatalog = { schemaVersion: 1, rateCard, models: rateCard.entries.map((entry: Doc) => ({
+  family: String(entry.model).split("-")[1], model: entry.model, deployment: entry.model, backendId: "",
+})) };
+let catalog: { doc: Doc; etag: string } | null = null;
+const catalogStore: CatalogStore = {
+  async read() { return catalog ? structuredClone(catalog) : null; },
+  async save(doc, etag) {
+    if (catalog && catalog.etag !== etag || !catalog && etag) return null;
+    catalog = { doc: structuredClone(doc), etag: `"catalog-${randomUUID()}"` };
+    return catalog.etag;
+  },
+};
+const operations = createOperations({}, { getToken: async () => { throw new Error("Demo must not acquire real tokens"); } }, console.log);
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
@@ -104,14 +128,14 @@ const server = createServer(async (req, res) => {
     const r = await serveUi(asset, UI);
     return send(r.status, r.headers, r.body);
   }
-  if (url.pathname.startsWith("/api/projects")) {
+  if (url.pathname.startsWith("/api/projects") || url.pathname.startsWith("/api/v2/")) {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     const body = chunks.length ? Buffer.concat(chunks).toString("utf8") : null;
-    const r = await handleAdminRequest(
-      { method: req.method ?? "GET", path: url.pathname, headers: (n) => { const v = req.headers[n.toLowerCase()]; return Array.isArray(v) ? v[0] : v ?? null; }, body },
-      { authenticate, store, log: (line) => console.log(line), now: () => new Date(), newId: () => randomUUID() },
-    );
+    const request = { method: req.method ?? "GET", path: url.pathname + url.search, headers: (n: string) => { const v = req.headers[n.toLowerCase()]; return Array.isArray(v) ? v[0] : v ?? null; }, body };
+    const r = url.pathname.startsWith("/api/v2/")
+      ? await handleV2Request(request, { authenticate, projects: store, catalogStore, defaultCatalog, operations, log: console.log, now: () => new Date(), newId: randomUUID })
+      : await handleAdminRequest(request, { authenticate, store, log: (line) => console.log(line), now: () => new Date(), newId: randomUUID });
     return sendJson(r.status, r.jsonBody, r.headers);
   }
   send(404, { "content-type": "text/plain" }, "Not found");

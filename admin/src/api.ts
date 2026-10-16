@@ -1,7 +1,6 @@
 // The project admin API, framework-free so it is tested with a fake store and fake clock.
-// Phase 1 operations only: list, read, create, replace a classification's family policy (models and
-// limits) and patch its limits. Project id, groups, backend, budgets and status are not editable here;
-// deletion, rename, group replacement and backend moves are deliberately absent (docs/ADMIN-API.md).
+// Core project operations plus v2 reviewed settings (tags, one backend/subscription and budgets).
+// Project ids, group ids and status are not editable; deletion and group replacement remain absent.
 // Every write requires the stored ETag (If-Match) and emits one ccof.admin.audit.v1 line.
 
 import { ApiError } from "./auth.ts";
@@ -19,6 +18,7 @@ export interface StoredProject {
 
 export interface ProjectStore {
   list(): Promise<StoredProject[]>;
+  listPage?(query: { search: string; tag: string; backendId: string; limit: number; cursor?: string }): Promise<{ items: StoredProject[]; cursor?: string }>;
   read(projectId: string): Promise<StoredProject | null>;
   // The new ETag, or "conflict" when a document with this id exists.
   create(doc: Doc): Promise<string | "conflict">;
@@ -51,6 +51,7 @@ type Route =
   | { op: "list" }
   | { op: "read"; projectId: string }
   | { op: "create" }
+  | { op: "settings"; projectId: string }
   | { op: "familyPolicy"; projectId: string; code: string }
   | { op: "limits"; projectId: string; code: string };
 
@@ -63,6 +64,7 @@ function route(method: string, path: string): Route | "method_not_allowed" | nul
   const projectId = decodeURIComponent(parts[1] ?? "");
   if (!isIdentifier(projectId)) return null;
   if (parts.length === 2) return m === "GET" ? { op: "read", projectId } : "method_not_allowed";
+  if (parts.length === 3 && parts[2] === "settings") return m === "PUT" ? { op: "settings", projectId } : "method_not_allowed";
   if (parts.length === 5 && parts[2] === "classifications" && isIdentifier(parts[3])) {
     if (parts[4] === "family-policy") return m === "PUT" ? { op: "familyPolicy", projectId, code: parts[3] } : "method_not_allowed";
     if (parts[4] === "limits") return m === "PATCH" ? { op: "limits", projectId, code: parts[3] } : "method_not_allowed";
@@ -96,6 +98,7 @@ function summary(p: StoredProject) {
     displayName: d.displayName,
     status: d.status,
     backendId: d.backendId,
+    adminTags: d.adminTags ?? [],
     classifications: isObject(d.classifications) ? Object.keys(d.classifications).sort() : [],
     etag: p.etag,
   };
@@ -177,7 +180,7 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
     if (matched === "method_not_allowed") throw new ApiError(405, "method_not_allowed");
     operation = matched.op;
     projectId = "projectId" in matched ? matched.projectId : undefined;
-    const writes = matched.op === "create" || matched.op === "familyPolicy" || matched.op === "limits";
+    const writes = matched.op === "create" || matched.op === "familyPolicy" || matched.op === "limits" || matched.op === "settings";
     if (writes && !actor.canWrite) throw new ApiError(403, "write_permission_required");
     if (!deps.store) throw new ApiError(503, "project_store_not_configured");
     const store = guardStore(deps.store);
@@ -201,6 +204,40 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
         audit({ outcome: "created", etagAfter: written, classifications: Object.keys(doc.classifications as Doc).sort() });
         return json(201, doc, { etag: written, location: `/api/projects/${encodeURIComponent(projectId)}` });
       }
+      case "settings": {
+        const etag = requireIfMatch(request);
+        const body = parseBody(request);
+        if (!isObject(body) || Object.keys(body).some((key) => !["adminTags", "displayName", "backendId", "designatedSubscriptionId", "budgets"].includes(key)) ||
+          Object.keys(body).length === 0) throw new ValidationError(["settings:invalid"]);
+        const current = await store.read(matched.projectId);
+        if (!current) throw new ApiError(404, "project_not_found");
+        if (current.etag !== etag) throw new ApiError(412, "etag_mismatch");
+        const before = stripSystem(current.doc);
+        const after = structuredClone(before);
+        if (body.backendId !== undefined && body.backendId !== before.backendId && !Object.hasOwn(body, "designatedSubscriptionId")) {
+          throw new ValidationError(["designatedSubscriptionId:required_for_backend_change"]);
+        }
+        for (const key of ["adminTags", "displayName", "backendId", "designatedSubscriptionId"]) if (Object.hasOwn(body, key)) after[key] = body[key];
+        if (body.adminTags === null || Array.isArray(body.adminTags) && body.adminTags.length === 0) delete after.adminTags;
+        if (body.budgets !== undefined) {
+          if (!isObject(body.budgets) || !isObject(after.classifications)) throw new ValidationError(["budgets:invalid"]);
+          for (const [code, budget] of Object.entries(body.budgets)) {
+            const classification = after.classifications[code];
+            if (!isObject(classification) || !isObject(budget) ||
+              Object.keys(budget).some((key) => !["personBudget", "aggregateBudget", "aggregateMode"].includes(key))) {
+              throw new ValidationError(["budgets:invalid"]);
+            }
+            Object.assign(classification, budget);
+          }
+        }
+        assertValidProject(after);
+        const changed = changes(before, after, "", []);
+        if (!changed.length) return json(200, { changed: false, project: before }, { etag });
+        const written = await store.replace(after, etag);
+        if (written === "precondition_failed") throw new ApiError(412, "etag_mismatch");
+        audit({ outcome: "updated", etagBefore: etag, etagAfter: written, changes: changed });
+        return json(200, { changed: true, project: after }, { etag: written });
+      }
       case "familyPolicy": {
         const result = await classificationUpdate(store, request, matched, (_policy, body) => {
           if (!isObject(body)) throw new ValidationError(["familyPolicy:invalid"]);
@@ -217,7 +254,7 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
     }
   } catch (err) {
     if (err instanceof ApiError) {
-      const isWriteAttempt = operation === "create" || operation === "familyPolicy" || operation === "limits";
+      const isWriteAttempt = operation === "create" || operation === "familyPolicy" || operation === "limits" || operation === "settings";
       if (isWriteAttempt || err.status === 401 || err.status === 403) audit({ outcome: "refused", status: err.status, code: err.code });
       const body: Record<string, unknown> = { error: err.code, requestId };
       if (err instanceof ValidationError) body.problems = err.problems;

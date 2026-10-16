@@ -1,5 +1,10 @@
 # Azure Portal-first deployment workbook
 
+> For the current resource-only Bicep / separate access-team / application /
+> customer-network sequence and private VDI v2 updates, start with
+> [STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md). The Portal steps
+> below are granular reference procedures, not permission to bypass those gates.
+
 **Create and connect resources in the UI. Deploy application code separately.**
 
 > **Screenshots are being added.** Each step has a `Screenshot:` slot: a placeholder image under

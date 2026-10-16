@@ -5080,3 +5080,53 @@ The condensed Bash procedure is an optional reference, **not** a replacement for
 these individually approved Portal/CLI steps.
 
 <!-- ADMIN-HAND-CONFIG-APPENDIX-END -->
+
+---
+
+## Current staged-deployment correction — 16 October 2026
+
+Modules **00–16 above remain unchanged** as the historical completion workbook.
+For new customer deployments and the private v1→v2 VDI update path, start with
+[STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md).
+It provides the actual new `infra\staged` resource-only Bicep entry point:
+
+1. Create **new service resources only**; no network components/integration,
+   no IAM/native data grants or Entra operations. APIM's provider constraint
+   requires an explicit approved **new public shell** bootstrap or a recorded
+   deferral; existing production public access is never loosened.
+2. Receive the **separate identity/access team's** registrations/roles/consent
+   handoff before dependent application operations. This team owns the original
+   workbook's permission steps, including reporting readers when their scopes exist.
+3. Build/configure/publish code, initialize only missing schema and use **create-only**
+   initial seed. Never reset/upsert existing project data; a v2 code update is not
+   an infrastructure redeployment or initial-seed rerun.
+4. Customer hand-configures network/private endpoints/central DNS; run scoped
+   diagnostics and authenticated read-only health. If private storage/SCM blocks
+   stage 3, prepare that network path first and resume stage 3 from approved VDI.
+
+**Module 14 corrections are in the staged runbook:** serialize groups with
+`ConvertTo-Json -InputObject @($groups)` even for one group; use a real
+`Authorization="Bearer $armToken"` / `"Bearer $token"` header, not the masked
+header shown in the preserved blocks; request `canFetchContent=true` on workbook
+content GET. Preserve unknown/unpriced/unattributed usage as unknown, not `$0`.
+
+**Network interpretation:** a dynamic APIM `set-backend-service` policy need not
+have a fixed operation backend URL. A private-only Foundry network 403 can be
+wrapped as a 502 credential message. Central DNS often resides in another
+subscription/RG and needs scoped Reader; links do not propagate through peering.
+Compare DNS with actual PE NIC IPs, including approved `100.104.x.x` addresses,
+from the relevant host—not ordinary public Cloud Shell. Missing CNAME or absent
+route-table attachment alone does not establish DNS failure or “no firewall”.
+
+**Existing private app publishing:** use Flex-aware
+`az functionapp deployment source config-zip` from the approved VDI/private path,
+retain the previous ZIP for rollback, keep PNA/SCM restrictions intact and use
+the staged runbook's protected `GET /api/health` with `x-functions-key`. Static
+checker success is not live-path or production acceptance. V1 remains
+`feat/project-admin-api`; v2 source is `feat/admin-console-v2` with its own
+reviewed commit/package contract.
+
+For v2's optional integration settings, the `adminConfig` schema (`/scopeId`),
+private-VDI publishing and **tag-compatible** v1 rollback, follow
+[ADMIN-V2.md](../ADMIN-V2.md) alongside the staged runbook. Optional capability
+permissions are separate access-team work, not automatic grants from stage 1.

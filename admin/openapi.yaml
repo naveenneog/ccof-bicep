@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
   title: CCOF project admin API
-  version: 0.1.0
+  version: 2.0.0
   description: >
-    Phase 1. Manage CCOF projects in the private Cosmos `projects` registry through the admin Function App.
-    All writes go through the Function App's managed identity; callers never reach Cosmos. Directory lookups
-    (Entra group names, members) are the UI's concern and are not part of this API.
+    Manage projects through the admin app managed identity. V2 adds optional capability-gated
+    directory lookup, inventory, cost definitions, health and telemetry. No permission grants,
+    network changes or membership writes are performed. See docs/ADMIN-V2.md.
 servers:
   - url: https://{functionAppHost}/api
     variables:
@@ -56,6 +56,63 @@ paths:
                 families: { type: object, additionalProperties: { $ref: "#/components/schemas/ScopePatch" } }
       responses:
         "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/settings:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/IfMatch" }]
+    put:
+      summary: Review/update project tags, single backend and classification budgets (editor)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                adminTags: { type: array, nullable: true, maxItems: 20, uniqueItems: true, items: { type: string, maxLength: 60 }, description: Null/empty removes optional metadata for v1 rollback }
+                displayName: { type: string, maxLength: 200 }
+                backendId: { type: string }
+                designatedSubscriptionId: { type: string, format: uuid, description: Required with a backend change }
+                budgets: { type: object, additionalProperties: { type: object } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/projects:
+    get:
+      summary: Server-paged project search (reader)
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: tag, in: query, schema: { type: string, maxLength: 60 } }
+        - { name: backendId, in: query, schema: { type: string, maxLength: 80 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque continuation token returned by the previous query }
+      responses:
+        "200": { description: Project documents and nullable next cursor }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/catalog:
+    get:
+      summary: Read configured or packaged model catalog and versioned rate card
+      responses:
+        "200": { description: Catalog with source/editable/enforcement fields and an ETag when persisted }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      summary: Save catalog (editor); If-None-Match * for creation, exact If-Match for replacement
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+        - { name: If-None-Match, in: header, schema: { type: string, enum: ["*"] } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [schemaVersion, models, rateCard] } } } }
+      responses:
+        "200": { description: Saved catalog; does not change deployed reconciler pricing }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/{feature}:
+    get:
+      summary: Optional read-only integration; missing permissions disable only this capability
+      parameters:
+        - { name: feature, in: path, required: true, schema: { type: string, enum: [groups, inventory, deployments, budgets, runs, audit, health, prices, billed-cost, version] } }
+        - { name: q, in: query, schema: { type: string }, description: Group name prefix for groups (2-80 characters) }
+        - { name: resourceId, in: query, schema: { type: string }, description: Deployments require a Foundry account ID within server-configured scopes }
+      responses:
+        "200": { description: Capability state with observedAt, optional reason/permission/data; version returns version metadata }
         default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
@@ -127,6 +184,7 @@ components:
         id: { type: string, description: Must equal projectId }
         projectId: { type: string }
         displayName: { type: string, maxLength: 200 }
+        adminTags: { type: array, maxItems: 20, uniqueItems: true, items: { type: string, maxLength: 60 } }
         status: { type: string, enum: [active] }
         backendId: { type: string }
         designatedSubscriptionId: { type: string, format: uuid }

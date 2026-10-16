@@ -6,6 +6,7 @@ import type { Container } from "@azure/cosmos";
 import type { TokenCredential } from "@azure/identity";
 import type { ProjectStore } from "./api.ts";
 import type { Doc } from "./validation.ts";
+import type { CatalogStore } from "./v2.ts";
 
 function statusOf(err: unknown): number | undefined {
   if (typeof err !== "object" || err === null) return undefined;
@@ -38,6 +39,18 @@ export function createCosmosProjectStore(container: Container): ProjectStore {
       const { resources } = await container.items.query<Doc>("SELECT * FROM c").fetchAll();
       return resources.map((doc) => ({ doc, etag: String(doc._etag ?? "") }));
     },
+    async listPage(query) {
+      const filters: string[] = [];
+      const parameters: { name: string; value: string }[] = [];
+      if (query.search) { filters.push("(CONTAINS(c.projectId, @search, true) OR CONTAINS(c.displayName, @search, true))"); parameters.push({ name: "@search", value: query.search }); }
+      if (query.tag) { filters.push("ARRAY_CONTAINS(c.adminTags, @tag)"); parameters.push({ name: "@tag", value: query.tag }); }
+      if (query.backendId) { filters.push("c.backendId = @backend"); parameters.push({ name: "@backend", value: query.backendId }); }
+      const sql = `SELECT * FROM c${filters.length ? ` WHERE ${filters.join(" AND ")}` : ""} ORDER BY c.projectId`;
+      const page = await container.items.query<Doc>({ query: sql, parameters }, {
+        maxItemCount: query.limit, continuationToken: query.cursor,
+      }).fetchNext();
+      return { items: page.resources.map((doc) => ({ doc, etag: String(doc._etag ?? "") })), cursor: page.continuationToken };
+    },
     async read(projectId) {
       try {
         const response = await container.item(projectId, projectId).read<Doc>();
@@ -67,6 +80,26 @@ export function createCosmosProjectStore(container: Container): ProjectStore {
         if (status === 412 || status === 404) return "precondition_failed";
         throw err;
       }
+    },
+  };
+}
+
+export function createCatalogStore(container: Container): CatalogStore {
+  return {
+    async read() {
+      try {
+        const response = await container.item("catalog", "catalog").read<Doc>();
+        return response.resource ? { doc: response.resource, etag: response.etag ?? "" } : null;
+      } catch (err) { if (statusOf(err) === 404) return null; throw err; }
+    },
+    async save(doc, etag) {
+      const value = { ...doc, id: "catalog", scopeId: "catalog" };
+      try {
+        const response = etag
+          ? await container.item("catalog", "catalog").replace(value, { accessCondition: { type: "IfMatch", condition: etag } })
+          : await container.items.create(value);
+        return response.etag ?? null;
+      } catch (err) { if ([409, 412, 404].includes(statusOf(err) ?? 0)) return null; throw err; }
     },
   };
 }

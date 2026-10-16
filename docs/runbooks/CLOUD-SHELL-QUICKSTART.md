@@ -1,5 +1,10 @@
 # Cloud Shell quick-start runbook (existing network)
 
+> This is the integrated quickstart, not the resource-only staged deployment.
+> For separate access-team handoff, customer-owned networking and private VDI v2
+> updates, start with [STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md).
+> Existing-network mode still creates endpoint/integration/configuration resources.
+
 Deploy the gateway core with `infra/quickstart/Deploy-Quickstart.ps1` from **Azure Cloud Shell →
 PowerShell**, into a VNet, subnets and private DNS zones that already exist. Every step is a block
 you copy and paste as-is. Steps marked **read-only** change nothing in Azure.

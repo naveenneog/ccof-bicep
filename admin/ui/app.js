@@ -1,6 +1,7 @@
-// CCOF project admin console. Plain DOM, no framework: the page is small and the API contract
-// (admin/openapi.yaml) is the source of truth. Every value from the API is inserted as text, never HTML.
+// Existing project editor, with React-based v2 operator panels in v2.jsx.
+// API values are inserted as text, never HTML.
 import { InteractionRequiredAuthError, PublicClientApplication } from "@azure/msal-browser";
+import { hasV2Draft, mountV2 } from "./v2.jsx";
 
 const API = "/api";
 const FAMILY_LABELS = { haiku: "Haiku", sonnet: "Sonnet", opus: "Opus", fable: "Fable", mythos: "Mythos" };
@@ -70,10 +71,11 @@ function displayName() {
   return auth.account?.name || auth.account?.username || "Signed in";
 }
 
-async function call(method, path, { body, etag } = {}) {
+async function call(method, path, { body, etag, ifNoneMatch } = {}) {
   const headers = { authorization: `Bearer ${await token()}` };
   if (body !== undefined) headers["content-type"] = "application/json";
   if (etag) headers["if-match"] = etag;
+  if (ifNoneMatch) headers["if-none-match"] = ifNoneMatch;
   let response;
   try {
     response = await fetch(`${API}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -183,26 +185,37 @@ const state = {
   reviewing: false,
   saving: false,
   saveError: null,
+  cursor: null,
+  catalog: null,
+  listEpoch: 0,
+  creating: false,
 };
 
 /* ── Project list ────────────────────────────────────── */
 
-async function loadProjects() {
+async function loadProjects(append = false) {
+  append = append === true;
+  const epoch = append ? state.listEpoch : ++state.listEpoch;
   $("list-status").textContent = "";
-  $("project-list").replaceChildren(el("li", { class: "skeleton", "aria-hidden": "true" }, el("span"), el("span"), el("span"), el("span")));
-  const result = await call("GET", "/projects");
+  if (!append) $("project-list").replaceChildren(el("li", { class: "skeleton", "aria-hidden": "true" }, el("span"), el("span"), el("span"), el("span")));
+  const params = new URLSearchParams({ search: $("search").value.trim(), tag: $("tag-filter").value.trim(), backendId: $("backend-filter").value.trim(), limit: "50" });
+  if (append && state.cursor) params.set("cursor", state.cursor);
+  const result = await call("GET", `/v2/projects?${params}`);
+  if (epoch !== state.listEpoch) return;
   if (result.status !== 200) {
     state.projects = [];
     state.listError = errorInfo(result);
   } else {
-    state.projects = result.data.projects;
+    const items = result.data.projects.map((p) => ({ ...p, classifications: Object.keys(p.classifications ?? {}) }));
+    state.projects = append ? [...state.projects, ...items] : items;
+    state.cursor = result.data.cursor;
     state.listError = null;
   }
   renderList();
+  $("load-more").hidden = !state.cursor || Boolean(state.listError);
 }
 
 function renderList() {
-  const query = $("search").value.trim().toLowerCase();
   const list = $("project-list");
   const status = $("list-status");
   if (state.listError) {
@@ -210,7 +223,7 @@ function renderList() {
     status.replaceChildren(errorNotice(state.listError, [el("button", { class: "btn btn-small", type: "button", text: "Try again", onclick: loadProjects })]));
     return;
   }
-  const shown = state.projects.filter((p) => !query || `${p.projectId} ${p.displayName}`.toLowerCase().includes(query));
+  const shown = state.projects;
   status.textContent = state.projects.length === 0 ? "" : shown.length === 0 ? "No projects match." : "";
   const selected = currentRoute().id;
   list.replaceChildren(...shown.map((p) =>
@@ -218,7 +231,7 @@ function renderList() {
       class: "project-item", type: "button", "aria-current": p.projectId === selected ? "true" : "false",
       onclick: () => navigate(`#/p/${encodeURIComponent(p.projectId)}`),
     }, el("span", { class: "name", text: p.displayName || p.projectId }),
-       el("span", { class: "meta", text: `${p.projectId} · ${p.classifications.join(", ")}` })))));
+       el("span", { class: "meta", text: `${p.projectId} · ${p.classifications.join(", ")}${p.adminTags?.length ? ` · ${p.adminTags.join(", ")}` : ""}` })))));
 }
 
 /* ── Routing ─────────────────────────────────────────── */
@@ -231,16 +244,24 @@ function currentRoute() {
 }
 
 function navigate(hash) {
-  if (location.hash === hash) route();
+  if (location.hash === hash) {
+    if ((state.editing || state.creating || hasV2Draft()) && !window.confirm("Discard unsaved changes?")) return;
+    route();
+  }
   else location.hash = hash;
 }
 
 async function route() {
   const r = currentRoute();
+  const extended = /^#\/(inventory|pricing|operations|audit)$/.test(location.hash);
+  $("detail").hidden = extended;
+  $("v2-content").hidden = !extended;
+  if (extended) return;
   lastView = null;
   state.editing = null;
   state.reviewing = false;
   state.saveError = null;
+  state.creating = false;
   renderList();
   if (r.view === "new") return state.canWrite ? renderCreate() : renderHome();
   if (r.view === "project") return openProject(r.id);
@@ -261,6 +282,8 @@ function setDetail(...children) {
 
 function renderHome() {
   if (state.listError) return setDetail(el("div", { class: "empty" }, el("h1", { text: "Projects" }), el("p", { class: "muted", text: "The project list couldn't be loaded. Details are on the left." })));
+  if (state.projects.length === 0 && state.cursor) return setDetail(el("div", { class: "empty" },
+    el("h1", { text: "Continue the project search" }), el("p", { text: "This query page was empty. Use Load more projects to continue; the registry has not been confirmed empty." })));
   if (state.projects.length === 0) {
     return setDetail(el("div", { class: "empty" },
       el("h1", { text: "No projects yet" }),
@@ -274,7 +297,7 @@ function renderHome() {
   }
   setDetail(el("div", { class: "empty" },
     el("h1", { text: "Select a project" }),
-    el("p", { class: "muted", text: `${state.projects.length} project${state.projects.length === 1 ? "" : "s"} in the registry. Pick one to see its access group, models and token limits.` })));
+    el("p", { class: "muted", text: `${state.projects.length} loaded project${state.projects.length === 1 ? "" : "s"}. ${state.cursor ? "More pages are available. " : ""}Pick one to see its access group, models and token limits.` })));
 }
 
 /* ── Project detail ──────────────────────────────────── */
@@ -319,7 +342,9 @@ function renderProject() {
       },
     }, code))) : null;
 
-  setDetail(head, tabs, renderClassification(cls));
+  const extras = el("div", { id: "project-extras" });
+  setDetail(head, tabs, renderClassification(cls), extras);
+  document.dispatchEvent(new CustomEvent("ccof:project", { detail: { ...state.current, editing: Boolean(state.editing) } }));
 }
 
 function switchClassification(code) {
@@ -355,7 +380,7 @@ function renderClassification(cls) {
       el("dt", { text: "Whole group" }), el("dd", { text: fmtBudget(cls.aggregateBudget) }),
       el("dt", { text: "Group budget mode" }), el("dd", { text: cls.aggregateMode === "strict" ? "Strict (block when exceeded)" : "Notify only" }),
       el("dt", { text: "New members" }), el("dd", { text: cls.onboardingMode === "block" ? "Blocked until budget state exists" : "Allowed with a warning" })),
-    el("p", { class: "section-note", text: "Budgets are reported, not enforced, while the gateway runs in token-limits-only mode. They can't be changed here." }));
+    el("p", { class: "section-note", text: "In token-limits-only mode, budgets are reported, not enforced. Use Organization & consumption below to review changes." }));
 
   return el("div", { class: "detail-inner" }, renderLimits(), access, budgets);
 }
@@ -463,7 +488,13 @@ function modelChips(family, models, editable) {
     requestAnimationFrame(() => document.querySelector(`[aria-label="Add a ${FAMILY_LABELS[family] ?? family} deployment"]`)?.focus());
   };
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
-  return el("div", {}, list, el("div", { class: "chip-add" }, input, el("button", { class: "btn btn-small", type: "button", text: "Add", onclick: add })));
+  const options = (state.catalog?.models ?? []).filter((m) => m.family === family &&
+    (!m.backendId || m.backendId === state.current.doc.backendId));
+  const choice = el("select", { class: "select", "aria-label": `Configured ${family} deployment`, onchange: (e) => {
+    if (e.target.value) { input.value = e.target.value; add(); }
+  } }, el("option", { value: "", text: "Choose configured deployment…" }),
+    options.map((m) => el("option", { value: m.deployment, text: `${m.deployment} (${m.model})` })));
+  return el("div", {}, list, choice, el("div", { class: "chip-add" }, input, el("button", { class: "btn btn-small", type: "button", text: "Add", onclick: add })));
 }
 
 function startEdit() {
@@ -595,11 +626,14 @@ function periodSelect(id, label) {
 }
 
 function renderCreate() {
+  const inventoryChoices = [];
+  const deploymentPickers = [];
+  let discoveredModels = [];
   const preview = el("pre", {});
   const f = {
     projectId: field("projectId", "Project ID", { hint: "For example PROJECT02. Permanent; developers send it in the x-ccof-project header.", validate: vId }),
     displayName: field("displayName", "Display name", { hint: "Shown to admins, for example Payments platform.", validate: required("Required.") }),
-    backendId: field("backendId", "Backend ID", { value: state.projects[0]?.backendId ?? "", hint: "Usually the same as your existing project.", validate: vId }),
+    backendId: field("backendId", "Backend ID", { hint: "Choose the single APIM backend for this project. Multiple projects may share it.", validate: vId }),
     subscription: field("subscription", "Foundry subscription ID", { hint: "Subscription that pays for this project's model use.", validate: vGuid }),
   };
   const status = el("div", { "aria-live": "polite" });
@@ -615,6 +649,28 @@ function renderCreate() {
     const groupName = field(`${code}-groupName`, "Group display name", {
       hint: `For example PROJECT02-${code}. Access uses the Object ID.`, validate: required("Required."),
     });
+    const directory = el("div", { class: "directory-search" });
+    const searchText = el("input", { class: "input", type: "search", "aria-label": `${code} directory group name`, placeholder: "Find an Entra group by name" });
+    const searchStatus = el("div", { role: "status" });
+    const searchButton = el("button", { class: "btn", type: "button", text: "Search directory", onclick: async () => {
+      searchButton.disabled = true; searchStatus.textContent = "Searching…";
+      try {
+        const r = await call("GET", `/v2/groups?q=${encodeURIComponent(searchText.value.trim())}`);
+        if (r.status !== 200 || r.data.state !== "available") {
+          searchStatus.textContent = `Directory lookup unavailable (${r.data?.reason ?? r.data?.error ?? "request failed"}). Enter the Object ID manually. ${r.data?.permission ?? ""}`;
+          return;
+        }
+        const groups = r.data.data.groups;
+        searchStatus.replaceChildren(...groups.map((g) => el("button", { class: "btn btn-small", type: "button", text: `${g.displayName} — ${g.id}${g.securityEnabled ? "" : " (not a security group)"}`, disabled: !g.securityEnabled, onclick: () => {
+          groupId.input.value = g.id; groupName.input.value = g.displayName;
+          groupId.check(); groupName.check(); refresh(); searchStatus.textContent = `Selected ${g.displayName}. Membership is not changed.`;
+        } })));
+        if (!groups.length) searchStatus.textContent = "No matching groups. Manual Object ID entry remains available.";
+        if (r.data.data.more) searchStatus.append(el("p", { text: "First 25 matches. Refine the group name to narrow results." }));
+      } catch { searchStatus.textContent = "Directory request failed. Enter the Object ID manually."; }
+      finally { searchButton.disabled = false; }
+    } });
+    directory.append(searchText, searchButton, searchStatus);
     const models = field(`${code}-models`, "Model deployment names", {
       hint: "Exact deployment names, separated by commas.", validate: required("Add at least one deployment."),
     });
@@ -632,6 +688,13 @@ function renderCreate() {
     const families = code === "CYB" ? ["sonnet", "opus", "haiku", "fable", "mythos"] : ["sonnet", "opus", "haiku"];
     const family = el("select", { class: "select", id: `${code}-family` },
       families.map((k) => el("option", { value: k, text: FAMILY_LABELS[k] })));
+    const catalogSelect = el("select", { class: "select", "aria-label": `${code} configured deployment`, onchange: (e) => {
+      if (e.target.value) { const current = models.input.value.split(",").map((m) => m.trim()).filter(Boolean); models.input.value = [...new Set([...current, e.target.value])].join(", "); refresh(); }
+    } });
+    const updateChoices = () => catalogSelect.replaceChildren(el("option", { value: "", text: "Add a deployment from cost definitions…" }),
+      [...(state.catalog?.models ?? []), ...discoveredModels].filter((m) => m.family === family.value && (!m.backendId || m.backendId === f.backendId.input.value.trim())).map((m) => el("option", { value: m.deployment, text: `${m.deployment} (${m.model})` })));
+    deploymentPickers.push(updateChoices);
+    family.addEventListener("change", updateChoices); f.backendId.input.addEventListener("input", updateChoices); updateChoices();
     const pPeriod = periodSelect(`${code}-pPeriod`, "Quota period");
     const gPeriod = periodSelect(`${code}-gPeriod`, "Quota period");
     const enabled = el("input", { type: "checkbox", id: `include-${code}`, checked: code === "STD",
@@ -640,9 +703,10 @@ function renderCreate() {
       disabled: !enabled.checked, hidden: !enabled.checked },
       el("legend", { class: "visually-hidden", text: `${code} settings` }),
       el("div", { class: "fields" }, groupId.node, groupName.node),
+      directory,
       el("h3", { text: "Models" }),
       el("div", { class: "fields" },
-        el("div", { class: "field" }, el("label", { for: `${code}-family`, text: "Model family" }), family), models.node),
+        el("div", { class: "field" }, el("label", { for: `${code}-family`, text: "Model family" }), family), models.node), catalogSelect,
       el("h3", { text: "Each person" }),
       el("div", { class: "limit-grid" }, pTpm.node, pQuota.node, pPeriod),
       el("h3", { text: "Whole group combined" }),
@@ -723,6 +787,7 @@ function renderCreate() {
       submit.setAttribute("aria-busy", "false");
       submit.textContent = "Create project";
       if (result.status === 201) {
+        state.creating = false;
         toast(`Project ${doc.projectId} created. Members get access after the next entitlement sync.`);
         await loadProjects();
         navigate(`#/p/${encodeURIComponent(doc.projectId)}`);
@@ -742,8 +807,32 @@ function renderCreate() {
     status,
     el("div", { class: "toolbar" }, submit, el("button", { class: "btn btn-quiet", type: "button", text: "Cancel", onclick: () => navigate("#/") })));
 
-  form.addEventListener("input", refresh);
+  form.addEventListener("input", () => { state.creating = true; refresh(); });
   form.addEventListener("change", refresh);
+  const backendChoices = el("datalist", { id: "create-backend-ids" });
+  f.backendId.input.setAttribute("list", "create-backend-ids");
+  f.backendId.node.append(backendChoices);
+  f.backendId.input.addEventListener("change", async () => {
+    const backendId = f.backendId.input.value.trim();
+    const resource = inventoryChoices.find((r) => r.backendIds?.includes(backendId));
+    discoveredModels = [];
+    deploymentPickers.forEach((update) => update());
+    if (!resource) return;
+    try {
+      const r = await call("GET", `/v2/deployments?resourceId=${encodeURIComponent(resource.id)}`);
+      if (f.backendId.input.value.trim() !== backendId || r.status !== 200 || r.data.state !== "available") return;
+      discoveredModels = r.data.data.deployments.filter((d) => d.state === "Succeeded").map((d) => ({
+        model: d.model, deployment: d.name, backendId,
+        family: (state.catalog?.models ?? []).find((m) => m.model === d.model)?.family ?? /^claude-(haiku|sonnet|opus|fable|mythos)-/.exec(d.model)?.[1],
+      }));
+      deploymentPickers.forEach((update) => update());
+    } catch { status.textContent = "Deployment discovery failed. Existing manual deployment fields remain available."; }
+  });
+  call("GET", "/v2/inventory").then((r) => {
+    if (r.status !== 200 || !["available", "partial"].includes(r.data.state)) return;
+    inventoryChoices.push(...r.data.data.resources);
+    backendChoices.replaceChildren(...r.data.data.backends.map((b) => el("option", { value: b.backendId, text: b.host })));
+  }).catch(() => { status.textContent = "Backend discovery failed. Enter the approved backend ID manually."; });
   setDetail(el("header", { class: "page-head" }, el("h1", { text: "New project" }),
     el("p", { class: "section-note", text: "Project ID and access group can't be changed after creation." })), form);
   refresh();
@@ -797,11 +886,40 @@ async function boot() {
     else auth.pca.logoutRedirect({ account: auth.account, postLogoutRedirectUri: `${location.origin}/api/console` });
   });
   if (auth.mode === "demo") $("sign-out").textContent = auth.demoAs === "editor" ? "Switch to reader" : "Switch to editor";
-  $("search").addEventListener("input", renderList);
-  window.addEventListener("hashchange", route);
-  window.addEventListener("beforeunload", (e) => { if (state.editing && changesBetween(currentPolicy(), state.editing).length) e.preventDefault(); });
+  let filterTimer;
+  for (const id of ["search", "tag-filter", "backend-filter"]) $(id).addEventListener("input", () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => { loadProjects().catch(() => { $("list-status").textContent = "Project search failed. Retry after checking connectivity."; }); }, 250);
+  });
+  $("load-more").addEventListener("click", async () => {
+    $("load-more").disabled = true;
+    try { await loadProjects(true); }
+    finally { $("load-more").disabled = false; }
+  });
+  let acceptedHash = location.hash;
+  window.addEventListener("hashchange", (e) => {
+    const dirty = state.editing && changesBetween(currentPolicy(), state.editing).length || state.creating || hasV2Draft();
+    if (dirty && !window.confirm("Discard unsaved changes?")) {
+      e.stopImmediatePropagation();
+      history.replaceState(null, "", acceptedHash || "#/");
+      return;
+    }
+    acceptedHash = location.hash;
+    route();
+  });
+  window.addEventListener("beforeunload", (e) => {
+    if (state.editing && changesBetween(currentPolicy(), state.editing).length || state.creating || hasV2Draft()) e.preventDefault();
+  });
 
   show("workspace");
+  $("console-navigation").hidden = false;
+  mountV2({ call, state, saved: async (id) => { await loadProjects(); await openProject(id); } });
+  window.addEventListener("ccof:catalog-updated", async () => {
+    try { const r = await call("GET", "/v2/catalog"); if (r.status === 200) state.catalog = r.data.catalog; }
+    catch { toast("Catalog refresh failed. Reload before choosing newly configured deployments."); }
+  });
+  const catalog = await call("GET", "/v2/catalog");
+  if (catalog.status === 200) state.catalog = catalog.data.catalog;
   await loadProjects();
   route();
 }

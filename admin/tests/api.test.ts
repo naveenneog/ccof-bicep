@@ -5,6 +5,7 @@ import { AUDIT_SCHEMA, handleAdminRequest } from "../src/api.ts";
 import type { ApiDependencies, ApiRequest, ProjectStore, StoredProject } from "../src/api.ts";
 import { createAuthenticator, readAuthConfig } from "../src/auth.ts";
 import type { Doc } from "../src/validation.ts";
+import { readRegistry } from "../../src/reconciler/registry.ts";
 
 const TENANT = "00000000-0000-4000-8000-000000000001";
 const AUDIENCE = "api://ccof-admin-test";
@@ -93,6 +94,37 @@ function setup(store: FakeStore | null = new FakeStore()) {
 }
 
 const policyOf = (doc: Doc) => ((doc.classifications as Doc).STD as Doc).familyPolicy as Doc;
+
+test("v2 project settings update tags and group budgets with ETag and audited field changes", async () => {
+  const { call, store, audits } = setup();
+  const doc = project();
+  const etag = await store.create(doc);
+  const changed = await call("PUT", "/api/projects/PROJECT02/settings", { ifMatch: etag, body: {
+    adminTags: ["business:finance", "pilot"], backendId: "shared-backend", designatedSubscriptionId: doc.designatedSubscriptionId,
+    budgets: { STD: { aggregateBudget: { amount: 2500, currency: "CCU", period: "monthly" } } },
+  } });
+  assert.equal(changed.status, 200);
+  const after = (await store.read("PROJECT02"))!;
+  assert.deepEqual(after.doc.adminTags, ["business:finance", "pilot"]);
+  assert.equal(after.doc.backendId, "shared-backend");
+  assert.deepEqual(policyOf(after.doc), policyOf(doc));
+  assert.deepEqual(readRegistry([after.doc], []).problems, []);
+  assert(audits().some((line) => line.changes?.some((c: { path: string }) => c.path === "adminTags")));
+  assert.equal((await call("PUT", "/api/projects/PROJECT02/settings", { ifMatch: etag, body: { adminTags: ["stale"] } })).status, 412);
+  assert.equal((await call("PUT", "/api/projects/PROJECT02/settings", { oid: READER, ifMatch: after.etag, body: { adminTags: [] } })).status, 403);
+  assert.equal((await call("PUT", "/api/projects/PROJECT02/settings", { ifMatch: after.etag, body: { adminTags: null } })).status, 200);
+  assert(!Object.hasOwn((await store.read("PROJECT02"))!.doc, "adminTags"));
+});
+
+test("v2 settings reject identity/group replacement, invalid tags and invalid budgets", async () => {
+  const { call, store } = setup();
+  const etag = await store.create(project());
+  for (const body of [
+    { groupId: GROUP_B }, { projectId: "OTHER" }, { adminTags: ["<script>"] },
+    { budgets: { STD: { aggregateBudget: { amount: -1, currency: "USD", period: "monthly" } } } },
+  ]) assert.equal((await call("PUT", "/api/projects/PROJECT02/settings", { ifMatch: etag, body })).status, 422);
+  assert.equal(store.writes, 1);
+});
 
 test("unauthenticated, wrong audience, wrong client, wrong scope, wrong tenant and non-admin callers are refused", async () => {
   const { call, store } = setup();

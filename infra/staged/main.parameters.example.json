@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "prefix": { "value": "ccofnew" },
+    "location": { "value": "eastus2" },
+    "tags": { "value": { "deploymentStage": "services-only" } },
+    "includeAdmin": { "value": true },
+    "cosmosCapacityMode": { "value": "serverless" },
+    "cosmosPublicNetworkAccess": { "value": "Disabled" },
+    "storagePublicNetworkAccess": { "value": "Disabled" },
+    "functionsPublicNetworkAccess": { "value": "Disabled" },
+    "approveNewPublicApimBootstrap": { "value": false },
+    "apimPublisherEmail": { "value": "" },
+    "apimPublisherName": { "value": "" }
+  }
+}

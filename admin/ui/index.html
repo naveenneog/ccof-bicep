@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>CCOF project admin</title>
+  <title>CCOF Admin console v2</title>
   <link rel="icon" href="/api/console/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/api/console/app.css">
   <script type="module" src="/api/console/app.js"></script>
@@ -16,7 +16,7 @@
     <div class="brand">
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">CCOF</span>
-      <span class="brand-sub">Project admin</span>
+      <span class="brand-sub">Admin console v2</span>
     </div>
     <div class="session" id="session" hidden>
       <span class="who" id="who"></span>
@@ -25,6 +25,7 @@
     </div>
   </header>
 
+  <div id="console-navigation" hidden></div>
   <main id="main" tabindex="-1">
     <!-- Boot: shown until configuration loads; never left blank. -->
     <section class="center-state" id="state-boot" aria-busy="true">
@@ -60,12 +61,18 @@
         <div class="sidebar-head">
           <label class="visually-hidden" for="search">Find a project</label>
           <input class="input" id="search" type="search" placeholder="Find a project" autocomplete="off">
+          <label class="visually-hidden" for="tag-filter">Filter by custom project tag</label>
+          <input class="input" id="tag-filter" type="search" placeholder="Filter by custom tag" autocomplete="off">
+          <label class="visually-hidden" for="backend-filter">Filter by APIM backend ID</label>
+          <input class="input" id="backend-filter" type="search" placeholder="Filter by backend ID" autocomplete="off">
           <button class="btn btn-primary btn-block" id="new-project" type="button" hidden>New project</button>
         </div>
         <div id="list-status" role="status" aria-live="polite"></div>
         <ul class="project-list" id="project-list"></ul>
+        <button class="btn btn-block" id="load-more" type="button" hidden>Load more projects</button>
       </nav>
       <section class="detail" id="detail" aria-live="polite"></section>
+      <section class="detail" id="v2-content" aria-live="polite" hidden></section>
     </div>
   </main>
 

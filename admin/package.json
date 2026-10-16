@@ -1,6 +1,6 @@
 {
   "name": "ccof-project-admin",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "main": "dist/admin/src/function-app.js",
@@ -14,6 +14,9 @@
     "@azure/functions": "^4.16.5",
     "@azure/identity": "^4.13.3",
     "@azure/msal-browser": "^5.25.0",
+    "decimal.js": "^10.6.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "jose": "^6.1.0"
   },
   "devDependencies": {

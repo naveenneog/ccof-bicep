@@ -11,7 +11,7 @@ export type Doc = Record<string, unknown>;
 export const isObject = (v: unknown): v is Doc => typeof v === "object" && v !== null && !Array.isArray(v);
 export const isIdentifier = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(v);
 
-const PROJECT_KEYS = ["id", "projectId", "displayName", "status", "backendId", "designatedSubscriptionId", "supersedes", "retiredAt", "classifications"];
+const PROJECT_KEYS = ["id", "projectId", "displayName", "status", "backendId", "designatedSubscriptionId", "supersedes", "retiredAt", "classifications", "adminTags"];
 const CLASSIFICATION_KEYS = ["groupId", "classificationGroupDisplayName", "familyPolicy", "personBudget", "aggregateBudget", "aggregateMode", "onboardingMode"];
 const BUDGET_KEYS = ["amount", "currency", "period"];
 const LIMIT_KEYS = ["tokensPerMinute", "tokenQuota", "tokenQuotaPeriod"];
@@ -32,6 +32,9 @@ export function projectProblems(value: unknown): string[] {
   if (!read.ok) problems.push(...read.problems);
   if (typeof value.displayName !== "string" || !value.displayName.trim() || value.displayName.length > 200) problems.push("displayName:invalid");
   if (!isGuid(value.designatedSubscriptionId)) problems.push("designatedSubscriptionId:invalid");
+  if (value.adminTags !== undefined && (!Array.isArray(value.adminTags) || value.adminTags.length > 20 ||
+    value.adminTags.some((tag) => typeof tag !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,59}$/.test(tag)) ||
+    new Set(value.adminTags).size !== value.adminTags.length)) problems.push("adminTags:invalid");
   if (value.supersedes !== null) problems.push("supersedes:invalid");
   if (value.retiredAt !== null) problems.push("retiredAt:invalid");
   if (isObject(value.classifications)) {

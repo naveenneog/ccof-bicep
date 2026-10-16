@@ -1,5 +1,11 @@
 # Project admin console and API
 
+> **v2 release:** see [Admin v2 capabilities, optional permissions and VDI
+> upgrade/rollback](ADMIN-V2.md). The Phase 1 description below documents the
+> original baseline. V2 adds optional Graph lookup, tags, reviewed backend/budget
+> settings, catalog/pricing and read-only operations panels; no permission is
+> granted automatically. Manual group IDs and the existing limits editor remain.
+
 A separate Function App that lists, creates and edits CCOF projects in the private Cosmos
 `projects` registry. It has two parts:
 
