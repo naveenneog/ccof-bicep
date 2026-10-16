@@ -269,3 +269,27 @@ test("store not configured is reported as unavailable, after authentication", as
   assert.equal((res.jsonBody as Doc).error, "project_store_not_configured");
   assert.equal((await call("GET", "/api/projects", { auth: null })).status, 401);
 });
+
+test("a registry failure is reported as 503 registry_unavailable without provider detail", async () => {
+  const store = new FakeStore();
+  store.list = async () => { throw Object.assign(new Error("Request originated from IP 203.0.113.9 through public internet"), { code: 403 }); };
+  const { call } = setup(store);
+  const res = await call("GET", "/api/projects");
+  assert.equal(res.status, 503);
+  assert.equal((res.jsonBody as Doc).error, "registry_unavailable");
+  assert.ok(!JSON.stringify(res.jsonBody).includes("203.0.113.9"));
+});
+
+test("the UI server serves only known assets with a strict CSP and public-only configuration", async () => {
+  const { serveUi, publicUiConfig } = await import("../src/ui.ts");
+  const base = new URL("../ui/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const page = await serveUi("", base);
+  assert.equal(page.status, 200);
+  assert.match(page.headers["content-security-policy"], /default-src 'none'/);
+  assert.match(page.headers["content-security-policy"], /frame-ancestors 'none'/);
+  assert.equal((await serveUi("../package.json", base)).status, 404);
+  assert.equal((await serveUi("secrets.txt", base)).status, 404);
+  assert.deepEqual(publicUiConfig({}), { configured: false });
+  const cfg = publicUiConfig({ ADMIN_TENANT_ID: TENANT, ADMIN_UI_CLIENT_ID: CLIENT, ADMIN_UI_SCOPE: "api://x/Projects.Manage", ADMIN_EDITOR_IDS: EDITOR });
+  assert.deepEqual(Object.keys(cfg).sort(), ["clientId", "configured", "scope", "tenantId"]);
+});

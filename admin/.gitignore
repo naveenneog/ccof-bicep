@@ -3,3 +3,6 @@ dist/
 *.zip
 .env*
 .package-stage/
+ui-dist/
+test-results/
+playwright-report/

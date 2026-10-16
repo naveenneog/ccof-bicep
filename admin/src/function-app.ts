@@ -11,6 +11,7 @@ import type { ApiDependencies } from "./api.ts";
 import { ApiError, createAuthenticator, readAuthConfig } from "./auth.ts";
 import type { Authenticator } from "./auth.ts";
 import { createCosmosProjectStore, openContainer, probeCosmos, readCosmosSettings } from "./cosmos-store.ts";
+import { serveUi, uiConfigurationResponse } from "./ui.ts";
 
 let authenticate: Authenticator | null = null;
 let authProblem = "";
@@ -36,8 +37,8 @@ async function projectsHandler(request: HttpRequest, context: InvocationContext)
 }
 
 // Function-key protected. Reports configuration and Cosmos reachability as codes only.
-async function healthHandler(): Promise<HttpResponseInit> {
-  const cosmosState = container ? await probeCosmos(container) : "not_configured";
+async function healthHandler(_request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const cosmosState = container ? await probeCosmos(container, (line) => context.log(line)) : "not_configured";
   const ready = authenticate !== null && cosmosState === "ok";
   return {
     status: ready ? 200 : 503,
@@ -54,4 +55,30 @@ app.http("classificationPolicy", {
   route: "projects/{projectId}/classifications/{code}/{part}",
   handler: projectsHandler,
 });
-app.http("adminHealth", { methods: ["GET"], authLevel: "function", route: "admin-health", handler: healthHandler });
+app.http("adminHealth", { methods: ["GET"], authLevel: "function", route: "health", handler: healthHandler });
+
+app.http("adminUi", {
+  methods: ["GET"], authLevel: "anonymous", route: "console/{asset?}",
+  handler: async (request, context) => {
+    const asset = request.params.asset ?? "";
+    if (asset === "config") return uiConfigurationResponse(process.env);
+    if (asset === "me") {
+      try {
+        if (!authenticate) throw new ApiError(503, "admin_auth_not_configured");
+        const actor = await authenticate(request.headers.get("authorization"));
+        return { status: 200, headers: { "cache-control": "no-store" }, jsonBody: { canWrite: actor.canWrite } };
+      } catch (err) {
+        const status = err instanceof ApiError ? err.status : 500;
+        const error = err instanceof ApiError ? err.code : "internal_error";
+        context.log(JSON.stringify({ schema: "ccof.admin.ui.v1", outcome: "refused", status, error }));
+        return { status, headers: { "cache-control": "no-store" }, jsonBody: { error } };
+      }
+    }
+    try {
+      return await serveUi(asset);
+    } catch {
+      context.error("ccof.admin.ui.v1: packaged UI assets unavailable");
+      return { status: 503, body: "Admin console assets are unavailable. Check the package deployment." };
+    }
+  },
+});

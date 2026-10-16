@@ -47,6 +47,9 @@ param adminScope string = ''
 param adminAllowedClientIds string = ''
 param adminReaderIds string = ''
 param adminEditorIds string = ''
+@description('Admin console (SPA) client id and API scope served to the browser by /api/admin/config.')
+param adminUiClientId string = ''
+param adminUiScope string = ''
 
 @minValue(1)
 @maxValue(1000)
@@ -179,6 +182,8 @@ resource settings 'Microsoft.Web/sites/config@2024-04-01' = {
     ADMIN_ALLOWED_CLIENT_IDS: adminAllowedClientIds
     ADMIN_READER_IDS: adminReaderIds
     ADMIN_EDITOR_IDS: adminEditorIds
+    ADMIN_UI_CLIENT_ID: adminUiClientId
+    ADMIN_UI_SCOPE: adminUiScope
   }
   dependsOn: [storageRole, insightsRole]
 }

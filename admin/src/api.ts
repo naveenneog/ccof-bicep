@@ -143,6 +143,25 @@ async function classificationUpdate(
   };
 }
 
+// A registry failure (no network path, missing data role, Cosmos outage) is reported as 503
+// registry_unavailable with no provider detail; the cause belongs in the app's own logs.
+function guardStore(store: ProjectStore): ProjectStore {
+  const guard = <A extends unknown[], R>(work: (...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    try {
+      return await work(...args);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(503, "registry_unavailable");
+    }
+  };
+  return {
+    list: guard(() => store.list()),
+    read: guard((id: string) => store.read(id)),
+    create: guard((doc: Doc) => store.create(doc)),
+    replace: guard((doc: Doc, etag: string) => store.replace(doc, etag)),
+  };
+}
+
 export async function handleAdminRequest(request: ApiRequest, deps: ApiDependencies): Promise<ApiResponse> {
   const requestId = deps.newId();
   const matched = route(request.method, request.path);
@@ -161,7 +180,7 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
     const writes = matched.op === "create" || matched.op === "familyPolicy" || matched.op === "limits";
     if (writes && !actor.canWrite) throw new ApiError(403, "write_permission_required");
     if (!deps.store) throw new ApiError(503, "project_store_not_configured");
-    const store = deps.store;
+    const store = guardStore(deps.store);
 
     switch (matched.op) {
       case "list": {

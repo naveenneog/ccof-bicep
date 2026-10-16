@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>CCOF project admin</title>
+  <link rel="icon" href="/api/console/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/api/console/app.css">
+  <script type="module" src="/api/console/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">CCOF</span>
+      <span class="brand-sub">Project admin</span>
+    </div>
+    <div class="session" id="session" hidden>
+      <span class="who" id="who"></span>
+      <span class="pill" id="role"></span>
+      <button class="btn btn-quiet" id="sign-out" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <!-- Boot: shown until configuration loads; never left blank. -->
+    <section class="center-state" id="state-boot" aria-busy="true">
+      <p class="muted">Loading the admin console…</p>
+    </section>
+
+    <section class="center-state" id="state-setup" hidden aria-labelledby="setup-title">
+      <div class="state-body">
+        <h1 id="setup-title">Sign-in isn't set up yet</h1>
+        <p>This admin app has no Entra sign-in configuration. Ask your Azure administrator to set these
+          application settings on the admin Function App, then reload:</p>
+        <dl class="settings-list">
+          <div><dt><code>ADMIN_TENANT_ID</code></dt><dd>Directory (tenant) ID</dd></div>
+          <div><dt><code>ADMIN_UI_CLIENT_ID</code></dt><dd>Client ID of the "CCOF Admin" app registration</dd></div>
+          <div><dt><code>ADMIN_UI_SCOPE</code></dt><dd><code>api://&lt;client-id&gt;/Projects.Manage</code></dd></div>
+        </dl>
+        <p class="muted">See <code>docs/ADMIN-API.md</code> in the repository for the full steps.</p>
+      </div>
+    </section>
+
+    <section class="center-state" id="state-signin" hidden aria-labelledby="signin-title">
+      <div class="state-body">
+        <h1 id="signin-title">Manage CCOF projects</h1>
+        <p>Create projects and adjust the models and token limits for each access group.
+          Changes reach developers after the next entitlement sync.</p>
+        <button class="btn btn-primary" id="sign-in" type="button">Sign in with Microsoft</button>
+        <p class="error-text" id="signin-error" role="alert" hidden></p>
+      </div>
+    </section>
+
+    <div class="workspace" id="workspace" hidden>
+      <nav class="sidebar" aria-label="Projects">
+        <div class="sidebar-head">
+          <label class="visually-hidden" for="search">Find a project</label>
+          <input class="input" id="search" type="search" placeholder="Find a project" autocomplete="off">
+          <button class="btn btn-primary btn-block" id="new-project" type="button" hidden>New project</button>
+        </div>
+        <div id="list-status" role="status" aria-live="polite"></div>
+        <ul class="project-list" id="project-list"></ul>
+      </nav>
+      <section class="detail" id="detail" aria-live="polite"></section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

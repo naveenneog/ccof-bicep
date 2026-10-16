@@ -73,7 +73,7 @@ export function createCosmosProjectStore(container: Container): ProjectStore {
 
 // Health probe: one point read of a non-existent item. 404 proves network reach and data-plane read
 // access; a 403 is classified by Cosmos's message without echoing it (it can contain the caller's IP).
-export async function probeCosmos(container: Container): Promise<string> {
+export async function probeCosmos(container: Container, log: (line: string) => void = () => {}): Promise<string> {
   try {
     await container.item("__ccof_admin_probe__", "__ccof_admin_probe__").read();
     return "ok";
@@ -81,7 +81,9 @@ export async function probeCosmos(container: Container): Promise<string> {
     const status = statusOf(err);
     if (status === 404) return "ok";
     const message = String((err as { message?: unknown })?.message ?? "");
-    if (status === 403 && /public internet|firewall|virtual network|private endpoint/i.test(message)) return "blocked_by_network";
+    // IP addresses are masked; the rest of the provider message classifies the refusal.
+    log(JSON.stringify({ schema: "ccof.admin.health.v1", status: status ?? null, message: message.replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, "x.x.x.x").slice(0, 400) }));
+    if (status === 403 && /public (internet|network)|firewall|virtual network|private endpoint|network acl/i.test(message)) return "blocked_by_network";
     if (status === 403) return "forbidden_data_role";
     if (status === 401) return "unauthorized";
     return status ? `error_${status}` : "unreachable";

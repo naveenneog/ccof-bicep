@@ -10,12 +10,12 @@ Push-Location $root
 try {
     npm ci --no-audit --no-fund | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
-    npx tsc -p tsconfig.json
-    if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed.' }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw 'Admin build failed.' }
     node --test tests/*.test.ts
     if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; package not built.' }
     New-Item -ItemType Directory $stage | Out-Null
-    Copy-Item dist, host.json, package.json, package-lock.json -Destination $stage -Recurse
+    Copy-Item dist, ui-dist, host.json, package.json, package-lock.json -Destination $stage -Recurse
     Push-Location $stage
     try {
         npm ci --omit=dev --no-audit --no-fund | Out-Null
