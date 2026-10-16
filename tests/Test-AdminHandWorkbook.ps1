@@ -39,4 +39,22 @@ foreach ($required in @(
 if ($appendix -match 'az deployment group create|Deploy-Quickstart\.ps1') {
     throw 'The hand-config appendix must not require an infrastructure deployment runner.'
 }
+if ($appendix -match "'functionapp','deploy'|az functionapp deploy -g|WEBSITE_RUN_FROM_PACKAGE\s*=") {
+    throw 'Use the documented Flex-aware config-zip command, not the generic deploy preview command or run-from-package settings.'
+}
+if ($appendix -notmatch "'functionapp','deployment','source','config-zip',.*'--src',") {
+    throw 'Admin publish must use the Azure CLI command that detects the Flex package endpoint.'
+}
+$quick = Get-Content (Join-Path $root 'docs/ADMIN-QUICK-STAGES.md') -Raw
+$quickCount = 0
+foreach ($block in [regex]::Matches($quick, '(?s)```powershell\s*\r?\n(.*?)```')) {
+    $errors = $null
+    [void][Management.Automation.Language.Parser]::ParseInput($block.Groups[1].Value, [ref]$null, [ref]$errors)
+    if ($errors.Count) { throw "Quick admin block does not parse: $($errors.Message -join '; ')" }
+    $quickCount++
+}
+if ($quickCount -lt 7 -or -not $quick.Contains('deployment source config-zip') -or -not $quick.Contains('Network gate')) {
+    throw 'Quick modular deployment needs checked publish syntax and an explicit network-policy gate.'
+}
+"Quick admin stages: $quickCount PowerShell blocks parsed; no commands executed."
 "Admin workbook: original content hash preserved, $($steps.Count) numbered Portal/CLI/check steps and appendix JSON verified. No commands executed."

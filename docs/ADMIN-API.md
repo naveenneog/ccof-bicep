@@ -138,10 +138,19 @@ az deployment group create -g <admin-net-rg> -n ccof-admin-network --template-fi
   --parameters adminStorageAccountId=<storage resource id from step 1>
 # 3. Redeploy step 1 with integrationSubnetId=<output of step 2>, storagePublicNetworkAccess=Disabled
 #    and the ADMIN_* sign-in parameters
-# 4. Build and deploy the package
+# 4. Build and deploy the package (this CLI command detects the Flex package API)
 pwsh admin/Build-AdminPackage.ps1
 az functionapp deployment source config-zip -g <rg> -n <app> --src admin/admin.zip
 ```
+
+Flex publishing note: Microsoft documents `az functionapp deployment source config-zip`
+for Flex Consumption: the CLI detects the plan and uses the managed package publishing
+endpoint. It is **not** a direct Kudu ZIP-deploy request on a Flex app. The generic
+`az functionapp deploy --type zip` returned HTTP 415 in the lab with CLI 2.91.0.
+Do not set `WEBSITE_RUN_FROM_PACKAGE` or request remote build for this ready-to-run ZIP.
+[Microsoft reference](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-by-using-azure-cli).
+
+If the customer permits a repository clone, the [quick modular stages](ADMIN-QUICK-STAGES.md) create the admin resources first, then configure sign-in, build/publish code and verify data access independently. Storage/network policy remains a dependency, not something this path bypasses.
 
 ## Lab status (2026-10-16)
 

@@ -3500,6 +3500,8 @@ missing approved item. A mismatched resource is a stop for review, not permissio
 | 23 | Dedicated admin Cosmos private endpoint, private DNS and in-app point-read verified |
 | 24 | STD/PRM/CYB UI, approved data tests, access restrictions and operations handoff verified |
 
+**Optional faster path, only if cloning is approved:** [admin quick modular stages](../ADMIN-QUICK-STAGES.md). Keep the numbered Portal-first steps below when a clone or template is not permitted. The faster path does not bypass private-storage or Cosmos-network requirements.
+
 **Acceptance boundary:** a ready health probe proves a point read from the Function App.
 It does not prove list/create/replace, audit delivery, membership projection or inference.
 The developer UI/API client never connects to Cosmos; all registry writes happen in the
@@ -4522,10 +4524,12 @@ it is not an instruction to clone on locked-down developer machines.
 
 ### Step 21.5 - Publish only the admin ZIP
 
-**Path A:** use an approved Portal/Deployment Center ZIP action only if the installed
-Flex blade exposes it. Otherwise the checked CLI is the explicit publishing exception.
-Upload the approved ZIP to Cloud Shell using **Manage files > Upload**; no repo clone.
-**Path B:**
+**Path A:** use an approved Flex-compatible deployment action if the Portal exposes one;
+otherwise use the checked CLI publishing exception below. Upload the approved ZIP to
+Cloud Shell using **Manage files > Upload**; no repo clone is required for this manual path.
+Do not use Kudu Advanced Tools, `/api/zipdeploy` directly, or set
+`WEBSITE_RUN_FROM_PACKAGE` on a Flex app.
+**Path B (Flex-aware Azure CLI publishing):**
 
 ```powershell
 $adminZip = 'REPLACE-absolute-path-to-approved-admin.zip'
@@ -4535,8 +4539,33 @@ Get-FileHash -LiteralPath $adminZip -Algorithm SHA256
 Invoke-CcofAzWrite @('functionapp','deployment','source','config-zip','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name,'--src',$adminZip)
 ```
 
-**Check:** publish targets only the new admin app. A storage 403 requires 19.1-19.7
-checks, not opening storage to the internet or enabling keys.
+Despite its name, `az functionapp deployment source config-zip` detects Flex Consumption
+and uses its managed package publishing path (`/api/publish`), not the legacy Kudu ZIP
+API. This is the command Microsoft documents for Flex. The generic preview command
+`az functionapp deploy --type zip` returned **415** in the Azure CLI 2.91.0 lab test;
+do not use it for this workbook's Flex deployment.
+
+The deployment service stores the package in the `app-package` container configured in
+18.12 using its configured identity, then refreshes the app. Do not add
+`WEBSITE_RUN_FROM_PACKAGE`, `SCM_DO_BUILD_DURING_DEPLOYMENT` or request remote build:
+the approved ZIP already contains compiled code and production `node_modules`.
+
+**Check:** CLI exits 0. Read back the expected deployment target/state (this check
+alone does **not** prove the new ZIP is running):
+
+```powershell
+$site = Invoke-CcofAzJson @('resource','show','--ids',$Admin.appId,'--api-version','2024-04-01')
+$site.properties.functionAppConfig.deployment.storage | ConvertTo-Json -Depth 5
+if ($site.properties.state -cne 'Running') { throw 'Admin app is not Running after deployment.' }
+```
+
+Deployment storage must still show the `app-package` URL with `SystemAssignedIdentity`.
+Then perform 21.6's handler/console checks and confirm the served UI matches the approved
+release; an older package can keep working after a failed upload. Storage 403 means check
+19.1-19.7 (role, propagation, private endpoint/DNS), not public storage or shared keys.
+An SCM hostname in an error does not itself mean Kudu was used: Flex also has a publishing
+endpoint on that hostname.
+Reference: [Microsoft's Flex package deployment command](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-by-using-azure-cli).
 
 ### Step 21.6 - Verify handlers and the console assets
 
@@ -4545,14 +4574,24 @@ checks, not opening storage to the internet or enabling keys.
 **Path B (read-only):**
 
 ```powershell
-az functionapp function list --subscription $Admin.subscriptionId -g $Admin.resourceGroup -n $Admin.name --query '[].name' -o tsv
-if ($LASTEXITCODE -ne 0) { throw 'Admin handler listing failed.' }
+$names = @()
+foreach ($attempt in 1..6) {
+  $names = @(az functionapp function list --subscription $Admin.subscriptionId -g $Admin.resourceGroup -n $Admin.name --query '[].name' -o tsv)
+  if ($LASTEXITCODE -ne 0) { throw 'Admin handler listing failed.' }
+  if ($names.Count -ge 5) { break }
+  Start-Sleep -Seconds 20
+}
+$names
+foreach ($handler in 'projects','project','classificationPolicy','adminUi','adminHealth') {
+  if (-not ($names -match "/$handler$|^$handler$")) { throw "Handler $handler not registered; check the ZIP root and app logs." }
+}
 $page = Invoke-WebRequest "https://$($Admin.hostName)/api/console"
 if ($page.StatusCode -ne 200) { throw 'Console page did not load.' }
 ```
 
-**Check:** correct routes and strict CSP; `/api/admin` is reserved by Functions,
-so use `/api/console`. Static HTML success does not prove Cosmos access.
+**Check:** all five handlers registered (Flex can take a minute to sync triggers after
+One Deploy), correct routes and strict CSP; `/api/admin` is reserved by Functions,
+so use `/api/console`. Static HTML success does not prove Cosmos access; 23.8 does.
 If inbound rules already block Cloud Shell, test from the approved network instead.
 
 ## 22. Native Cosmos grants - admin identity on projects only
