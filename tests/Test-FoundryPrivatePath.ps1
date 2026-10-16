@@ -14,6 +14,10 @@ $script:ids = @{
     pe = "$other/Microsoft.Network/privateEndpoints/foundry-pe"
     nic = "$other/Microsoft.Network/networkInterfaces/foundry-nic"
     zone = "$central/Microsoft.Network/privateDnsZones/privatelink.services.ai.azure.com"
+    clientVnet = '/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/vdi/providers/Microsoft.Network/virtualNetworks/vdi-vnet'
+    clientPe = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/shared/providers/Microsoft.Network/privateEndpoints/admin-pe'
+    clientNic = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/shared/providers/Microsoft.Network/networkInterfaces/admin-nic'
+    clientZone = "$central/Microsoft.Network/privateDnsZones/privatelink.azurewebsites.net"
     nsg = "$root/Microsoft.Network/networkSecurityGroups/gateway"
     route = "$root/Microsoft.Network/routeTables/gateway"
 }
@@ -37,6 +41,22 @@ function New-Fixtures {
         delegations = @(@{ properties = @{ serviceName = 'Microsoft.Web/serverFarms' } })
     }
     $script:resources[$i.vnet] = Fixture $i.vnet '' @{ dhcpOptions = @{ dnsServers = @() } }
+    $script:resources[$i.clientVnet] = Fixture $i.clientVnet 'Microsoft.Network/virtualNetworks' @{ dhcpOptions = @{ dnsServers = @() } }
+    $script:resources[$i.clientPe] = Fixture $i.clientPe '' @{
+        provisioningState = 'Succeeded'; networkInterfaces = @(@{ id = $i.clientNic })
+    }
+    $script:resources[$i.clientNic] = Fixture $i.clientNic '' @{
+        ipConfigurations = @(@{ properties = @{ privateIPAddress = '172.20.9.9' } })
+    }
+    $script:resources[$i.clientZone] = Fixture $i.clientZone 'Microsoft.Network/privateDnsZones' @{}
+    $script:resources["$($i.clientZone)/A"] = @{
+        value = @(@{ name = 'admin-app'; properties = @{ aRecords = @(@{ ipv4Address = '172.20.9.9' }) } })
+    }
+    $script:resources["$($i.clientZone)/virtualNetworkLinks"] = @{
+        value = @(@{ properties = @{
+            virtualNetwork = @{ id = $i.clientVnet }; provisioningState = 'Succeeded'; virtualNetworkLinkState = 'Completed'
+        } })
+    }
     $script:resources[$i.pe] = Fixture $i.pe '' @{
         provisioningState = 'Succeeded'; subnet = @{ id = "$($i.vnet)/subnets/pe" }
         privateLinkServiceConnections = @(@{ properties = @{
@@ -254,6 +274,33 @@ try {
     $script:resources[$subList] = @{ value = @() }
     $script:resources["$($ids.pe)/privateDnsZoneGroups"].value = @()
     Run-Case 'Zone absent from named DNS subscription fails' $true @('[FAIL] Private DNS zone') @{ DnsSubscription = 'Connectivity-DNS' } -ExpectedExit 1
+    New-Fixtures
+    Run-Case 'Client VDI VNet has matching linked admin-app DNS record' $false @('[PASS] Client DNS A record', '[PASS] Client DNS visibility (static)', '[UNVERIFIED] Live client DNS') @{
+        ClientVnetResourceId = $ids.clientVnet; ClientHost = 'https://admin-app.azurewebsites.net/api/console'
+        ClientDnsZoneId = $ids.clientZone; ClientPrivateEndpointId = $ids.clientPe
+    }
+    New-Fixtures
+    $script:resources["$($ids.clientZone)/virtualNetworkLinks"].value = @()
+    Run-Case 'Azure-DNS VDI VNet missing client zone link fails' $true @('[FAIL] Client DNS visibility') @{
+        ClientVnetResourceId = $ids.clientVnet; ClientHost = 'admin-app.azurewebsites.net'
+        ClientDnsZoneId = $ids.clientZone; ClientPrivateEndpointId = $ids.clientPe
+    } -ExpectedExit 1
+    New-Fixtures
+    $script:resources[$ids.clientVnet].properties.dhcpOptions.dnsServers = @('172.20.9.53')
+    Run-Case 'VDI custom DNS forwarding stays unverified' $false @('[WARN] Client DNS visibility', 'Forwarding/resolver visibility is not proven') @{
+        ClientVnetResourceId = $ids.clientVnet; ClientHost = 'admin-app.azurewebsites.net'
+        ClientDnsZoneId = $ids.clientZone; ClientPrivateEndpointId = $ids.clientPe
+    }
+    New-Fixtures
+    $script:resources["$($ids.clientZone)/A"].value[0].properties.aRecords[0].ipv4Address = '20.1.2.3'
+    Run-Case 'Client DNS public or stale IP differs from admin PE' $true @('[FAIL] Client DNS A record') @{
+        ClientVnetResourceId = $ids.clientVnet; ClientHost = 'admin-app.azurewebsites.net'
+        ClientDnsZoneId = $ids.clientZone; ClientPrivateEndpointId = $ids.clientPe
+    } -ExpectedExit 1
+    New-Fixtures
+    Run-Case 'Client VNet and host must be supplied together' $true @('requires both -ClientVnetResourceId and -ClientHost') @{
+        ClientVnetResourceId = $ids.clientVnet
+    } -ExpectedExit 1
     Write-Output "$script:cases offline cases passed. No Azure calls made."
 } finally {
     Remove-Item Function:\az

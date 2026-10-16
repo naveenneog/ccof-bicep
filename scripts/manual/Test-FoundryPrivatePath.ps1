@@ -19,12 +19,27 @@ param(
     [string]$DnsSubscription,
     # Optional: narrows zone discovery to one resource group in -DnsSubscription.
     [string]$DnsResourceGroup,
-    [string]$DnsVnetResourceId
+    [string]$DnsVnetResourceId,
+    # Optional client/VDI-side static DNS check. Requires both ClientVnetResourceId and ClientHost.
+    [string]$ClientVnetResourceId,
+    [string]$ClientHost,
+    [string]$ClientDnsZoneId,
+    # Optional: validate the client's DNS A record against this private endpoint's NIC IPs.
+    [string]$ClientPrivateEndpointId
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $script:failures = 0
 $script:permissionGaps = 0
+function Get-ExpectedPrivateEndpointIps([string]$Id) {
+    $endpoint = Read-Arm $Id
+    $expected = @()
+    foreach ($nicRef in $endpoint.properties.networkInterfaces) {
+        $nic = Read-Arm $nicRef.id
+        $expected += @($nic.properties.ipConfigurations | ForEach-Object { $_.properties.privateIPAddress })
+    }
+    @($expected | Where-Object { $_ } | Sort-Object -Unique)
+}
 function Report([string]$State, [string]$Check, [string]$Detail) {
     if ($State -eq 'FAIL') { $script:failures++ }
     Write-Output "[$State] ${Check}: $Detail"
@@ -285,6 +300,86 @@ try {
             $script:permissionGaps++
             Report 'UNVERIFIED' 'Central DNS access' $_.Exception.Message
         }
+    }
+    if ([bool]$ClientVnetResourceId -xor [bool]$ClientHost) {
+        throw 'Client-side DNS check requires both -ClientVnetResourceId and -ClientHost.'
+    }
+    if ($ClientHost) {
+        $clientHostInput = $ClientHost.Trim()
+        $clientUri = $null
+        if ($clientHostInput -match '^[a-z]+://' -and [uri]::TryCreate($clientHostInput, [UriKind]::Absolute, [ref]$clientUri)) {
+            $clientHostInput = $clientUri.DnsSafeHost
+        }
+        $clientHostInput = $clientHostInput.TrimEnd('/').ToLowerInvariant()
+        if ($clientHostInput -notmatch '^(?<record>[^/:\s]+)\.azurewebsites\.net$' -or $clientHostInput -match '\.privatelink\.') {
+            throw 'ClientHost must be an App Service public-form hostname such as admin-app.azurewebsites.net (or its HTTPS URL).'
+        }
+        $clientRecord = $Matches.record
+        $clientZoneName = 'privatelink.azurewebsites.net'
+        $clientVnet = Read-Arm $ClientVnetResourceId
+        if ($clientVnet.type -ine 'Microsoft.Network/virtualNetworks') { throw '-ClientVnetResourceId must identify a virtual network.' }
+        $clientDnsServers = @($clientVnet.properties.dhcpOptions.dnsServers)
+        Report 'INFO' 'Client VNet DNS' "vnet=$($clientVnet.id); servers=$(if ($clientDnsServers.Count) {$clientDnsServers -join ','} else {'Azure-provided'})"
+        $clientZoneIds = @()
+        if ($ClientDnsZoneId) {
+            $clientZoneIds = @($ClientDnsZoneId)
+        } elseif ($DnsSubscription) {
+            try {
+                $dnsSub = Resolve-SubscriptionId $DnsSubscription
+                $dnsSubId = $dnsSub.id
+                $scope = if ($DnsResourceGroup) { "/subscriptions/$dnsSubId/resourceGroups/$DnsResourceGroup" } else { "/subscriptions/$dnsSubId" }
+                $clientZoneIds = @(Read-Arm "$scope/providers/Microsoft.Network/privateDnsZones" '2024-06-01' |
+                    Where-Object { $_.name -ieq $clientZoneName } | ForEach-Object { $_.id })
+                Report 'INFO' 'Client DNS zone discovery' "subscription=$dnsSubId; scope=$scope; zone=$clientZoneName; found=$($clientZoneIds.Count)"
+            } catch [UnauthorizedAccessException] {
+                $script:permissionGaps++
+                Report 'UNVERIFIED' 'Client DNS zone access' $_.Exception.Message
+            }
+        }
+        if (-not $clientZoneIds.Count) {
+            if ($script:permissionGaps) {
+                Report 'UNVERIFIED' 'Client DNS zone' "Could not identify $clientZoneName. Supply -ClientDnsZoneId or allow access to -DnsSubscription."
+            } else {
+                Report 'FAIL' 'Client DNS zone' "No $clientZoneName zone found. Supply -ClientDnsZoneId or check -DnsSubscription/-DnsResourceGroup."
+            }
+        }
+        $expectedClientIps = @()
+        if ($ClientPrivateEndpointId) {
+            $clientPe = Read-Arm $ClientPrivateEndpointId
+            Check-State $clientPe 'Client private endpoint'
+            $expectedClientIps = @(Get-ExpectedPrivateEndpointIps $ClientPrivateEndpointId)
+            if (-not $expectedClientIps.Count) { Report 'FAIL' 'Client private endpoint IP' 'No private endpoint NIC IPs were found.' }
+        }
+        foreach ($clientZoneId in $clientZoneIds) {
+            try {
+                $clientZone = Read-Arm $clientZoneId '2024-06-01'
+                if ($clientZone.name -ine $clientZoneName) { throw "Client DNS zone must be $clientZoneName." }
+                $clientRecords = @(Read-Arm "$clientZoneId/A" '2024-06-01')
+                $clientA = @($clientRecords | Where-Object { $_.name -ieq $clientRecord })
+                $clientIps = @($clientA | ForEach-Object { $_.properties.aRecords } | ForEach-Object { $_.ipv4Address } | Sort-Object -Unique)
+                if ($ClientPrivateEndpointId) {
+                    $recordMatchesPe = $clientIps.Count -gt 0 -and @($clientIps | Where-Object { $_ -notin $expectedClientIps }).Count -eq 0
+                    Report $(if ($recordMatchesPe) { 'PASS' } else { 'FAIL' }) 'Client DNS A record' "host=$clientHostInput; zone=$clientZoneId; record=$clientRecord; actual=$($clientIps -join ','); clientPE=$($expectedClientIps -join ',')"
+                } else {
+                    Report $(if ($clientIps.Count) { 'INFO' } else { 'FAIL' }) 'Client DNS A record' "host=$clientHostInput; zone=$clientZoneId; record=$clientRecord; actual=$($clientIps -join ','); pass -ClientPrivateEndpointId to validate the target IP"
+                }
+                $clientLinks = @(Read-Arm "$clientZoneId/virtualNetworkLinks" '2024-06-01')
+                $clientLinked = @($clientLinks | Where-Object {
+                    $_.properties.virtualNetwork.id -ieq $clientVnet.id -and $_.properties.provisioningState -eq 'Succeeded' -and $_.properties.virtualNetworkLinkState -eq 'Completed'
+                }).Count -gt 0
+                if ($clientLinked -and -not $clientDnsServers.Count) {
+                    Report 'PASS' 'Client DNS visibility (static)' 'Zone has a completed direct link to the client VNet, which uses Azure-provided DNS.'
+                } elseif ($clientDnsServers.Count) {
+                    Report 'WARN' 'Client DNS visibility' "Client VNet uses custom DNS servers ($($clientDnsServers -join ',')); zone link=$clientLinked. Forwarding/resolver visibility is not proven."
+                } else {
+                    Report 'FAIL' 'Client DNS visibility' "Zone has no completed direct link to client VNet $($clientVnet.id), which uses Azure-provided DNS."
+                }
+            } catch [UnauthorizedAccessException] {
+                $script:permissionGaps++
+                Report 'UNVERIFIED' 'Client DNS access' $_.Exception.Message
+            }
+        }
+        Report 'UNVERIFIED' 'Live client DNS' 'Static zone records and VNet links do not test DNS from the VDI. Run Resolve-DnsName on the VDI and compare the result with the private endpoint IP.'
     }
 } catch {
     Report 'FAIL' 'Check incomplete' $_.Exception.Message

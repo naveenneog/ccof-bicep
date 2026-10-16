@@ -92,6 +92,32 @@ the backend hostname there; no zone IDs needed:
 The name must be visible in `az account list --all`; if two subscriptions share
 the name, pass the GUID. `-PrivateDnsZoneIds`, when given, takes precedence.
 
+### Optional VDI/client DNS check
+
+To check whether the central App Service private DNS zone is statically visible
+to a VDI VNet, pass the VNet resource ID and the admin app's normal hostname.
+This checks the `privatelink.azurewebsites.net` A record and link. Pass the
+admin app private endpoint ID as well to compare the record to its actual NIC
+IP. The DNS zone can be in a separate subscription/resource group; reuse
+`-DnsSubscription` and `-DnsResourceGroup`, or give the full zone ID directly:
+
+```powershell
+& .\scripts\manual\Test-FoundryPrivatePath.ps1 -ApimResourceId $apimId -FoundryResourceId $foundryId `
+    -BackendHost '<ACCOUNT-NAME>.services.ai.azure.com' `
+    -DnsSubscription '<CENTRAL-DNS-SUBSCRIPTION-NAME>' -DnsResourceGroup '<CENTRAL-DNS-RG>' `
+    -ClientVnetResourceId '/subscriptions/<VDI-SUB>/resourceGroups/<VDI-RG>/providers/Microsoft.Network/virtualNetworks/<VDI-VNET>' `
+    -ClientHost '<ADMIN-APP>.azurewebsites.net' `
+    -ClientPrivateEndpointId '/subscriptions/<APP-SUB>/resourceGroups/<APP-RG>/providers/Microsoft.Network/privateEndpoints/<ADMIN-APP-PE>'
+```
+
+`-ClientVnetResourceId` and `-ClientHost` must be provided together. The admin
+app private endpoint ID is optional; without it, the checker reports the A
+record but cannot verify its IP target. A completed zone link is a static
+configuration check only: custom VDI DNS forwarding, VPN/on-premises resolver
+behavior, and live VDI DNS are not proven. Run `Resolve-DnsName
+<ADMIN-APP>.azurewebsites.net` on the VDI and compare the answer with the
+private endpoint NIC IP.
+
 Use `cognitiveservices.azure.com` or `openai.azure.com` and its corresponding
 `privatelink.*` zone **instead** when that is the actual backend suffix. The check
 requires only that hostname's zone, not all three. Cross-subscription/RG IDs are
