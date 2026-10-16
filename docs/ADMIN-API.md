@@ -148,11 +148,92 @@ az functionapp deployment source config-zip -g <rg> -n <app> --src admin/admin.z
 
 ## Remaining steps to read and write the registry (each needs approval)
 
-Both steps add to the existing Cosmos account. Nothing existing is modified.
+Both steps add configuration under the existing Cosmos account: a custom role/assignment and a
+private-endpoint connection. Existing apps, their grants, the original endpoint, and the public-access
+setting stay unchanged. These are real Azure writes and require the account owner's approval.
+
+### Hand configuration from Azure Cloud Shell
+
+Use **Bash**, not PowerShell. The complete copy-paste procedure is
+[`admin/Configure-RegistryAccess.sh`](../admin/Configure-RegistryAccess.sh). It needs no clone,
+download, app rebuild, account key or Graph consent. Paste its contents into Cloud Shell after
+filling the variables at the top. Cloud Shell configures resources through Azure's management
+plane; the **Function App**, not Cloud Shell, subsequently connects to private Cosmos.
+
+Required authority: Cosmos `sqlRoleDefinitions/write` and `sqlRoleAssignments/write`; Network
+Contributor-equivalent access to the admin VNet, subnet and private endpoint; Private DNS
+Zone Contributor-equivalent access to the admin DNS zone; permission to approve the new
+Cosmos private-endpoint connection; and permission to restart/read keys on the admin app.
+Owner or appropriately scoped Contributor/custom roles can supply these actions; a Cosmos
+data-reader role alone cannot configure them.
+
+The procedure:
+
+1. Checks the selected app's system identity and existing integration with the admin VNet.
+2. Adds a custom role permitting metadata read, query, item read/create/replace, assigned
+   **only** on `/dbs/<database>/colls/projects`. Includes `readChangeFeed`, which Microsoft requires
+   alongside `executeQuery` for SDK queries (the project list). No delete, upsert, entitlement or
+   backend writes.
+3. Adds a `Sql` Cosmos private endpoint in `snet-admin-private-endpoints`, not the delegated
+   Functions subnet. Creates a documents private DNS zone in the **admin network** resource
+   group and links it to the **admin VNet only**. Leaves the CCOF VNet/zone alone.
+4. Requires connection approval and adds the endpoint's DNS zone group. The group manages the
+   global and regional records; do not manually create just one account A record.
+5. Restarts **only the admin app** and checks `/api/health` with a key held in memory, never
+   printed or put in the URL. No API token or key should be pasted into a ticket or screenshot.
+
+**Expected result:** HTTP 200, `status: ready`, `checks.auth: configured`, `checks.cosmos: ok`.
+This is a point-read probe from the app. It does **not** prove list, create, replace, audit
+ingestion or propagation into developer entitlements. Sign in to the UI, click **Try again**,
+confirm projects load, then separately approve a dedicated test-project create/update test.
+Do not change live projects just to test connectivity.
+
+**If it still fails:**
+
+| Result | Action |
+|---|---|
+| `forbidden_data_role` | Verify the assignment uses the admin app's **principal/Object ID**, correct database/container and custom role; allow a few minutes for propagation. The metadata refusal can occur before networking is fully exercised. |
+| `blocked_by_network` / `unreachable` | Confirm PE Approved, DNS zone group and VNet link, app integration, custom-DNS forwarding if any, and NSG/UDR reachability. Private DNS must work inside the Function VNet. |
+| HTTP 403 before a health JSON | App inbound restrictions may block ordinary Cloud Shell. Test from an approved network; do not broaden the allow-list just for the probe. |
+| Endpoint connection Pending | Cosmos owner: **Cosmos account > Networking > Private access**, approve only this new admin connection; rerun afterwards. |
+| Health ready but UI refuses sign-in | Authentication/app-role issue, not Cosmos networking; check the CCOF Admin app assignment and client/scope settings. |
+
+If custom DNS, NSGs or a firewall are in use, allow the Functions host, Entra authentication,
+monitoring and deployment dependencies as well. The Cosmos SDK currently uses its default Direct
+mode: TCP 443 and the documented private-endpoint Direct-mode port requirements must be considered.
+Do not change the endpoint account URL to a private IP. Sources:
+[Cosmos Private Link](https://learn.microsoft.com/azure/cosmos-db/how-to-configure-private-endpoints),
+[Cosmos data RBAC](https://learn.microsoft.com/azure/cosmos-db/how-to-connect-role-based-access-control).
+
+### Equivalent hand-configured Portal steps
+
+1. **Admin Function App > Identity > System assigned**: copy its Object/principal ID. Do not use
+   the Entra UI application client ID or the sync identity.
+2. Use the Cloud Shell role-definition/assignment commands for **Cosmos native data RBAC**.
+   Ordinary **Access control (IAM)** assignments are not a substitute. Scope only to `projects`.
+3. **Private endpoints > Create**: select the admin network resource group and the admin VNet's
+   region. Target **Microsoft.DocumentDB/databaseAccounts**, the existing Cosmos account, and
+   sub-resource **Sql**. Use a new endpoint name.
+4. Select the **admin VNet > snet-admin-private-endpoints**. Do not use the delegated Functions
+   integration subnet. Do not edit the CCOF VNet.
+5. In DNS, integrate with **privatelink.documents.azure.com in the admin network resource group**.
+   If the wizard does not offer a separate zone, create it in **Private DNS zones**, add a virtual
+   network link to the admin VNet (auto registration off), then add a **DNS configuration > private
+   DNS zone group** on this new endpoint pointing to that zone.
+6. Cosmos account > **Networking > Private access**: verify this endpoint connection is
+   **Approved**. Leave public network access **Disabled** and keep the original connection.
+7. Confirm **Admin Function App > Networking > VNet integration** still points to the admin VNet,
+   and restart only the admin app. Its `COSMOS_ENDPOINT` remains the normal account hostname.
+8. Run the final Cloud Shell health probe, then reopen the console. Creating a private endpoint is
+   not evidence of a successful data read. For a private-only inbound console, test from the
+   approved admin network rather than ordinary Cloud Shell.
+
+### Role details and alternative networking
 
 1. **Data role for the admin identity only**, scoped to the `projects` container. Use a custom
    role with `readMetadata`, `items/read`, `items/create`, `items/replace` and
-   `executeQuery`. No delete and no upsert.
+   `executeQuery` and `readChangeFeed`. Both query actions are required for SDK queries. No delete
+   and no upsert.
 
    ```powershell
    az cosmosdb sql role definition create -g <rg> -a <cosmos> -b '{
@@ -160,6 +241,7 @@ Both steps add to the existing Cosmos account. Nothing existing is modified.
      "Permissions":[{"DataActions":[
        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery",
+       "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed",
        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace"]}]}'
