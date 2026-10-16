@@ -130,6 +130,13 @@ try {
         Report 'FAIL' 'APIM VNet location' 'APIM v2 integration requires the same subscription and region.'
     }
     Check-Subnet $subnet 'APIM subnet'
+    if ($BackendHost) {
+        # Accept a pasted backend URL; use only its hostname (query/path are never printed).
+        $BackendHost = $BackendHost.Trim()
+        $parsed = $null
+        if ($BackendHost -match '^[a-z]+://' -and [uri]::TryCreate($BackendHost, [UriKind]::Absolute, [ref]$parsed)) { $BackendHost = $parsed.DnsSafeHost }
+        $BackendHost = $BackendHost.TrimEnd('/').ToLowerInvariant()
+    }
     if (-not $BackendHost) {
         # Project URLs only: never return backend credentials, headers or certificates.
         $backends = @(Read-Arm "$ApimResourceId/backends" '2024-05-01' '{value: value[].{name:name,url:properties.url}, nextLink:nextLink}')

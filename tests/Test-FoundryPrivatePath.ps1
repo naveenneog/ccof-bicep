@@ -191,6 +191,8 @@ try {
     $script:resources[$ids.pe].properties.privateLinkServiceConnections = @()
     Run-Case 'Manual connection ARM response shape and explicit host' $false @('[PASS] Foundry PE approval') @{ BackendHost = 'foundry.services.ai.azure.com' }
     New-Fixtures
+    Run-Case 'Pasted backend URL is reduced to its hostname' $false @('host=foundry.services.ai.azure.com', '[PASS] Private DNS A record') @{ BackendHost = ' https://Foundry.services.ai.azure.com/anthropic?k=DO-NOT-PRINT ' }
+    New-Fixtures
     $script:resources["$($ids.pe)/privateDnsZoneGroups"].value = @()
     Run-Case 'Central DNS zone array explicitly selected without zone group' $false @('[WARN] DNS zone group') @{ PrivateDnsZoneIds = @($ids.zone) }
     New-Fixtures
