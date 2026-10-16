@@ -100,20 +100,127 @@ of **the new admin resources only**, with `storagePublicNetworkAccess=Disabled` 
 ADMIN_* parameters preserved. Do not blindly redeploy after configuring authentication, because
 empty template defaults can overwrite the new admin app's settings.
 
-## Stage 4 - Separate admin identity setup and application settings
+## Stage 4 - Create the admin Entra app, its roles and permissions, then settings
 
-Follow workbook **20.1-20.11** for the new single-tenant CCOF Admin registration:
-`Projects.Manage` scope, v2 tokens, Read/Write roles, SPA redirect, self-client preauthorization,
-enterprise application, approved users and Assignment required.
-No runtime Graph lookup permissions are needed. The redirect must use the actual hostname
-reported in Stage 3, followed by `/api/console`.
+Run as an **Application Administrator** (or the app's owner). This creates a NEW registration
+only; the existing gateway/developer registrations are not touched. No Graph API permissions
+are requested for the app. Each block reads first and skips what already exists.
 
-Then merge settings on the **new admin app only**:
+### 4a - Hostname of the new app (for the redirect URI)
 
 ```powershell
-$tenant = 'REPLACE-customer-tenant-guid'
-$client = 'REPLACE-new-admin-registration-client-guid'
-if ($tenant -match 'REPLACE-' -or $client -match 'REPLACE-') { throw 'Fill the new admin registration IDs.' }
+$hostName = az functionapp show --subscription $sub -g $rg -n $app --query 'properties.defaultHostName || defaultHostName' -o tsv
+if ($LASTEXITCODE -ne 0 -or -not $hostName) { throw 'Admin hostname read failed; complete Stage 3 first.' }
+$redirect = "https://$hostName/api/console"
+$tenant = az account show --subscription $sub --query tenantId -o tsv
+$displayName = 'CCOF Admin'
+```
+
+### 4b - Create (or reuse) the app registration
+
+```powershell
+$existing = @(az ad app list --display-name $displayName --query '[].{appId:appId,id:id}' -o json | ConvertFrom-Json)
+if ($existing.Count -gt 1) { throw "More than one '$displayName' exists; choose one and set `$client/`$objectId manually." }
+if ($existing.Count -eq 1) { $client = $existing[0].appId; $objectId = $existing[0].id }
+else {
+  $reg = az ad app create --display-name $displayName --sign-in-audience AzureADMyOrg -o json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0) { throw 'App registration create failed.' }
+  $client = $reg.appId; $objectId = $reg.id
+}
+"Admin client ID: $client"
+```
+
+### 4c - Expose the API: URI, v2 tokens and the Projects.Manage scope
+
+```powershell
+$current = az ad app show --id $client -o json | ConvertFrom-Json
+$scope = @($current.api.oauth2PermissionScopes | Where-Object value -CEQ 'Projects.Manage') | Select-Object -First 1
+$scopeId = if ($scope) { $scope.id } else { [guid]::NewGuid().ToString() }
+$others = @($current.api.oauth2PermissionScopes | Where-Object value -CNE 'Projects.Manage')
+$body = @{
+  identifierUris = @("api://$client")
+  api = @{
+    requestedAccessTokenVersion = 2
+    oauth2PermissionScopes = $others + @(@{
+      id = $scopeId; value = 'Projects.Manage'; type = 'Admin'; isEnabled = $true
+      adminConsentDisplayName = 'Manage CCOF projects'
+      adminConsentDescription = 'Read and change CCOF project models and token limits as the signed-in administrator.'
+    })
+  }
+}
+$f = New-TemporaryFile; $body | ConvertTo-Json -Depth 10 | Set-Content $f -Encoding utf8NoBOM
+az rest --method patch --url "https://graph.microsoft.com/v1.0/applications/$objectId" --headers 'Content-Type=application/json' --body "@$f" --output none
+$code = $LASTEXITCODE; Remove-Item $f
+if ($code -ne 0) { throw 'Scope/URI update failed.' }
+```
+
+### 4d - App roles: CCOF.Projects.Read and CCOF.Projects.Write
+
+```powershell
+$current = az ad app show --id $client -o json | ConvertFrom-Json
+$roles = @($current.appRoles)
+foreach ($r in @(
+  @{ value = 'CCOF.Projects.Read';  name = 'CCOF project reader'; desc = 'View CCOF projects, models and token limits.' },
+  @{ value = 'CCOF.Projects.Write'; name = 'CCOF project editor'; desc = 'Create CCOF projects and change models and token limits.' })) {
+  if (-not ($roles | Where-Object value -CEQ $r.value)) {
+    $roles += @{ id = [guid]::NewGuid().ToString(); value = $r.value; displayName = $r.name; description = $r.desc
+                 allowedMemberTypes = @('User'); isEnabled = $true }
+  }
+}
+$f = New-TemporaryFile; @{ appRoles = $roles } | ConvertTo-Json -Depth 10 | Set-Content $f -Encoding utf8NoBOM
+az rest --method patch --url "https://graph.microsoft.com/v1.0/applications/$objectId" --headers 'Content-Type=application/json' --body "@$f" --output none
+$code = $LASTEXITCODE; Remove-Item $f
+if ($code -ne 0) { throw 'App role update failed.' }
+```
+
+### 4e - SPA redirect and self-preauthorization (no consent prompt)
+
+```powershell
+$current = az ad app show --id $client -o json | ConvertFrom-Json
+$redirects = @(@($current.spa.redirectUris) + $redirect | Where-Object { $_ } | Sort-Object -Unique)
+$pre = @(@($current.api.preAuthorizedApplications) | Where-Object { $_ -and $_.appId -ne $client }) +
+       @(@{ appId = $client; delegatedPermissionIds = @($scopeId) })
+$f = New-TemporaryFile
+@{ spa = @{ redirectUris = $redirects }; api = @{ preAuthorizedApplications = $pre } } | ConvertTo-Json -Depth 10 | Set-Content $f -Encoding utf8NoBOM
+az rest --method patch --url "https://graph.microsoft.com/v1.0/applications/$objectId" --headers 'Content-Type=application/json' --body "@$f" --output none
+$code = $LASTEXITCODE; Remove-Item $f
+if ($code -ne 0) { throw 'Redirect/preauthorization update failed.' }
+```
+
+### 4f - Enterprise app, Assignment required, and role assignments
+
+```powershell
+$spId = az ad sp list --filter "appId eq '$client'" --query '[0].id' -o tsv
+if (-not $spId) { $spId = az ad sp create --id $client --query id -o tsv }
+if ($LASTEXITCODE -ne 0 -or -not $spId) { throw 'Enterprise app create/read failed.' }
+$f = New-TemporaryFile; '{"appRoleAssignmentRequired":true}' | Set-Content $f -Encoding utf8NoBOM
+az rest --method patch --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId" --headers 'Content-Type=application/json' --body "@$f" --output none
+$code = $LASTEXITCODE; Remove-Item $f
+if ($code -ne 0) { throw 'Assignment-required update failed.' }
+
+# One approved person per call. Use 'CCOF.Projects.Write' for editors, 'CCOF.Projects.Read' for readers.
+function Grant-CcofAdminRole([string]$UserObjectId, [string]$RoleValue) {
+  $roleId = az ad app show --id $client --query "appRoles[?value=='$RoleValue'].id | [0]" -o tsv
+  if (-not $roleId) { throw "Role $RoleValue not found." }
+  $already = az rest --method get --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --query "value[?principalId=='$UserObjectId' && appRoleId=='$roleId'] | length(@)" -o tsv
+  if ($already -ne '0') { "Already assigned: $RoleValue"; return }
+  $f = New-TemporaryFile
+  @{ principalId = $UserObjectId; resourceId = $spId; appRoleId = $roleId } | ConvertTo-Json | Set-Content $f -Encoding utf8NoBOM
+  az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --headers 'Content-Type=application/json' --body "@$f" --output none
+  $code = $LASTEXITCODE; Remove-Item $f
+  if ($code -ne 0) { throw "Role assignment failed for $UserObjectId." }
+  "Assigned $RoleValue"
+}
+Grant-CcofAdminRole -UserObjectId 'REPLACE-approved-editor-user-object-id' -RoleValue 'CCOF.Projects.Write'
+# Grant-CcofAdminRole -UserObjectId 'REPLACE-reviewer-user-object-id' -RoleValue 'CCOF.Projects.Read'
+```
+
+User object IDs: Entra ID > Users > the person > **Object ID**. Group assignment works the same
+way (pass the group's Object ID) where the tenant's licence allows group app-role assignment.
+
+### 4g - Merge sign-in settings on the NEW admin app only
+
+```powershell
 az functionapp config appsettings set --subscription $sub -g $rg -n $app --settings `
   "ADMIN_TENANT_ID=$tenant" "ADMIN_AUDIENCE=$client" 'ADMIN_SCOPE=Projects.Manage' `
   "ADMIN_ALLOWED_CLIENT_IDS=$client" "ADMIN_UI_CLIENT_ID=$client" `
@@ -121,9 +228,25 @@ az functionapp config appsettings set --subscription $sub -g $rg -n $app --setti
 if ($LASTEXITCODE -ne 0) { throw 'New admin settings merge failed.' }
 ```
 
-This is the console registration, not the existing inference gateway registration. The
-resource template already supplies identity-based host storage, Cosmos names and Insights.
-Prefer assigned roles to object-ID allow-lists. Verify values privately, not only setting names.
+**Check:** Entra > App registrations > CCOF Admin shows the `Projects.Manage` scope, both app
+roles, the SPA redirect `https://<host>/api/console` and itself under Authorized client
+applications; Enterprise apps > CCOF Admin shows **Assignment required = Yes** and the editor.
+This is the console registration, not the existing inference gateway registration.
+
+### 4h - Azure IAM grants (already created by Stage 3)
+
+The resources template grants the admin app's managed identity **Storage Blob Data Owner** on
+its own storage and **Monitoring Metrics Publisher** on its own Application Insights. Verify:
+
+```powershell
+$principal = az functionapp identity show --subscription $sub -g $rg -n $app --query principalId -o tsv
+az role assignment list --assignee $principal --all --query '[].{role:roleDefinitionName,scope:scope}' -o table
+if ($LASTEXITCODE -ne 0) { throw 'Role assignment read failed.' }
+```
+
+Expect exactly those two roles, each scoped to the new admin resources. Don't add Owner or
+Contributor. Optional: give the admins **Log Analytics Reader** on the new workspace to read
+the audit log.
 
 ## Stage 5 - Build ONLY the admin code, or use the reviewed prebuilt ZIP
 
@@ -169,14 +292,69 @@ Wait for trigger synchronization; require `projects`, `project`, `classification
 `adminUi`, and `adminHealth`. Open `https://<actual-host>/api/console`; verify the UI is the
 reviewed version, then sign in. A working old page is not proof of a successful package upload.
 
-**Cosmos grant:** workbook **22.1-22.5** is the separately approved native custom role and
-assignment on `/dbs/<actual-db>/colls/projects`, to this Function's principal ID. Six actions:
-metadata read, item read/create/replace, executeQuery and readChangeFeed. No delete/upsert.
-Do not substitute subscription IAM access or copy a grant to the wrong identity.
+## Stage 7b - Cosmos data role for the admin identity (projects container only)
 
-**Private access:** workbook **23.1-23.8** when required. Its Function-side health probe verifies
-private Cosmos reachability and read access. Inbound console restrictions are **24.8-24.13**.
-Do not open Cosmos/storage to the internet to make the console load.
+Run as someone with Cosmos `sqlRoleDefinitions/write` and `sqlRoleAssignments/write` (for
+example the Cosmos account owner). Ordinary Azure IAM roles do not grant item access.
+
+```powershell
+$cosmosRg = 'REPLACE-cosmos-resource-group'
+$cosmosAccount = 'REPLACE-existing-cosmos-account'
+if (@($cosmosRg, $cosmosAccount) -match 'REPLACE-') { throw 'Fill the Cosmos names.' }
+$principal = az functionapp identity show --subscription $sub -g $rg -n $app --query principalId -o tsv
+$cosmosId = az cosmosdb show --subscription $sub -g $cosmosRg -n $cosmosAccount --query id -o tsv
+az cosmosdb sql container show --subscription $sub -g $cosmosRg -a $cosmosAccount -d $db -n projects --query id -o tsv
+if ($LASTEXITCODE -ne 0 -or -not $principal -or -not $cosmosId) { throw 'Identity, account or projects container not found.' }
+
+$roleName = "ccof-admin-project-editor-$app"
+$roleId = az cosmosdb sql role definition list --subscription $sub -g $cosmosRg -a $cosmosAccount --query "[?roleName=='$roleName'].name | [0]" -o tsv
+if (-not $roleId) {
+  $roleId = [guid]::NewGuid().ToString()
+  $f = New-TemporaryFile
+  @{
+    Id = $roleId; RoleName = $roleName; Type = 'CustomRole'; AssignableScopes = @($cosmosId)
+    Permissions = @(@{ DataActions = @(
+      'Microsoft.DocumentDB/databaseAccounts/readMetadata'
+      'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery'
+      'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed'
+      'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read'
+      'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create'
+      'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace'
+    ) })
+  } | ConvertTo-Json -Depth 6 | Set-Content $f -Encoding utf8NoBOM
+  az cosmosdb sql role definition create --subscription $sub -g $cosmosRg -a $cosmosAccount --body "@$f" --output none
+  $code = $LASTEXITCODE; Remove-Item $f
+  if ($code -ne 0) { throw 'Cosmos role definition failed.' }
+}
+$scope = "/dbs/$db/colls/projects"
+$has = az cosmosdb sql role assignment list --subscription $sub -g $cosmosRg -a $cosmosAccount --query "[?principalId=='$principal' && ends_with(roleDefinitionId,'$roleId')] | length(@)" -o tsv
+if ($has -eq '0') {
+  az cosmosdb sql role assignment create --subscription $sub -g $cosmosRg -a $cosmosAccount `
+    --role-definition-id $roleId --principal-id $principal --scope $scope --output none
+  if ($LASTEXITCODE -ne 0) { throw 'Cosmos role assignment failed.' }
+}
+az cosmosdb sql role assignment list --subscription $sub -g $cosmosRg -a $cosmosAccount --query "[?principalId=='$principal'].{scope:scope,role:roleDefinitionId}" -o table
+```
+
+**Check:** one assignment for the admin app's principal, scope ending `/dbs/<db>/colls/projects`.
+No delete or upsert; nothing on `entitlement`, `backends` or budget containers. Existing
+assignments are untouched. Allow a few minutes for propagation.
+
+### Health check after the grant
+
+```powershell
+$key = az functionapp keys list --subscription $sub -g $rg -n $app --query functionKeys.default -o tsv
+try {
+  $h = Invoke-WebRequest "https://$hostName/api/health" -Headers @{ 'x-functions-key' = $key } -SkipHttpErrorCheck -TimeoutSec 90
+  "HTTP $($h.StatusCode) $($h.Content)"
+} finally { $key = $null }
+```
+
+Expect `"cosmos":"ok"`. `forbidden_data_role`: wait and retry, then recheck the scope/principal.
+`blocked_by_network`: the Cosmos firewall or private access needs the approved path (workbook 23).
+
+**Private access:** workbook **23.1-23.8** when required. Inbound console restrictions are
+**24.8-24.13**. Do not open Cosmos/storage to the internet to make the console load.
 
 **Final acceptance:** console sign-in, actual project list, an approved test-project create/update,
 ETag conflict/reader refusal, admin audit, and separately verified entitlement sync. A ready health
