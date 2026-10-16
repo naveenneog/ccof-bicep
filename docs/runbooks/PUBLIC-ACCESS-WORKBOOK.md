@@ -3473,7 +3473,9 @@ Modules 18-24 add the **separate** admin console/API at the end of the same work
 by hand, one resource at a time. They do not run Bicep/Quickstart, redeploy the three existing
 Functions, change their settings/identities/permissions, or edit the existing APIM APIs/policy.
 They do add a Cosmos native role/assignment and a new private-endpoint connection on the
-existing account after separate approval. Existing Cosmos public access remains Disabled.
+existing account after separate approval. Preserve the existing Cosmos public-access setting:
+if already Disabled, it stays Disabled; if the customer is still in the public phase,
+do not disable it as part of this admin installation. Coordinate its cutover through Module 16.
 Do not modify the existing CCOF VNet or DNS zone to follow this route.
 
 **Use Cloud Shell PowerShell 7**, as in Module 00. All blocks below are PowerShell unless
@@ -4566,11 +4568,17 @@ Identity review: admin app > Identity > Object ID.
 $cosmos = Invoke-CcofAzJson @('cosmosdb','show','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-n',$Admin.cosmosAccount)
 $container = Invoke-CcofAzJson @('cosmosdb','sql','container','show','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-a',$Admin.cosmosAccount,'-d',$Admin.database,'-n',$Admin.container)
 if ($cosmos.id -ine $Admin.cosmosResourceId) { throw 'Wrong Cosmos account.' }
-if ($cosmos.publicNetworkAccess -cne 'Disabled') { throw 'Private-only Cosmos expected; stop for review.' }
+if ($cosmos.publicNetworkAccess -cnotin @('Enabled','Disabled')) { throw 'Unexpected Cosmos public-access state; stop for review.' }
+$Admin.cosmosOriginalPublicNetworkAccess = $cosmos.publicNetworkAccess
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
 if (@($container.resource.partitionKey.paths).Count -ne 1 -or $container.resource.partitionKey.paths[0] -cne '/projectId') { throw 'Unexpected project partition key.' }
 ```
 
-**Check:** exact existing account/database/container; do not create another database or change keys.
+**Check:** exact existing account/database/container and recorded public-access state.
+Do not create another database, change keys, enable public access or disable a live public path.
+The new private endpoint can be added while the existing public phase continues; Module 16 owns
+the separately approved public-access cutover. Health success alone does not prove the private
+route: also verify the admin VNet integration, DNS zone group/link and approved PE.
 
 ### Step 22.2 - Prepare the native role definition
 
@@ -4734,7 +4742,8 @@ Invoke-CcofAzWrite @('network','private-endpoint','dns-zone-group','create','--s
 ```
 
 **Check:** the zone group populates **all** account/regional A records. Don't hand-create
-only one A record. Keep the normal `COSMOS_ENDPOINT` and public access Disabled.
+only one A record. Keep the normal `COSMOS_ENDPOINT` and preserve the account's recorded
+public-access setting. If already Disabled, it stays Disabled.
 
 ### Step 23.7 - Refresh only the admin Function
 
