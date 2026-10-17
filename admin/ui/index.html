@@ -59,13 +59,22 @@
     <div class="workspace" id="workspace" hidden>
       <nav class="sidebar" aria-label="Projects">
         <div class="sidebar-head">
+          <div class="sidebar-title">
+            <span class="sidebar-label" aria-hidden="true">Projects</span>
+            <button class="btn btn-primary btn-small" id="new-project" type="button" hidden>New project</button>
+          </div>
           <label class="visually-hidden" for="search">Find a project</label>
-          <input class="input" id="search" type="search" placeholder="Find a project" autocomplete="off">
-          <label class="visually-hidden" for="tag-filter">Filter by custom project tag</label>
-          <input class="input" id="tag-filter" type="search" placeholder="Filter by custom tag" autocomplete="off">
-          <label class="visually-hidden" for="backend-filter">Filter by APIM backend ID</label>
-          <input class="input" id="backend-filter" type="search" placeholder="Filter by backend ID" autocomplete="off">
-          <button class="btn btn-primary btn-block" id="new-project" type="button" hidden>New project</button>
+          <input class="input" id="search" type="search" placeholder="Find a project" autocomplete="off" spellcheck="false">
+          <details class="filters" id="filters">
+            <summary>Filter by tag or backend<span class="pill pill-primary filter-count" id="filter-count" hidden></span></summary>
+            <div class="filter-fields">
+              <label for="tag-filter">Tag<span class="visually-hidden"> filter, exact match</span></label>
+              <input class="input input-compact" id="tag-filter" type="search" placeholder="Exact tag" autocomplete="off" spellcheck="false">
+              <label for="backend-filter">Backend ID<span class="visually-hidden"> filter, exact match</span></label>
+              <input class="input input-compact" id="backend-filter" type="search" placeholder="Exact backend ID" autocomplete="off" spellcheck="false">
+              <p class="hint">Search matches names and IDs. Tag and backend ID must match exactly.</p>
+            </div>
+          </details>
         </div>
         <div id="list-status" role="status" aria-live="polite"></div>
         <ul class="project-list" id="project-list"></ul>

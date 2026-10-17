@@ -111,6 +111,12 @@ paths:
         - { name: feature, in: path, required: true, schema: { type: string, enum: [groups, inventory, deployments, budgets, runs, audit, health, prices, billed-cost, version] } }
         - { name: q, in: query, schema: { type: string }, description: Group name prefix for groups (2-80 characters) }
         - { name: resourceId, in: query, schema: { type: string }, description: Deployments require a Foundry account ID within server-configured scopes }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 }, description: Budgets page size }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 }, description: Budgets page offset }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Budgets project or group substring }
+        - { name: projectId, in: query, schema: { type: string, maxLength: 80 }, description: Budgets exact project }
+        - { name: minUsedPercent, in: query, schema: { type: number, minimum: 0, maximum: 10000 }, description: Budgets minimum percent used }
+        - { name: attention, in: query, schema: { type: boolean }, description: Budgets limited to exhausted, stale or partial groups }
       responses:
         "200": { description: "Capability state with observedAt, optional reason/permission/data; version returns version metadata. For budgets, data is { groups[], totals, basis }: per group spentCcu/spentUsd, budgetCcu/budgetUsd (null = no cap), remainingCcu/remainingUsd, usedPercent, completeness, fresh; totals across groups with lowerBound." }
         default: { $ref: "#/components/responses/Error" }

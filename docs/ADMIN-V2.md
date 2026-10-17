@@ -46,6 +46,52 @@ static CSS. The existing limits editor remains in place. Same-origin assets,
 strict CSP (no unsafe-inline/eval), server-side authorization and ETag guards
 remain the security controls; using React is not a security certification.
 
+### Operator workflow and responsive layout
+
+The section navigation has visible selection and keyboard focus states. Project
+search stays visible; exact tag/backend filters expand separately and show an
+active-filter count. On narrow screens, the project list is a separate screen;
+use **All projects** to return from a project. Wide data tables scroll within
+their own frame, while numeric figures remain aligned and timestamps use UTC.
+
+Project settings and catalog saves retain their review and ETag safeguards.
+Settings reviews show field-level before/after changes; stale saves offer a
+reload without silently overwriting another administrator. Refresh asks before
+discarding drafts and retains the previous observation while fetching. Loading,
+permission-denied, partial and retry states are distinct. These presentation
+changes do not add permissions, alter cost meanings, or change API contracts.
+
+## How administrators use the console
+
+| Role | Typical tasks |
+| --- | --- |
+| Project editor (`CCOF.Projects.Write`) | Create projects; change models, token limits, budgets, tags and the single backend; every save is reviewed as a field-level diff and guarded by ETag |
+| Reader, finance or auditor (`CCOF.Projects.Read`) | Review projects, group consumption against budgets, cost definitions and audit events |
+| Platform operations | Foundry inventory and deployments, APIM backend linkage, endpoint probes and reconciler runs |
+
+Typical flows:
+- **Onboard:** New project, then for each classification (STD/PRM/CYB) paste or look up the Entra group, choose models and limits, review and save. Access reaches developers after the next sync.
+- **Organize:** add tags such as `bu:payments` or `region:india`; filter the project list by exact tag or backend. Tags never grant access.
+- **Watch spend:** Group budgets, sorted by % used; filter to groups at or above a threshold or needing attention, then open the project to adjust its budget.
+- **Foundry change or loss:** Foundry inventory marks unreadable accounts `not_found`, `access_denied` or `unavailable` and shows linked projects; reassign their backend in project settings.
+- **Investigate:** Audit shows who changed what, before and after, with request IDs for correlation.
+
+## Scale toward 10,000 projects
+
+Built in:
+- Project list: Cosmos query with server-side search, exact tag/backend filters, `ORDER BY projectId`, 50 per page (max 100) and continuation tokens. The browser never loads the registry.
+- One document per project with ETag writes: concurrent administrators never block or overwrite each other.
+- Group budgets (2.0.1): exact roll-up on the server, then paged (100 per page, max 500) and filtered on the server. Totals still cover every group. Offline test: 30,000 groups rolled up and paged in well under a second, one page under 100 KB.
+- Stateless Flex Consumption app; bounded integrations (Graph 25 results, catalog 2,000 mappings, ARM 30 pages, audit 200 events, probes 30 targets six at a time).
+
+Known limits, not yet load-tested against a live 10,000-project registry:
+- Name/ID search uses `CONTAINS`, which scans the container; request-unit cost grows with registry size. Next: a normalized search field with prefix matching, or a search index.
+- The Group budgets query still reads the month's latest line per group from Log Analytics on each request (about 30,000 rows at 10,000 projects); only the response to the browser is paged.
+- Tag filter is one exact tag; no tag roll-up of budgets yet.
+- Inventory links Foundry accounts only to projects already loaded in the browser.
+- No bulk import/export; audit is the latest 200 events.
+- Outside the admin app, the larger 10,000-project risks are the sync's Entra group expansion (Graph throttling) and the reconciler's log volume.
+
 ## Cost meanings (do not combine these totals)
 
 | Figure | Source and meaning |
@@ -234,7 +280,8 @@ Existing v1 project operations remain. New authenticated routes:
 | `PUT /api/projects/{id}/settings` | Editor, current If-Match. Tags/display name/single backend + subscription/classification budgets only; no group-ID changes. |
 | `GET /api/v2/groups?q=...` | Optional bounded prefix lookup; manual group IDs remain supported. |
 | `GET /api/v2/inventory`, `/deployments?resourceId=...` | Only server-configured resources/scopes; resource URL cannot be supplied. |
-| `GET /api/v2/budgets`, `/runs`, `/audit` | Server-generated queries against allowlisted log resource IDs. |
+| `GET /api/v2/budgets` | Server-generated query against allowlisted log resource IDs. Paged: `limit` (1-500, default 100), `offset`; filters `search` (project/group, max 100 chars), `projectId` (exact), `minUsedPercent`, `attention=true` (exhausted, stale or partial). Totals always cover every group; `page` reports `matched`, `total` and `nextOffset`. Invalid values return 400 `invalid_budget_query`. |
+| `GET /api/v2/runs`, `/audit` | Server-generated queries against allowlisted log resource IDs. |
 | `GET /api/v2/health`, `/prices`, `/billed-cost` | Separate optional capability results, including observation time/permission requirement. |
 | `GET/PUT /api/v2/catalog` | Editor writes; If-None-Match `*` for first create, exact If-Match for replace; parsed rate card and deployment mappings. |
 | `GET /api/v2/version` | Authenticated version information. |

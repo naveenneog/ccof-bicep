@@ -62,6 +62,42 @@ export function summarizeGroupBudgets(rows: unknown[], now: Date): Doc {
   };
 }
 
+export const BUDGET_PAGE_DEFAULT = 100;
+export const BUDGET_PAGE_MAX = 500;
+export interface BudgetQuery { search: string; projectId: string; minUsedPercent: number | null; onlyAttention: boolean; limit: number; offset: number }
+// Bounded, validated query so tens of thousands of access groups never reach the browser at once.
+export function readBudgetQuery(params: URLSearchParams): BudgetQuery {
+  const search = (params.get("search") ?? "").trim();
+  const projectId = (params.get("projectId") ?? "").trim();
+  const minRaw = params.get("minUsedPercent");
+  const limitRaw = params.get("limit");
+  const offsetRaw = params.get("offset");
+  const minUsedPercent = minRaw === null || minRaw === "" ? null : Number(minRaw);
+  const limit = limitRaw === null || limitRaw === "" ? BUDGET_PAGE_DEFAULT : Number(limitRaw);
+  const offset = offsetRaw === null || offsetRaw === "" ? 0 : Number(offsetRaw);
+  if (search.length > 100 || projectId.length > 80 ||
+    minUsedPercent !== null && (!Number.isFinite(minUsedPercent) || minUsedPercent < 0 || minUsedPercent > 10000) ||
+    !Number.isInteger(limit) || limit < 1 || limit > BUDGET_PAGE_MAX || !Number.isInteger(offset) || offset < 0 || offset > 1_000_000) {
+    throw new ApiError(400, "invalid_budget_query");
+  }
+  return { search: search.toLowerCase(), projectId, minUsedPercent, onlyAttention: params.get("attention") === "true", limit, offset };
+}
+// Totals always cover every group; `matched` and the page reflect the filter. Rows keep the roll-up's order (highest use first).
+export function pageGroupBudgets(summary: Doc, query: BudgetQuery): Doc {
+  const all = Array.isArray(summary.groups) ? summary.groups as Doc[] : [];
+  const matched = all.filter((g) =>
+    (!query.projectId || g.projectId === query.projectId) &&
+    (!query.search || `${g.projectId} ${g.classification}`.toLowerCase().includes(query.search)) &&
+    (query.minUsedPercent === null || g.usedPercent !== null && Number(g.usedPercent) >= query.minUsedPercent) &&
+    (!query.onlyAttention || g.exhausted === true || g.fresh !== true || g.completeness !== "complete"));
+  const groups = matched.slice(query.offset, query.offset + query.limit);
+  const next = query.offset + groups.length;
+  return {
+    ...summary, groups,
+    page: { offset: query.offset, limit: query.limit, returned: groups.length, matched: matched.length, total: all.length, nextOffset: next < matched.length ? next : null },
+  };
+}
+
 export interface CatalogStore {
   read(): Promise<{ doc: Doc; etag: string } | null>;
   save(doc: Doc, etag: string | null): Promise<string | null>;
@@ -183,10 +219,14 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       case "groups": cap = await deps.operations.groups(url.searchParams.get("q") ?? ""); break;
       case "inventory": cap = await deps.operations.inventory(); break;
       case "deployments": cap = await deps.operations.deployments(url.searchParams.get("resourceId") ?? ""); break;
-      case "budgets":
+      case "budgets": {
+        const query = readBudgetQuery(url.searchParams);
         cap = await deps.operations.logs("budgets");
-        if ((cap.state === "available" || cap.state === "partial") && Array.isArray(cap.data)) cap = { ...cap, data: summarizeGroupBudgets(cap.data, deps.now()) };
+        if ((cap.state === "available" || cap.state === "partial") && Array.isArray(cap.data)) {
+          cap = { ...cap, data: pageGroupBudgets(summarizeGroupBudgets(cap.data, deps.now()), query) };
+        }
         break;
+      }
       case "audit": cap = await deps.operations.logs("audit"); break;
       case "runs": cap = await deps.operations.logs("runs"); break;
       case "health": cap = await deps.operations.health(); break;

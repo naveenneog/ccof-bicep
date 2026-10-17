@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { handleV2Request, MAX_CATALOG_BYTES, summarizeGroupBudgets, validateCatalog, validateRateHistory } from "../src/v2.ts";
+import { BUDGET_PAGE_DEFAULT, BUDGET_PAGE_MAX, handleV2Request, MAX_CATALOG_BYTES, pageGroupBudgets, readBudgetQuery, summarizeGroupBudgets, validateCatalog, validateRateHistory } from "../src/v2.ts";
 import type { CatalogStore, V2Dependencies } from "../src/v2.ts";
 import type { Doc } from "../src/validation.ts";
 import type { Capability, Operations } from "../src/operations.ts";
@@ -162,4 +162,48 @@ test("a missing packaged rate card degrades only cost definitions; other feature
   assert.equal((await call("version")).status, 200);
   const saved = await call("catalog", "PUT", baseline, { "if-none-match": "*" });
   assert.equal(saved.status, 200, "an editor can still save a first catalog");
+});
+test("budgets endpoint pages and filters on the server; totals still cover every group", async () => {
+  const { deps, call } = setup();
+  deps.now = () => NOW;
+  const rows = Array.from({ length: 250 }, (_, i) => groupRow({ scopeId: `P${i}:STD`, projectId: `P${i}`, spentCcu: String(i * 10), budgetCcu: "2000" }));
+  deps.operations = { ...operations, logs: async () => ({ state: "available", observedAt: NOW.toISOString(), data: rows }) };
+  const first = ((await call("budgets")).jsonBody as Capability).data as Doc;
+  assert.equal((first.groups as Doc[]).length, BUDGET_PAGE_DEFAULT, "default page, never every group");
+  assert.deepEqual(first.page, { offset: 0, limit: 100, returned: 100, matched: 250, total: 250, nextOffset: 100 });
+  assert.equal((first.totals as Doc).groups, 250, "totals cover every group, not the page");
+  const last = ((await call("budgets?offset=200&limit=100")).jsonBody as Capability).data as Doc;
+  assert.equal((last.page as Doc).returned, 50);
+  assert.equal((last.page as Doc).nextOffset, null);
+  const hot = ((await call("budgets?minUsedPercent=90")).jsonBody as Capability).data as Doc;
+  assert.ok((hot.groups as Doc[]).every((g) => Number(g.usedPercent) >= 90));
+  assert.equal((hot.page as Doc).matched, 70, "spent 1800..2490 of 2000");
+  const one = ((await call("budgets?projectId=P7")).jsonBody as Capability).data as Doc;
+  assert.deepEqual((one.groups as Doc[]).map((g) => g.projectId), ["P7"], "exact project match, not P70..P79");
+  for (const bad of ["limit=0", `limit=${BUDGET_PAGE_MAX + 1}`, "offset=-1", "limit=1.5", "minUsedPercent=abc", `search=${"x".repeat(101)}`]) {
+    const r = await call(`budgets?${bad}`);
+    assert.equal(r.status, 400, bad);
+    assert.equal((r.jsonBody as Doc).error, "invalid_budget_query");
+  }
+});
+test("attention filter keeps exhausted, stale and partial groups only", () => {
+  const summary = summarizeGroupBudgets([
+    groupRow(), groupRow({ scopeId: "P2:STD", projectId: "P2", exhausted: true }),
+    groupRow({ scopeId: "P3:STD", projectId: "P3", validUntil: "2026-10-16T11:00:00Z" }), groupRow({ scopeId: "P4:STD", projectId: "P4", completeness: "partial" }),
+  ], NOW);
+  const page = pageGroupBudgets(summary, readBudgetQuery(new URLSearchParams("attention=true")));
+  assert.deepEqual((page.groups as Doc[]).map((g) => g.projectId).sort(), ["P2", "P3", "P4"]);
+});
+test("scale: 30,000 access groups roll up and page server-side within a bounded response", () => {
+  const rows = Array.from({ length: 30000 }, (_, i) => groupRow({
+    scopeId: `PRJ${i}:STD`, projectId: `PRJ${String(i).padStart(5, "0")}`, spentCcu: `${i % 3000}.25`, budgetCcu: i % 7 === 0 ? null : "2500",
+  }));
+  const started = performance.now();
+  const summary = summarizeGroupBudgets(rows, NOW);
+  const page = pageGroupBudgets(summary, readBudgetQuery(new URLSearchParams("limit=100&minUsedPercent=80")));
+  const elapsed = performance.now() - started;
+  assert.equal((summary.totals as Doc).groups, 30000);
+  assert.equal((page.groups as Doc[]).length, 100);
+  assert.ok(Buffer.byteLength(JSON.stringify(page.groups)) < 100_000, "one page stays well under 100 KB");
+  assert.ok(elapsed < 5000, `30K roll-up + page took ${elapsed.toFixed(0)} ms`);
 });

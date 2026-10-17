@@ -170,7 +170,7 @@ function toast(message) {
 
 const fmtTpm = (v) => (v === null || v === undefined ? "No limit" : nf.format(v));
 const fmtQuota = (limit) => (limit?.tokenQuota == null ? "No quota" : `${nf.format(limit.tokenQuota)} / ${PERIOD_UNIT[limit.tokenQuotaPeriod] ?? limit.tokenQuotaPeriod}`);
-const fmtBudget = (b) => (b ? `${b.currency === "USD" ? "$" : ""}${nf.format(b.amount)}${b.currency === "USD" ? "" : ` ${b.currency}`} / month` : "Uncapped");
+const fmtBudget = (b) => (b ? `${b.currency === "USD" ? "$" : ""}${nf.format(b.amount)}${b.currency === "USD" ? "" : ` ${b.currency}`} / month` : "No cap");
 const familiesOf = (policy) => Object.keys(policy.families ?? {}).sort((a, b) => FAMILY_ORDER.indexOf(a) - FAMILY_ORDER.indexOf(b));
 
 /* ── State ───────────────────────────────────────────── */
@@ -193,10 +193,28 @@ const state = {
 
 /* ── Project list ────────────────────────────────────── */
 
+const FILTER_IDS = ["search", "tag-filter", "backend-filter"];
+const queryActive = () => FILTER_IDS.some((id) => $(id).value.trim() !== "");
+const isSectionRoute = () => /^#\/(budgets|inventory|pricing|operations|audit)$/.test(location.hash);
+
+function syncFilterSummary() {
+  const active = ["tag-filter", "backend-filter"].filter((id) => $(id).value.trim() !== "").length;
+  $("filter-count").textContent = active ? `${active} active` : "";
+  $("filter-count").hidden = active === 0;
+}
+
+function clearFilters() {
+  for (const id of FILTER_IDS) $(id).value = "";
+  syncFilterSummary();
+  $("search").focus();
+  loadProjects().catch(() => { $("list-status").textContent = "Project search failed. Retry after checking connectivity."; });
+}
+
 async function loadProjects(append = false) {
   append = append === true;
   const epoch = append ? state.listEpoch : ++state.listEpoch;
   $("list-status").textContent = "";
+  delete $("list-status").dataset.state;
   if (!append) $("project-list").replaceChildren(el("li", { class: "skeleton", "aria-hidden": "true" }, el("span"), el("span"), el("span"), el("span")));
   const params = new URLSearchParams({ search: $("search").value.trim(), tag: $("tag-filter").value.trim(), backendId: $("backend-filter").value.trim(), limit: "50" });
   if (append && state.cursor) params.set("cursor", state.cursor);
@@ -213,6 +231,9 @@ async function loadProjects(append = false) {
   }
   renderList();
   $("load-more").hidden = !state.cursor || Boolean(state.listError);
+  document.dispatchEvent(new CustomEvent("ccof:projects"));
+  // Keep the Projects home in step with the list once it is on screen (filters, load more).
+  if (lastView !== null && currentRoute().view === "home" && !isSectionRoute()) renderHome();
 }
 
 function renderList() {
@@ -221,12 +242,25 @@ function renderList() {
   if (state.listError) {
     list.replaceChildren();
     status.replaceChildren(errorNotice(state.listError, [el("button", { class: "btn btn-small", type: "button", text: "Try again", onclick: loadProjects })]));
+    status.dataset.state = "error";
     return;
   }
-  const shown = state.projects;
-  status.textContent = state.projects.length === 0 ? "" : shown.length === 0 ? "No projects match." : "";
+  const count = state.projects.length;
+  const filtered = queryActive();
+  if (count === 0 && filtered) {
+    if (status.dataset.state !== "no-match") {
+      status.replaceChildren("No projects match.", el("button", { class: "btn btn-small", type: "button", text: "Clear filters", onclick: clearFilters }));
+      status.dataset.state = "no-match";
+    }
+  } else {
+    const summary = count === 0 ? (state.cursor ? "This page is empty. Load more to continue." : "")
+      : `${count} ${filtered ? "matching " : ""}project${count === 1 ? "" : "s"}${state.cursor ? " loaded · more available" : ""}`;
+    // Rewriting identical text would make the live region announce it again on every route change.
+    if (status.dataset.state !== "summary" || status.textContent !== summary) status.textContent = summary;
+    status.dataset.state = "summary";
+  }
   const selected = currentRoute().id;
-  list.replaceChildren(...shown.map((p) =>
+  list.replaceChildren(...state.projects.map((p) =>
     el("li", {}, el("button", {
       class: "project-item", type: "button", "aria-current": p.projectId === selected ? "true" : "false",
       onclick: () => navigate(`#/p/${encodeURIComponent(p.projectId)}`),
@@ -253,10 +287,14 @@ function navigate(hash) {
 
 async function route() {
   const r = currentRoute();
-  const extended = /^#\/(budgets|inventory|pricing|operations|audit)$/.test(location.hash);
+  const extended = isSectionRoute();
   $("detail").hidden = extended;
   $("v2-content").hidden = !extended;
-  if (extended) return;
+  $("workspace").dataset.view = extended ? "section" : r.view;
+  if (extended) {
+    renderList();
+    return;
+  }
   lastView = null;
   state.editing = null;
   state.reviewing = false;
@@ -269,6 +307,7 @@ async function route() {
 }
 
 // A new view fades in and starts at the top; re-rendering the same view keeps scroll and doesn't animate.
+// Narrow layouts scroll <main> instead of the detail pane, so both positions are handled.
 let lastView = null;
 function setDetail(...children) {
   const view = location.hash || "#/";
@@ -276,14 +315,36 @@ function setDetail(...children) {
   lastView = view;
   const inner = el("div", { class: `detail-inner${fresh ? " detail-enter" : ""}` }, ...children);
   const top = $("detail").scrollTop;
+  const pageTop = $("main").scrollTop;
   $("detail").replaceChildren(inner);
   $("detail").scrollTop = fresh ? 0 : top;
+  $("main").scrollTop = fresh ? 0 : pageTop;
 }
 
+const backLink = () => el("a", { class: "back-link", href: "#/" }, el("span", { "aria-hidden": "true", text: "←" }), "All projects");
+
+const PROJECT_GUIDE = [
+  ["Access groups", "One Entra security group per classification, such as STD, PRM or CYB. Membership is managed in Entra; developers get changes after the next entitlement sync."],
+  ["Models and token limits", "The deployments each model family may use, with per-person and whole-group tokens per minute and quotas. A request must fit both the all-models limit and its family's limit."],
+  ["Budgets", "Monthly per-person and whole-group budgets. Month-to-date consumption is the reconciler's calculation, not an invoice; 100 CCU = USD 1."],
+  ["Organization", "Custom tags and the single APIM backend the project uses. Tags organize the list; they never grant access."],
+];
+const SECTION_GUIDE = [
+  ["#/budgets", "Group budgets", "Month-to-date consumption against every access group's budget, across all projects."],
+  ["#/inventory", "Foundry inventory", "Foundry resources, their deployed models and the APIM backends that point at them."],
+  ["#/pricing", "Cost definitions", "The model catalog and the versioned USD token rate card."],
+  ["#/operations", "Health & operations", "Control-plane state, endpoint probes and reconciler runs, reported separately."],
+  ["#/audit", "Audit", "Recent admin changes and refusals from configured telemetry."],
+];
+
 function renderHome() {
-  if (state.listError) return setDetail(el("div", { class: "empty" }, el("h1", { text: "Projects" }), el("p", { class: "muted", text: "The project list couldn't be loaded. Details are on the left." })));
+  if (state.listError) return setDetail(el("div", { class: "empty" }, el("h1", { text: "Projects" }), el("p", { class: "muted", text: "The project list couldn't be loaded. Its message explains what went wrong and lets you try again." })));
   if (state.projects.length === 0 && state.cursor) return setDetail(el("div", { class: "empty" },
     el("h1", { text: "Continue the project search" }), el("p", { text: "This query page was empty. Use Load more projects to continue; the registry has not been confirmed empty." })));
+  if (state.projects.length === 0 && queryActive()) return setDetail(el("div", { class: "empty" },
+    el("h1", { text: "No projects match" }),
+    el("p", { text: "Search matches project names and IDs. Tag and backend ID filters need the exact value. The registry itself has not been confirmed empty." }),
+    el("div", { class: "toolbar" }, el("button", { class: "btn", type: "button", text: "Clear filters", onclick: clearFilters }))));
   if (state.projects.length === 0) {
     return setDetail(el("div", { class: "empty" },
       el("h1", { text: "No projects yet" }),
@@ -295,9 +356,19 @@ function renderHome() {
         el("li", { text: "The exact model deployment names, for example claude-sonnet-4-5." })),
       state.canWrite ? el("div", {}, el("button", { class: "btn btn-primary", type: "button", text: "Create the first project", onclick: () => navigate("#/new") })) : el("p", { class: "muted", text: "You have read-only access." })));
   }
-  setDetail(el("div", { class: "empty" },
-    el("h1", { text: "Select a project" }),
-    el("p", { class: "muted", text: `${state.projects.length} loaded project${state.projects.length === 1 ? "" : "s"}. ${state.cursor ? "More pages are available. " : ""}Pick one to see its access group, models and token limits.` })));
+  const n = state.projects.length;
+  setDetail(el("div", { class: "home" },
+    el("header", { class: "page-head" },
+      el("h1", { text: "Projects" }),
+      el("p", { class: "section-note", text: `${n} ${queryActive() ? "matching " : ""}project${n === 1 ? "" : "s"} loaded${state.cursor ? "; more are available with Load more projects" : ""}. ` +
+        `Choose one from the project list to review its access groups, models, token limits and budgets${state.canWrite ? ", or add one with New project" : ""}.` }),
+      state.canWrite ? null : el("p", { class: "section-note", text: "You have read-only access. Editing needs the CCOF.Projects.Write role." })),
+    el("section", { class: "section", "aria-labelledby": "guide-project" },
+      el("h2", { id: "guide-project", text: "What a project defines" }),
+      el("dl", { class: "guide" }, PROJECT_GUIDE.flatMap(([term, text]) => [el("dt", { text: term }), el("dd", { text })]))),
+    el("section", { class: "section", "aria-labelledby": "guide-sections" },
+      el("h2", { id: "guide-sections", text: "Across all projects" }),
+      el("dl", { class: "guide" }, SECTION_GUIDE.flatMap(([href, term, text]) => [el("dt", {}, el("a", { href, text: term })), el("dd", { text })])))));
 }
 
 /* ── Project detail ──────────────────────────────────── */
@@ -321,11 +392,13 @@ function renderProject() {
   const cls = doc.classifications[state.code];
 
   const head = el("header", { class: "page-head" },
+    backLink(),
     el("div", { class: "row" }, el("h1", { text: doc.displayName || doc.projectId }), el("span", { class: "pill pill-ok", text: doc.status === "active" ? "Active" : doc.status })),
     el("dl", { class: "facts" },
       el("div", {}, el("dt", { text: "Project ID" }), el("dd", { text: doc.projectId })),
       el("div", {}, el("dt", { text: "Backend" }), el("dd", { text: doc.backendId })),
-      el("div", {}, el("dt", { text: "Foundry subscription" }), el("dd", { text: doc.designatedSubscriptionId }))));
+      el("div", {}, el("dt", { text: "Foundry subscription" }), el("dd", { text: doc.designatedSubscriptionId })),
+      el("div", {}, el("dt", { text: "Tags" }), el("dd", { text: doc.adminTags?.length ? doc.adminTags.join(", ") : "None" }))));
 
   const tabs = codes.length > 1 ? el("div", { class: "tabs", role: "tablist", "aria-label": "Classifications" },
     codes.map((code, i) => el("button", {
@@ -833,7 +906,7 @@ function renderCreate() {
     inventoryChoices.push(...r.data.data.resources);
     backendChoices.replaceChildren(...r.data.data.backends.map((b) => el("option", { value: b.backendId, text: b.host })));
   }).catch(() => { status.textContent = "Backend discovery failed. Enter the approved backend ID manually."; });
-  setDetail(el("header", { class: "page-head" }, el("h1", { text: "New project" }),
+  setDetail(el("header", { class: "page-head" }, backLink(), el("h1", { text: "New project" }),
     el("p", { class: "section-note", text: "Project ID and access group can't be changed after creation." })), form);
   refresh();
   f.projectId.input.focus();
@@ -887,7 +960,8 @@ async function boot() {
   });
   if (auth.mode === "demo") $("sign-out").textContent = auth.demoAs === "editor" ? "Switch to reader" : "Switch to editor";
   let filterTimer;
-  for (const id of ["search", "tag-filter", "backend-filter"]) $(id).addEventListener("input", () => {
+  for (const id of FILTER_IDS) $(id).addEventListener("input", () => {
+    syncFilterSummary();
     clearTimeout(filterTimer);
     filterTimer = setTimeout(() => { loadProjects().catch(() => { $("list-status").textContent = "Project search failed. Retry after checking connectivity."; }); }, 250);
   });
@@ -913,7 +987,7 @@ async function boot() {
 
   show("workspace");
   $("console-navigation").hidden = false;
-  mountV2({ call, state, saved: async (id) => { await loadProjects(); await openProject(id); } });
+  mountV2({ call, state, notify: toast, saved: async (id) => { await loadProjects(); await openProject(id); } });
   window.addEventListener("ccof:catalog-updated", async () => {
     try { const r = await call("GET", "/v2/catalog"); if (r.status === 200) state.catalog = r.data.catalog; }
     catch { toast("Catalog refresh failed. Reload before choosing newly configured deployments."); }
