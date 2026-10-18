@@ -133,3 +133,22 @@ test("health probes are bounded parallel work instead of a sequential timeout ch
   assert.equal((cap.data as unknown[]).length, 14);
   assert(peak > 1 && peak <= 6);
 });
+
+test("audit can read a separate admin workspace while budgets and runs stay on the shared workspace", async () => {
+  const shared = "11111111-1111-1111-1111-111111111111";
+  const adminWs = "22222222-2222-2222-2222-222222222222";
+  const ids = "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg/providers/Microsoft.Web/sites/app";
+  const seen: string[] = [];
+  const credential = { getToken: async () => ({ token: "t", expiresOnTimestamp: Date.now() + 60000 }) };
+  const transport = (async (url: string | URL) => { seen.push(String(url)); return new Response(JSON.stringify({ tables: [{ rows: [] }] }), { status: 200 }); }) as typeof fetch;
+  const ops = createOperations({ ADMIN_WORKSPACE_ID: shared, ADMIN_AUDIT_WORKSPACE_ID: adminWs, ADMIN_LOG_RESOURCE_IDS: ids }, credential, () => {}, transport);
+  assert.equal((await ops.logs("audit")).state, "available");
+  assert.equal((await ops.logs("budgets")).state, "available");
+  assert.equal((await ops.logs("runs")).state, "available");
+  assert.ok(seen[0].includes(`/workspaces/${adminWs}/`), "audit uses the admin workspace");
+  assert.ok(seen[1].includes(`/workspaces/${shared}/`) && seen[2].includes(`/workspaces/${shared}/`), "budgets and runs stay shared");
+  const fallback = createOperations({ ADMIN_WORKSPACE_ID: shared, ADMIN_LOG_RESOURCE_IDS: ids }, credential, () => {}, transport);
+  seen.length = 0;
+  await fallback.logs("audit");
+  assert.ok(seen[0].includes(`/workspaces/${shared}/`), "without the setting, audit uses the shared workspace");
+});

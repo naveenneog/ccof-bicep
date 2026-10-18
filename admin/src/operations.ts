@@ -46,6 +46,9 @@ export function createOperations(
   const logIds = ids(env.ADMIN_LOG_RESOURCE_IDS);
   const validIds = configuredIds.every((id) => RESOURCE_ID.test(id));
   const validScopes = scopes.every((id) => DISCOVERY_SCOPE.test(id));
+  // Audit lines live in the admin app's own Application Insights workspace when it differs from the
+  // shared workspace holding the reconciler's budget/run lines (the quick install creates both).
+  const workspaceFor = (kind: "budgets" | "audit" | "runs") => (kind === "audit" && env.ADMIN_AUDIT_WORKSPACE_ID ? env.ADMIN_AUDIT_WORKSPACE_ID : env.ADMIN_WORKSPACE_ID) ?? "";
   const result = (state: Capability["state"], data?: unknown, reason?: string, permission?: string): Capability =>
     ({ state, observedAt: stamp(), ...(data === undefined ? {} : { data }), ...(reason ? { reason } : {}), ...(permission ? { permission } : {}) });
   async function request(url: string, scope: string | null, init: RequestInit = {}): Promise<Doc> {
@@ -157,7 +160,7 @@ export function createOperations(
         ? "| summarize arg_max(at, d) by requestId=tostring(d.requestId), operation=tostring(d.operation), outcome=tostring(d.outcome) | top 200 by at desc"
         : "| summarize arg_max(at, d) by runId=tostring(d.runId), outcome=tostring(d.outcome) | top 200 by at desc";
     const query = `${messages(logIds)} | where tostring(d.schema) == "${schema}" ${tail} | project d=bag_merge(d, bag_pack("observedAt", at))`;
-    const body = await request(`https://api.loganalytics.azure.com/v1/workspaces/${env.ADMIN_WORKSPACE_ID}/query`,
+    const body = await request(`https://api.loganalytics.azure.com/v1/workspaces/${workspaceFor(kind)}/query`,
       "https://api.loganalytics.io/.default", { method: "POST", body: JSON.stringify({ query, timespan: "P31D" }) });
     if (!Array.isArray(body.tables)) throw new ProviderError(502, "invalid_query_result");
     const table = object(body.tables[0]);
@@ -188,7 +191,7 @@ export function createOperations(
       const page = await list(`${ARM}${id}/deployments?api-version=2025-06-01`);
       return { deployments: page.items.map((d) => ({ name: d.name, model: object(object(d.properties).model).name, state: object(d.properties).provisioningState })), truncated: page.truncated };
     }),
-    logs: (kind) => optional(kind, isGuid(env.ADMIN_WORKSPACE_ID) && logIds.length > 0, "Log Analytics Reader on configured workspace; diagnostics routed to it", () => logData(kind)),
+    logs: (kind) => optional(kind, isGuid(workspaceFor(kind)) && logIds.length > 0, kind === "audit" && env.ADMIN_AUDIT_WORKSPACE_ID ? "Log Analytics Reader on ADMIN_AUDIT_WORKSPACE_ID (the admin app's own Application Insights workspace)" : "Log Analytics Reader on configured workspace; diagnostics routed to it", () => logData(kind)),
     health: () => optional("health", Boolean(env.ADMIN_HEALTH_TARGETS), "Private DNS/network path; optional function key via app-setting reference", async () => {
       const raw: unknown = JSON.parse(env.ADMIN_HEALTH_TARGETS ?? "[]");
       if (!Array.isArray(raw) || raw.length > 30) throw new ProviderError(400, "invalid_health_targets");
