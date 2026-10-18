@@ -354,6 +354,7 @@ as a client. Portal: core RG → **Workbooks** → the workbook's display name (
 |---|---|
 | `seed_document_invalid: Answers failed schema validation` | `pwsh -File scripts/diagnostics/Find-SeedError.ps1 -ParametersPath $p` |
 | `AuthorizationFailed` on a read | Run block 0.2 again (wrong subscription). |
+| `Timedout waiting for token from portal. Audience: https://graph.microsoft.com/` | Quickstart tries the existing Azure PowerShell sign-in. If both token routes fail, stop: use the Portal-first guide's modules 06, 13 and 16, or an approved browser-authenticated workstation. Do not log out, reset Cloud Shell, use blocked device-code login, or skip prerequisite checks. |
 | `seed_group_duplicate` | Two `groups` entries share the same `projectId` and `classification`. |
 | `seed_backend_conflict` | Entries of one project use different `backendId` values. |
 | Windows only: `'charmap' codec can't encode '\u2212'` | `$env:PATH = "$PWD/scripts/diagnostics/windows-az-utf8;" + $env:PATH` (makes `az` resolve to the UTF-8 `az.ps1` wrapper), then rerun. Cloud Shell is not affected. |

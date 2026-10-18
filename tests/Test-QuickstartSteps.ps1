@@ -56,20 +56,28 @@ function Invoke-QsAz {
     return ''
 }
 function Get-QsGraph {
-    param([string]$Path)
+    param([string]$Path, [string]$TenantId)
     if ($Path -match '^servicePrincipals/') { return @{ appId = '00000000-0000-4000-8000-000001111000' } }
     if ($Path -match "appId eq '([0-9a-f-]+)'") {
         $id = $Matches[1]
         $app = @($script:Graph.gateway, $script:Graph.developer, $script:Graph.resolver | Where-Object { $_ -and $_.appId -eq $id })
         return @{ value = $app }
     }
-    if ($Path -match '^groups/([0-9a-f-]+)$') { if ($script:Graph.groups.Contains($Matches[1])) { return $script:Graph.groups[$Matches[1]] }; throw 'Request_ResourceNotFound' }
+    if ($Path -match '^groups/([0-9a-f-]+)$') {
+        if ($script:GroupReadError) { throw $script:GroupReadError }
+        if ($script:Graph.groups.Contains($Matches[1])) { return $script:Graph.groups[$Matches[1]] }
+        throw 'Request_ResourceNotFound'
+    }
     throw "unexpected Graph path $Path"
 }
 function New-Step1Context { @{ P = $P; ParametersText = '// no placeholders'; Roles = { param($Ctx) @() } } }
 
 # --- Step 1 ---
 Reset-Fakes
+$script:GroupReadError = 'graph_authentication_unavailable: portal token timed out'
+$message = try { $null = Test-QsPrerequisites (New-Step1Context); '' } catch { $_.Exception.Message }
+Assert-True 'group authentication failures are not reported as missing groups' ($message -ceq $script:GroupReadError)
+$script:GroupReadError = ''
 $out = $null; $message = ''
 try { $out = Test-QsPrerequisites (New-Step1Context) } catch { $message = $_.Exception.Message }
 Assert-True 'step 1 passes when only "Allow public client flows" is off on the Developer Sign-in app' ($null -ne $out -and -not $message) $message

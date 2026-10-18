@@ -104,7 +104,26 @@ function Read-QsParameters {
     return $v
 }
 
-function Get-QsGraph { param([string]$Path) Invoke-QsAz @('rest', '--method', 'get', '--url', "https://graph.microsoft.com/v1.0/$Path") }
+function Get-QsGraph {
+    param([string]$Path, [string]$TenantId)
+    $uri = "https://graph.microsoft.com/v1.0/$Path"
+    try { return Invoke-QsAz @('rest', '--method', 'get', '--url', $uri) }
+    catch {
+        if ($_.Exception.Message -notmatch '(?i)timed\s*out waiting for token from portal|not a supported MSI token audience') { throw }
+        Write-Host 'WARNING: Azure CLI could not obtain a Graph token; trying the existing Azure PowerShell sign-in (no new login).' -ForegroundColor Yellow
+    }
+    try {
+        if (-not $TenantId) { throw 'The target tenant is required for the alternate Graph token.' }
+        if (-not (Get-Command Get-AzAccessToken -ErrorAction SilentlyContinue)) { throw 'Az.Accounts is not available in this session.' }
+        $access = Get-AzAccessToken -ResourceTypeName MSGraph -TenantId $TenantId -AsSecureString -ErrorAction Stop
+        if ($access.Token -isnot [System.Security.SecureString] -or $access.Token.Length -eq 0) { throw 'Azure PowerShell returned no secure Graph token.' }
+    }
+    catch {
+        throw "graph_authentication_unavailable: Azure CLI could not acquire the Graph token and the existing Azure PowerShell sign-in could not supply it. No prerequisite checks were skipped. Do not run az logout or use device-code login where it is blocked. Follow docs/runbooks/AZURE-PORTAL-DEPLOYMENT.md for UI checks, or use an approved workstation with browser sign-in. Azure PowerShell: $($_.Exception.Message)"
+    }
+    Invoke-RestMethod -Method Get -Uri $uri -Authentication Bearer -Token $access.Token -TimeoutSec 60 -ErrorAction Stop |
+        ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
+}
 
 function Test-QsPrerequisites {
     param($Ctx)
@@ -123,23 +142,23 @@ function Test-QsPrerequisites {
     $principalId = $apim.identity.principalId
     if (-not $principalId -or $apim.identity.type -notmatch 'SystemAssigned') { $problems.Add('apim_identity_missing: the APIM has no system-assigned identity. Turn it on in the portal (APIM > Managed identities); never use az apim update, which strips it.') }
     $apimAppId = $null
-    if ($principalId) { $apimAppId = (Get-QsGraph "servicePrincipals/$principalId").appId }
+    if ($principalId) { $apimAppId = (Get-QsGraph "servicePrincipals/$principalId" -TenantId $p.tenantId).appId }
     $r = $p.registrations
-    $gw = @((Get-QsGraph "applications?`$filter=appId eq '$($r.gatewayApi.appId)'").value)[0]
+    $gw = @((Get-QsGraph "applications?`$filter=appId eq '$($r.gatewayApi.appId)'" -TenantId $p.tenantId).value)[0]
     if (-not $gw) { $problems.Add('gateway_api_missing: no application with registrations.gatewayApi.appId') }
     else {
         if ($null -eq $gw.api.requestedAccessTokenVersion) { $problems.Add('gateway_api_token_version_unset: set api.requestedAccessTokenVersion explicitly (1 or 2) in the manifest') }
         if (-not @($gw.api.oauth2PermissionScopes | Where-Object { $_.value -ceq $r.gatewayApi.scope -and $_.isEnabled }).Count) { $problems.Add("gateway_api_scope_missing: scope $($r.gatewayApi.scope) is not exposed and enabled") }
     }
     $dev = if ($r.developerSignIn.appId -eq $r.gatewayApi.appId) { $gw }
-    else { @((Get-QsGraph "applications?`$filter=appId eq '$($r.developerSignIn.appId)'").value)[0] }
+    else { @((Get-QsGraph "applications?`$filter=appId eq '$($r.developerSignIn.appId)'" -TenantId $p.tenantId).value)[0] }
     $warnings = [System.Collections.Generic.List[string]]::new()
     # "Allow public client flows" is needed only by the device code flow (ccof-token login
     # --device-code); WAM and the browser sign-in use the app's public-client redirect URIs
     # (docs/CLIENTS.md). So it is a warning and the deployment goes on.
     if (-not $dev) { $problems.Add('developer_sign_in_missing: no application with registrations.developerSignIn.appId') }
     elseif (-not $dev.isFallbackPublicClient) { $warnings.Add('developer_sign_in_not_public: "Allow public client flows" is off on the Developer Sign-in app, so `ccof-token login --device-code` will fail; WAM and browser sign-in are unaffected. An Entra administrator turns it on (docs/QUICKSTART-PREREQUISITES.md).') }
-    $res = @((Get-QsGraph "applications?`$filter=appId eq '$($r.resolverApi.appId)'").value)[0]
+    $res = @((Get-QsGraph "applications?`$filter=appId eq '$($r.resolverApi.appId)'" -TenantId $p.tenantId).value)[0]
     if (-not $res) { $problems.Add('resolver_api_missing: no application with registrations.resolverApi.appId') }
     else {
         if ($res.api.requestedAccessTokenVersion -ne 2) { $problems.Add('resolver_api_token_version: the Resolver API needs requestedAccessTokenVersion 2 (ADR-0009)') }
@@ -156,7 +175,11 @@ function Test-QsPrerequisites {
     }
     $groupDisplayNames=@{}
     foreach ($g in $p.groups) {
-        $group = try { Get-QsGraph "groups/$($g.groupId)" } catch { $null }
+        $group = try { Get-QsGraph "groups/$($g.groupId)" -TenantId $p.tenantId }
+        catch {
+            if ($_.Exception.Message -notmatch 'Request_ResourceNotFound|ResourceNotFound|(\b404\b)') { throw }
+            $null
+        }
         if (-not $group -or -not $group.securityEnabled) { $problems.Add("group_missing: $($g.projectId)/$($g.classification) group $($g.groupId) is not an existing security group") }
         elseif($group.displayName -is [string] -and $group.displayName.Length -ge 1 -and $group.displayName.Length -le 256) {
             $g.classificationGroupDisplayName=$group.displayName
@@ -216,7 +239,11 @@ function Get-QsWorkbookGroups {
     foreach ($g in $P.groups) {
         $id = ([string]$g.groupId).ToLowerInvariant()
         if (-not $read.ContainsKey($id)) {
-            $actual = try { Get-QsGraph "groups/$id`?`$select=id,displayName" } catch { $null }
+            $actual = try { Get-QsGraph "groups/$id`?`$select=id,displayName" -TenantId $P.tenantId }
+            catch {
+                Write-Host "WARNING: group display name could not be read for $id; the workbook will show its object ID. $($_.Exception.Message)" -ForegroundColor Yellow
+                $null
+            }
             if ($actual -and $actual.id -ine $id) { throw 'group_identity_mismatch: directory metadata named another object.' }
             $read[$id] = if ($actual -and $actual.displayName -is [string] -and $actual.displayName.Length) { $actual.displayName } else { $null }
         }
