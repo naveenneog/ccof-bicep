@@ -247,7 +247,7 @@ main:has(> .workspace:not([hidden])) { overflow: hidden; }
 .skeleton-table > span:last-child { border-bottom: 0; }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
-.detail { overflow-y: auto; padding: var(--s6) var(--s6) var(--s7); }
+.detail { overflow-y: auto; padding: var(--s6) var(--s6) var(--s7); container: detail / inline-size; }
 .detail-inner { max-width: 1120px; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); }
 .detail-enter { animation: enter 220ms var(--ease); }
 @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
@@ -487,7 +487,16 @@ details.disclosure[open] > summary { border-bottom: 1px solid var(--line); borde
   .guide > dt { padding-bottom: 0; }
   .guide > dd { padding-top: var(--s1); border-top: 0; }
   .toast { left: var(--s4); right: var(--s4); bottom: var(--s4); max-width: none; }
+}
 
+/* Medium screens (VDI, 1080p at 125-150% scaling): give the content panel more room. */
+@media (min-width: 821px) and (max-width: 1440px) {
+  .workspace { grid-template-columns: 240px minmax(0, 1fr); }
+  .detail { padding: var(--s5) var(--s5) var(--s7); }
+}
+
+/* Sized by the content panel, not the window: tables reflow before they would clip on the right. */
+@container detail (max-width: 920px) {
   /* Limits: one labelled block per scope instead of a sideways-scrolling table. */
   .table-wrap:has(> .limits) { overflow: visible; border: 0; background: none; }
   table.limits { min-width: 0; }
@@ -500,6 +509,14 @@ details.disclosure[open] > summary { border-bottom: 1px solid var(--line); borde
   .limits .sep { border-left: 0; }
   .limits tbody tr:last-child > * { border-bottom: 1px solid var(--line); }
   .limits tbody tr > :last-child { border-bottom: 0; }
+  .limits td .quota-pair { flex-wrap: wrap; justify-content: flex-end; }
+}
+@container detail (max-width: 1040px) {
+  /* Long identifiers and timestamps wrap so data tables fit instead of clipping. */
+  .v2-table .id { min-width: 12ch; }
+  .v2-table time, .v2-table .time { white-space: normal; }
+  .v2-table tbody th:not(.id) { white-space: normal; }
+  .v2-table th, .v2-table td { padding: var(--s2); }
 }
 
 @media (prefers-reduced-motion: reduce) {
