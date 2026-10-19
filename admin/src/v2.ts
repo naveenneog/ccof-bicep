@@ -8,6 +8,7 @@ import { parseRateCard } from "../../src/cost/rate-card.ts";
 import { ccuToUsd } from "../../src/cost/budget-units.ts";
 import { Money } from "../../src/cost/money.ts";
 import type { Capability, Operations } from "./operations.ts";
+import { ADMIN_VERSION } from "./version.ts";
 export const MAX_CATALOG_BYTES = 1024 * 1024;
 const DECIMAL_TEXT = /^\d{1,30}(\.\d{1,30})?$/;
 
@@ -194,10 +195,14 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       const backendId = url.searchParams.get("backendId") ?? "";
       const limit = Number(url.searchParams.get("limit") ?? "50");
       const cursor = url.searchParams.get("cursor") ?? undefined;
+      // V3 filters: every listed tag must be present (comma-separated, up to 10) and the classification must exist.
+      const tags = (url.searchParams.get("tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+      const classification = url.searchParams.get("classification") ?? "";
+      if (tags.length > 10 || tags.some((t) => t.length > 60) || classification && !isIdentifier(classification)) throw new ApiError(400, "invalid_project_query");
       if (search.length > 200 || tag.length > 60 || backendId.length > 80 || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         cursor && cursor.length > 24000) throw new ApiError(400, "invalid_project_query");
       if (!deps.projects.listPage) throw new ApiError(503, "paged_project_store_required");
-      const page = await deps.projects.listPage({ search, tag, backendId, limit, cursor });
+      const page = await deps.projects.listPage({ search, tag, backendId, limit, cursor, ...(tags.length ? { tags } : {}), ...(classification ? { classification } : {}) });
       return response(200, { projects: page.items.map((p) => ({ ...stripSystem(p.doc), etag: p.etag })), cursor: page.cursor ?? null });
     }
     if (path === "catalog") {
@@ -232,7 +237,7 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       case "health": cap = await deps.operations.health(); break;
       case "prices": cap = await deps.operations.retail(); break;
       case "billed-cost": cap = await deps.operations.billed(); break;
-      case "version": return response(200, { version: "2.0.1", api: "v2", projectApi: "v1-compatible" });
+      case "version": return response(200, { version: ADMIN_VERSION, api: "v2", projectApi: "v1-compatible" });
       default: throw new ApiError(404, "route_not_found");
     }
     return response(200, cap);

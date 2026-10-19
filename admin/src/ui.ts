@@ -56,11 +56,32 @@ export async function serveUi(asset: string, base = PACKAGED_UI): Promise<{
   headers: Record<string, string>;
   body: string;
 }> {
-  const entry = files[asset];
+  const entry = Object.hasOwn(files, asset) ? files[asset] : undefined;
   if (!entry) return { status: 404, headers: UI_HEADERS, body: "Not found" };
   return { status: 200, headers: { ...UI_HEADERS, "content-type": entry.type }, body: await readFile(resolve(base, entry.file), "utf8") };
 }
 
 export function uiConfigurationResponse(env: Readonly<Record<string, string | undefined>>): ApiResponse {
   return { status: 200, headers: { ...UI_HEADERS, "content-type": "application/json" }, jsonBody: publicUiConfig(env) };
+}
+
+// V3 console (docs/ADMIN-V3.md): the same headers and strict CSP, its own explicit allow-list and
+// build output, and served only when ADMIN_V3_ENABLED=true so V2 stays the default.
+const v3Files: Record<string, { file: string; type: string }> = {
+  "": { file: "index.html", type: "text/html; charset=utf-8" },
+  "app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+  "app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "icon.svg": { file: "icon.svg", type: "image/svg+xml" },
+};
+const PACKAGED_UI_V3 = fileURLToPath(new URL("../../../ui-dist-v3/", import.meta.url));
+export const v3Enabled = (env: Readonly<Record<string, string | undefined>>): boolean => env.ADMIN_V3_ENABLED === "true";
+
+export async function serveUiV3(asset: string, enabled: boolean, base = PACKAGED_UI_V3): Promise<{
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}> {
+  const entry = enabled ? v3Files[asset] : undefined;
+  if (!entry || !Object.hasOwn(v3Files, asset)) return { status: 404, headers: UI_HEADERS, body: "Not found" };
+  return { status: 200, headers: { ...UI_HEADERS, "content-type": entry.type }, body: await readFile(resolve(base, entry.file), "utf8") };
 }

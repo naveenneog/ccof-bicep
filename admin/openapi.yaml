@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: CCOF project admin API
-  version: 2.0.1
+  version: 3.0.0
   description: >
     Manage projects through the admin app managed identity. V2 adds optional capability-gated
     directory lookup, inventory, cost definitions, health and telemetry. No permission grants,
@@ -86,6 +86,8 @@ paths:
         - { name: backendId, in: query, schema: { type: string, maxLength: 80 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
         - { name: cursor, in: query, schema: { type: string }, description: Opaque continuation token returned by the previous query }
+        - { name: tags, in: query, schema: { type: string }, description: 'V3: comma-separated tags (up to 10), all must match' }
+        - { name: classification, in: query, schema: { type: string }, description: 'V3: only projects with this classification' }
       responses:
         "200": { description: Project documents and nullable next cursor }
         default: { $ref: "#/components/responses/Error" }
@@ -119,6 +121,86 @@ paths:
         - { name: attention, in: query, schema: { type: boolean }, description: Budgets limited to exhausted, stale or partial groups }
       responses:
         "200": { description: "Capability state with observedAt, optional reason/permission/data; version returns version metadata. For budgets, data is { groups[], totals, basis }: per group spentCcu/spentUsd, budgetCcu/budgetUsd (null = no cap), remainingCcu/remainingUsd, usedPercent, completeness, fresh; totals across groups with lowerBound." }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/chargeback/{view}:
+    get:
+      summary: "V3 (ADMIN_V3_ENABLED=true): chargeback view built server-side by the workbook's own query builder; the browser never sends KQL"
+      parameters:
+        - { name: view, in: path, required: true, schema: { type: string, enum: [totals, groups, developers, models, families, projects, trend, coverage, unpriced, diagnostics] } }
+        - { name: period, in: query, schema: { type: string, enum: [month, previous, custom], default: month } }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: 'Custom only, UTC; [from, to) at most ADMIN_CHARGEBACK_MAX_QUERY_DAYS' }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: project, in: query, schema: { type: string } }
+        - { name: group, in: query, schema: { type: string, format: uuid } }
+        - { name: developer, in: query, schema: { type: string, format: uuid } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: backend, in: query, schema: { type: string }, description: Request-time backendId from the ledger }
+        - { name: family, in: query, schema: { type: string, enum: [haiku, sonnet, opus, fable, mythos, unknown] } }
+        - { name: interval, in: query, schema: { type: string, enum: [hour, day], default: day } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: "Capability state; data has rows, columns, page, truncated, period, rateCardVersion, basis (list price, not an invoice), observedAt, cached" }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/reconciler/{kind}:
+    get:
+      summary: "V3: reconciler runs (latest per outcome, freshness vs timer interval), budget snapshots (person and group scope) or their summary"
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [runs, snapshots, summary] } }
+        - { name: period, in: query, schema: { type: string, enum: [month, previous, custom] } }
+        - { name: scope, in: query, schema: { type: string, enum: [person, group] } }
+        - { name: project, in: query, schema: { type: string } }
+        - { name: classification, in: query, schema: { type: string } }
+        - { name: person, in: query, schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { type: string, enum: [current, expired, historical, invalid_event] } }
+        - { name: budgetState, in: query, schema: { type: string, enum: [available, exhausted, no_cap, unknown] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: Capability state with rows and paging; CCU amounts with exact USD equivalents }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/audit:
+    get:
+      summary: "V3: audit search with server-side filters and paging"
+      parameters:
+        - { name: project, in: query, schema: { type: string } }
+        - { name: actor, in: query, schema: { type: string, format: uuid } }
+        - { name: operation, in: query, schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: Capability state with rows (at, requestId, operation, outcome, projectId, actorOid, d) and paging }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/plan:
+    get:
+      summary: "V3: in-force models by family with USD per MTok rates and geography multipliers"
+      responses:
+        "200": { description: Models, rate card version and source }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      summary: "V3: budget-to-token plan; pure, no writes, no extra permission"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [monthlyBudget, members, sizing, mix, families] } } } }
+      responses:
+        "200": { description: Plan per family (blended and worst-case USD/MTok, monthly tokens, TPM), expected and worst-case spend, warnings }
+        "422": { description: invalid_plan_request with detail }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/rate-card/review:
+    post:
+      summary: "V3: validate a candidate rate card (parser, history rules, no past-dated prices) and return added/closed entries; save with PUT /v2/catalog"
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Review with version before/after, added, closed and unchanged entries }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/{info}:
+    get:
+      summary: "V3: version (3.0.0) or configured capabilities and the caller's role"
+      parameters:
+        - { name: info, in: path, required: true, schema: { type: string, enum: [version, capabilities] } }
+      responses:
+        "200": { description: Version or capabilities }
         default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:

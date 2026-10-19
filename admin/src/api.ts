@@ -18,7 +18,7 @@ export interface StoredProject {
 
 export interface ProjectStore {
   list(): Promise<StoredProject[]>;
-  listPage?(query: { search: string; tag: string; backendId: string; limit: number; cursor?: string }): Promise<{ items: StoredProject[]; cursor?: string }>;
+  listPage?(query: { search: string; tag: string; backendId: string; limit: number; cursor?: string; tags?: string[]; classification?: string }): Promise<{ items: StoredProject[]; cursor?: string }>;
   read(projectId: string): Promise<StoredProject | null>;
   // The new ETag, or "conflict" when a document with this id exists.
   create(doc: Doc): Promise<string | "conflict">;

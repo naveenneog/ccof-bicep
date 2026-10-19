@@ -44,6 +44,8 @@ export function createCosmosProjectStore(container: Container): ProjectStore {
       const parameters: { name: string; value: string }[] = [];
       if (query.search) { filters.push("(CONTAINS(c.projectId, @search, true) OR CONTAINS(c.displayName, @search, true))"); parameters.push({ name: "@search", value: query.search }); }
       if (query.tag) { filters.push("ARRAY_CONTAINS(c.adminTags, @tag)"); parameters.push({ name: "@tag", value: query.tag }); }
+      (query.tags ?? []).forEach((tag, i) => { filters.push(`ARRAY_CONTAINS(c.adminTags, @tag${i})`); parameters.push({ name: `@tag${i}`, value: tag }); });
+      if (query.classification) { filters.push("IS_DEFINED(c.classifications[@classification])"); parameters.push({ name: "@classification", value: query.classification }); }
       if (query.backendId) { filters.push("c.backendId = @backend"); parameters.push({ name: "@backend", value: query.backendId }); }
       const sql = `SELECT * FROM c${filters.length ? ` WHERE ${filters.join(" AND ")}` : ""} ORDER BY c.projectId`;
       const page = await container.items.query<Doc>({ query: sql, parameters }, {

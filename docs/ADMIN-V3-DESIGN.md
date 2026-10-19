@@ -1,8 +1,9 @@
 # Admin console V3: design and required changes
 
-Status: **design proposal**. Nothing in V3 is deployed. V2 (`/api/console`, package 2.0.x) stays
-unchanged and remains the supported console until V3 is accepted. One V3 building block exists
-in code today: the budget-to-token planner (`admin/src/token-planner.ts`, tested).
+Status: **built (package 3.0.0), not deployed**. Phases 1–4 below are implemented and tested on the
+local demo; V3 is served only with `ADMIN_V3_ENABLED=true`, and V2 (`/api/console`) is unchanged.
+Settings, permissions, upgrade and rollback: [ADMIN-V3.md](ADMIN-V3.md). See §12 for what was built
+and where it differs from this design.
 
 ## 1. Goals
 
@@ -230,3 +231,31 @@ catalog's current rate card. Pure computation; no writes, no extra permission.
 - **Budget assistant expectations:** a token quota doesn't cap dollars exactly. The UI shows
   expected and worst-case spend, and offers guaranteed sizing.
 - **New dependencies** (router, primitives, charts): pinned, bundled and reviewed. No runtime CDN.
+
+## 12. Build status (3.0.0)
+
+| Item | State |
+| --- | --- |
+| V3 shell (`/api/console-v3`, flag, sidebar/rail/drawer, breadcrumb, help drawer, Light/Dark/System) | Built. Same strict CSP and an explicit asset allow-list (`admin/src/ui.ts`); tests in `admin/tests/ui-v3.test.ts`, including 4.5:1 contrast for both themes. |
+| Pages (§3) | All built: Overview, Projects, Project detail (6 tabs), New project stepper, Chargeback, Budgets, Reconciler (new page), Foundry, Health, Audit, Cost definitions, Help. |
+| Shared query builder (§4) | Built: `analytics/workbooks/chargeback-queries.ts`, used by the workbook build and `admin/src/chargeback.ts`. Workbook output unchanged (digests pinned in `tests/chargeback-shared-queries.test.ts`). |
+| `GET /api/v3/chargeback/{view}` | Built, plus a `projects` view for "top projects". Backend and family filters, hour/day bins, ≤ 500-row pages, 2,000-point series, 30 s timeout, 60 s cache. |
+| Budget assistant (§5), `POST /api/v3/plan` | Built; uses the saved catalog rate card when present, else the packaged card. "Apply to limits" fills the family and aggregate limit fields for review. |
+| Reconciler and person budgets | Built as `/api/v3/reconciler/{runs,snapshots,summary}` from `budgets.kql` (person and group scope); the reconciler log source is the union of `FunctionAppLogs` and `AppTraces` for the configured resource IDs. |
+| Cost definitions | Built: load from file, reprice from a future date, USD/CCU display and editing (exact), server review (`POST /api/v3/rate-card/review`), save through the existing `/api/v2/catalog` ETag flow, export. |
+| Version | Package, `/api/v2/version`, `/api/health` and `/api/v3/version` report 3.0.0. |
+
+Differences from this design, and why:
+- **No React Router, Radix or chart library.** Hash routing, tabs, segmented controls, drawers and SVG
+  charts are small hand-written components, and sliders are native `<input type="range">`. This avoids
+  new third-party code in a privileged admin app and any inline-style or `eval` risk under the strict CSP;
+  every chart is paired with a data table. Only React 19 and MSAL (already dependencies) are bundled.
+- **Projects table is paged (25 a page, continuation tokens), not virtualized.** Server paging already
+  bounds what the browser holds; virtualization adds nothing at 25 rows.
+- **Audit filters and paging are a new `GET /api/v3/audit`** rather than a change to `/api/v2/audit`, so V2's
+  contract stays as it is. `/api/v2/projects` gained optional `tags` and `classification` filters.
+- **The console refuses past-dated new prices** (`effective_date_in_past`) in its review step, on top of the
+  existing history rules; `PUT /api/v2/catalog` itself is unchanged.
+- **Not done:** phase 5 (load test with 10,000 projects, accessibility audit with assistive technology,
+  customer acceptance) and any lab deployment. "Figures match the workbook row for row" is proven at the
+  query level (same builder, same text), not yet against live data.

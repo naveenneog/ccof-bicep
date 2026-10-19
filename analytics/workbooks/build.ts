@@ -5,7 +5,8 @@ import { validateAnswers, workbookSettingKeys } from "./config.ts";
 import { isMain } from "./main.ts";
 import { compileRateCard, kqlString } from "./rate-card.ts";
 import { layout } from "./layout.ts";
-import { bounded, context, health, rollup } from "./queries.ts";
+import { bounded, health, rollup } from "./queries.ts";
+import { usageQueryBase } from "./chargeback-queries.ts";
 
 // Line endings depend on the checkout (core.autocrlf); LF keeps content and digests the same on every machine.
 export const lf = (value: string) => value.replace(/\r\n/g, "\n");
@@ -64,13 +65,8 @@ export function buildWorkbook(rawAnswers: unknown, rawCard: unknown, rawLedger: 
   const budgets = source("budgets.kql");
   const violations = [...auditQueries(pricing, budgets), ...auditTemplate(source("../../infra/workbook/main.bicep"))];
   if (violations.length) throw new Error(`workbook_contract: ${violations.join(",")}`);
-  const rateCardSha256 = digest(cardText);
-  const ledgerSha256 = digest(ledger);
-  const preamble = context(answers) + "\n" + card.kql + "\n";
-  const usageBase = preamble + ledger + `
-let Ledger = CcofUsageLedger(iff(RangeValid, FromTime, ReportNow), iff(RangeValid, ToTime, ReportNow), GatewayResourceId)
-| where RangeValid and (ProjectFilter == "*" or projectId == ProjectFilter);
-` + pricing + "\n";
+  // The shared builder (chargeback-queries.ts) also serves the admin console, so both read the same ledger base.
+  const { preamble, usageBase, rateCardSha256, ledgerSha256 } = usageQueryBase(answers, card, cardText, ledger, pricing);
   const provenance = `
 | extend periodStart = FromTime, periodEnd = ToTime, basis = "list price",
     rateCardVersion = RateCardVersion, rateSourceDates = tostring(RateCardSourceDates),
@@ -110,7 +106,7 @@ let Ledger = CcofUsageLedger(iff(RangeValid, FromTime, ReportNow), iff(RangeVali
     workbookContent: { value: workbook },
     contentTags: { value: contentTags },
   };
-  return { workbook, parameters, queries, rateCardKql: card.kql, rateCardSha256, ledgerSha256, contentSha256: contentTags["ccof-content"] };
+  return { workbook, parameters, queries, usageBase, rateCardKql: card.kql, rateCardSha256, ledgerSha256, contentSha256: contentTags["ccof-content"] };
 }
 
 export function generateFiles(answersPath: string): { workbookResourceName: string; rateCardSha256: string; ledgerSha256: string; contentSha256: string } {

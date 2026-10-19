@@ -6,3 +6,5 @@ dist/
 ui-dist/
 test-results/
 playwright-report/
+ui-dist-v3/
+kql/

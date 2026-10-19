@@ -15,7 +15,7 @@ try {
     node --test tests/*.test.ts
     if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; package not built.' }
     New-Item -ItemType Directory $stage | Out-Null
-    Copy-Item dist, ui-dist, host.json, package.json, package-lock.json -Destination $stage -Recurse
+    Copy-Item dist, ui-dist, ui-dist-v3, kql, host.json, package.json, package-lock.json -Destination $stage -Recurse
     Push-Location $stage
     try {
         npm ci --omit=dev --no-audit --no-fund | Out-Null

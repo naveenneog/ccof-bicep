@@ -18,8 +18,12 @@ export interface Operations {
   health(): Promise<Capability>;
   retail(): Promise<Capability>;
   billed(): Promise<Capability>;
+  // Runs one server-built KQL query (V3 chargeback, reconciler, audit). Throws ProviderError.
+  query?(workspaceId: string, query: string, timespan: string, meta: QueryMeta): Promise<LogTable>;
 }
-class ProviderError extends Error {
+export interface LogTable { columns: { name: string; type: string }[]; rows: unknown[][] }
+export interface QueryMeta { kind: string; view: string; filters: Record<string, unknown> }
+export class ProviderError extends Error {
   readonly status: number;
   readonly code: string;
   constructor(status: number, code: string) { super(code); this.status = status; this.code = code; }
@@ -51,11 +55,11 @@ export function createOperations(
   const workspaceFor = (kind: "budgets" | "audit" | "runs") => (kind === "audit" && env.ADMIN_AUDIT_WORKSPACE_ID ? env.ADMIN_AUDIT_WORKSPACE_ID : env.ADMIN_WORKSPACE_ID) ?? "";
   const result = (state: Capability["state"], data?: unknown, reason?: string, permission?: string): Capability =>
     ({ state, observedAt: stamp(), ...(data === undefined ? {} : { data }), ...(reason ? { reason } : {}), ...(permission ? { permission } : {}) });
-  async function request(url: string, scope: string | null, init: RequestInit = {}): Promise<Doc> {
+  async function request(url: string, scope: string | null, init: RequestInit = {}, timeoutMs = 12000): Promise<Doc> {
     const token = scope ? await credential.getToken(scope) : null;
     if (scope && !token) throw new ProviderError(401, "managed_identity_token_unavailable");
     const response = await transport(url, {
-      ...init, redirect: "error", signal: AbortSignal.timeout(12000),
+      ...init, redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token.token}` } : {}), ...init.headers },
     });
     if (!response.ok) throw new ProviderError(response.status, `upstream_${response.status}`);
@@ -171,7 +175,17 @@ export function createOperations(
       return object(value);
     });
   }
+  async function query(workspaceId: string, kql: string, timespan: string): Promise<LogTable> {
+    if (!isGuid(workspaceId)) throw new ProviderError(400, "invalid_workspace_id");
+    const body = await request(`https://api.loganalytics.azure.com/v1/workspaces/${workspaceId}/query`, "https://api.loganalytics.io/.default",
+      { method: "POST", body: JSON.stringify({ query: kql, timespan }), headers: { prefer: "wait=30" } }, 30000);
+    if (!Array.isArray(body.tables)) throw new ProviderError(502, "invalid_query_result");
+    const table = object(body.tables[0]);
+    if (!Array.isArray(table.rows) || !Array.isArray(table.columns)) throw new ProviderError(502, "invalid_query_rows");
+    return { columns: table.columns.filter(isObject).map((c) => ({ name: String(c.name), type: String(c.type) })), rows: table.rows.filter(Array.isArray) };
+  }
   return {
+    query,
     groups: (query) => optional("directory_search", env.ADMIN_GRAPH_ENABLED === "true", "Microsoft Graph application GroupMember.Read.All; tenant-admin consent", async () => {
       if (query.length < 2 || query.length > 80) throw new ProviderError(400, "search_length_2_to_80");
       const params = new URLSearchParams({ "$select": "id,displayName,securityEnabled", "$filter": `startswith(displayName,'${query.replaceAll("'", "''")}')`, "$top": "25" });

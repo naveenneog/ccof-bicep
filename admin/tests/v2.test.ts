@@ -30,7 +30,7 @@ test("v2 fails closed and optional capabilities are independently disabled", asy
   const { deps, call } = setup();
   assert.equal((await call("groups?q=Payment")).status, 200);
   assert.equal(((await call("groups?q=Payment")).jsonBody as Capability).state, "disabled");
-  assert.equal(((await call("version")).jsonBody as Doc).version, "2.0.1");
+  assert.equal(((await call("version")).jsonBody as Doc).version, "3.0.0");
   deps.authenticate = null;
   assert.equal((await call("catalog")).status, 503);
 });

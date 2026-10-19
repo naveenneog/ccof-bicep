@@ -12,9 +12,13 @@ import type { ApiDependencies } from "./api.ts";
 import { ApiError, createAuthenticator, readAuthConfig } from "./auth.ts";
 import type { Authenticator } from "./auth.ts";
 import { createCatalogStore, createCosmosProjectStore, openContainer, probeCosmos, readCosmosSettings } from "./cosmos-store.ts";
-import { serveUi, uiConfigurationResponse } from "./ui.ts";
+import { serveUi, serveUiV3, uiConfigurationResponse, v3Enabled } from "./ui.ts";
 import { createOperations } from "./operations.ts";
 import { handleV2Request } from "./v2.ts";
+import { handleV3Request } from "./v3.ts";
+import { QueryCache } from "./chargeback.ts";
+import type { QuerySources } from "./chargeback.ts";
+import { ADMIN_VERSION } from "./version.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 
@@ -68,7 +72,7 @@ async function healthHandler(_request: HttpRequest, context: InvocationContext):
   return {
     status: ready ? 200 : 503,
     headers: { "cache-control": "no-store" },
-    jsonBody: { version: "2.0.1", status: ready ? "ready" : "not_ready", checks: { auth: authenticate ? "configured" : authProblem, cosmos: cosmosState } },
+    jsonBody: { version: ADMIN_VERSION, status: ready ? "ready" : "not_ready", checks: { auth: authenticate ? "configured" : authProblem, cosmos: cosmosState } },
   };
 }
 
@@ -119,6 +123,57 @@ app.http("adminUi", {
     } catch {
       context.error("ccof.admin.ui.v1: packaged UI assets unavailable");
       return { status: 503, body: "Admin console assets are unavailable. Check the package deployment." };
+    }
+  },
+});
+
+// ---- V3 console and API (docs/ADMIN-V3.md). Served only with ADMIN_V3_ENABLED=true; V2 is untouched. ----
+const v3Cache = new QueryCache();
+let sourcesPromise: Promise<QuerySources | null> | null = null;
+// The packaged KQL (ledger, pricing, budgets) shared with the workbook; a missing file disables only
+// the log-backed V3 views and is retried on the next request.
+function querySources(log: (line: string) => void): Promise<QuerySources | null> {
+  const read = (name: string) => readFile(new URL(`../../../kql/${name}`, import.meta.url), "utf8");
+  sourcesPromise ??= Promise.all([read("ledger.kql"), read("pricing.kql"), read("budgets.kql")])
+    .then(([ledger, pricing, budgets]) => ({ ledger, pricing, budgets }))
+    .catch(() => {
+      log(JSON.stringify({ schema: "ccof.admin.integration.v2", capability: "packaged_queries", outcome: "unavailable" }));
+      sourcesPromise = null;
+      return null;
+    });
+  return sourcesPromise;
+}
+
+app.http("adminV3", {
+  methods: ["GET", "POST"], authLevel: "anonymous", route: "v3/{*rest}",
+  handler: async (request, context) => {
+    if (!v3Enabled(process.env)) return { status: 404, headers: { "cache-control": "no-store" }, jsonBody: { error: "route_not_found" } };
+    const log = (line: string) => context.log(line);
+    const response = await handleV3Request({
+      method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
+      headers: (name) => request.headers.get(name), body: request.method === "POST" ? await request.text() : null,
+    }, {
+      authenticate, projects: store, catalogStore, defaultCatalog: await defaultCatalog(log),
+      operations: createOperations(process.env, credential, log), env: process.env,
+      sources: await querySources(log), cache: v3Cache, now: () => new Date(), newId: randomUUID, log,
+    });
+    return { status: response.status, headers: response.headers, jsonBody: response.jsonBody };
+  },
+});
+
+app.http("adminUiV3", {
+  methods: ["GET"], authLevel: "anonymous", route: "console-v3/{asset?}",
+  handler: async (request, context) => {
+    const enabled = v3Enabled(process.env);
+    if (!enabled) return { status: 404, headers: { "cache-control": "no-store" }, body: "Not found" };
+    const asset = request.params.asset ?? "";
+    // Same public sign-in configuration as V2; the browser registers /api/console-v3 as its redirect URI.
+    if (asset === "config") return uiConfigurationResponse(process.env);
+    try {
+      return await serveUiV3(asset, enabled);
+    } catch {
+      context.error("ccof.admin.ui.v3: packaged UI assets unavailable");
+      return { status: 503, body: "Admin console V3 assets are unavailable. Check the package deployment." };
     }
   },
 });
