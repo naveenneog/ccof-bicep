@@ -76,17 +76,23 @@ async function healthHandler(_request: HttpRequest, context: InvocationContext):
   };
 }
 
-app.http("projects", { methods: ["GET", "POST"], authLevel: "anonymous", route: "projects", handler: projectsHandler });
-app.http("project", { methods: ["GET"], authLevel: "anonymous", route: "projects/{projectId}", handler: projectsHandler });
+// Only the admin host has an empty prefix so the site root can redirect. A route template cannot start
+// with "/"; an optional zero-length parameter matches only the root path. All existing public API URLs
+// keep their explicit /api prefix; resolver/sync/reconciler host files are not changed.
+app.http("adminHome", { methods: ["GET"], authLevel: "anonymous", route: "{root:maxlength(0)?}", handler: () => ({
+  status: 302, headers: { location: v3Enabled(process.env) ? "/api/console-v3#/overview" : "/api/console", "cache-control": "no-store" },
+}) });
+app.http("projects", { methods: ["GET", "POST"], authLevel: "anonymous", route: "api/projects", handler: projectsHandler });
+app.http("project", { methods: ["GET"], authLevel: "anonymous", route: "api/projects/{projectId}", handler: projectsHandler });
 app.http("classificationPolicy", {
   methods: ["PUT", "PATCH"],
   authLevel: "anonymous",
-  route: "projects/{projectId}/classifications/{code}/{part}",
+  route: "api/projects/{projectId}/classifications/{code}/{part}",
   handler: projectsHandler,
 });
-app.http("projectSettings", { methods: ["PUT"], authLevel: "anonymous", route: "projects/{projectId}/settings", handler: projectsHandler });
+app.http("projectSettings", { methods: ["PUT"], authLevel: "anonymous", route: "api/projects/{projectId}/settings", handler: projectsHandler });
 app.http("adminV2", {
-  methods: ["GET", "PUT"], authLevel: "anonymous", route: "v2/{feature}",
+  methods: ["GET", "PUT"], authLevel: "anonymous", route: "api/v2/{feature}",
   handler: async (request, context) => {
     const response = await handleV2Request({
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
@@ -99,10 +105,10 @@ app.http("adminV2", {
     return { status: response.status, headers: response.headers, jsonBody: response.jsonBody };
   },
 });
-app.http("adminHealth", { methods: ["GET"], authLevel: "function", route: "health", handler: healthHandler });
+app.http("adminHealth", { methods: ["GET"], authLevel: "function", route: "api/health", handler: healthHandler });
 
 app.http("adminUi", {
-  methods: ["GET"], authLevel: "anonymous", route: "console/{asset?}",
+  methods: ["GET"], authLevel: "anonymous", route: "api/console/{asset?}",
   handler: async (request, context) => {
     const asset = request.params.asset ?? "";
     if (asset === "config") return uiConfigurationResponse(process.env);
@@ -145,7 +151,7 @@ function querySources(log: (line: string) => void): Promise<QuerySources | null>
 }
 
 app.http("adminV3", {
-  methods: ["GET", "POST"], authLevel: "anonymous", route: "v3/{*rest}",
+  methods: ["GET", "POST"], authLevel: "anonymous", route: "api/v3/{*rest}",
   handler: async (request, context) => {
     if (!v3Enabled(process.env)) return { status: 404, headers: { "cache-control": "no-store" }, jsonBody: { error: "route_not_found" } };
     const log = (line: string) => context.log(line);
@@ -162,7 +168,7 @@ app.http("adminV3", {
 });
 
 app.http("adminUiV3", {
-  methods: ["GET"], authLevel: "anonymous", route: "console-v3/{asset?}",
+  methods: ["GET"], authLevel: "anonymous", route: "api/console-v3/{asset?}",
   handler: async (request, context) => {
     const enabled = v3Enabled(process.env);
     if (!enabled) return { status: 404, headers: { "cache-control": "no-store" }, body: "Not found" };

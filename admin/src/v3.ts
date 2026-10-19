@@ -47,7 +47,7 @@ const response = (status: number, data: unknown): ApiResponse =>
   ({ status, jsonBody: data, headers: { "cache-control": "no-store", "content-type": "application/json" } });
 
 async function currentRateCard(deps: V3Dependencies): Promise<{ rateCard: Doc; source: "admin_catalog" | "packaged_rate_card" } | null> {
-  const saved = deps.catalogStore ? await deps.catalogStore.read().catch(() => null) : null;
+  const saved = deps.catalogStore ? await deps.catalogStore.read() : null;
   if (saved && isObject(saved.doc.rateCard)) return { rateCard: saved.doc.rateCard, source: "admin_catalog" };
   if (deps.defaultCatalog && isObject(deps.defaultCatalog.rateCard)) return { rateCard: deps.defaultCatalog.rateCard, source: "packaged_rate_card" };
   return null;
@@ -67,13 +67,18 @@ const num = (v: unknown, name: string) => {
 // Validates the plan request and resolves rates from the current rate card; pure, no writes.
 export function planFromRequest(body: unknown, rateCard: Doc, now: Date) {
   if (!isObject(body)) throw new PlanError("body: object required");
-  const allowed = ["monthlyBudget", "members", "geography", "sizing", "mix", "families", "workingDaysPerMonth", "workingHoursPerDay", "burstFactor"];
+  const allowed = ["budgetBasis", "monthlyBudget", "groupMonthlyBudget", "geography", "sizing", "mix", "families", "workingDaysPerMonth", "workingHoursPerDay", "burstFactor"];
   if (Object.keys(body).some((k) => !allowed.includes(k))) throw new PlanError("body: unknown field");
+  if (body.budgetBasis !== "person") throw new PlanError("budgetBasis: person required; no member-count assumption");
   const budget = body.monthlyBudget;
   if (!isObject(budget) || typeof budget.amount !== "string" || !DECIMAL_TEXT.test(budget.amount) || (budget.currency !== "USD" && budget.currency !== "CCU")) {
     throw new PlanError("monthlyBudget: { amount: decimal text, currency: USD | CCU } required");
   }
   const usd = budget.currency === "CCU" ? ccuToUsdText(budget.amount) : budget.amount;
+  const group = body.groupMonthlyBudget;
+  if (group != null && (!isObject(group) || typeof group.amount !== "string" || !DECIMAL_TEXT.test(group.amount) ||
+    group.currency !== "USD" && group.currency !== "CCU")) throw new PlanError("groupMonthlyBudget: decimal amount and USD | CCU required");
+  const groupUsd = isObject(group) ? group.currency === "CCU" ? ccuToUsdText(String(group.amount)) : String(group.amount) : null;
   const geography = body.geography ?? "global";
   if (typeof geography !== "string" || !/^[a-z][a-z0-9_-]{0,19}$/.test(geography)) throw new PlanError("geography: invalid");
   if (body.sizing !== "expected" && body.sizing !== "guaranteed") throw new PlanError("sizing: expected | guaranteed required");
@@ -100,15 +105,15 @@ export function planFromRequest(body: unknown, rateCard: Doc, now: Date) {
     if (multiplier === undefined) throw new PlanError(`families[${i}]: ${chosen.model} is not priced for geography ${geography}`);
     if (geoMultiplier !== null && geoMultiplier !== Number(multiplier)) throw new PlanError("geography: models carry different multipliers; plan them separately");
     geoMultiplier = Number(multiplier);
-    return { family: f.family, model: chosen.model, budgetPercent: num(f.budgetPercent, `families[${i}].budgetPercent`), rates: chosen.rates };
+    return { family: f.family, model: chosen.model, budgetPercent: num(f.budgetPercent, `families[${i}].budgetPercent`), rates: chosen.rates, worstRates: chosen.worstRates };
   });
   const plan = planBudget({
-    monthlyBudgetUsd: Number(usd), members: num(body.members, "members"), geoMultiplier: geoMultiplier ?? 1, sizing: body.sizing, mix, families,
+    personMonthlyBudgetUsd: usd, groupMonthlyBudgetUsd: groupUsd, geoMultiplier: geoMultiplier ?? 1, sizing: body.sizing, mix, families,
     workingDaysPerMonth: body.workingDaysPerMonth === undefined ? undefined : num(body.workingDaysPerMonth, "workingDaysPerMonth"),
     workingHoursPerDay: body.workingHoursPerDay === undefined ? undefined : num(body.workingHoursPerDay, "workingHoursPerDay"),
     burstFactor: body.burstFactor === undefined ? undefined : num(body.burstFactor, "burstFactor"),
   });
-  return { plan, budgetUsd: usd, geography, geoMultiplier: String(geoMultiplier ?? 1), rates: families.map(({ family, model, rates }) => ({ family, model, rates })) };
+  return { plan, budgetBasis: "person", budgetUsd: usd, groupBudgetUsd: groupUsd, geography, geoMultiplier: String(geoMultiplier ?? 1), rates: families.map(({ family, model, rates }) => ({ family, model, rates })) };
 }
 
 async function capability(deps: V3Dependencies, cfg: Configured<unknown>, name: string, run: () => Promise<unknown>): Promise<Capability> {
@@ -196,7 +201,7 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
         if (!card || !cfg.ok || !deps.sources || !deps.operations.query) throw new ProviderError(503, "rate_card_unavailable");
         const prepared = prepareRateCard(card.rateCard);
         const key = `chargeback|${view}|${canonical(filters)}|${prepared.sha}`;
-        const cached = deps.cache.get(key, deps.now().getTime());
+        const cached = request.headers("x-ccof-refresh") === "true" ? null : deps.cache.get(key, deps.now().getTime());
         if (cached) return { ...(cached as Doc), cached: true };
         const query = buildChargebackQuery(view, filters, cfg.value, deps.sources, prepared, await groupMetadata(deps, filters.project));
         const meta: QueryMeta = { kind: "chargeback", view, filters: filters as unknown as Doc };
@@ -230,7 +235,7 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
         if (!card || !cfg.ok || !deps.sources || !deps.operations.query) throw new ProviderError(503, "rate_card_unavailable");
         const prepared = prepareRateCard(card.rateCard);
         const key = `reconciler|${kind}|${canonical(filters)}|${prepared.sha}`;
-        const cached = deps.cache.get(key, deps.now().getTime());
+        const cached = request.headers("x-ccof-refresh") === "true" ? null : deps.cache.get(key, deps.now().getTime());
         if (cached) return { ...(cached as Doc), cached: true };
         const query = kind === "runs" ? buildRunsQuery(cfg.value, deps.sources, prepared, deps.now())
           : buildSnapshotQuery(kind as "snapshots" | "summary", filters!, cfg.value, deps.sources, prepared);

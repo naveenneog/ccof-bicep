@@ -218,7 +218,7 @@ const server = createServer(async (req, res) => {
   const sendJson = (status: number, value: unknown, headers: Record<string, string> = {}) =>
     send(status, { "content-type": "application/json", "cache-control": "no-store", ...headers }, JSON.stringify(value));
 
-  if (url.pathname === "/" ) return send(302, { location: "/api/console" }, "");
+  if (url.pathname === "/" ) return send(302, { location: V3_ENABLED ? "/api/console-v3#/overview" : "/api/console", "cache-control": "no-store" }, "");
   const ui = /^\/api\/console(?:\/([^/]*))?$/.exec(url.pathname);
   if (ui) {
     const asset = ui[1] ?? "";

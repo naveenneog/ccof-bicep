@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, errorMessage, useQuery } from "../lib/api.ts";
 import { int, usd } from "../lib/format.ts";
 import { href, navigate } from "../lib/router.ts";
-import { Button, Empty, ErrorNote, Field, PageHeader, Section, Segmented, useToast } from "../components/ui.tsx";
+import { Button, ChoiceInput, Empty, ErrorNote, Field, PageHeader, Section, Segmented, useToast } from "../components/ui.tsx";
 import { BudgetAssistant } from "../components/budget-assistant.tsx";
 import { FAMILY_ORDER, LimitsEditor, emptyLimit, useCatalogModels } from "../components/limits.tsx";
 import type { FamilyPolicy } from "../components/limits.tsx";
@@ -38,9 +38,9 @@ export function NewProject() {
   const backends: string[] = inventory.data?.data?.backends?.map((b: any) => b.backendId) ?? [];
 
   const addGroup = () => {
-    const code = ["STD", "INT", "CYB", "EXT"].find((c) => !groups.some((g) => g.code === c)) ?? "";
+    const code = ["STD", "PRM", "CYB"].find((c) => !groups.some((g) => g.code === c)) ?? "";
     setGroups([...groups, { code, groupId: "", groupName: basics.projectId ? `${basics.projectId}-${code}` : "", onboardingMode: "block", aggregateMode: "strict",
-      personBudget: { amount: 25, currency: "USD", period: "monthly" }, aggregateBudget: { amount: 500, currency: "USD", period: "monthly" }, policy: newPolicy(catalog) }]);
+      personBudget: { amount: 25, currency: "USD", period: "monthly" }, aggregateBudget: null, policy: newPolicy(catalog) }]);
     setActive(groups.length);
   };
   const setGroup = (i: number, patch: Partial<Group>) => setGroups(groups.map((g, j) => j === i ? { ...g, ...patch } : g));
@@ -103,8 +103,8 @@ export function NewProject() {
             <Field label="Project ID" hint="Permanent. Used in limits, budgets and chargeback." error={errors.projectId}>{(id, d) => <input id={id} aria-describedby={d} aria-invalid={Boolean(errors.projectId)} className="input mono" value={basics.projectId} onChange={(e) => setBasics({ ...basics, projectId: e.target.value })} autoComplete="off" spellCheck={false} />}</Field>
             <Field label="Display name" error={errors.displayName}>{(id, d) => <input id={id} aria-describedby={d} aria-invalid={Boolean(errors.displayName)} className="input" value={basics.displayName} maxLength={200} onChange={(e) => setBasics({ ...basics, displayName: e.target.value })} />}</Field>
             <Field label="Foundry backend" hint={backends.length ? "From the APIM inventory." : "Type the APIM backend ID."} error={errors.backendId}>{(id, d) => (
-              <><input id={id} aria-describedby={d} aria-invalid={Boolean(errors.backendId)} className="input mono" list={`${id}-l`} value={basics.backendId} onChange={(e) => setBasics({ ...basics, backendId: e.target.value })} autoComplete="off" spellCheck={false} />
-                <datalist id={`${id}-l`}>{backends.map((b) => <option key={b} value={b} />)}</datalist></>
+              <ChoiceInput id={id} describedBy={d} invalid={Boolean(errors.backendId)} value={basics.backendId} options={backends}
+                onChange={(backendId) => setBasics({ ...basics, backendId })} emptyLabel="Select a backend" />
             )}</Field>
             <Field label="Designated subscription ID" error={errors.designatedSubscriptionId}>{(id, d) => <input id={id} aria-describedby={d} aria-invalid={Boolean(errors.designatedSubscriptionId)} className="input mono" value={basics.designatedSubscriptionId} onChange={(e) => setBasics({ ...basics, designatedSubscriptionId: e.target.value.trim() })} autoComplete="off" spellCheck={false} />}</Field>
             <Field label="Tags" hint="Optional, comma-separated.">{(id, d) => <input id={id} aria-describedby={d} className="input" value={basics.tags} onChange={(e) => setBasics({ ...basics, tags: e.target.value })} />}</Field>
@@ -154,8 +154,8 @@ export function NewProject() {
           </Section>
           <Section title="Budget assistant" description="Suggests quotas and TPM from a monthly budget; Apply fills the limits above for review.">
             <BudgetAssistant key={`${active}-${Object.keys(g.policy.families).join()}`} families={FAMILY_ORDER.filter((f) => g.policy.families[f]).map((f) => ({ family: f, models: g.policy.families[f].models }))}
-              defaultMembers={10} applyLabel={`Apply to ${g.code} limits`}
-              onApply={(patch, summary) => { setGroup(active, { policy: applyPatch(g.policy, patch) }); setNote(`Limits filled from the budget assistant (${summary}). Check them before you continue.`); }} />
+              initialBudget={g.personBudget} initialGroupBudget={g.aggregateBudget} applyLabel={`Apply to ${g.code} limits`}
+              onApply={(patch, summary, budgets) => { setGroup(active, { policy: applyPatch(g.policy, patch), personBudget: budgets.personBudget, aggregateBudget: budgets.groupBudget }); setNote(`Draft budgets and limits filled from the assistant (${summary}). Review the document before creating the project.`); }} />
           </Section>
         </div>
       )}

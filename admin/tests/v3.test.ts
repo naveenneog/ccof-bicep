@@ -43,6 +43,24 @@ function setup(env: Record<string, string> = ENV, table: (meta: QueryMeta, query
 }
 const data = (r: { jsonBody?: unknown }) => (r.jsonBody as Doc);
 
+test("explicit Refresh bypasses the V3 server cache and Overview projects are ranked before paging", async () => {
+  const { call, deps, queries } = setup();
+  await call("chargeback/projects?period=month&limit=25");
+  assert.match(queries[0].query, /knownListUsd desc nulls last/);
+  await call("chargeback/projects?period=month&limit=25");
+  assert.equal(queries.length, 1);
+  await handleV3Request({ method: "GET", path: "/api/v3/chargeback/projects?period=month&limit=25",
+    body: null, headers: (n) => n === "x-ccof-refresh" ? "true" : null }, deps);
+  assert.equal(queries.length, 2);
+});
+
+test("a denied configured rate-card store never silently substitutes packaged prices", async () => {
+  const { deps, call } = setup();
+  deps.catalogStore = { read: async () => { throw new Error("permission_denied"); }, save: async () => null };
+  assert.equal((await call("plan")).status, 503);
+  assert.equal((await call("version")).status, 200);
+});
+
 test("v3 fails closed without authentication and reports 3.0.0", async () => {
   const { deps, call } = setup();
   const v = await call("version");
@@ -159,7 +177,7 @@ test("rows are shaped: bookkeeping columns removed, truncation and paging report
 test("plan route validates input and plans from the current rate card; it never writes", async () => {
   const { call, setSaved, queries } = setup();
   const body = {
-    monthlyBudget: { amount: "100", currency: "USD" }, members: 10, sizing: "guaranteed", geography: "global",
+    budgetBasis: "person", monthlyBudget: { amount: "100", currency: "USD" }, sizing: "guaranteed", geography: "global",
     mix: { outputPercentOfTokens: 20, cacheReadPercentOfInput: 50, cacheWrite5mPercentOfInput: 10, cacheWrite1hPercentOfInput: 0 },
     families: [{ family: "sonnet", model: "claude-sonnet-5", budgetPercent: 70 }, { family: "haiku", model: "claude-haiku-4-5", budgetPercent: 30 }],
   };
@@ -168,7 +186,12 @@ test("plan route validates input and plans from the current rate card; it never 
   const plan = (data(r).plan as Doc);
   assert.equal(plan.worstCaseSpendUsd, "100.00");
   const sonnet = (plan.families as Doc[])[0];
-  assert.equal(sonnet.groupMonthlyTokens, 7_000_000);
+  assert.equal(sonnet.personMonthlyTokens, 7_000_000);
+  assert.equal(sonnet.groupMonthlyTokens, null);
+  const withGroup = data(await call("plan", "POST", { ...body, groupMonthlyBudget: { amount: "1000", currency: "USD" } }));
+  assert.equal(((withGroup.plan as Doc).families as Doc[])[0].personMonthlyTokens, 7_000_000);
+  assert.equal(((withGroup.plan as Doc).families as Doc[])[0].groupMonthlyTokens, 70_000_000);
+  assert.equal((await call("plan", "POST", { ...body, budgetBasis: "group", members: 10 })).status, 422, "Old member-count sizing is refused rather than silently reinterpreted");
   assert.equal(sonnet.blendedUsdPerMTok, "2.9200");
   const ccu = await call("plan", "POST", { ...body, monthlyBudget: { amount: "10000", currency: "CCU" } });
   assert.equal(data(ccu).budgetUsd, "100");

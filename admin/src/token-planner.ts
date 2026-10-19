@@ -14,10 +14,10 @@ import type { Decimal } from "decimal.js";
 export interface TokenRates { input: string; output: string; cacheRead: string; cacheWrite5m: string; cacheWrite1h: string }
 // Shares of *input* tokens by category, in percent; uncached input is the remainder.
 export interface TrafficMix { outputPercentOfTokens: number; cacheReadPercentOfInput: number; cacheWrite5mPercentOfInput: number; cacheWrite1hPercentOfInput: number }
-export interface FamilyAllocation { family: string; model: string; budgetPercent: number; rates: TokenRates }
+export interface FamilyAllocation { family: string; model: string; budgetPercent: number; rates: TokenRates; worstRates?: TokenRates }
 export interface PlanInput {
-  monthlyBudgetUsd: number;
-  members: number;
+  personMonthlyBudgetUsd: string | number;
+  groupMonthlyBudgetUsd?: string | number | null;
   geoMultiplier?: number;
   sizing: "expected" | "guaranteed";
   mix: TrafficMix;
@@ -30,11 +30,14 @@ export interface PlanInput {
 export interface FamilyPlan {
   family: string; model: string; budgetUsd: string;
   blendedUsdPerMTok: string; worstUsdPerMTok: string;
-  groupMonthlyTokens: number; personMonthlyTokens: number;
-  personTokensPerMinute: number; groupTokensPerMinute: number;
+  groupMonthlyTokens: number | null; personMonthlyTokens: number;
+  personTokensPerMinute: number; groupTokensPerMinute: number | null;
   expectedSpendUsd: string; worstCaseSpendUsd: string;
 }
-export interface Plan { families: FamilyPlan[]; totalBudgetUsd: string; expectedSpendUsd: string; worstCaseSpendUsd: string; warnings: string[] }
+export interface Plan {
+  families: FamilyPlan[]; totalBudgetUsd: string; groupBudgetUsd: string | null;
+  expectedSpendUsd: string; worstCaseSpendUsd: string; warnings: string[]; applicable: boolean;
+}
 
 export class PlanError extends Error {}
 const MTOK = new Money(1_000_000);
@@ -69,8 +72,15 @@ export function worstRate(rates: TokenRates, geo = 1): Decimal {
 }
 
 export function planBudget(p: PlanInput): Plan {
-  if (!Number.isFinite(p.monthlyBudgetUsd) || p.monthlyBudgetUsd <= 0 || p.monthlyBudgetUsd > 10_000_000) throw new PlanError("monthlyBudgetUsd: positive amount required");
-  if (!Number.isInteger(p.members) || p.members < 1 || p.members > 1_000_000) throw new PlanError("members: positive integer required");
+  const amount = (v: string | number, field: string) => {
+    if (!/^\d{1,9}(\.\d{1,12})?$/.test(String(v))) throw new PlanError(`${field}: positive decimal amount required`);
+    const n = new Money(v);
+    if (n.lte(0) || n.gt(10_000_000)) throw new PlanError(`${field}: positive amount up to 10000000 required`);
+    return n;
+  };
+  const budget = amount(p.personMonthlyBudgetUsd, "personMonthlyBudgetUsd");
+  const groupBudget = p.groupMonthlyBudgetUsd == null ? null : amount(p.groupMonthlyBudgetUsd, "groupMonthlyBudgetUsd");
+  if (p.sizing !== "expected" && p.sizing !== "guaranteed") throw new PlanError("sizing: expected or guaranteed required");
   if (!p.families.length) throw new PlanError("families: at least one required");
   const geo = p.geoMultiplier ?? 1;
   if (!Number.isFinite(geo) || geo < 1 || geo > 5) throw new PlanError("geoMultiplier: 1..5 required");
@@ -79,34 +89,41 @@ export function planBudget(p: PlanInput): Plan {
   const days = p.workingDaysPerMonth ?? 22, hours = p.workingHoursPerDay ?? 8, burst = p.burstFactor ?? 3;
   if (![days, hours, burst].every((n) => Number.isFinite(n) && n > 0) || days > 31 || hours > 24 || burst > 50) throw new PlanError("rate-limit shaping out of range");
   const minutes = new Money(days).times(hours).times(60);
-  const budget = new Money(p.monthlyBudgetUsd);
   const warnings: string[] = [];
   let expected = new Money(0), worst = new Money(0);
   const families = p.families.map((f) => {
     const famBudget = budget.times(f.budgetPercent).dividedBy(100);
     const blended = blendedRate(f.rates, p.mix, geo);
-    const worstR = worstRate(f.rates, geo);
+    const worstR = worstRate(f.worstRates ?? f.rates, geo);
     const sizingRate = p.sizing === "guaranteed" ? worstR : blended;
     if (sizingRate.lte(0)) throw new PlanError(`${f.family}: zero rate`);
     // Floor, so rounding never lets the quota exceed the budget.
-    const groupTokens = famBudget.dividedBy(sizingRate).times(MTOK).floor();
-    const personTokens = groupTokens.dividedBy(p.members).floor();
+    const personTokens = famBudget.dividedBy(sizingRate).times(MTOK).floor();
+    const groupTokens = groupBudget?.times(f.budgetPercent).dividedBy(100).dividedBy(sizingRate).times(MTOK).floor() ?? null;
     const personTpm = personTokens.dividedBy(minutes).times(burst).ceil();
-    const groupTpm = groupTokens.dividedBy(minutes).times(burst).ceil();
-    const exp = groupTokens.dividedBy(MTOK).times(blended);
-    const wc = groupTokens.dividedBy(MTOK).times(worstR);
+    const groupTpm = groupTokens?.dividedBy(minutes).times(burst).ceil() ?? null;
+    const exp = personTokens.dividedBy(MTOK).times(blended);
+    const wc = personTokens.dividedBy(MTOK).times(worstR);
     expected = expected.plus(exp); worst = worst.plus(wc);
     if (personTokens.lt(10_000)) warnings.push(`${f.family}: under 10,000 tokens per person per month; a single long session can exhaust it`);
     return {
       family: f.family, model: f.model, budgetUsd: famBudget.toFixed(2),
       blendedUsdPerMTok: blended.toFixed(4), worstUsdPerMTok: worstR.toFixed(4),
-      groupMonthlyTokens: groupTokens.toNumber(), personMonthlyTokens: personTokens.toNumber(),
-      personTokensPerMinute: personTpm.toNumber(), groupTokensPerMinute: groupTpm.toNumber(),
+      groupMonthlyTokens: groupTokens?.toNumber() ?? null, personMonthlyTokens: personTokens.toNumber(),
+      personTokensPerMinute: personTpm.toNumber(), groupTokensPerMinute: groupTpm?.toNumber() ?? null,
       expectedSpendUsd: exp.toFixed(2), worstCaseSpendUsd: wc.toFixed(2),
     };
   });
   if (p.sizing === "expected" && worst.gt(budget)) {
-    warnings.push(`Sized at the expected mix: if usage is output-heavy, the quota allows up to $${worst.toFixed(2)}, above the $${budget.toFixed(2)} budget. Choose "guaranteed" sizing or keep the budget in strict mode.`);
+    warnings.push(`Per-user quotas sized at the expected mix can cost up to $${worst.toFixed(2)}, above the $${budget.toFixed(2)} per-user budget. Use conservative sizing and separately review monetary-budget enforcement.`);
   }
-  return { families, totalBudgetUsd: budget.toFixed(2), expectedSpendUsd: expected.toFixed(2), worstCaseSpendUsd: worst.toFixed(2), warnings };
+  const applicable = families.every((f) => [f.personMonthlyTokens, f.groupMonthlyTokens].every((q) => q === null || Number.isSafeInteger(q) && q > 0)) &&
+    ["personMonthlyTokens", "groupMonthlyTokens", "personTokensPerMinute", "groupTokensPerMinute"].every((key) => {
+      const values = families.map((f) => f[key as keyof FamilyPlan]).filter((n): n is number => typeof n === "number");
+      const sum = values.reduce((a, b) => a + b, 0);
+      return !values.length || Number.isSafeInteger(sum) && sum > 0 && sum <= (key.endsWith("Minute") ? 2147483647 : Number.MAX_SAFE_INTEGER);
+    });
+  if (!applicable) warnings.push("Some suggested limits are zero or exceed supported numeric bounds. Adjust the budget or family split before applying; limits are never silently rounded up.");
+  return { families, totalBudgetUsd: budget.toFixed(2), groupBudgetUsd: groupBudget?.toFixed(2) ?? null,
+    expectedSpendUsd: expected.toFixed(2), worstCaseSpendUsd: worst.toFixed(2), warnings, applicable };
 }

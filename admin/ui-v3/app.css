@@ -252,6 +252,9 @@ a:hover { color: var(--ink); }
 .input:disabled, .input[readonly] { background: var(--chrome); color: var(--ink-2); }
 .input[aria-invalid="true"] { border-color: var(--danger-line); }
 select.input { padding-right: var(--s5); }
+select.input { color-scheme: inherit; }
+select.input option, select.input optgroup { color: var(--ink); background-color: var(--surface); }
+.choice-input { display: grid; gap: var(--s1); }
 .input-compact { min-height: 30px; font-size: var(--text-xs); }
 .input-num { text-align: right; font-variant-numeric: tabular-nums; max-width: 12rem; }
 .input-short { max-width: 8rem; }
@@ -477,6 +480,15 @@ select.input { padding-right: var(--s5); }
 .assistant-result > .btn { justify-self: start; }
 .assistant-result .mono { white-space: nowrap; }
 .assistant-summary { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); font-size: var(--text-sm); }
+.guided-overlay { position: fixed; inset: 0; z-index: var(--z-tooltip); }
+.guided-spotlight { position: absolute; inset: 0; pointer-events: none; }
+.guided-shade { fill: oklch(0.1 0 0 / 0.7); }
+.guided-ring { fill: none; stroke: var(--focus); stroke-width: 3; }
+.guided-panel { position: absolute; left: var(--s4); right: var(--s4); bottom: var(--s4); max-width: 56rem; margin-inline: auto;
+  max-height: 42dvh; overflow: auto; display: grid; gap: var(--s3); padding: var(--s4); border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg); background: var(--surface); color: var(--ink); }
+.guided-targets { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.guided-targets [aria-pressed="true"] { background: var(--primary-tint); border-color: var(--primary); }
 .family-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 12rem); gap: var(--s3); align-items: end; }
 .stepper { display: flex; gap: var(--s2); list-style: none; margin: 0; padding: 0; flex-wrap: wrap; counter-reset: step; }
 .stepper li { flex: 1 1 140px; }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, qs, useQuery } from "../lib/api.ts";
 import { ago, human, int, pct, usd, when } from "../lib/format.ts";
 import { href, navigate } from "../lib/router.ts";
-import { Button, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, Review, Section, Segmented, StatePill, Tabs, diff, useToast } from "../components/ui.tsx";
+import { Button, ChoiceInput, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, Review, Section, Segmented, StatePill, Tabs, diff, useToast } from "../components/ui.tsx";
 import type { Change } from "../components/ui.tsx";
 import { BurnDown, Meter, StackedColumns } from "../components/charts.tsx";
 import { BudgetAssistant } from "../components/budget-assistant.tsx";
@@ -241,7 +241,7 @@ function BudgetsTab({ project, codes, readOnly, onApply, onReview }: { project: 
         </details>
       </section>
       <Section title="Budget assistant" description="Turn a monthly budget into suggested token quotas and rate limits per model family, at the approved rate card.">
-        <BudgetAssistant families={admitted} defaultMembers={snapshot?.activeMemberCount ?? 10} applyLabel={readOnly ? undefined : `Apply to ${code} limits`}
+        <BudgetAssistant key={code} families={admitted} initialBudget={draft[code].personBudget} initialGroupBudget={draft[code].aggregateBudget} applyLabel={readOnly ? undefined : `Apply to ${code} limits`}
           onApply={readOnly ? undefined : (patch, summary) => onApply(code, patch, summary)} />
       </Section>
     </div>
@@ -278,8 +278,8 @@ function SettingsTab({ project, readOnly, onReview }: { project: any; readOnly: 
         <Field label="Display name">{(id) => <input id={id} className="input" readOnly={readOnly} value={draft.displayName} maxLength={200} onChange={(e) => setDraft({ ...draft, displayName: e.target.value })} />}</Field>
         <Field label="Tags" hint="Comma-separated, up to 20.">{(id, d) => <input id={id} aria-describedby={d} className="input" readOnly={readOnly} value={tagText} onChange={(e) => setTagText(e.target.value)} />}</Field>
         <Field label="Foundry backend" hint={inventory.data?.state === "available" ? "From the APIM inventory." : "Inventory unavailable: type the APIM backend ID."}>{(id, d) => (
-          <><input id={id} aria-describedby={d} className="input mono" list={`${id}-l`} readOnly={readOnly} value={draft.backendId} onChange={(e) => setDraft({ ...draft, backendId: e.target.value })} />
-            <datalist id={`${id}-l`}>{backends.map((b) => <option key={b} value={b} />)}</datalist></>
+          <ChoiceInput id={id} describedBy={d} value={draft.backendId} options={backends} disabled={readOnly}
+            onChange={(backendId) => setDraft({ ...draft, backendId })} />
         )}</Field>
         <Field label="Designated subscription ID">{(id) => <input id={id} className="input mono" readOnly={readOnly} value={draft.designatedSubscriptionId} onChange={(e) => setDraft({ ...draft, designatedSubscriptionId: e.target.value })} />}</Field>
       </div>

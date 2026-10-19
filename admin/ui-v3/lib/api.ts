@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { token } from "./auth.ts";
+import { ReadCache, readTtl } from "./read-cache.ts";
+
+interface CachedRead { data: unknown; etag: string | null; observedAt: Date }
+const readCache = new ReadCache<CachedRead>();
 
 export class ApiFailure extends Error {
   status: number; code: string; problems: string[]; requestId: string | null; detail: string | null;
@@ -13,21 +17,27 @@ export class ApiFailure extends Error {
   }
 }
 
-export interface ApiOptions { method?: string; body?: unknown; ifMatch?: string | null; ifNoneMatch?: string; signal?: AbortSignal }
+export interface ApiOptions { method?: string; body?: unknown; ifMatch?: string | null; ifNoneMatch?: string; signal?: AbortSignal; refresh?: boolean }
 export interface ApiResult<T> { data: T; etag: string | null; status: number }
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<ApiResult<T>> {
+  const write = opts.method !== undefined && opts.method.toUpperCase() !== "GET";
+  // Planning/review POSTs are read-only, so don't evict the dashboard on every slider movement.
+  const mutation = write && !/^\/api\/v3\/(?:plan|rate-card\/review)$/.test(path);
+  if (mutation) readCache.clear();
   const headers: Record<string, string> = { authorization: `Bearer ${await token()}` };
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   if (opts.ifMatch) headers["if-match"] = opts.ifMatch;
   if (opts.ifNoneMatch) headers["if-none-match"] = opts.ifNoneMatch;
-  const res = await fetch(path, {
+  if (opts.refresh) headers["x-ccof-refresh"] = "true";
+  let res: Response;
+  try { res = await fetch(path, {
     method: opts.method ?? "GET", headers, signal: opts.signal, cache: "no-store",
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
+  }); } finally { if (mutation) readCache.clear(); }
   let body: any = null;
   try { body = await res.json(); } catch { body = null; }
-  if (!res.ok) throw new ApiFailure(res.status, body);
+  if (!res.ok) { if (res.status === 401 || res.status === 403) readCache.clear(); throw new ApiFailure(res.status, body); }
   return { data: body as T, etag: res.headers.get("etag"), status: res.status };
 }
 
@@ -38,14 +48,26 @@ export function useQuery<T = any>(path: string | null): QueryState<T> {
   const [state, setState] = useState<{ data: T | null; error: any; loading: boolean; etag: string | null; observedAt: Date | null }>({ data: null, error: null, loading: Boolean(path), etag: null, observedAt: null });
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((n) => n + 1), []);
-  const pathRef = useRef(path);
-  pathRef.current = path;
+  const previousTick = useRef(0);
   useEffect(() => {
     if (!path) { setState({ data: null, error: null, loading: false, etag: null, observedAt: null }); return; }
+    const force = tick !== previousTick.current;
+    previousTick.current = tick;
+    const cached = force ? undefined : readCache.get(path);
+    if (cached) {
+      setState({ data: cached.data as T, error: null, loading: false, etag: cached.etag, observedAt: cached.observedAt });
+      return;
+    }
     const controller = new AbortController();
+    const generation = readCache.generation;
     setState((s) => ({ ...s, loading: true, error: null }));
-    api<T>(path, { signal: controller.signal }).then(
-      (r) => { if (!controller.signal.aborted) setState({ data: r.data, error: null, loading: false, etag: r.etag, observedAt: new Date() }); },
+    api<T>(path, { signal: controller.signal, refresh: force }).then(
+      (r) => { if (!controller.signal.aborted) {
+        const observedAt = new Date();
+        const state = r.data && typeof r.data === "object" && "state" in r.data ? r.data.state : null;
+        if (!state || state === "available" || state === "partial") readCache.put(path, { data: r.data, etag: r.etag, observedAt }, readTtl(path), generation);
+        setState({ data: r.data, error: null, loading: false, etag: r.etag, observedAt });
+      } },
       (err) => { if (!controller.signal.aborted) setState((s) => ({ ...s, error: err, loading: false, observedAt: new Date() })); },
     );
     return () => controller.abort();

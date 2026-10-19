@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, qs, useQuery } from "../lib/api.ts";
 import { compact, day, download, human, int, pct, toCsv, usd, when } from "../lib/format.ts";
 import { href } from "../lib/router.ts";
-import { Button, CapabilityNotice, DataTable, ErrorNote, Field, Loading, PageHeader, Segmented, StatePill, Tabs, useToast } from "../components/ui.tsx";
+import { Button, ChoiceInput, CapabilityNotice, DataTable, ErrorNote, Field, Loading, PageHeader, Segmented, StatePill, Tabs, useToast } from "../components/ui.tsx";
 import type { Column } from "../components/ui.tsx";
 import { BurnDown, HBars, SplitBar, StackedColumns } from "../components/charts.tsx";
 import { ChartPanel, FAMILIES, TOKEN_CATEGORIES, bucketLabel, trendBuckets } from "../components/panels.tsx";
@@ -128,8 +128,8 @@ export function Chargeback({ query }: { query: URLSearchParams }) {
           <Field label="To (UTC, excluded)">{(id) => <input id={id} className="input" type="datetime-local" value={toLocalInput(f.to)} onChange={(e) => setF({ ...f, to: fromLocalInput(e.target.value) })} />}</Field>
         </>}
         <Field label="Project">{(id) => (
-          <><input id={id} className="input" list={`${id}-l`} value={f.project} placeholder="All projects" onChange={(e) => setF({ ...f, project: e.target.value.trim() })} autoComplete="off" spellCheck={false} />
-            <datalist id={`${id}-l`}>{(projects.data?.projects ?? []).map((p: any) => <option key={p.projectId} value={p.projectId}>{p.displayName}</option>)}</datalist></>
+          <ChoiceInput id={id} value={f.project} options={(projects.data?.projects ?? []).map((p: { projectId: string }) => p.projectId)}
+            onChange={(project) => setF({ ...f, project: project.trim() })} emptyLabel="All projects" manualLabel="Enter a project ID…" />
         )}</Field>
         <Field label="Foundry backend">{(id) => (
           <select id={id} className="input" value={f.backend} onChange={(e) => setF({ ...f, backend: e.target.value })}>

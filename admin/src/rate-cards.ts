@@ -10,6 +10,7 @@ import { parseRateCard } from "../../src/cost/rate-card.ts";
 import { validateRateHistory } from "./v2.ts";
 import { rateForDisplay } from "./units.ts";
 import type { TokenRates } from "./token-planner.ts";
+import { Money } from "../../src/cost/money.ts";
 
 export const FAMILIES = ["haiku", "sonnet", "opus", "fable", "mythos"] as const;
 export const familyOf = (model: string): string =>
@@ -24,7 +25,7 @@ function entries(card: unknown): Entry[] {
 const perTokensOf = (card: unknown): number => (isObject(card) && isObject(card.rateUnit) && typeof card.rateUnit.perTokens === "number" ? card.rateUnit.perTokens : 1_000_000);
 const inForce = (e: Entry, at: Date) => Date.parse(e.effectiveFrom) <= at.getTime() && (e.effectiveTo === null || Date.parse(e.effectiveTo) > at.getTime());
 
-export interface PlanModel { family: string; model: string; displayName: string; geos: Record<string, string>; rates: TokenRates; tiered: boolean }
+export interface PlanModel { family: string; model: string; displayName: string; geos: Record<string, string>; rates: TokenRates; worstRates: TokenRates; tiered: boolean }
 
 // In-force models by family, USD per million tokens, first (base) prompt tier.
 export function planModels(card: unknown, at: Date): PlanModel[] {
@@ -32,9 +33,14 @@ export function planModels(card: unknown, at: Date): PlanModel[] {
   return entries(card).filter((e) => inForce(e, at) && familyOf(e.model) !== "unknown").map((e) => {
     const base = e.promptTiers[0]?.rates ?? {};
     const r = (k: string) => rateForDisplay(String(base[k]), perTokens, "USD");
+    const maxRate = (k: string) => e.promptTiers.reduce((max, tier) => {
+      const n = new Money(rateForDisplay(String(tier.rates[k]), perTokens, "USD"));
+      return n.gt(max) ? n : max;
+    }, new Money(0)).toFixed();
     return {
       family: familyOf(e.model), model: e.model, displayName: e.displayName ?? e.model, geos: { ...e.inferenceGeoMultipliers },
       rates: { input: r("input"), output: r("output"), cacheRead: r("cacheRead"), cacheWrite5m: r("cacheWrite5m"), cacheWrite1h: r("cacheWrite1h") },
+      worstRates: { input: maxRate("input"), output: maxRate("output"), cacheRead: maxRate("cacheRead"), cacheWrite5m: maxRate("cacheWrite5m"), cacheWrite1h: maxRate("cacheWrite1h") },
       tiered: e.promptTiers.length > 1,
     };
   });

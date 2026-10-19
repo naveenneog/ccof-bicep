@@ -10,6 +10,7 @@ const get = (key: string) => { try { return localStorage.getItem(key); } catch {
 const put = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 
 const media = () => matchMedia("(prefers-color-scheme: dark)");
+export const normalizeTheme = (value: string | null): ThemeChoice => value === "light" || value === "dark" ? value : "system";
 export function applyTheme(choice: ThemeChoice) {
   const resolved = choice === "system" ? (media().matches ? "dark" : "light") : choice;
   document.documentElement.dataset.theme = resolved;
@@ -18,7 +19,7 @@ export function applyTheme(choice: ThemeChoice) {
 }
 
 export function useTheme(): [ThemeChoice, (t: ThemeChoice) => void] {
-  const [choice, setChoice] = useState<ThemeChoice>(() => (get(THEME_KEY) as ThemeChoice) || "system");
+  const [choice, setChoice] = useState<ThemeChoice>(() => normalizeTheme(get(THEME_KEY)));
   useEffect(() => {
     applyTheme(choice);
     if (choice !== "system") return;

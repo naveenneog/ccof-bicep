@@ -1,13 +1,16 @@
+import { useState } from "react";
 import { useQuery } from "../lib/api.ts";
 import { ago, compact, human, int, pct, usd, when } from "../lib/format.ts";
 import { href } from "../lib/router.ts";
-import { CapabilityNotice, DataTable, ErrorNote, Loading, PageHeader, StatePill } from "../components/ui.tsx";
+import { CapabilityNotice, DataTable, ErrorNote, Loading, PageHeader, Pager, StatePill } from "../components/ui.tsx";
 import { StackedColumns } from "../components/charts.tsx";
 import { ChartPanel, FAMILIES, bucketLabel, trendBuckets } from "../components/panels.tsx";
 
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 
 export function Overview() {
+  const [projectOffset, setProjectOffset] = useState(0);
+  const projects = useQuery(`/api/v3/chargeback/projects?period=month&limit=25&offset=${projectOffset}`);
   const trend = useQuery("/api/v3/chargeback/trend?period=month&interval=day");
   const totals = useQuery("/api/v3/chargeback/totals?period=month");
   const coverage = useQuery("/api/v3/chargeback/coverage?period=month");
@@ -15,13 +18,16 @@ export function Overview() {
   const runs = useQuery("/api/v3/reconciler/runs");
   const health = useQuery("/api/v2/health");
   const audit = useQuery("/api/v3/audit?limit=6");
-  const reload = () => [trend, totals, coverage, budgets, runs, health, audit].forEach((q) => q.reload());
+  const reload = () => [projects, trend, totals, coverage, budgets, runs, health, audit].forEach((q) => q.reload());
   const loading = [trend, totals, coverage].some((q) => q.loading);
 
   const t = ok(totals.data) ? totals.data.data.rows[0] : null;
   const cov = ok(coverage.data) ? coverage.data.data.rows[0] : null;
   const buckets = ok(trend.data) ? trendBuckets(trend.data.data.rows) : [];
   const written = ok(runs.data) ? runs.data.data.rows.find((r: any) => r.outcome === "written") : null;
+  const confirmed = ok(budgets.data) && budgets.data.data.groups?.length > 0 &&
+    cov?.reportState === "observed_token_usage_complete" && written?.freshness === "on_schedule" &&
+    ok(health.data) && Array.isArray(health.data.data) && health.data.data.length > 0;
   const attention: { key: string; tone: string; text: React.ReactNode; to: string }[] = [];
   if (ok(budgets.data)) for (const g of budgets.data.data.groups) {
     attention.push({ key: `b-${g.projectId}-${g.classification}`, tone: g.exhausted ? "danger" : "warn", to: `/projects/${g.projectId}/budgets`,
@@ -38,6 +44,26 @@ export function Overview() {
       <PageHeader title="Overview" subtitle="This month at list price, what needs attention, and the latest changes." observedAt={totals.observedAt} onRefresh={reload} busy={loading} />
       <div className="overview-grid">
         <div className="overview-main">
+          <section className="panel" data-help="project-costs">
+            <div className="panel-head"><div><h2>Month-to-date project costs</h2>
+              <p className="section-desc">All observed projects, highest known list cost first. Projects without telemetry have unknown cost, not zero.</p></div></div>
+            {projects.loading && !projects.data ? <Loading rows={5} /> : projects.error ? <ErrorNote error={projects.error} retry={projects.reload} />
+              : !ok(projects.data) ? <CapabilityNotice cap={projects.data} what="Project cost reporting" />
+                : <>
+                  <DataTable caption="Month-to-date project costs, highest cost first" rows={projects.data.data.rows}
+                    empty={<p className="empty-inline">No project cost observations this month. This does not mean no spend.</p>}
+                    columns={[
+                      { key: "projectLabel", label: "Project", render: (r: any) => <a href={href(`/chargeback?project=${encodeURIComponent(r.projectLabel)}`)}>{r.projectLabel}</a> },
+                      { key: "knownListUsd", label: "Known cost (USD)", align: "end", render: (r: any) => usd(r.knownListUsd) },
+                      { key: "knownListCcu", label: "Known CCU", align: "end", render: (r: any) => int(r.knownListCcu) },
+                      { key: "listUsd", label: "Complete cost", align: "end", render: (r: any) => usd(r.listUsd) },
+                      { key: "requests", label: "Requests", align: "end", render: (r: any) => int(r.requests) },
+                      { key: "completeness", label: "Coverage", render: (r: any) => <StatePill state={r.completeness} /> },
+                    ]} />
+                  {projects.data.data.page && <Pager {...projects.data.data.page} onPage={setProjectOffset} label="projects" />}
+                  <p className="hint">Current month in UTC, list price, not an invoice. <a href={href("/projects")}>Open the registry for projects with no cost observations.</a></p>
+                </>}
+          </section>
           {trend.loading && !trend.data ? <section className="panel"><Loading chart /></section>
             : trend.error ? <ErrorNote error={trend.error} retry={trend.reload} />
               : !ok(trend.data) ? <CapabilityNotice cap={trend.data} what="Chargeback" />
@@ -70,7 +96,8 @@ export function Overview() {
           <section className="panel">
             <div className="panel-head"><h2>Needs attention</h2></div>
             {budgets.loading && !budgets.data ? <Loading rows={3} /> : attention.length === 0
-              ? <p className="empty-inline"><span className="ok-text">Nothing needs attention.</span> Budgets are under 80 %, telemetry is complete and probes respond.</p>
+              ? <p className="empty-inline">{confirmed ? <><span className="ok-text">Nothing needs attention.</span> The available observations show no concerns.</>
+                : "No confirmed alerts from available observations. Some checks have no data or are not configured; overall health is unverified."}</p>
               : <ul className="attention">{attention.map((a) => <li key={a.key} className={`attention-${a.tone}`}><a href={href(a.to)}>{a.text}</a></li>)}</ul>}
             {budgets.data && !ok(budgets.data) && <CapabilityNotice cap={budgets.data} what="Budgets" />}
           </section>

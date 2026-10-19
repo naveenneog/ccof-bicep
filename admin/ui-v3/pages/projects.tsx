@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { qs, useQuery } from "../lib/api.ts";
 import { pct } from "../lib/format.ts";
 import { href, navigate } from "../lib/router.ts";
-import { Button, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, StatePill } from "../components/ui.tsx";
+import { Button, ChoiceInput, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, StatePill } from "../components/ui.tsx";
 import { Meter } from "../components/charts.tsx";
 import { useSession } from "../components/shell.tsx";
 
@@ -20,7 +20,8 @@ export function Projects({ query }: { query: URLSearchParams }) {
   const [backend, setBackend] = useState(query.get("backend") ?? "");
   const [classification, setClassification] = useState(query.get("classification") ?? "");
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const debounced = useDebounced({ search, tagText, backend, classification });
+  const filterInput = useMemo(() => ({ search, tagText, backend, classification }), [search, tagText, backend, classification]);
+  const debounced = useDebounced(filterInput);
   const tags = debounced.tagText.split(",").map((t) => t.trim()).filter(Boolean);
   const filterKey = JSON.stringify(debounced);
   useEffect(() => { setCursors([null]); }, [filterKey]);
@@ -50,10 +51,7 @@ export function Projects({ query }: { query: URLSearchParams }) {
         <Field label="Search">{(id) => <input id={id} className="input" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name or project ID" autoComplete="off" spellCheck={false} />}</Field>
         <Field label="Tags" hint="Comma-separated; all must match">{(id, d) => <input id={id} aria-describedby={d} className="input" value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="finance, pilot" autoComplete="off" />}</Field>
         <Field label="Backend">{(id) => (
-          <>
-            <input id={id} className="input" list={`${id}-list`} value={backend} onChange={(e) => setBackend(e.target.value)} placeholder="Any backend" autoComplete="off" spellCheck={false} />
-            <datalist id={`${id}-list`}>{backendOptions.map((b) => <option key={b} value={b} />)}</datalist>
-          </>
+          <ChoiceInput id={id} value={backend} onChange={setBackend} options={backendOptions} emptyLabel="Any backend" />
         )}</Field>
         <Field label="Classification">{(id) => <input id={id} className="input input-short" value={classification} onChange={(e) => setClassification(e.target.value.toUpperCase())} placeholder="STD" autoComplete="off" spellCheck={false} />}</Field>
         {active > 0 && <Button variant="quiet" size="small" onClick={() => { setSearch(""); setTagText(""); setBackend(""); setClassification(""); }}>Clear filters</Button>}

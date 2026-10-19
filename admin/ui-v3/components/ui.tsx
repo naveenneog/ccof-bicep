@@ -66,6 +66,28 @@ export function Field({ label, hint, error, children, id }: { label: ReactNode; 
   );
 }
 
+// Native selects follow the selected colour scheme. Manual entry remains available when inventory
+// is unavailable or an approved ID is not in the loaded page; no browser-owned datalist popup.
+export function ChoiceInput({ id, describedBy, value, options, onChange, disabled, invalid, emptyLabel = "Select…", manualLabel = "Enter another ID…" }: {
+  id: string; describedBy?: string; value: string; options: string[]; onChange: (value: string) => void;
+  disabled?: boolean; invalid?: boolean; emptyLabel?: string; manualLabel?: string;
+}) {
+  const [manual, setManual] = useState(false);
+  const choices = [...new Set(options)].sort();
+  if (!choices.length || manual) return <div className="choice-input">
+    <input id={id} className="input" value={value} onChange={(e) => onChange(e.target.value)}
+      aria-describedby={describedBy} aria-invalid={invalid || undefined} disabled={disabled} autoComplete="off" spellCheck={false} />
+    {choices.length > 0 && <Button size="small" variant="quiet" disabled={disabled} onClick={() => setManual(false)}>Choose from list</Button>}
+  </div>;
+  return <select id={id} className="input" value={value} disabled={disabled} aria-describedby={describedBy} aria-invalid={invalid || undefined}
+    onChange={(e) => { if (e.target.value === ":manual") setManual(true); else onChange(e.target.value); }}>
+    <option value="">{emptyLabel}</option>
+    {value && !choices.includes(value) && <option value={value}>{value} (current value)</option>}
+    {choices.map((v) => <option key={v} value={v}>{v}</option>)}
+    <option value=":manual">{manualLabel}</option>
+  </select>;
+}
+
 const TONE: Record<string, string> = {
   available: "ok", complete: "ok", current: "ok", observed_token_usage_complete: "ok", endpoint_responding: "ok", on_schedule: "ok", written: "ok",
   updated: "ok", created: "ok", observed: "ok", Succeeded: "ok", configured: "ok", strict: "neutral", notify: "neutral", no_cap: "neutral",
