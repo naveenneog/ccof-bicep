@@ -28,7 +28,7 @@ This is not a runtime, customer-policy, networking or Admin V3 acceptance result
 | Azure provider validation | Succeeded |
 | What-if | 32 Create changes, no Modify/Delete changes; includes storage child resources and per-app diagnostics |
 | Actual deployment | Parent deployment Succeeded |
-| Top-level inventory | Exactly 20: 1 workspace, 1 Cosmos account, 2 user-assigned identities, 4 storage accounts, 4 Flex plans, 4 Function Apps, 4 Insights components |
+| Top-level inventory at read-back | Exactly 20 at 09:10:32 UTC: 1 workspace, 1 Cosmos account, 2 user-assigned identities, 4 storage accounts, 4 Flex plans, 4 Function Apps, 4 Insights components. Four platform-created alert rules followed at 09:14:57 UTC (see below) |
 | Cosmos | Provisioning Succeeded; PNA Disabled, local authentication disabled; zero SQL databases and zero native data-role assignments |
 | All four apps | PNA Disabled, no VNet subnet attachment, Node 22; zero application settings |
 | App identities | Resolver/admin SystemAssigned; sync/reconciler UserAssigned; real principal IDs exported |
@@ -51,6 +51,28 @@ This is not a runtime, customer-policy, networking or Admin V3 acceptance result
 
 These were verification-script issues; they did not require changing or weakening
 the deployed resources.
+
+## Independent re-check — 2026-10-20 09:22 UTC
+
+A second read-back, run separately from the original verifier, confirmed: deployment
+`stage1-proof` Succeeded (ARM duration PT1M56.9S; the 133 seconds above are wall-clock
+from submission), 17 deployment operations, all four apps with PNA Disabled, no VNet
+subnet and zero application settings, all four storage accounts with PNA Disabled,
+shared keys off and firewall Deny, Cosmos PNA Disabled with local authentication off,
+zero SQL databases, zero Cosmos data-role assignments, and zero Azure role assignments
+scoped at or below the RG (48 visible assignments are all inherited).
+
+The RG then held **24** resources, not 20. The extra four are
+`microsoft.alertsmanagement/smartDetectorAlertRules` named
+`Failure Anomalies - <app>-ai`, one per Application Insights component. The activity log
+shows them written at 09:14:57–09:14:59 UTC by the Microsoft first-party service principal
+**Azure Smart Alerts** (app ID `3af5a1e8-2459-45cb-8683-bcd6cccbcc13`), about four minutes
+after the original read-back. They are not in the template's deployment operations.
+Application Insights creates Failure Anomalies smart detection automatically
+([Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/proactive-failure-diagnostics)).
+They are alert rules only: no data access, role assignment or application setting.
+A Stage 1 inventory check therefore expects 20 template resources plus up to four
+platform-created Failure Anomalies rules; any other extra resource is a failure.
 
 ## Regression and documentation checks
 

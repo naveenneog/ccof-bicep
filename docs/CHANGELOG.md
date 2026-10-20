@@ -3,8 +3,9 @@
 ## 2026-10-20 — Stage 1 resources-only proof
 
 - Completed live provider verification of the existing staged templates in an
-  isolated new lab RG: 20 top-level resources, all four private/keyless service
-  checks pass, and no schema, application settings or runtime grants were created.
+  isolated new lab RG: 20 template resources at read-back (Application Insights
+  later auto-added four Failure Anomalies alert rules, recorded in the report);
+  all four private/keyless service checks pass, and no schema, application settings or runtime grants were created.
   Existing inference/admin deployments were not write targets. APIM is deferred.
 - Added a scoped work ledger and local Ironclad charter/gate without installing
   hooks or changing CI. The stage contract remains the existing resources-only

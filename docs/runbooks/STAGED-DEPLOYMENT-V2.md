@@ -155,6 +155,14 @@ auth disabled, no SQL databases and no data-role assignments. Azure grants withi
 the new RG are absent; inherited operator permissions are not counted as stage
 outputs. See the [live evidence](../STAGE1-LIVE-VERIFICATION.md).
 
+Expected inventory with admin included: 20 template resources, plus one
+`Failure Anomalies - <app>-ai` smart-detector alert rule per Application Insights
+component, created minutes later by the Azure Smart Alerts platform identity
+([Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/proactive-failure-diagnostics)).
+Count only those as expected extras. Run `az` queries without parentheses in
+`--query` on Windows (for example count in PowerShell), because `az.cmd` passes
+arguments through cmd.exe.
+
 If deployment fails, read parent and nested operations and retain the inventory.
 A nonempty RG blocks the create-new procedure. A recovery plan must explicitly
 target the partially created resources and preserve the same names/parameters;
