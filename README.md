@@ -90,6 +90,11 @@ Do not aim a mock-only load command at an existing real Foundry route.
 
 ## Evidence and limits
 
+The [configurable staged deployment](docs/runbooks/STAGED-DEPLOYMENT-V2.md)
+documents Stage 1 inputs, operator permissions and commands. Its
+[Azure live proof](docs/STAGE1-LIVE-VERIFICATION.md) verifies resource-only
+provisioning; the later-stage entry points and application acceptance remain separate.
+
 Offline tests are not live acceptance. Earlier quickstart seed resynchronization was
 reported live-verified, but that does not prove the integrated v3 route, combined
 client sign-in, second-subscription routing, workbook portal rendering or production load.

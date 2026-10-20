@@ -1,5 +1,11 @@
 # Staged customer deployment and private VDI updates
 
+**2026-10-20 update:** the [configurable staged plan](STAGED-DEPLOYMENT-V2.md)
+separates the later steps by permission boundary. Its Stage 1 uses the same
+`infra/staged` templates and has a [live resource-only proof](../STAGE1-LIVE-VERIFICATION.md).
+The four stage numbers in this retained runbook differ from the new plan.
+Later-stage entry points in that plan are not yet implemented.
+
 **Current sequencing correction, 16 October 2026.** Use this runbook for the
 public repository's customer deployment plan. The original
 [completion workbook, Modules 00–16](PUBLIC-ACCESS-WORKBOOK.md) is retained as
