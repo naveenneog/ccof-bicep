@@ -1,5 +1,20 @@
 # Change log
 
+## 2026-10-20 — Manual Portal walkthrough and verification gaps
+
+- Added click paths for the staged guide, Foundry setup prerequisites, Standard v2 outbound
+  networking, IAM and Entra checks, and the operations that still need Bicep or CLI.
+- Embedded five existing masked Portal screenshots beside the relevant steps. They are
+  labelled historical navigation references, not new FDPO/Contoso deployment evidence.
+- Real Playwright Portal probes for FDPO and Contoso reached the Microsoft sign-in page.
+  Fresh blade captures and the requested Standard v2 runs remain blocked on sign-in and
+  confirmation of the separate SASET/personal FDPO targets.
+- Documented unresolved APIM integration, Foundry provisioning, cross-target state reuse
+  (reproduced offline) and uncorrelated telemetry acceptance. Bicep compilation and existing
+  stage tests pass but do not prove those missing behaviours.
+- Playwright verified the rendered guide's five images and internal anchor. A broken-image
+  negative control failed as intended, and restoring the image passed.
+
 ## 2026-10-20 — Stages 2-8 implemented and run live
 
 - New entry points in `infra/staged`: `stage2-network.bicep`, `stage3-schema.bicep`,
