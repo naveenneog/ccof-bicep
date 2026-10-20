@@ -15,12 +15,14 @@ import type { RenderParameters } from "../../analytics/workbooks/render.ts";
 import { ccuToUsdText, DECIMAL_TEXT } from "./units.ts";
 import type { LogTable } from "./operations.ts";
 
-export const CHARGEBACK_VIEWS = ["totals", "groups", "developers", "models", "families", "trend", "coverage", "unpriced", "diagnostics", "projects"] as const;
+export const CHARGEBACK_VIEWS = ["totals", "groups", "developers", "models", "families", "trend", "coverage", "unpriced", "diagnostics", "projects", "classifications"] as const;
 export type ChargebackView = typeof CHARGEBACK_VIEWS[number];
 const QUERY_KEY: Record<ChargebackView, string> = {
   totals: "totals", groups: "groups", developers: "developers", models: "models", families: "families",
-  trend: "trends", coverage: "health", unpriced: "unpriced", diagnostics: "diagnostics", projects: "projects",
+  trend: "trends", coverage: "health", unpriced: "unpriced", diagnostics: "diagnostics", projects: "projects", classifications: "classifications",
 };
+// Tags resolve to project IDs from the registry; a larger match is refused rather than truncated.
+export const TAG_PROJECTS_MAX = 2000;
 export const ROW_PAGE_MAX = 500;
 export const SERIES_POINTS_MAX = 2000;
 export const CACHE_TTL_MS = 60_000;
@@ -114,12 +116,18 @@ const optional = (params: URLSearchParams, key: string, valid: (v: string) => bo
 
 export interface ChargebackFilters {
   period: Period; project: string; group: string; developer: string; model: string; backend: string; family: string;
+  classification: string; tags: string[];
+  // Resolved by the handler from `tags`; null means no tag filter.
+  projectSet: string[] | null;
   interval: "hour" | "day"; offset: number; limit: number;
 }
+const TAG = /^[A-Za-z0-9][A-Za-z0-9 ._:@/+-]{0,59}$/;
 export function readChargebackFilters(params: URLSearchParams, now: Date, maxQueryDays: number): ChargebackFilters {
-  onlyParams(params, ["period", "from", "to", "project", "group", "developer", "model", "backend", "family", "interval", "offset", "limit"]);
+  onlyParams(params, ["period", "from", "to", "project", "group", "developer", "model", "backend", "family", "classification", "tags", "interval", "offset", "limit"]);
   const interval = params.get("interval") ?? "day";
   if (interval !== "hour" && interval !== "day") throw new ApiError(400, "invalid_interval");
+  const tags = [...new Set((params.get("tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean))].sort();
+  if (tags.length > 10 || tags.some((t) => !TAG.test(t))) throw new ApiError(400, "invalid_tags_filter");
   return {
     period: readPeriod(params, now, maxQueryDays),
     project: optional(params, "project", isIdentifier, "invalid_project_filter"),
@@ -128,14 +136,19 @@ export function readChargebackFilters(params: URLSearchParams, now: Date, maxQue
     model: optional(params, "model", (v) => MODEL.test(v), "invalid_model_filter"),
     backend: optional(params, "backend", isIdentifier, "invalid_backend_filter"),
     family: optional(params, "family", (v) => FAMILY.includes(v), "invalid_family_filter"),
+    classification: optional(params, "classification", isIdentifier, "invalid_classification_filter"),
+    tags, projectSet: null,
     interval, ...page(params),
   };
 }
 
-const renderParams = (f: { period: Period; project?: string; group?: string; developer?: string; model?: string; backend?: string; family?: string }): RenderParameters => ({
+const renderParams = (f: { period: Period; project?: string; group?: string; developer?: string; model?: string; backend?: string; family?: string; classification?: string; projectSet?: string[] | null }): RenderParameters => ({
   period: f.period.mode, project: f.project || "*",
   from: f.period.mode === "custom" ? f.period.from : null, to: f.period.mode === "custom" ? f.period.to : null,
   group: f.group || "*", developer: f.developer || "*", model: f.model || "*", backend: f.backend || "*", family: f.family || "*",
+  classification: f.classification || "*",
+  // An empty tag match must select nothing, never everything: "(none)" is not a valid project ID.
+  projects: f.projectSet === null || f.projectSet === undefined ? "*" : f.projectSet.length ? f.projectSet.join(",") : "(none)",
 });
 
 export interface PreparedCard { card: Doc; text: string; sha: string; version: string }

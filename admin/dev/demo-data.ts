@@ -70,7 +70,8 @@ export function createDemoTelemetry(card: Card, groups: DemoGroup[], now = new D
     const period = f.period as { from: string; to: string };
     const a = Date.parse(period.from), b = Date.parse(period.to);
     return rows.filter((x) => x.at >= a && x.at < b && (!f.project || x.projectId === f.project) && (!f.group || x.groupId === f.group) &&
-      (!f.developer || x.personId === f.developer) && (!f.model || x.model === f.model) && (!f.backend || x.backendId === f.backend) && (!f.family || x.family === f.family));
+      (!f.developer || x.personId === f.developer) && (!f.model || x.model === f.model) && (!f.backend || x.backendId === f.backend) && (!f.family || x.family === f.family) &&
+      (!f.classification || x.classification === f.classification) && (!Array.isArray(f.projectSet) || (f.projectSet as string[]).includes(x.projectId)));
   }
 
   function rollup(list: Row[], period: { from: string; to: string }): Doc {
@@ -126,6 +127,7 @@ export function createDemoTelemetry(card: Card, groups: DemoGroup[], now = new D
       case "models": return table(grouped(list, (x) => x.model, (k) => ({ model: k }), period).sort(byCost), offset, limit);
       case "families": return table(grouped(list, (x) => x.family, (k) => ({ modelFamily: k }), period).sort(byCost), offset, limit);
       case "projects": return table(grouped(list, (x) => x.projectId, (k) => ({ projectLabel: k }), period).sort(byCost), offset, limit);
+      case "classifications": return table(grouped(list, (x) => `${x.projectId}|${x.classification}`, (k) => ({ projectLabel: k.split("|")[0], classification: k.split("|")[1] }), period).sort(byCost), offset, limit);
       case "trend": {
         const bin = f.interval === "hour" ? 3_600_000 : 86_400_000;
         const out = grouped(list, (x) => `${Math.floor(x.at / bin) * bin}|${x.family}`, (k) => ({ bucket: new Date(Number(k.split("|")[0])).toISOString(), modelFamily: k.split("|")[1] }), period)

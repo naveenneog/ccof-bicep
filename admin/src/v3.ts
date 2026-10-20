@@ -6,7 +6,7 @@
 import { ApiError, isGuid } from "./auth.ts";
 import type { Authenticator } from "./auth.ts";
 import type { ApiRequest, ApiResponse, ProjectStore } from "./api.ts";
-import { canonical, isObject } from "./validation.ts";
+import { canonical, isIdentifier, isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 import type { Capability, Operations, QueryMeta } from "./operations.ts";
 import { ProviderError } from "./operations.ts";
@@ -18,8 +18,9 @@ import { FAMILIES, planModels, reviewRateCard } from "./rate-cards.ts";
 import {
   buildAuditQuery, buildChargebackQuery, buildRunsQuery, buildSnapshotQuery, CHARGEBACK_VIEWS, prepareRateCard, QueryCache,
   readAuditFilters, readAuditSettings, readChargebackFilters, readChargebackSettings, readReconcilerSettings, readSnapshotFilters,
-  shapeRows, shapeRun, shapeSnapshot, tableRows,
+  shapeRows, shapeRun, shapeSnapshot, tableRows, TAG_PROJECTS_MAX,
 } from "./chargeback.ts";
+import { buildClientFiles, readClientSettings } from "./client-config.ts";
 import type { ChargebackView, Configured, QuerySources } from "./chargeback.ts";
 import type { GroupMetadata } from "../../analytics/workbooks/chargeback-queries.ts";
 import { ccuToUsdText, DECIMAL_TEXT } from "./units.ts";
@@ -142,6 +143,21 @@ async function groupMetadata(deps: V3Dependencies, projectId: string): Promise<G
   });
 }
 
+// Registry tags → project IDs (all tags must match). Ledger rows carry no tags, so this is how a
+// tag filter reaches the chargeback query. A larger match than TAG_PROJECTS_MAX is refused.
+async function projectsForTags(deps: V3Dependencies, tags: string[]): Promise<string[]> {
+  if (!deps.projects?.listPage) throw new ApiError(503, "project_store_not_configured");
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await deps.projects.listPage({ search: "", tag: "", backendId: "", tags, limit: 100, cursor });
+    for (const p of page.items) if (typeof p.doc.projectId === "string") ids.push(p.doc.projectId);
+    if (ids.length > TAG_PROJECTS_MAX) throw new ApiError(400, "tag_matches_too_many_projects");
+    cursor = page.cursor;
+  } while (cursor);
+  return [...new Set(ids)].sort();
+}
+
 export async function handleV3Request(request: ApiRequest, deps: V3Dependencies): Promise<ApiResponse> {
   const requestId = deps.newId();
   const url = new URL(request.path, "https://admin.invalid");
@@ -190,12 +206,25 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
     }
     if (method !== "GET") throw new ApiError(405, "method_not_allowed");
 
+    const clientFiles = /^projects\/([^/]+)\/client-config$/.exec(path);
+    if (clientFiles) {
+      const projectId = decodeURIComponent(clientFiles[1]);
+      if (!isIdentifier(projectId)) throw new ApiError(400, "invalid_project_id");
+      if (!deps.projects) throw new ApiError(503, "project_store_not_configured");
+      const found = await deps.projects.read(projectId);
+      if (!found) throw new ApiError(404, "project_not_found");
+      const classification = url.searchParams.get("classification") ?? "";
+      const files = buildClientFiles(found.doc, classification, readClientSettings(deps.env), deps.now());
+      return response(200, { projectId, classification, ...files, observedAt: deps.now().toISOString() });
+    }
+
     const chargeback = /^chargeback\/([a-z]+)$/.exec(path);
     if (chargeback) {
       const view = chargeback[1] as ChargebackView;
       if (!(CHARGEBACK_VIEWS as readonly string[]).includes(view)) throw new ApiError(404, "view_not_found");
       const cfg = readChargebackSettings(deps.env);
       const filters = readChargebackFilters(url.searchParams, deps.now(), cfg.ok ? cfg.value.maxQueryDays : 62);
+      if (filters.tags.length) filters.projectSet = await projectsForTags(deps, filters.tags);
       return response(200, await capability(deps, cfg, "chargeback", async () => {
         const card = await currentRateCard(deps);
         if (!card || !cfg.ok || !deps.sources || !deps.operations.query) throw new ProviderError(503, "rate_card_unavailable");
@@ -216,7 +245,8 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
             nextOffset: shaped.reportRows !== null && filters.offset + shaped.rows.length < shaped.reportRows ? filters.offset + shaped.rows.length : null,
           },
           seriesCap: isSeries ? 2000 : null,
-          period: filters.period, interval: filters.interval, filters: { project: filters.project, group: filters.group, developer: filters.developer, model: filters.model, backend: filters.backend, family: filters.family },
+          period: filters.period, interval: filters.interval, filters: { project: filters.project, group: filters.group, developer: filters.developer, model: filters.model, backend: filters.backend, family: filters.family,
+            classification: filters.classification, tags: filters.tags, tagProjects: filters.projectSet === null ? null : filters.projectSet.length },
           rateCardVersion: prepared.version, rateCardSource: card.source, basis: LIST_PRICE_BASIS,
           observedAt: deps.now().toISOString(), cached: false,
         };

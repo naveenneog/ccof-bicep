@@ -60,10 +60,15 @@ let Ledger = CcofUsageLedger(iff(RangeValid, FromTime, ReportNow), iff(RangeVali
 function metadata(groups: GroupMetadata[], extended: boolean): string {
   const extraLets = extended ? `let BackendFilter = base64_decode_tostring("{Backend:base64}");
 let FamilyFilter = base64_decode_tostring("{Family:base64}");
+let ClassificationFilter = base64_decode_tostring("{Classification:base64}");
+let ProjectSetFilter = base64_decode_tostring("{Projects:base64}");
+let ProjectSet = split(ProjectSetFilter, ",");
 ` : "";
   const extraWhere = extended ? `
     and (BackendFilter == "*" or backendId =~ BackendFilter)
-    and (FamilyFilter == "*" or modelFamily == FamilyFilter)` : "";
+    and (FamilyFilter == "*" or modelFamily == FamilyFilter)
+    and (ClassificationFilter == "*" or classification == ClassificationFilter)
+    and (ProjectSetFilter == "*" or projectId in (ProjectSet))` : "";
   return `let GroupMetadata = datatable(projectId:string, classification:string, mappedGroupId:string, mappedGroupName:string)[
 ${groups.map(g => [g.projectId, g.classification, g.groupId.toLowerCase(), g.displayName ?? ""].map(kqlString).join(", ")).join(",\n")}
 ];
@@ -135,7 +140,7 @@ export function reportRollup(groupBy: string, withGroupNames = false): string {
 | project-away ${costColumns.map(c => `${c}CostSum`).join(", ")}, cacheReadSavingsSum`;
 }
 
-export type ChargebackQueries = Record<"health" | "developers" | "usage" | "groups" | "models" | "families" | "totals" | "trends" | "diagnostics" | "unpriced", string> & { projects?: string };
+export type ChargebackQueries = Record<"health" | "developers" | "usage" | "groups" | "models" | "families" | "totals" | "trends" | "diagnostics" | "unpriced", string> & { projects?: string; classifications?: string };
 
 // The chargeback report queries. `usage` is the result of usageQueryBase for the same settings, rate
 // card and ledger; `maxRows` bounds every row view.
@@ -192,7 +197,11 @@ export function chargebackQueries(usage: UsageQueryBase, maxRows: number, groups
     pricingStatus, pricingReason, knownListCcu, listCcu, knownListUsd = knownListCcu / decimal(100),
     inputTokens, outputTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens` + provenance, maxRows, "timestamp desc", offset),
   };
-  if (options.extraViews) queries.projects = report("projectLabel");
+  if (options.extraViews) {
+    queries.projects = report("projectLabel");
+    // Project → classification drill-down (STD, PRM, CYB, ...).
+    queries.classifications = report("projectLabel, classification");
+  }
   return queries;
 }
 

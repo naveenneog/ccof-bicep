@@ -91,7 +91,8 @@ if (mode === "seeded") {
   for (const doc of [
     seed("PROJECT01", "Payments platform", {
       STD: { group: "6f3a2c1e-4b5d-4e8f-9a0b-1c2d3e4f5a6b", groupName: "PROJECT01-STD", families: { sonnet: ["claude-sonnet-4-5"], haiku: ["claude-haiku-4-5"] } },
-      INT: { group: "7a4b3d2f-5c6e-4f9a-8b1c-2d3e4f5a6b7c", groupName: "PROJECT01-INT", families: { sonnet: ["claude-sonnet-4-5"], opus: ["claude-opus-4-1"] } },
+      PRM: { group: "7a4b3d2f-5c6e-4f9a-8b1c-2d3e4f5a6b7c", groupName: "PROJECT01-PRM", families: { sonnet: ["claude-sonnet-4-5"], opus: ["claude-opus-4-1"] } },
+      CYB: { group: "9c6d5f4b-7e8a-4b1c-8d3e-4f5a6b7c8d9e", groupName: "PROJECT01-CYB", families: { opus: ["claude-opus-4-1"], sonnet: ["claude-sonnet-4-5"] } },
     }),
     seed("PROJECT02", "Customer support copilots", {
       STD: { group: "8b5c4e3a-6d7f-4a0b-9c2d-3e4f5a6b7c8d", groupName: "PROJECT02-STD", families: { sonnet: ["claude-sonnet-4-5"] } },
@@ -107,7 +108,8 @@ if (mode === "seeded") {
     const classes: Record<string, { group: string; groupName: string; families: Record<string, string[]> }> = {
       STD: { group: `${hex(0x1a2b0000 + i, 8)}-0000-4000-8000-${hex(i + 1, 12)}`, groupName: `${id}-STD`, families: { sonnet: ["claude-sonnet-4-5"], haiku: ["claude-haiku-4-5"] } },
     };
-    if (i % 3 === 0) classes.INT = { group: `${hex(0x2b3c0000 + i, 8)}-0000-4000-8000-${hex(i + 1, 12)}`, groupName: `${id}-INT`, families: { sonnet: ["claude-sonnet-4-5"], opus: ["claude-opus-4-1"] } };
+    if (i % 3 === 0) classes.PRM = { group: `${hex(0x2b3c0000 + i, 8)}-0000-4000-8000-${hex(i + 1, 12)}`, groupName: `${id}-PRM`, families: { sonnet: ["claude-sonnet-4-5"], opus: ["claude-opus-4-1"] } };
+    if (i % 4 === 1) classes.CYB = { group: `${hex(0x3c4d0000 + i, 8)}-0000-4000-8000-${hex(i + 1, 12)}`, groupName: `${id}-CYB`, families: { opus: ["claude-opus-4-1"], sonnet: ["claude-sonnet-4-5"] } };
     await store.create(seed(id, name, classes, {
       backendId: i === names.length - 1 ? "foundry-wus3" : i % 4 === 0 ? "foundry-swc" : "foundry-eus2",
       adminTags: [["finance", "pilot"], ["platform"], ["finance"], ["people", "pilot"], ["legal"], ["growth"]][i % 6],
@@ -118,7 +120,7 @@ if (mode === "seeded") {
     const doc = structuredClone(p.doc);
     for (const [code, c] of Object.entries(doc.classifications as Record<string, Doc>)) {
       const n = Number(String(doc.projectId).slice(-2));
-      (c.aggregateBudget as Doc).amount = doc.projectId === "PROJECT01" && code === "INT" ? 40 : 80 + (n % 5) * 40;
+      (c.aggregateBudget as Doc).amount = doc.projectId === "PROJECT01" && code === "PRM" ? 40 : 80 + (n % 5) * 40;
     }
     await store.replace(doc, p.etag);
   }
@@ -206,6 +208,10 @@ const demoEnv = mode === "seeded" ? {
   ADMIN_GATEWAY_RESOURCE_ID: "/subscriptions/3c1d5a0e-8f2b-4c6d-9e1a-7b2f4d8c0a11/resourceGroups/ccof-rg/providers/Microsoft.ApiManagement/service/ccof-apim",
   ADMIN_LOG_RESOURCE_IDS: "/subscriptions/3c1d5a0e-8f2b-4c6d-9e1a-7b2f4d8c0a11/resourceGroups/ccof-rg/providers/Microsoft.Web/sites/ccof-reconciler",
   ADMIN_RECONCILER_INTERVAL_MINUTES: "5",
+  // Client onboarding downloads (V3 project → Onboarding). Demo values, not a real tenant.
+  ADMIN_TENANT_ID: "0f1e2d3c-4b5a-4968-8776-655443322110",
+  ADMIN_CLIENT_ID: "5d6e7f80-9a1b-4c2d-8e3f-405162738495",
+  ADMIN_GATEWAY_URL: "https://ccof-apim.azure-api.net/claude",
 } : {};
 const kql = (name: string) => readFile(new URL(`../kql/${name}`, import.meta.url), "utf8");
 const sources = await Promise.all([kql("ledger.kql"), kql("pricing.kql"), kql("budgets.kql")]).then(([ledger, pricing, budgets]) => ({ ledger, pricing, budgets })).catch(() => null);

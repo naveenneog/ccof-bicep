@@ -11,10 +11,11 @@ import { LimitsEditor } from "../components/limits.tsx";
 import type { FamilyPolicy } from "../components/limits.tsx";
 import { FAMILIES, bucketLabel, trendBuckets } from "../components/panels.tsx";
 import { useSession } from "../components/shell.tsx";
+import { OnboardingTab } from "../components/onboarding.tsx";
 
 const TABS = [
   { id: "overview", label: "Overview" }, { id: "limits", label: "Models & limits" }, { id: "groups", label: "Access groups" },
-  { id: "budgets", label: "Budgets" }, { id: "settings", label: "Settings" }, { id: "activity", label: "Activity" },
+  { id: "budgets", label: "Budgets" }, { id: "onboarding", label: "Onboarding" }, { id: "settings", label: "Settings" }, { id: "activity", label: "Activity" },
 ];
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 
@@ -87,7 +88,8 @@ export function ProjectDetail({ id, tab }: { id: string; tab: string }) {
                 : active === "settings" ? <SettingsTab project={project} readOnly={readOnly}
                   onReview={(before, after) => saver.open("Review settings", before, after,
                     () => api(`/api/projects/${encodeURIComponent(id)}/settings`, { method: "PUT", body: changedOnly(before, after), ifMatch: etag }))} />
-                  : <ActivityTab id={id} />}
+                  : active === "onboarding" ? <OnboardingTab project={project} codes={codes} />
+                    : <ActivityTab id={id} />}
       </div>
     </div>
   );

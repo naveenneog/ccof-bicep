@@ -7,10 +7,11 @@ import type { Column } from "../components/ui.tsx";
 import { BurnDown, HBars, SplitBar, StackedColumns } from "../components/charts.tsx";
 import { ChartPanel, FAMILIES, TOKEN_CATEGORIES, bucketLabel, trendBuckets } from "../components/panels.tsx";
 import { PagerLite } from "./project-detail.tsx";
+import { useDebounced } from "./projects.tsx";
 
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-interface Filters { period: string; from: string; to: string; project: string; group: string; developer: string; model: string; backend: string; family: string; interval: string }
+interface Filters { period: string; from: string; to: string; project: string; group: string; developer: string; model: string; backend: string; family: string; classification: string; tags: string; interval: string }
 
 const money = (k: string, label = "Known cost"): Column<any> => ({ key: k, label, align: "end", render: (r) => usd(r[k]) });
 const common: Column<any>[] = [
@@ -49,15 +50,19 @@ export function Chargeback({ query }: { query: URLSearchParams }) {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const [f, setF] = useState<Filters>({
     period: query.get("period") ?? "month", from: monthStart, to: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString(),
-    project: query.get("project") ?? "", group: "", developer: "", model: "", backend: "", family: "", interval: "day",
+    project: query.get("project") ?? "", group: "", developer: GUID.test(query.get("developer") ?? "") ? query.get("developer")!.toLowerCase() : "",
+    model: "", backend: "", family: "", classification: (query.get("classification") ?? "").toUpperCase(), tags: query.get("tags") ?? "", interval: "day",
   });
-  const [draftText, setDraftText] = useState({ group: "", developer: "" });
+  const [draftText, setDraftText] = useState({ group: "", developer: f.developer });
+  const fq = useDebounced(f, 250);
+  const tagList = fq.tags.split(",").map((t) => t.trim()).filter(Boolean).join(",");
   const [view, setView] = useState("groups");
   const [top, setTop] = useState<"groups" | "projects">("groups");
   const [offset, setOffset] = useState(0);
   const filterQs = (extra: Record<string, string | number> = {}) => qs({
-    period: f.period, from: f.period === "custom" ? f.from : null, to: f.period === "custom" ? f.to : null,
-    project: f.project, group: f.group, developer: f.developer, model: f.model, backend: f.backend, family: f.family, ...extra,
+    period: fq.period, from: fq.period === "custom" ? fq.from : null, to: fq.period === "custom" ? fq.to : null,
+    project: fq.project, group: fq.group, developer: fq.developer, model: fq.model, backend: fq.backend, family: fq.family,
+    classification: fq.classification, tags: tagList, ...extra,
   });
   useEffect(() => setOffset(0), [JSON.stringify(f), view]);
   const totals = useQuery(`/api/v3/chargeback/totals${filterQs()}`);
@@ -131,6 +136,10 @@ export function Chargeback({ query }: { query: URLSearchParams }) {
           <ChoiceInput id={id} value={f.project} options={(projects.data?.projects ?? []).map((p: { projectId: string }) => p.projectId)}
             onChange={(project) => setF({ ...f, project: project.trim() })} emptyLabel="All projects" manualLabel="Enter a project ID…" />
         )}</Field>
+        <Field label="Classification">{(id) => <input id={id} className="input input-short" value={f.classification} placeholder="STD"
+          onChange={(e) => setF({ ...f, classification: e.target.value.trim().toUpperCase() })} autoComplete="off" spellCheck={false} />}</Field>
+        <Field label="Tags" hint="All must match">{(id, d) => <input id={id} aria-describedby={d} className="input" value={f.tags} placeholder="finance, pilot"
+          onChange={(e) => setF({ ...f, tags: e.target.value })} autoComplete="off" />}</Field>
         <Field label="Foundry backend">{(id) => (
           <select id={id} className="input" value={f.backend} onChange={(e) => setF({ ...f, backend: e.target.value })}>
             <option value="">All backends</option>{backends.map((b) => <option key={b}>{b}</option>)}

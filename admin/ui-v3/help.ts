@@ -10,6 +10,7 @@ export const HELP: Record<string, HelpTopic> = {
       ["Blank is not zero", "A dash means the amount is unknown (unpriced, unattributed or no data), never that nothing was spent."],
       ["Coverage", "Whether every observed request was priced and attributed. 'Incomplete' means some were not; open Chargeback → Unpriced."],
       ["Budgets near limit", "Access groups at 80 % or more of their monthly budget, from the reconciler's latest calculation."],
+      ["Cost breakdown", "Month-to-date known cost by project. Select a project slice (or legend row) to split it by classification (STD, PRM, CYB, ...), then select a classification. The users and models split beside the chart follow the selection. Tags select projects that carry all chosen tags."],
     ],
     permissions: ["Chargeback: Log Analytics Reader on the gateway telemetry workspace.", "Budgets and reconciler: Log Analytics Reader on the workspace with the reconciler's logs.", "Audit: Log Analytics Reader on the admin app's workspace."],
     troubleshooting: [["A panel says 'not configured'", "That integration's app setting is missing. Each panel names the setting or role it needs; the rest of the console still works."]],
@@ -33,6 +34,7 @@ export const HELP: Record<string, HelpTopic> = {
       ["Quota", "Tokens per period (usually monthly). Empty means no quota."],
       ["Aggregate limits", "Limits across all model families of the access group, on top of each family's own limit."],
       ["Person / group budget", "Monthly spend caps in USD or CCU (100 CCU = USD 1). Strict mode blocks when exhausted; notify only reports."],
+      ["Onboarding", "Per classification, download config.json (the CCOF helper's client configuration, with this project's selector header and allowed models) and onboarding.json (group, install paths and steps). No secrets are included. Missing admin settings (ADMIN_CLIENT_ID, ADMIN_GATEWAY_URL, ...) are listed and filled with REPLACE- placeholders the client refuses."],
     ],
     permissions: ["Editing needs CCOF.Projects.Write. Every save shows the field-level change first and is sent with the version tag (If-Match), so a concurrent change is never overwritten."],
     troubleshooting: [

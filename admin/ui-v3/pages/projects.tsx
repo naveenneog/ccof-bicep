@@ -7,7 +7,7 @@ import { Meter } from "../components/charts.tsx";
 import { useSession } from "../components/shell.tsx";
 
 const PAGE = 25;
-function useDebounced<T>(value: T, ms = 300): T {
+export function useDebounced<T>(value: T, ms = 300): T {
   const [v, setV] = useState(value);
   useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
   return v;

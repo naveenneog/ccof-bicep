@@ -9,9 +9,9 @@ One ZIP serves both consoles. V2 stays at `/api/console` and is unchanged; V3 is
 
 | Page | What it shows | Data |
 | --- | --- | --- |
-| Overview | Month-to-date known list cost stacked by model family (with its data table), needs-attention list (groups at ≥ 80 % of budget, incomplete coverage, late reconciler, failing probes), telemetry and reconciler facts, recent changes | `/api/v3/chargeback/{trend,totals,coverage}`, `/api/v2/budgets`, `/api/v3/reconciler/runs`, `/api/v2/health`, `/api/v3/audit` |
+| Overview | **Cost breakdown** (full width): overall known cost, tag toggles and a project picker; a project donut (top 7 + "N more") → select a project for its classification donut (STD, PRM, CYB, ...) → select a classification; the **users** split (top 8 by cost, Entra Object IDs) and **models** donut beside it follow the selection, and unknown cost is never drawn as zero. Then month-to-date known list cost stacked by model family (with its data table), needs-attention list (groups at ≥ 80 % of budget, incomplete coverage, late reconciler, failing probes), telemetry and reconciler facts, recent changes | `/api/v3/chargeback/{projects,classifications,developers,models,trend,totals,coverage}`, `/api/v2/budgets`, `/api/v3/reconciler/runs`, `/api/v2/health`, `/api/v3/audit` |
 | Projects | Full-width table, 25 a page with continuation tokens; search, tags (all must match), backend and classification filters; budget used per project | `/api/v2/projects` (new `tags`, `classification` filters), `/api/v2/budgets` |
-| Project detail | Tabs: Overview (cost trend, group budget use, facts), Models & limits (editor, review, save), Access groups, Budgets (person/group budgets in USD or CCU, burn-down, budget assistant with *Apply to limits*), Settings (name, tags, backend, subscription), Activity | `/api/projects/{id}` and its existing PUT/PATCH routes with If-Match, `/api/v3/plan`, `/api/v3/audit` |
+| Project detail | Tabs: Overview (cost trend, group budget use, facts), Models & limits (editor, review, save), Access groups, Budgets (person/group budgets in USD or CCU, burn-down, budget assistant with *Apply to limits*), **Onboarding** (per classification: download `config.json` for the developer's CCOF helper and `onboarding.json` for whoever onboards the team, with a preview, install paths and steps), Settings (name, tags, backend, subscription), Activity | `/api/projects/{id}` and its existing PUT/PATCH routes with If-Match, `/api/v3/plan`, `/api/v3/audit`, `/api/v3/projects/{id}/client-config` |
 | New project | Stepper: Basics → Access groups → Models & budget (with the assistant) → Review (the exact document) → `POST /api/projects` | existing |
 | Chargeback | Totals, coverage state, rate-card version, observation time, "list price, not an invoice"; charts each paired with a data table: cost over time by family (hour/day bins), cost by token category, top groups/projects, budget burn-down; breakdown tabs (groups, developers, models, families, projects, unpriced, diagnostics) paged ≤ 500 rows; CSV export with `truncated` flag | `/api/v3/chargeback/{view}` |
 | Budgets | Group and person budget counts, spend, capped use; burn-down per access group; snapshots table (groups or people) | `/api/v3/reconciler/{summary,snapshots}`, `/api/v2/budgets` |
@@ -58,10 +58,17 @@ change.
 | `ADMIN_RECONCILER_INTERVAL_MINUTES` | Reconciler freshness (optional) | Timer interval matching `RECONCILER_SCHEDULE`, default 5 |
 | `ADMIN_BUDGET_LOOKBACK_DAYS` | Reconciler (optional) | 1–93, default 31 |
 | `ADMIN_AUDIT_WORKSPACE_ID` | Audit (as V2) | Admin app's own workspace when it differs |
+| `ADMIN_CLIENT_ID` | Onboarding downloads | Application (client) ID of the CCOF client app registration developers sign in with |
+| `ADMIN_CLIENT_TENANT_ID` | Onboarding downloads (optional) | Entra tenant GUID for the client; defaults to `ADMIN_TENANT_ID` |
+| `ADMIN_CLIENT_SCOPE` | Onboarding downloads (optional) | Token scope; defaults to `api://<ADMIN_CLIENT_ID>/access_as_user` |
+| `ADMIN_GATEWAY_URL` | Onboarding downloads | Gateway base URL the client calls, `https://…` without `/v1` (same value as the client's `gatewayUrl`) |
+| `ADMIN_PROJECT_HEADER` | Onboarding downloads (optional) | Project selector header, default `x-ccof-project` |
 | `ADMIN_CONFIG_CONTAINER` | Saving cost definitions (as V2) | Cosmos container; when a catalog is saved, chargeback and the budget assistant use its rate card |
 
 A missing or invalid setting disables only its feature, which then shows its capability state
 (`disabled`, `permission_required`, `unavailable`) with the reason and the permission that enables it.
+Without the client settings the Onboarding tab still generates both files but lists the missing settings
+and writes `REPLACE-…` placeholders in their place, which the client's validator refuses.
 
 ## Permissions
 
@@ -85,7 +92,8 @@ People: reading needs `CCOF.Projects.Read` (or `ADMIN_READER_IDS`); changes need
 
 | Route | Behavior |
 | --- | --- |
-| `GET /api/v3/chargeback/{view}` | `view`: totals, groups, developers, models, families, projects, trend, coverage, unpriced, diagnostics. Query: `period` (month, previous, custom), `from`/`to` (UTC, custom only), `project`, `group` and `developer` (Object IDs), `model`, `backend` (request-time `backendId`), `family`, `interval` (hour, day), `limit` (1–500, default 100), `offset`. Unknown or repeated parameters return 400. |
+| `GET /api/v3/chargeback/{view}` | `view`: totals, groups, developers, models, families, projects, classifications (project × classification), trend, coverage, unpriced, diagnostics. Query: `period` (month, previous, custom), `from`/`to` (UTC, custom only), `project`, `group` and `developer` (Object IDs), `model`, `backend` (request-time `backendId`), `family`, `classification`, `tags` (comma-separated, ≤ 10, all must match; resolved to project IDs from the registry, refused with 400 `tag_matches_too_many_projects` above 2,000 projects; no match selects nothing), `interval` (hour, day), `limit` (1–500, default 100), `offset`. Unknown or repeated parameters return 400. |
+| `GET /api/v3/projects/{id}/client-config?classification=STD` | Reader. Returns `config` (validates with `client/src/config.mjs`: tenant, client, scope, gateway URL, the classification's models by family, a stable Desktop profile ID, `project {id, selectorHeader}`), `onboarding` (Entra group, models, install paths, steps), `missing` and `complete`. No secrets. 400 invalid classification, 404 unknown project or classification, 409 classification without models. |
 | `GET /api/v3/reconciler/runs` | Latest run per outcome and reason, with `ageMinutes` and `freshness` against the interval |
 | `GET /api/v3/reconciler/snapshots`, `/summary` | `period`, `scope` (person, group), `project`, `classification`, `person`, `state` (current, expired, historical, invalid_event), `budgetState`, `limit`, `offset`; exact USD equivalents |
 | `GET /api/v3/audit` | `project`, `actor`, `operation`, `outcome`, `from`, `to` (≤ 93 days, default last 31), `limit`, `offset` |

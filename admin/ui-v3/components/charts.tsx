@@ -167,3 +167,68 @@ export function Meter({ value, max, label }: { value: number | null; max: number
     </svg>
   );
 }
+
+// Share-of-cost donut. Slices take the categorical palette (pie-0..pie-7, then pie-other). The legend is
+// the interactive surface: each entry is a button when onSelect is given, so drill-down works from the
+// keyboard; slices repeat the click for pointer users. Items with unknown cost are excluded from the
+// arcs and counted in the caption, never drawn as zero.
+export interface DonutItem { key: string; label: string; value: number | null; other?: boolean }
+export const DONUT_SLICES = 7;
+
+export function topWithOther(items: DonutItem[], max = DONUT_SLICES): DonutItem[] {
+  const known = items.filter((i) => i.value !== null && i.value > 0).sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  if (known.length <= max + 1) return known;
+  const rest = known.slice(max);
+  return [...known.slice(0, max), { key: ":other", label: `${rest.length} more`, value: rest.reduce((s, i) => s + (i.value ?? 0), 0), other: true }];
+}
+
+function arc(cx: number, cy: number, r: number, inner: number, a0: number, a1: number): string {
+  const p = (rad: number, a: number) => `${(cx + rad * Math.sin(a)).toFixed(2)},${(cy - rad * Math.cos(a)).toFixed(2)}`;
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M${p(r, a0)} A${r},${r} 0 ${large} 1 ${p(r, a1)} L${p(inner, a1)} A${inner},${inner} 0 ${large} 0 ${p(inner, a0)} Z`;
+}
+
+export function Donut({ items, format, label, centerLabel, centerValue, onSelect, selected, size = 200, unknownCount = 0 }: {
+  items: DonutItem[]; format: (n: number | null) => string; label: string; centerLabel: string; centerValue: string;
+  onSelect?: (key: string) => void; selected?: string; size?: number; unknownCount?: number;
+}) {
+  const total = items.reduce((s, i) => s + (i.value ?? 0), 0);
+  const r = size / 2 - 2, inner = r * 0.62, c = size / 2;
+  const share = (v: number | null) => total > 0 && v ? `${(v / total * 100).toFixed(v / total < 0.1 ? 1 : 0)}%` : "—";
+  const cls = (i: number, item: DonutItem) => item.other ? "pie-other" : `pie-${i % 8}`;
+  let a = 0;
+  const slices = items.map((item, i) => {
+    const sweep = total > 0 ? ((item.value ?? 0) / total) * Math.PI * 2 : 0;
+    const a0 = a; a += sweep;
+    return { item, i, a0, a1: a, sweep };
+  });
+  const pick = (item: DonutItem) => onSelect && !item.other ? () => onSelect(item.key) : undefined;
+  return (
+    <div className="donut">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
+        aria-label={`${label}. Total ${centerValue} across ${items.length} slices${unknownCount ? `; ${unknownCount} with unknown cost not drawn` : ""}. The legend lists every value.`}>
+        {total <= 0 ? <circle cx={c} cy={c} r={(r + inner) / 2} className="donut-empty" strokeWidth={r - inner} />
+          : slices.map(({ item, i, a0, a1, sweep }) => sweep >= Math.PI * 2 - 1e-6
+            ? <circle key={item.key} cx={c} cy={c} r={(r + inner) / 2} strokeWidth={r - inner} className={`donut-ring ${cls(i, item).replace("pie-", "pie-stroke-")}`} onClick={pick(item)} />
+            : <path key={item.key} d={arc(c, c, r, inner, a0, a1)} onClick={pick(item)}
+              className={`donut-slice ${cls(i, item)}${selected === item.key ? " is-selected" : ""}${pick(item) ? " is-clickable" : ""}`}>
+              <title>{`${item.label}: ${format(item.value)} (${share(item.value)})`}</title></path>)}
+        <text x={c} y={c - 6} textAnchor="middle" className="donut-value">{centerValue}</text>
+        <text x={c} y={c + 14} textAnchor="middle" className="axis-label">{centerLabel}</text>
+      </svg>
+      <ul className="donut-legend" aria-label={`${label} legend`}>
+        {slices.map(({ item, i }) => {
+          const body = <>
+            <svg width="10" height="10" aria-hidden="true"><rect width="10" height="10" rx="2" className={cls(i, item)} /></svg>
+            <span className="donut-legend-label">{item.label}</span>
+            <span className="donut-legend-value">{format(item.value)}</span>
+            <span className="donut-legend-share">{share(item.value)}</span>
+          </>;
+          return <li key={item.key}>{pick(item)
+            ? <button type="button" className={`donut-legend-row${selected === item.key ? " is-selected" : ""}`} aria-pressed={selected === item.key} onClick={pick(item)}>{body}</button>
+            : <span className="donut-legend-row">{body}</span>}</li>;
+        })}
+      </ul>
+    </div>
+  );
+}
