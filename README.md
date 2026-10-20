@@ -91,9 +91,9 @@ Do not aim a mock-only load command at an existing real Foundry route.
 ## Evidence and limits
 
 The [configurable staged deployment](docs/runbooks/STAGED-DEPLOYMENT-V2.md)
-documents Stage 1 inputs, operator permissions and commands. Its
-[Azure live proof](docs/STAGE1-LIVE-VERIFICATION.md) verifies resource-only
-provisioning; the later-stage entry points and application acceptance remain separate.
+runs CCOF in nine stages (`infra/staged/Invoke-StagedDeployment.ps1`), each with its own operator
+permissions, preview, apply and read-back. The [live run report](docs/STAGED-LIVE-RUN-2026-10-20.md)
+records all nine stages in a lab RG, from resources to authenticated model calls, with screenshots.
 
 Offline tests are not live acceptance. Earlier quickstart seed resynchronization was
 reported live-verified, but that does not prove the integrated v3 route, combined

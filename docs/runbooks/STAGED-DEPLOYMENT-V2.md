@@ -1,182 +1,172 @@
 # Configurable staged deployment
 
-Stage 1 was deployed and read back in Azure on 2026-10-20. The remaining stages
-below describe the agreed separation; this document does not claim that separate
-entry points for stages 2-8 have been implemented.
+CCOF deploys in nine stages, run one at a time by
+[`infra/staged/Invoke-StagedDeployment.ps1`](../../infra/staged/Invoke-StagedDeployment.ps1).
+Each stage has its own operator permission boundary, a preview, an apply, and a read-back
+verification. All nine stages ran end to end in a new lab resource group on 2026-10-20;
+the evidence and screenshots are in the [live run report](../STAGED-LIVE-RUN-2026-10-20.md).
 
-The existing [four-stage runbook](STAGED-CUSTOMER-DEPLOYMENT.md) remains available.
-Its stage numbers differ. The resource-only Stage 1 entry point is the same.
-The [live report](../STAGE1-LIVE-VERIFICATION.md) records the tested configuration.
+The [four-stage runbook](STAGED-CUSTOMER-DEPLOYMENT.md) and the
+[quickstart](../QUICKSTART.md) remain available. This path reuses the quickstart's Bicep modules
+and PowerShell functions; it does not change them.
+
+## How a stage runs
+
+The entry script holds parameters and dispatch; the stages live in `Staged.Common.ps1`
+(configuration, state, Azure and Graph helpers), `Staged.Resources.ps1` (stages 0-4),
+`Staged.Entra.ps1` (stage 5) and `Staged.Application.ps1` (stages 6-8).
+
+```powershell
+$cfg = 'C:\private\ccof\staged.config.json'   # private copy of infra\staged\staged.config.example.json
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 1 -ConfigPath $cfg          # preview only
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 1 -ConfigPath $cfg -Apply   # change, then verify
+```
+
+- **Preview** is the default. Bicep stages run `az deployment group what-if`; script stages print
+  their plan. Nothing changes.
+- **Apply** deploys, then reads the result back from Azure (or Entra). A failed read-back stops
+  the stage with `verify_failed: <reason>` and records nothing.
+- **State.** Each verified stage writes its outputs to `<config dir>\.staged-state\state.json`.
+  A stage refuses to start before the stages it reads (`stage_order`). Read-back evidence is
+  written to `.staged-state\evidence\`.
+- **Rerun.** Every stage can be rerun; deployments are Incremental with deterministic names.
+  Stage 1 alone refuses a non-empty resource group, except to resume and verify a
+  `stage1-services` deployment that already succeeded there.
+- **Windows.** `az.cmd` passes arguments through cmd.exe, so no argument holds `( ) | & < > ^`;
+  bodies and queries travel in files or over REST. Entra display names are limited to letters,
+  digits, space, `.`, `_` and `-` for the same reason.
+- Use a separate `AZURE_CONFIG_DIR` for the operator profile; the driver never runs `az login`
+  or `az account set`.
 
 ## Stages and permission boundaries
 
-Operator permissions and permissions granted to runtime identities are distinct.
-Azure Contributor does not grant Azure RBAC assignment rights or Cosmos data access.
+Operator permissions are the person or pipeline running the stage. Runtime grants are what
+the deployed identities receive, and are created only by Stage 4.
 
-| Stage | Work | Operator permission boundary | Exit evidence |
-| --- | --- | --- | --- |
-| 0 | Read approved inputs, existing resources, subscriptions, regions and policies | Azure Reader on referenced scopes; separately authorized directory reads | Explicit inventory; inaccessible is not absent |
-| 1 | New service resources and identities only | Resource-group Contributor, or equivalent resource/deployment actions listed below | Successful provisioning, exact resource and principal inventory, boundary read-back |
-| 2 | Network integration, private endpoints, approvals and DNS | Network Contributor on approved networks; DNS-zone write/link and VNet join rights; endpoint approval rights on targets | Connectivity from real caller networks |
-| 3 | Cosmos database/container structure | Cosmos database/container management actions on the account | Partition keys, indexing and capacity match approved inputs |
-| 4 | Runtime Azure and Cosmos-native access grants | Azure role-assignment rights at each scope; separate Cosmos SQL role-definition/assignment actions | Principal, role, scope and effective access verified |
-| 5 | Entra registrations, scopes, app roles, assignments and optional Graph consent | Authorized application owner/administrator and group permissions; appropriate privileged administrator for Graph application consent | Registration and consent handoff, verified token claims |
-| 6 | Application settings, APIM configuration, diagnostics and workbook content | Site configuration, APIM and monitoring write rights at selected scopes | Settings/policy read-back; schedules stay disabled |
-| 7 | Pinned code packages and approved initial data | Function publishing rights; scoped Cosmos data-write rights from a reachable host | Package hashes, handler registration and seed verification |
-| 8 | E2E, negative tests, bounded load and activation | Test identities, telemetry read access and explicit activation rights | Acceptance evidence and rollback handoff |
+| Stage | Entry point | Creates or changes | Operator permission | Verified by read-back |
+| --- | --- | --- | --- | --- |
+| 0 | driver only | Nothing (read-only) | Reader on the target subscription, RG and backend accounts; directory read of groups | Tenant, empty RG, providers, Flex region, backend deployments, operator |
+| 1 | [`main.bicep`](../../infra/staged/main.bicep) | Workspace, Cosmos account, identities, four Flex apps with storage and Insights, optional new APIM | RG Contributor; subscription `resourceGroups/write` to create the RG | Apps with zero settings, keyless storage, no database, zero role assignments |
+| 2 | [`stage2-network.bicep`](../../infra/staged/stage2-network.bicep) + VNet integration | VNet, subnets, private DNS zones and links, private endpoints, site VNet integration | Network Contributor on the VNet, private DNS zone write and link, site write | Endpoints Approved with DNS records; every app integrated |
+| 3 | [`stage3-schema.bicep`](../../infra/staged/stage3-schema.bicep) | Cosmos database and containers | Cosmos database/container write (Contributor on the account) | Containers and partition keys; no data roles yet |
+| 4 | [`stage4-grants.bicep`](../../infra/staged/stage4-grants.bicep) | Azure RBAC, Cosmos SQL role definitions and assignments, APIM grant on Foundry | Role Based Access Control Administrator (or Owner) at each scope, including the Foundry account; Cosmos `sqlRoleDefinitions/write` and `sqlRoleAssignments/write` | Every assignment by principal and scope; none for other principals |
+| 5 | driver (Microsoft Graph) | App registrations (new or merged), scopes, roles, preauthorized clients, groups and members | Application owner or Application Administrator; group owner or Groups Administrator | Identifier URI, v2 tokens, `access_as_user` scope |
+| 6 | [`stage6-config.bicep`](../../infra/staged/stage6-config.bicep) | App settings, resolver authentication, APIM API/backends/policy, API telemetry, workbook | Site config write, APIM service contributor, workbook write | Setting names per app, resolver `Return401`, API path, policy hash; timers off |
+| 7 | driver | Code packages, registry seed, delegated membership snapshot, client file | Function publishing (site write); settings write on the sync app; Graph read of the groups (delegated) | Functions listed, seed outcomes, sync run counts, client validator |
+| 8 | driver | Model calls only | A gateway caller identity; Log Analytics read | 401/200/403 matrix, admin endpoints, LLM logs in the workspace |
 
-Stage 1 includes per-service diagnostic settings. Stage 6 covers subsequent
-application/APIM telemetry configuration, not a second creation of those settings.
-Stages 2 and 5 can progress independently when their dependencies exist.
-Private storage/network reachability gates publishing regardless of stage number.
+Stages 2 and 5 do not depend on each other. Publishing (Stage 7) needs Stage 2 when storage is
+private: a Flex app writes its package to its own deployment storage through its VNet.
 
-## Stage 1: resources only
+## Configuration file
 
-Entry point: `infra/staged/main.bicep`. It creates:
+One JSON file drives every stage:
+[`infra/staged/staged.config.example.json`](../../infra/staged/staged.config.example.json).
+The driver refuses it until the placeholders are replaced. Sections:
 
-- One Log Analytics workspace and one Cosmos account.
-- Sync and reconciler user-assigned managed identities.
-- Resolver, sync and reconciler Flex Function services, plus admin when enabled.
-  Each service has its own plan, storage account, private-access blob container,
-  Application Insights component and Function log diagnostic setting.
-- An optional new APIM shell, only with explicit public-bootstrap approval.
+| Section | Read by | Notes |
+| --- | --- | --- |
+| `tenantId`, `subscriptionId`, `resourceGroup`, `location`, `tags` | all | GUIDs are validated |
+| `stage1` | 1 | Exactly the `main.bicep` parameters. Defaults: every public network access `Disabled`, APIM deferred, `StandardV2` |
+| `network` | 2 | `mode: create` (VNet, subnets, zones) or `existing` (subnet and zone IDs) |
+| `cosmos` | 3, 4 | Database name, capacity mode, custom role names |
+| `apim` | 4, 6 | `existing` APIM, or the Stage 1 one; API id, path and display name |
+| `backends` | 0, 4, 6 | Foundry accounts, deployment names and inference geography |
+| `entra` | 5 | Display names to create, or `existing` app IDs to merge into; `allowAzureCliClient` |
+| `groups` | 5, 7 | Project, classification, `groupId` or `groupDisplayName`, members, family policy and budgets |
+| `client` | 7 | Project, classification and model aliases for `config.json` |
+| `resolver`, `sync`, `reconciler`, `budgetState`, `gateway`, `syncTimerEnabled` | 6 | Same meaning as in the quickstart |
+| `rateCard`, `workbook` | 6, 7 | Repository-relative rate card; a new workbook GUID |
+| `admin` | 6 | `v3Enabled`; `extraAllowedClientIds` (empty; test clients only) |
+| `acceptance` | 8 | Allowed and denied project/model pairs with the expected status |
 
-It does not create application settings, code packages, Cosmos databases, runtime
-role assignments, Entra objects, API/backend policies or network attachments.
-The shell's required Node runtime and identity-backed deployment storage reference
-are platform properties, not a published application.
+## Stage notes
 
-### Operator permissions
+### Stage 0: read-only checks
+Fails on a provider that is not registered, a region without Flex Consumption, or a backend that
+lacks a configured deployment. Registering providers needs subscription Contributor and is not
+done by the driver.
 
-| Scope / operation | Required access |
-| --- | --- |
-| Existing target RG | `Microsoft.Resources/deployments/*` and read/write actions for the resource types below; RG Contributor is the standard built-in role |
-| Resource types | `Microsoft.OperationalInsights/workspaces`, `Microsoft.DocumentDB/databaseAccounts`, `Microsoft.ManagedIdentity/userAssignedIdentities`, `Microsoft.Storage/storageAccounts` and blob service/container children, `Microsoft.Web/serverfarms`, `Microsoft.Web/sites`, `Microsoft.Insights/components`, `Microsoft.Insights/diagnosticSettings` |
-| Attaching a user-assigned identity | `Microsoft.ManagedIdentity/userAssignedIdentities/assign/action` on the selected identity; identities in this stage are newly created in the target RG |
-| Optional APIM | `Microsoft.ApiManagement/service` read/write and diagnostic-setting write at its scope |
-| New RG, if required | Subscription-scope `Microsoft.Resources/subscriptions/resourceGroups/write`; RG creation is separate from the template |
-| Unregistered provider, if required | Provider registration permission at subscription scope; no automatic registration in Stage 1 |
-| Verification | Read permissions on deployed resources, Cosmos database/SQL-role inventories, app-settings list and role-assignment inventories; some read-back operations use POST/list actions |
-
-No `Microsoft.Authorization/roleAssignments/write` or directory consent is needed
-by the Stage 1 template. The lab proof used the existing authorized operator; it
-did not establish least privilege by deploying under a newly restricted principal.
-Azure Policy and deny assignments can still prevent resource creation.
-
-### Configuration
-
-Both `main.bicepparam` and `main.parameters.example.json` are supported. The
-operator uses one private, reviewed parameter set for preview and deployment.
-
-| Parameter | Default / contract |
-| --- | --- |
-| `prefix` | Required, approved lowercase alphanumeric string, 3-8 characters; suffix derives from RG ID and prefix |
-| `location`, `tags` | RG location; empty tags |
-| `includeAdmin` | `true`; `false` omits only the new admin service |
-| `cosmosCapacityMode` | `serverless`; alternatively `provisioned`; SQL database throughput belongs to schema stage |
-| `retentionInDays` | 30, range 30-730 |
-| `storageSku` | `Standard_LRS`; alternatively `Standard_ZRS`, subject to region/policy availability |
-| `cosmosPublicNetworkAccess`, `storagePublicNetworkAccess`, `functionsPublicNetworkAccess` | `Disabled`; the proof retained all three defaults |
-| `maximumInstanceCount`, `instanceMemoryMB` | 40 maximum instances per app, 2048 MB; these are scaling limits, not a reservation of 40 running instances |
-| `approveNewPublicApimBootstrap` | `false`; APIM is deferred, not silently created with public ingress |
-| `apimPublisherEmail`, `apimPublisherName` | Required approved values only when APIM bootstrap is authorized |
-| `apimSku`, `apimUnits` | `StandardV2`, 1; APIM was not deployed in this proof |
-
-### Build, preview and deploy
-
-The target must be a newly approved empty RG. ARM is upsert-based, not an atomic
-create-only API. This path is not an update or resume command for a partially
-populated RG. Existing environment discovery belongs to Stage 0.
-
-The commands use PowerShell 7.2+. Subscription selection is explicit, and no
-`az account set` is required. An isolated `AZURE_CONFIG_DIR` avoids changing a
-shared operator profile. Authentication occurs in that profile before live use.
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$sub = 'REPLACE-approved-subscription-guid'
-$rg = 'REPLACE-approved-empty-resource-group'
-$parameters = 'REPLACE-private-absolute-path-to-parameters.json'
-if ($sub -notmatch '^[0-9a-fA-F-]{36}$' -or
-    $rg -notmatch '^[A-Za-z0-9_-]{1,90}$' -or
-    -not (Test-Path -LiteralPath $parameters)) { throw 'Approved inputs required.' }
-if ($parameters -match '[&|<>^()]') { throw 'Unsupported native argument characters in parameter path.' }
-$values = (Get-Content -LiteralPath $parameters -Raw | ConvertFrom-Json).parameters
-if ($values.prefix.value -cnotmatch '^[a-z0-9]{3,8}$') { throw 'Invalid prefix.' }
-if ($values.approveNewPublicApimBootstrap.value -and
-    (-not $values.apimPublisherEmail.value -or -not $values.apimPublisherName.value)) {
-    throw 'Approved APIM publisher details required.'
-}
-az account show --subscription $sub --query '{subscription:id,tenant:tenantId}' -o json
-if ($LASTEXITCODE) { throw 'Subscription verification failed.' }
-```
-
-```powershell
-az bicep build --file infra\staged\main.bicep --stdout | Out-Null
-if ($LASTEXITCODE) { throw 'Stage 1 compilation failed.' }
-pwsh -NoProfile -File tests\Test-StagedCustomerDeployment.ps1
-if ($LASTEXITCODE) { throw 'Stage 1 boundary checks failed.' }
-$inventory = az resource list --subscription $sub -g $rg -o json
-if ($LASTEXITCODE) { throw 'Target inventory could not be read.' }
-if (@(($inventory -join "`n" | ConvertFrom-Json)).Count) { throw 'Target RG is not empty.' }
-az deployment group what-if --subscription $sub -g $rg -n stage1-services `
-    --template-file infra\staged\main.bicep --parameters "@$parameters" `
-    --no-pretty-print --output json
-if ($LASTEXITCODE) { throw 'Preview failed.' }
-```
-
-The preview must contain only approved new resources, no changes to existing
-resources, and no network/grant/schema resources. Review the entire preview.
-`--no-pretty-print` is necessary for machine-readable what-if JSON; `-o json`
-alone did not produce JSON in the tested Azure CLI.
-
-```powershell
-# After reviewing the preview, recheck immediately before applying.
-$inventory = az resource list --subscription $sub -g $rg -o json
-if ($LASTEXITCODE) { throw 'Target inventory failed.' }
-if (@(($inventory -join "`n" | ConvertFrom-Json)).Count) { throw 'Target changed; stop.' }
-az deployment group create --subscription $sub -g $rg -n stage1-services `
-    --mode Incremental --template-file infra\staged\main.bicep `
-    --parameters "@$parameters" --output json
-if ($LASTEXITCODE) { throw 'Inspect deployment operations; do not blindly retry.' }
-```
-
-### Outputs, verification and recovery
-
-Outputs include workspace ARM/customer IDs, Cosmos ARM ID/endpoint, each service's
-app/plan/storage/Insights IDs, hostnames and principal IDs, and APIM's explicit
-deferred/deployed state. These are an inventory, not an application-ready flag.
-
-Read-back checks cover all deployed services, not one representative app:
-public ingress Disabled, no VNet attachment, Node 22 Flex runtime, real principal
-IDs, zero application settings, private/keyless storage with firewall Deny and no
-bypass, private deployment containers and diagnostic targets. Cosmos has local
-auth disabled, no SQL databases and no data-role assignments. Azure grants within
-the new RG are absent; inherited operator permissions are not counted as stage
-outputs. See the [live evidence](../STAGE1-LIVE-VERIFICATION.md).
-
-Expected inventory with admin included: 20 template resources, plus one
-`Failure Anomalies - <app>-ai` smart-detector alert rule per Application Insights
-component, created minutes later by the Azure Smart Alerts platform identity
+### Stage 1: resources only
+No settings, schema, grants, network attachment or code. With
+`approveNewPublicApimBootstrap: true` a new APIM is created through
+[`apim-service.bicep`](../../infra/staged/apim-service.bicep), with public ingress (APIM cannot be
+created with public access disabled before a private endpoint exists). `BasicV2` has no VNet
+integration; use `StandardV2` when any backend is private. Application Insights adds one
+"Failure Anomalies" smart-detector rule per component a few minutes after creation
 ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/proactive-failure-diagnostics)).
-Count only those as expected extras. Run `az` queries without parentheses in
-`--query` on Windows (for example count in PowerShell), because `az.cmd` passes
-arguments through cmd.exe.
 
-If deployment fails, read parent and nested operations and retain the inventory.
-A nonempty RG blocks the create-new procedure. A recovery plan must explicitly
-target the partially created resources and preserve the same names/parameters;
-changing the prefix creates a different stack. Automatic deletion, public access,
-storage keys and hidden grants are not recovery actions.
+### Stage 2: network
+`mode: create` reuses [`infra/prereqs/network.bicep`](../../infra/prereqs/network.bicep), whose
+subnet list is authoritative: run it once per VNet. The driver then attaches each Function App
+to the Functions subnet one at a time (parallel joins failed with `ServiceAssociationLinkLease`).
+The lab run took 11 minutes, mostly private endpoint creation.
 
-After successful deployment the service shells remain nonfunctional until their
-later-stage dependencies are configured. Retained lab resources can incur charges.
-Cleanup or promotion is a separately approved operation.
+### Stage 3: schema
+The container list equals the quickstart's; `adminConfig` is added when the admin app is included.
+`tests/Test-StagedStages.ps1` compares the two lists.
+
+### Stage 4: runtime grants
+| Principal | Grants |
+| --- | --- |
+| Each app | Storage Blob Data Owner on its own storage; Monitoring Metrics Publisher on its own Insights |
+| Reconciler, admin | Log Analytics Reader on the workspace |
+| Resolver | Cosmos Built-in Data Reader on the database |
+| Sync | Entitlement writer on `entitlement` and `syncLease`; reader and create-only writer on `projects`; create-only writer on `backends` |
+| Reconciler | Reader on `projects` and `entitlement`; state writer on `budgetState`, `aggregateBudgetState`, `reconcilerLease` |
+| Admin | Project editor (read, query, create, replace; no delete or upsert) on `projects` and `adminConfig` |
+| APIM identity | Cognitive Services User on each Foundry account |
+
+Removing a principal from the configuration does not delete an assignment made earlier.
+
+### Stage 5: Entra
+Creates or reuses three registrations: gateway API plus developer sign-in (one app,
+`access_as_user`, v2 tokens, public client), resolver API, and admin (`Projects.Manage`,
+`CCOF.Projects.Read`/`Write`, SPA redirects for `/api/console` and `/api/console-v3`, assignment
+required). For `existing` apps every list is merged: redirect URIs, identifier URIs,
+preauthorized clients, scopes and roles keep their current entries. The Microsoft Graph
+application permission for unattended sync is not part of this stage; `sync.mode:
+delegated-snapshot` needs none ([PERMISSIONS.md](../PERMISSIONS.md), rows 2-3).
+
+`entra.allowAzureCliClient` preauthorizes Azure CLI on the gateway app and adds its client ID to
+the gateway policy's delegated clients. Developers can then use `az account get-access-token`
+([client modes](../CLIENTS.md)); Stage 8 uses it for its test calls.
+
+### Stage 6: configuration
+Application settings are written as a complete set per app; this stage is the only settings
+writer, so rerun it rather than editing settings by hand. The resolver accepts only the APIM
+identity. Stage 1 owns the resource-log diagnostic settings; Stage 6 adds only the API-level
+logger and diagnostic. Timers stay off until `syncTimerEnabled` or `reconciler.timerEnabled` is
+set and Stage 6 is rerun.
+
+### Stage 7: code and initial data
+Publishes with `az functionapp deployment source config-zip` (the Flex publishing path), seeds
+`projects` and `backends` through the sync app's `registrySeed` function (create only), loads group
+membership from a delegated snapshot through `snapshotApply`, and writes `config.json` for the
+selected project, checked by `client/bin/validate-config.mjs`.
+
+### Stage 8: acceptance
+Requires the `acceptance` matrix. Checks: anonymous 401 at the gateway and at the resolver;
+each allowed pair 200; each denied pair the expected status; admin root 302 to V3, console 200,
+API 401 without a token; LLM logs in the workspace within 15 minutes.
+
+## Recovery
+
+- A failed apply records nothing. Read the deployment operations, fix the cause and rerun the
+  same stage; deterministic names make the rerun converge.
+- A partially created Stage 1 is resumed only when `stage1-services` succeeded; otherwise empty
+  or replace the RG under a separate approval.
+- Stage 5 never deletes Entra objects. Stage 4 never removes earlier assignments.
+- No recovery step enables public Cosmos/storage access, account keys or anonymous APIs.
 
 ## References
 
-- [Bicep deployment permissions](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-cli).
-- [Azure role-assignment permissions](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-template).
-- [APIM private endpoints and public-access constraints](https://learn.microsoft.com/en-us/azure/api-management/private-endpoint).
-- Source: `infra/staged/main.bicep`, `function-service.bicep`, and
-  `tests/Test-StagedCustomerDeployment.ps1`.
+- [Live run report, 2026-10-20](../STAGED-LIVE-RUN-2026-10-20.md) and the
+  [Stage 1 report](../STAGE1-LIVE-VERIFICATION.md).
+- [Bicep deployment permissions](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-cli);
+  [role assignments in templates](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-template);
+  [Cosmos DB data-plane RBAC](https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-setup-rbac);
+  [Flex Consumption deployment](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-by-using-azure-cli);
+  [APIM private endpoints](https://learn.microsoft.com/en-us/azure/api-management/private-endpoint).
+- Tests: `tests/Test-StagedStages.ps1` (stage boundaries, negative control, Cosmos contract, driver,
+  configuration) and `tests/Test-StagedCustomerDeployment.ps1` (Stage 1).

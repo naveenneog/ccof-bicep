@@ -1,5 +1,8 @@
 # Stage 1 live verification — 2026-10-20
 
+> The RG `ccof-stage1-20261020-rg` was deleted on 2026-10-20 (approved). Stages 1-8 then ran in
+> a new RG: see the [staged live run report](STAGED-LIVE-RUN-2026-10-20.md).
+
 Result: **PASS for resource-only provisioning and the checks below.**
 This is not a runtime, customer-policy, networking or Admin V3 acceptance result.
 

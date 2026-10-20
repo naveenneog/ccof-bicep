@@ -70,7 +70,8 @@ foreach ($name in 'cosmosPublicNetworkAccess', 'storagePublicNetworkAccess', 'fu
 Assert-Contract ($arm.parameters.approveNewPublicApimBootstrap.defaultValue -eq $false) 'Public APIM bootstrap must be explicit opt-in.'
 Assert-Contract ($arm.parameters.includeAdmin.defaultValue -eq $true) 'Separate admin service must be included by default.'
 $apim = @($resources | Where-Object type -EQ 'Microsoft.ApiManagement/service')
-Assert-Contract ($apim.Count -eq 1 -and $apim[0].condition -match "parameters\('approveNewPublicApimBootstrap'\)") 'APIM must be conditional on approval of NEW public bootstrap.'
+$apimModules = @($arm.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and @($_.properties.template.resources | Where-Object type -EQ 'Microsoft.ApiManagement/service').Count })
+Assert-Contract ($apim.Count -eq 1 -and $apimModules.Count -eq 1 -and $apimModules[0].condition -match "parameters\('approveNewPublicApimBootstrap'\)") 'APIM must be conditional on approval of NEW public bootstrap.'
 Assert-Contract ($arm.outputs.apimId.value -match "if\(parameters\('approveNewPublicApimBootstrap'\).*, ''\)") 'Deferred APIM must have an empty ID, not a pretend deployed resource.'
 $cosmos = @($resources | Where-Object type -EQ 'Microsoft.DocumentDB/databaseAccounts')[0]
 Assert-Contract ($cosmos.properties.disableLocalAuth -eq $true) 'Cosmos local auth must remain disabled.'

@@ -1,5 +1,20 @@
 # Change log
 
+## 2026-10-20 — Stages 2-8 implemented and run live
+
+- New entry points in `infra/staged`: `stage2-network.bicep`, `stage3-schema.bicep`,
+  `stage4-grants.bicep`, `stage6-config.bicep` (+ `stage6-api-telemetry.bicep`), and the driver
+  `Invoke-StagedDeployment.ps1` (stages 0-8: preview by default, apply, read-back, state).
+  Configuration: `staged.config.example.json`.
+- Stage 1: optional APIM moved into `apim-service.bicep` (what-if failed on the conditional scope);
+  `BasicV2` allowed; outputs `names` and `apimName` for later stages.
+- Live run in a new lab RG after deleting the Stage 1 RG: all nine stages verified, gateway
+  401/200/403 matrix, Admin V3 with live chargeback data
+  ([report](STAGED-LIVE-RUN-2026-10-20.md), 20 screenshots in `docs/images/staged`).
+- Tests: `tests/Test-StagedStages.ps1` (stage boundaries with a negative control, Cosmos
+  contract against the quickstart, driver and configuration checks).
+- Runbook rewritten: [configurable staged deployment](runbooks/STAGED-DEPLOYMENT-V2.md).
+
 ## 2026-10-20 — Stage 1 resources-only proof
 
 - Completed live provider verification of the existing staged templates in an

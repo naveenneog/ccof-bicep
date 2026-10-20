@@ -1,5 +1,21 @@
 # Current work
 
+## Staged deployment, stages 0-8
+
+**Active packet:** S2 — staged entry points for stages 2-8 and a live end-to-end run (complete).
+
+Status: verified, 2026-10-20, in the new lab RG `ccof-staged-20261020-rg`
+([report](STAGED-LIVE-RUN-2026-10-20.md)). The Stage 1 RG below was deleted first.
+
+Open items:
+
+- Private-only variant (StandardV2 APIM with VNet integration, private Function endpoints,
+  in-network build agent) not run.
+- New Entra registrations/groups not exercised (operator directory quota); merge path verified.
+- Least-privilege identity per stage, timers, load and 10,000-project scale not tested.
+- Admin console shows sub-cent costs as $0.00.
+
+
 ## Stage 1 resources-only live proof
 
 **Active packet:** S1 — Stage 1 resources-only live proof (complete).

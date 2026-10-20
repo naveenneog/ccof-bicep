@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "REPLACE-00000000-0000-4000-8000-000000000001",
+  "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+  "resourceGroup": "REPLACE-new-empty-resource-group",
+  "location": "eastus2",
+  "tags": {
+    "workload": "claude-code-on-foundry",
+    "deployment": "staged"
+  },
+  "stage1": {
+    "prefix": "ccofstg",
+    "includeAdmin": true,
+    "cosmosCapacityMode": "serverless",
+    "cosmosPublicNetworkAccess": "Disabled",
+    "storagePublicNetworkAccess": "Disabled",
+    "functionsPublicNetworkAccess": "Disabled",
+    "storageSku": "Standard_LRS",
+    "retentionInDays": 30,
+    "maximumInstanceCount": 40,
+    "instanceMemoryMB": 2048,
+    "approveNewPublicApimBootstrap": false,
+    "apimPublisherEmail": "",
+    "apimPublisherName": "",
+    "apimSku": "StandardV2",
+    "apimUnits": 1
+  },
+  "network": {
+    "mode": "create",
+    "create": {
+      "vnetName": "ccofstg-vnet",
+      "addressSpace": "10.64.0.0/16",
+      "apimNsgName": "ccofstg-nsg-apim",
+      "subnets": {
+        "apim": {
+          "name": "snet-apim",
+          "prefix": "10.64.1.0/24"
+        },
+        "privateEndpoints": {
+          "name": "snet-private-endpoints",
+          "prefix": "10.64.2.0/24"
+        },
+        "functions": {
+          "name": "snet-functions",
+          "prefix": "10.64.3.0/24"
+        }
+      }
+    }
+  },
+  "cosmos": {
+    "databaseName": "ccof",
+    "capacityMode": "serverless",
+    "autoscaleMaxThroughput": 1000,
+    "roleNames": {
+      "syncWriter": "ccof sync entitlement writer",
+      "reconcilerWriter": "ccof reconciler budget writer",
+      "projectWriter": "ccof onboarding project writer",
+      "adminEditor": "ccof admin project editor"
+    }
+  },
+  "apim": {
+    "existing": null,
+    "apiId": "claude-messages",
+    "apiPath": "anthropic",
+    "apiDisplayName": "Claude Messages (staged)"
+  },
+  "backends": [
+    {
+      "id": "REPLACE-backend-id",
+      "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+      "resourceGroup": "REPLACE-foundry-rg",
+      "accountName": "REPLACE-foundry-account",
+      "url": "https://REPLACE-foundry-account.services.ai.azure.com/anthropic",
+      "resource": "https://cognitiveservices.azure.com",
+      "deploymentInferenceGeo": {
+        "claude-haiku-4-5": "global",
+        "claude-sonnet-5": "global",
+        "claude-opus-5-5": "global"
+      },
+      "assignCognitiveServicesUser": true
+    }
+  ],
+  "entra": {
+    "gatewayAppDisplayName": "CCOF Gateway",
+    "resolverAppDisplayName": "CCOF Resolver API",
+    "adminAppDisplayName": "CCOF Admin",
+    "allowAzureCliClient": false,
+    "adminEditors": [
+      "@me"
+    ],
+    "adminReaders": []
+  },
+  "groups": [
+    {
+      "projectId": "PROJECT01",
+      "classification": "STD",
+      "groupDisplayName": "CCOF-PROJECT01-STD",
+      "members": [
+        "@me"
+      ],
+      "displayName": "PROJECT01 STD",
+      "backendId": "REPLACE-backend-id",
+      "familyPolicy": {
+        "aggregateLimits": {
+          "person": {
+            "tokensPerMinute": 200000,
+            "tokenQuota": 500000,
+            "tokenQuotaPeriod": "Daily"
+          },
+          "group": {
+            "tokensPerMinute": null,
+            "tokenQuota": 2000000,
+            "tokenQuotaPeriod": "Daily"
+          }
+        },
+        "families": {
+          "haiku": {
+            "models": [
+              "claude-haiku-4-5"
+            ],
+            "person": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            },
+            "group": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            }
+          },
+          "sonnet": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "person": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            },
+            "group": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            }
+          }
+        }
+      },
+      "personBudget": {
+        "amount": 25000,
+        "currency": "CCU",
+        "period": "monthly"
+      },
+      "aggregateBudget": {
+        "amount": 2000000,
+        "currency": "CCU",
+        "period": "monthly"
+      },
+      "aggregateMode": "strict",
+      "onboardingMode": "block"
+    },
+    {
+      "projectId": "PROJECT01",
+      "classification": "PRM",
+      "groupDisplayName": "CCOF-PROJECT01-PRM",
+      "members": [],
+      "displayName": "PROJECT01 PRM",
+      "backendId": "REPLACE-backend-id",
+      "familyPolicy": {
+        "aggregateLimits": {
+          "person": {
+            "tokensPerMinute": 200000,
+            "tokenQuota": 500000,
+            "tokenQuotaPeriod": "Daily"
+          },
+          "group": {
+            "tokensPerMinute": null,
+            "tokenQuota": 2000000,
+            "tokenQuotaPeriod": "Daily"
+          }
+        },
+        "families": {
+          "haiku": {
+            "models": [
+              "claude-haiku-4-5"
+            ],
+            "person": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            },
+            "group": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            }
+          },
+          "sonnet": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "person": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            },
+            "group": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            }
+          },
+          "opus": {
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "person": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            },
+            "group": {
+              "tokensPerMinute": null,
+              "tokenQuota": null,
+              "tokenQuotaPeriod": null
+            }
+          }
+        }
+      },
+      "personBudget": {
+        "amount": 25000,
+        "currency": "CCU",
+        "period": "monthly"
+      },
+      "aggregateBudget": {
+        "amount": 2000000,
+        "currency": "CCU",
+        "period": "monthly"
+      },
+      "aggregateMode": "notify",
+      "onboardingMode": "block"
+    }
+  ],
+  "client": {
+    "projectId": "PROJECT01",
+    "classification": "STD",
+    "models": {
+      "default": "claude-sonnet-5",
+      "sonnet": "claude-sonnet-5",
+      "haiku": "claude-haiku-4-5",
+      "opus": "claude-sonnet-5"
+    }
+  },
+  "resolver": {
+    "budgetEnforcement": "token-limits-only",
+    "cosmosRequestTimeoutMs": 2000,
+    "cosmosRetryAttempts": 2,
+    "cosmosRetryMaxWaitSeconds": 2,
+    "requestDeadlineMs": 4000
+  },
+  "sync": {
+    "mode": "delegated-snapshot",
+    "schedule": "0 */1 * * * *",
+    "leaseSeconds": 300,
+    "maxRemovalsPerRun": 5,
+    "maxRemovalFraction": "0.1",
+    "memberTypes": "user",
+    "graphMaxRetries": 3,
+    "graphMaxRetryAfterSeconds": 30,
+    "graphTimeoutSeconds": 30,
+    "writeMode": "apply"
+  },
+  "syncTimerEnabled": false,
+  "reconciler": {
+    "timerEnabled": false,
+    "schedule": "0 */2 * * * *",
+    "validitySeconds": 600,
+    "leaseSeconds": 300,
+    "ledgerTimeoutSeconds": 60,
+    "ledgerMaxRows": 100000,
+    "maxStates": 10000,
+    "writeConcurrency": 8,
+    "logAnalyticsEndpoint": "https://api.loganalytics.io"
+  },
+  "budgetState": {
+    "graceSeconds": 900,
+    "hardLimitSeconds": 3600
+  },
+  "gateway": {
+    "configurationId": "ccof-staged-gateway-1",
+    "admission": {
+      "perPerson": {
+        "calls": 120,
+        "renewalPeriodSeconds": 60
+      },
+      "resolverMisses": {
+        "calls": 200,
+        "renewalPeriodSeconds": 1,
+        "maxConcurrent": 100
+      }
+    },
+    "resolverTimeoutSeconds": 10,
+    "projectHeaderName": "x-ccof-project",
+    "keyVersion": 1,
+    "entitlementCache": {
+      "cachingType": "internal",
+      "allowTtlSeconds": 120,
+      "refusalTtlSeconds": 30,
+      "lastKnownGoodGraceSeconds": 3600,
+      "refreshBackoffSeconds": 30,
+      "unavailableRetryAfterSeconds": 5
+    },
+    "tokenLimits": {
+      "estimatePromptTokens": false,
+      "headers": {
+        "personRemainingQuota": "x-ccof-person-quota-remaining",
+        "personRemainingTokens": "x-ccof-person-tokens-remaining",
+        "groupRemainingQuota": "x-ccof-group-quota-remaining",
+        "groupRemainingTokens": "x-ccof-group-tokens-remaining",
+        "tokensConsumed": "x-ccof-tokens-consumed"
+      }
+    },
+    "defaultAnthropicVersion": "2023-06-01"
+  },
+  "rateCard": {
+    "path": "config/rate-card.json",
+    "contractSchedulePath": "config/contract-schedule.json"
+  },
+  "workbook": {
+    "resourceName": "REPLACE-new-workbook-guid",
+    "displayName": "Claude gateway chargeback (staged)",
+    "readerPrincipalIds": [],
+    "settings": {
+      "defaultProjectId": "*",
+      "maxRows": 1000,
+      "topUsers": 25,
+      "maxQueryDays": 62,
+      "budgetLookbackDays": 31
+    }
+  },
+  "admin": {
+    "v3Enabled": true,
+    "extraAllowedClientIds": []
+  },
+  "acceptance": {
+    "allowed": [
+      {
+        "project": "PROJECT01",
+        "model": "claude-haiku-4-5"
+      }
+    ],
+    "denied": [
+      {
+        "project": "PROJECT01",
+        "model": "claude-opus-5-5",
+        "expectedStatus": 403,
+        "reason": "opus is not admitted for STD"
+      }
+    ]
+  }
+}

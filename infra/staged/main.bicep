@@ -41,7 +41,8 @@ param apimPublisherEmail string = ''
 
 param apimPublisherName string = ''
 
-@allowed(['StandardV2'])
+@description('StandardV2 supports outbound VNet integration (private Foundry). BasicV2 is public-only; use it only where every backend is reachable without a VNet.')
+@allowed(['BasicV2', 'StandardV2'])
 param apimSku string = 'StandardV2'
 
 @minValue(1)
@@ -126,29 +127,17 @@ module functionServices 'function-service.bicep' = [for app in apps: {
 
 // APIM requires an approved inbound endpoint before PNA can be disabled.
 // This opt-in creates a NEW public shell, never modifies an existing private gateway.
-resource apim 'Microsoft.ApiManagement/service@2024-05-01' = if (approveNewPublicApimBootstrap) {
-  name: '${stem}-apim'
-  location: location
-  tags: tags
-  sku: { name: apimSku, capacity: apimUnits }
-  identity: { type: 'SystemAssigned' }
-  properties: {
+module apimService 'apim-service.bicep' = if (approveNewPublicApimBootstrap) {
+  name: 'stage1-apim'
+  params: {
+    name: '${stem}-apim'
+    location: location
+    tags: tags
+    sku: apimSku
+    units: apimUnits
     publisherEmail: apimPublisherEmail
     publisherName: apimPublisherName
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
-resource apimDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (approveNewPublicApimBootstrap) {
-  name: 'ccof-gateway-logs'
-  scope: apim!
-  properties: {
     workspaceId: workspace.id
-    logAnalyticsDestinationType: 'Dedicated'
-    logs: [
-      { category: 'GatewayLogs', enabled: true }
-      { category: 'GatewayLlmLogs', enabled: true }
-    ]
   }
 }
 
@@ -159,8 +148,26 @@ output cosmosEndpoint string = cosmos.properties.documentEndpoint
 output functionApps array = [for (app, i) in apps: { key: app.key, service: functionServices[i].outputs.inventory }]
 output syncIdentityId string = syncIdentity.id
 output reconcilerIdentityId string = reconcilerIdentity.id
-output apimId string = approveNewPublicApimBootstrap ? apim!.id : ''
-output apimPrincipalId string = approveNewPublicApimBootstrap ? apim!.identity.principalId : ''
-output apimGatewayUrl string = approveNewPublicApimBootstrap ? apim!.properties.gatewayUrl : ''
+output apimId string = approveNewPublicApimBootstrap ? apimService!.outputs.id : ''
+output apimPrincipalId string = approveNewPublicApimBootstrap ? apimService!.outputs.principalId : ''
+output apimGatewayUrl string = approveNewPublicApimBootstrap ? apimService!.outputs.gatewayUrl : ''
 output apimStatus string = approveNewPublicApimBootstrap ? 'new-public-shell-needs-approved-private-cutover' : 'deferred-no-public-bootstrap-approved'
+// The resource names later stages read (quickstart `names` shape, infra/quickstart/main.bicepparam).
+// Stage 3 adds cosmosDatabase; Stage 4 adds cosmosRoles. Inventory only: no setting or grant.
+output names object = {
+  deploymentPrefix: prefix
+  subscriptionId: subscription().subscriptionId
+  resourceGroup: resourceGroup().name
+  logAnalyticsWorkspace: workspace.name
+  cosmosAccount: cosmos.name
+  identities: { sync: syncIdentity.name, reconciler: reconcilerIdentity.name }
+  apps: toObject(apps, a => a.key, a => {
+    functionApp: '${stem}-${a.key}'
+    plan: '${stem}-${a.key}-plan'
+    storageAccount: '${storageStem}${a.storageSuffix}'
+    deploymentContainer: 'app-package'
+    appInsights: '${stem}-${a.key}-ai'
+  })
+}
+output apimName string = approveNewPublicApimBootstrap ? apimService!.outputs.name : ''
 output completionGate string = 'Services only: separate-team grants, schema/settings/code, and customer network required before runtime acceptance.'

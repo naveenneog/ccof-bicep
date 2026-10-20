@@ -15,3 +15,5 @@ deploy-package.zip
 
 # Quick-start generated files (Deploy-Quickstart.ps1); the state file is already covered by .env.*
 infra/quickstart/.generated/
+# Staged deployment state and evidence (Invoke-StagedDeployment.ps1)
+.staged-state/
