@@ -130,6 +130,19 @@ try {
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'prefix' }
     Assert-Contract $bad 'An invalid prefix must be refused.'
 } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+# State is bound to its tenant/subscription/RG: another target's outputs are refused, not reused.
+$stateDir = Join-Path ([IO.Path]::GetTempPath()) "staged-state-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $stateDir | Out-Null
+try {
+    $script:StateDir = $stateDir
+    $cfgA = @{ tenantId = '00000000-0000-4000-8000-00000000000a'; subscriptionId = '00000000-0000-4000-8000-00000000000b'; resourceGroup = 'rg-a' }
+    $cfgB = @{ tenantId = '00000000-0000-4000-8000-00000000000a'; subscriptionId = '00000000-0000-4000-8000-00000000000c'; resourceGroup = 'rg-a' }
+    Save-StgStage $cfgA 1 @{ marker = 'a' }
+    Assert-Contract ((Get-StgStage $cfgA 1).marker -ceq 'a') 'State must return its own target outputs.'
+    $mismatch = $false
+    try { $null = Get-StgStage $cfgB 1 } catch { $mismatch = $_.Exception.Message -match 'state_target_mismatch' }
+    Assert-Contract $mismatch 'State of another subscription must be refused.'
+} finally { Remove-Item -LiteralPath $stateDir -Recurse -Force -ErrorAction SilentlyContinue }
 $s1Params = @($s1.parameters.Keys)
 foreach ($k in $c.stage1.Keys) { Assert-Contract ($s1Params -contains $k) "Example stage1.$k is not a Stage 1 template parameter." }
 

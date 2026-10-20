@@ -23,7 +23,33 @@
     "apimPublisherEmail": "",
     "apimPublisherName": "",
     "apimSku": "StandardV2",
-    "apimUnits": 1
+    "apimUnits": 1,
+    "foundry": {
+      "create": false,
+      "accountName": "REPLACE-unique-foundry-name",
+      "publicNetworkAccess": "Disabled",
+      "deployments": [
+        {
+          "name": "claude-haiku-4-5",
+          "model": "claude-haiku-4-5",
+          "version": "20251001",
+          "sku": "GlobalStandard",
+          "capacity": 10
+        },
+        {
+          "name": "claude-sonnet-5",
+          "model": "claude-sonnet-5",
+          "version": "2",
+          "sku": "GlobalStandard",
+          "capacity": 10
+        }
+      ],
+      "modelProviderData": {
+        "organizationName": "REPLACE-legal-entity-name",
+        "countryCode": "US",
+        "industry": "technology"
+      }
+    }
   },
   "network": {
     "mode": "create",
@@ -77,7 +103,8 @@
         "claude-sonnet-5": "global",
         "claude-opus-5-5": "global"
       },
-      "assignCognitiveServicesUser": true
+      "assignCognitiveServicesUser": true,
+      "privateEndpoint": false
     }
   ],
   "entra": {
@@ -357,5 +384,6 @@
         "reason": "opus is not admitted for STD"
       }
     ]
-  }
+  },
+  "sharedResourceGroup": false
 }

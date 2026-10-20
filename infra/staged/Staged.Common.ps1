@@ -27,19 +27,39 @@ function Read-StgConfig {
         $(if (-not $existingApps.adminAppId) { $c.entra.adminAppDisplayName })) + @($c.groups | Where-Object { -not $_.groupId } | ForEach-Object { $_.groupDisplayName })
     foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { if ($existingApps[$k] -and $existingApps[$k] -notmatch $script:Guid) { $problems.Add("entra.existing.$k must be a GUID") } }
     foreach ($n in @($entraNames | Where-Object { $_ })) { if ($n -notmatch '^[A-Za-z0-9 ._-]{1,120}$') { $problems.Add("Entra display name '$n' may hold only letters, digits, space . _ -") } }
+    $fd = $c.stage1.foundry
+    if ($fd -and $fd.create) {
+        if ($fd.accountName -cnotmatch '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$') { $problems.Add('stage1.foundry.accountName must be 3-64 lowercase letters, digits or -') }
+        if (-not @($fd.deployments).Count -and -not $fd.modelDeploymentsBlocked) { $problems.Add('stage1.foundry.deployments needs at least one model deployment (or modelDeploymentsBlocked with the reason)') }
+        $mpd = $fd.modelProviderData
+        if (@($fd.deployments).Count -and (-not $mpd -or -not $mpd.organizationName -or "$($mpd.organizationName)" -match '^REPLACE' -or "$($mpd.countryCode)" -cnotmatch '^[A-Z]{2}$' -or -not $mpd.industry)) {
+            $problems.Add('stage1.foundry.modelProviderData { organizationName, countryCode (ISO 3166 alpha-2), industry } is required: it is the Anthropic attestation that accepts the Claude Marketplace offer for the real organization')
+        }
+    }
+    if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
     if ($problems.Count) { throw "invalid staged configuration:`n  - $($problems -join "`n  - ")" }
     $c.__path = $full
     return $c
 }
 
 function Get-StgStatePath { param($Cfg) Join-Path $script:StateDir 'state.json' }
+function Get-StgTarget { param($Cfg) [ordered]@{ tenantId = "$($Cfg.tenantId)".ToLowerInvariant(); subscriptionId = "$($Cfg.subscriptionId)".ToLowerInvariant(); resourceGroup = "$($Cfg.resourceGroup)".ToLowerInvariant() } }
 function Read-StgState { param($Cfg)
     $p = Get-StgStatePath $Cfg
-    if (Test-Path -LiteralPath $p) { return Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable -Depth 100 }
-    return @{ schemaVersion = 1; stages = @{} }
+    if (Test-Path -LiteralPath $p) {
+        $state = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+        # A state file belongs to one tenant/subscription/RG: outputs of another target are never reused.
+        $t = Get-StgTarget $Cfg
+        if ($state.target -and (($state.target.tenantId -ne $t.tenantId) -or ($state.target.subscriptionId -ne $t.subscriptionId) -or ($state.target.resourceGroup -ne $t.resourceGroup))) {
+            throw "state_target_mismatch: $p belongs to $($state.target.tenantId)/$($state.target.subscriptionId)/$($state.target.resourceGroup), not this configuration's $($t.tenantId)/$($t.subscriptionId)/$($t.resourceGroup). Use -StateDirectory for each target."
+        }
+        return $state
+    }
+    return @{ schemaVersion = 1; target = (Get-StgTarget $Cfg); stages = @{} }
 }
 function Save-StgStage { param($Cfg, [int]$Number, $Outputs)
     $state = Read-StgState $Cfg
+    $state.target = Get-StgTarget $Cfg
     $state.stages["$Number"] = @{ completedAt = [DateTime]::UtcNow.ToString('o'); outputs = $Outputs }
     $state | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath (Get-StgStatePath $Cfg) -Encoding utf8NoBOM
 }
@@ -56,6 +76,20 @@ function Write-StgEvidence { param([string]$Name, $Value)
     return $file
 }
 
+# Names of the resources this deployment owns (Stage 1 outputs), for read-back in a shared RG.
+function Get-StgOwnedNames { param($Cfg)
+    $s1 = (Read-StgState $Cfg).stages['1'].outputs
+    $n = $s1.names
+    $list = @($n.logAnalyticsWorkspace, $n.cosmosAccount) + @($n.identities.Values) + @($n.apps.Values | ForEach-Object { $_.functionApp, $_.plan, $_.storageAccount, $_.appInsights })
+    if ($s1.apimName) { $list += $s1.apimName }
+    if ($Cfg.stage1.foundry.create) { $list += $Cfg.stage1.foundry.accountName }
+    return @($list | Where-Object { $_ } | ForEach-Object { "$_".ToLowerInvariant() })
+}
+function Test-StgOwnedScope { param([string]$Scope, [string[]]$Owned)
+    $parts = $Scope.ToLowerInvariant() -split '/'
+    return [bool](@($parts | Where-Object { $Owned -contains $_ }).Count)
+}
+
 function Assert-Stg { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw "verify_failed: $Message" } }
 
 function Invoke-StgAzJson {
@@ -65,13 +99,19 @@ function Invoke-StgAzJson {
     return $r
 }
 
-function Invoke-StgBicep {
-    <# what-if (preview) or create (apply) of one stage template; returns the outputs as a hashtable. #>
-    param($Cfg, [string]$Template, [string]$Name, [hashtable]$Parameters, [switch]$Apply)
+function Write-StgParameters {
+    param($Cfg, [string]$Name, $Parameters)
     $doc = [ordered]@{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = [ordered]@{} }
     foreach ($k in $Parameters.Keys) { $doc.parameters[$k] = @{ value = $Parameters[$k] } }
     $file = Join-Path $script:StateDir "$Name.parameters.json"
     $doc | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+    return $file
+}
+
+function Invoke-StgBicep {
+    <# what-if (preview) or create (apply) of one stage template; returns the outputs as a hashtable. #>
+    param($Cfg, [string]$Template, [string]$Name, [hashtable]$Parameters, [switch]$Apply)
+    $file = Write-StgParameters $Cfg $Name $Parameters
     $common = @('--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $Name, '--template-file', (Join-Path $script:StagedDir $Template), '--parameters', "@$file")
     if (-not $Apply) {
         $raw = Invoke-QsAz (@('deployment', 'group', 'what-if') + $common + @('--no-pretty-print', '--output', 'json'))

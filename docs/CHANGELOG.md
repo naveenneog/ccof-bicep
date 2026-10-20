@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-10-20 — Standard v2 and private Foundry, SASET MSFT FDPO and Contoso
+
+- Stage 1 can create a keyless private Foundry account with Claude deployments
+  (`foundry-account.bicep`; `modelProviderData` required, API `2025-10-01-preview`).
+- Stage 2 integrates a Standard v2 APIM with the VNet (outbound) and creates the Foundry private
+  endpoint with its three DNS zones.
+- `sharedResourceGroup` and the guarded Stage 1 rerun: what-if must not change resources outside
+  the deployment's prefix. State is bound to tenant/subscription/RG. Stage 8 correlates telemetry by
+  this run's request IDs.
+- Live: SASET MSFT FDPO (shared RG) stages 0-8 with 200 responses; Contoso stages 0-8 with new
+  Entra objects, Claude blocked by the sandbox subscription, Graph consent refused without an active
+  admin role ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
+
 ## 2026-10-20 — Manual Portal walkthrough and verification gaps
 
 - Added click paths for the staged guide, Foundry setup prerequisites, Standard v2 outbound

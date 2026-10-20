@@ -48,6 +48,9 @@ param apimSku string = 'StandardV2'
 @minValue(1)
 param apimUnits int = 1
 
+@description('Optional NEW Foundry account: { create: bool, accountName, publicNetworkAccess, deployments: [{ name, model, version, sku, capacity }] }. Default: no Foundry (an existing account is a backend in later stages).')
+param foundry object = { create: false }
+
 @minValue(40)
 @maxValue(1000)
 param maximumInstanceCount int = 40
@@ -141,6 +144,18 @@ module apimService 'apim-service.bicep' = if (approveNewPublicApimBootstrap) {
   }
 }
 
+module foundryAccount 'foundry-account.bicep' = if (foundry.?create ?? false) {
+  name: 'stage1-foundry'
+  params: {
+    name: foundry.accountName
+    location: location
+    tags: tags
+    publicNetworkAccess: foundry.?publicNetworkAccess ?? 'Disabled'
+    deployments: foundry.deployments
+    modelProviderData: foundry.modelProviderData
+  }
+}
+
 output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
 output cosmosAccountId string = cosmos.id
@@ -170,4 +185,6 @@ output names object = {
   })
 }
 output apimName string = approveNewPublicApimBootstrap ? apimService!.outputs.name : ''
+output foundryAccountId string = (foundry.?create ?? false) ? foundryAccount!.outputs.id : ''
+output foundryAnthropicUrl string = (foundry.?create ?? false) ? foundryAccount!.outputs.anthropicUrl : ''
 output completionGate string = 'Services only: separate-team grants, schema/settings/code, and customer network required before runtime acceptance.'

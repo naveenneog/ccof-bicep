@@ -51,7 +51,9 @@ $allowed = @(
     'Microsoft.Insights/diagnosticSettings',
     'Microsoft.Web/serverfarms',
     'Microsoft.Web/sites',
-    'Microsoft.ApiManagement/service'
+    'Microsoft.ApiManagement/service',
+    'Microsoft.CognitiveServices/accounts',
+    'Microsoft.CognitiveServices/accounts/deployments'
 )
 foreach ($resource in $resources) {
     Assert-Contract ($resource.type -in $allowed) "Not an approved stage-1 service resource: $($resource.type)"
@@ -69,6 +71,11 @@ foreach ($name in 'cosmosPublicNetworkAccess', 'storagePublicNetworkAccess', 'fu
 }
 Assert-Contract ($arm.parameters.approveNewPublicApimBootstrap.defaultValue -eq $false) 'Public APIM bootstrap must be explicit opt-in.'
 Assert-Contract ($arm.parameters.includeAdmin.defaultValue -eq $true) 'Separate admin service must be included by default.'
+$foundryModule = @($arm.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and @($_.properties.template.resources | Where-Object type -EQ 'Microsoft.CognitiveServices/accounts').Count })
+Assert-Contract ($foundryModule.Count -eq 1 -and $foundryModule[0].condition -match 'foundry') 'Foundry account must be an opt-in Stage 1 module.'
+$foundryAccount = @($foundryModule[0].properties.template.resources | Where-Object type -EQ 'Microsoft.CognitiveServices/accounts')[0]
+Assert-Contract ($foundryAccount.properties.disableLocalAuth -eq $true) 'Foundry account must be keyless.'
+Assert-Contract ($foundryModule[0].properties.template.parameters.publicNetworkAccess.defaultValue -ceq 'Disabled') 'Foundry must default to private.'
 $apim = @($resources | Where-Object type -EQ 'Microsoft.ApiManagement/service')
 $apimModules = @($arm.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and @($_.properties.template.resources | Where-Object type -EQ 'Microsoft.ApiManagement/service').Count })
 Assert-Contract ($apim.Count -eq 1 -and $apimModules.Count -eq 1 -and $apimModules[0].condition -match "parameters\('approveNewPublicApimBootstrap'\)") 'APIM must be conditional on approval of NEW public bootstrap.'

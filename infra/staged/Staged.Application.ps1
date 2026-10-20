@@ -144,7 +144,8 @@ function Invoke-Stage8 {
     $t = $Cfg.acceptance
     if (-not $Apply) { Write-Host "preview: gateway $($s6.gatewayUrl): anonymous 401, $(@($t.allowed).Count) allowed and $(@($t.denied).Count) denied requests, resolver 401, admin console checks, telemetry query"; return $null }
     $checks = [ordered]@{}
-    $checks.anonymous = Invoke-StgGateway -Url $s6.gatewayUrl -Project $t.allowed[0].project -Model $t.allowed[0].model
+    $probe = @(@($t.allowed) + @($t.denied))[0]
+    $checks.anonymous = Invoke-StgGateway -Url $s6.gatewayUrl -Project $probe.project -Model $probe.model
     Assert-Stg ($checks.anonymous.status -eq 401) "anonymous request answered $($checks.anonymous.status)"
     $resolverUrl = "https://$($s1.names.apps.resolver.functionApp).azurewebsites.net/api/resolve"
     $checks.resolverAnonymous = [int](Invoke-WebRequest -Uri $resolverUrl -Method Post -Body '{}' -ContentType 'application/json' -SkipHttpErrorCheck -TimeoutSec 60).StatusCode
@@ -177,9 +178,17 @@ function Invoke-Stage8 {
         Assert-Stg ($checks.admin.consoleStatus -eq 200) "admin console answered $($checks.admin.consoleStatus)"
         Assert-Stg ($checks.admin.apiWithoutToken -eq 401) "admin API answered $($checks.admin.apiWithoutToken) without a token"
     }
-    # Telemetry: gateway LLM logs reach the workspace (ingestion takes minutes; up to 15 minutes here).
+    # Telemetry: this run's allowed requests (x-ccof-request-id = APIM context.RequestId = CorrelationId)
+    # must reach the workspace; older rows do not count. Up to 15 minutes for ingestion.
     # The query holds | : sent over REST, never as an az.cmd argument.
-    $q = 'ApiManagementGatewayLlmLog | where TimeGenerated > ago(2h) | summarize rows=count(), requests=dcount(CorrelationId)'
+    if (-not @($t.allowed).Count) {
+        $checks.telemetry = @{ status = 'not_applicable: acceptance.allowed is empty (no model deployment); no request reached a model' }
+        $null = Write-StgEvidence 'stage8.verify.json' $checks
+        return $checks
+    }
+    $ids = @($checks.allowed | ForEach-Object { "$($_.headers['x-ccof-request-id'])".ToLowerInvariant() } | Where-Object { $_ -match $script:Guid })
+    Assert-Stg ($ids.Count -eq @($t.allowed).Count) "allowed responses carried $($ids.Count) x-ccof-request-id values, expected $(@($t.allowed).Count)"
+    $q = "ApiManagementGatewayLlmLog | where TimeGenerated > ago(2h) | where tolower(tostring(CorrelationId)) in ($((@($ids | ForEach-Object { "'$_'" })) -join ',')) | summarize rows=count(), requests=dcount(CorrelationId), models=make_set(ModelName)"
     $laToken = (Invoke-QsAz @('account', 'get-access-token', '--resource', 'https://api.loganalytics.io', '--query', 'accessToken', '--output', 'tsv')).Trim()
     $rows = @()
     for ($i = 0; $i -lt 30; $i++) {
@@ -189,8 +198,8 @@ function Invoke-Stage8 {
         if ($rows.Count -and [int]$rows[0].requests -ge @($t.allowed).Count) { break }
         Start-Sleep 30
     }
-    $checks.telemetry = @{ query = $q; rows = $rows }
-    Assert-Stg ($rows.Count -and [int]$rows[0].requests -ge 1) 'no gateway LLM log rows reached the workspace within 15 minutes'
+    $checks.telemetry = @{ query = $q; requestIds = $ids; rows = $rows }
+    Assert-Stg ($rows.Count -and [int]$rows[0].requests -eq $ids.Count) "only $(if ($rows.Count) { $rows[0].requests } else { 0 }) of this run's $($ids.Count) requests reached ApiManagementGatewayLlmLog within 15 minutes"
     $null = Write-StgEvidence 'stage8.verify.json' $checks
     return $checks
 }

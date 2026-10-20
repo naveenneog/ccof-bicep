@@ -6,9 +6,12 @@ Each stage has its own operator permission boundary, a preview, an apply, and a 
 verification. All nine stages ran end to end in a new lab resource group on 2026-10-20;
 the evidence and screenshots are in the [live run report](../STAGED-LIVE-RUN-2026-10-20.md).
 
-The [manual Portal walkthrough](#manual-portal-walkthrough) below separates Portal actions,
-CLI-only operations and the available screenshots. The earlier live run used Basic v2 and
-an existing Foundry backend. It is not evidence of a new Standard v2/private Foundry setup.
+Standard v2 APIM with a new private Foundry account ran in two tenants on 2026-10-20: the
+SASET MSFT FDPO subscription (shared resource group, existing Entra objects) passed end to end
+with 200 responses; Contoso (new Entra objects) passed every stage, with model calls blocked
+because its sandbox subscription cannot buy the Claude offer. See the
+[Standard v2 and Foundry run report](../STAGED-STDV2-RUNS-2026-10-20.md).
+The [manual Portal walkthrough](#manual-portal-walkthrough) maps each stage to Portal checks.
 
 The [four-stage runbook](STAGED-CUSTOMER-DEPLOYMENT.md) and the
 [quickstart](../QUICKSTART.md) remain available. This path reuses the quickstart's Bicep modules
@@ -41,6 +44,11 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 1 -ConfigPath $cfg -A
   digits, space, `.`, `_` and `-` for the same reason.
 - Use a separate `AZURE_CONFIG_DIR` for the operator profile; the driver never runs `az login`
   or `az account set`.
+- **One target per state directory.** `state.json` records tenant, subscription and resource
+  group; another target stops with `state_target_mismatch`. Use `-StateDirectory` (or a separate
+  configuration folder) per environment.
+- **One Stage 7 at a time per checkout.** Stage 7 runs `npm ci` in `admin/`; two concurrent runs
+  from the same checkout failed with EPERM on `admin/node_modules`.
 
 ## Stages and permission boundaries
 
@@ -75,7 +83,9 @@ The driver refuses it until the placeholders are replaced. Sections:
 | `network` | 2 | `mode: create` (VNet, subnets, zones) or `existing` (subnet and zone IDs) |
 | `cosmos` | 3, 4 | Database name, capacity mode, custom role names |
 | `apim` | 4, 6 | `existing` APIM, or the Stage 1 one; API id, path and display name |
-| `backends` | 0, 4, 6 | Foundry accounts, deployment names and inference geography |
+| `stage1.foundry` | 0, 1, 2 | Optional new Foundry account: `create`, `accountName`, `publicNetworkAccess` (default `Disabled`), `deployments` [{ name, model, version, sku, capacity }], `modelProviderData` { organizationName, countryCode, industry } (required with deployments), or `modelDeploymentsBlocked` with the reason |
+| `sharedResourceGroup` | 1 | `true` to deploy beside existing resources: apply only when what-if shows no Modify or Delete outside this deployment's prefix |
+| `backends` | 0, 2, 4, 6 | Foundry accounts, deployment names and inference geography; `privateEndpoint: true` (same subscription and RG) makes Stage 2 create its private endpoint and DNS |
 | `entra` | 5 | Display names to create, or `existing` app IDs to merge into; `allowAzureCliClient` |
 | `groups` | 5, 7 | Project, classification, `groupId` or `groupDisplayName`, members, family policy and budgets |
 | `client` | 7 | Project, classification and model aliases for `config.json` |
@@ -100,11 +110,38 @@ integration; use `StandardV2` when any backend is private. Application Insights 
 "Failure Anomalies" smart-detector rule per component a few minutes after creation
 ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/proactive-failure-diagnostics)).
 
+### Stage 1: Foundry (optional)
+`stage1.foundry.create` adds a keyless AIServices account and its Claude deployments
+([`foundry-account.bicep`](../../infra/staged/foundry-account.bicep)). Claude deployments are
+Marketplace offers:
+
+- `modelProviderData` (organizationName, countryCode, lowercase industry) is required and is
+  accepted only by API version `2025-10-01-preview`; earlier versions fail with
+  `InvalidModelProviderData`. These values are the Anthropic attestation that accepts the offer
+  for the real organization ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/developer/ai/how-to/deploy-claude-foundry)).
+- Internal or sandbox subscriptions cannot buy it ("Only $0.00 products or test products can be
+  purchased"). Record that with `modelDeploymentsBlocked`; the rest of the stages still deploy.
+- The operator needs to create resources and accept the Marketplace offer on the subscription;
+  Owner on one resource group was sufficient in the SASET run.
+
+### Stage 1 in a shared resource group
+With `sharedResourceGroup: true`, Stage 1 runs what-if first and refuses any Modify or Delete of a
+resource whose name (or parent name) does not start with the prefix. The same guard applies to a
+rerun after a failed Stage 1 apply. Read-back and grant checks then consider only this
+deployment's resources.
+
 ### Stage 2: network
 `mode: create` reuses [`infra/prereqs/network.bicep`](../../infra/prereqs/network.bicep), whose
 subnet list is authoritative: run it once per VNet. The driver then attaches each Function App
 to the Functions subnet one at a time (parallel joins failed with `ServiceAssociationLinkLease`).
 The lab run took 11 minutes, mostly private endpoint creation.
+
+With a Stage 1 APIM of SKU `StandardV2` (or `PremiumV2`), Stage 2 also sets its **outbound**
+VNet integration on the APIM subnet (`virtualNetworkType: External`, through an ARM PATCH that
+keeps the system-assigned identity), waits for `Succeeded` and verifies subnet and identity.
+Ingress stays public. Backends with `privateEndpoint: true` get a private endpoint (group
+`account`) with the `privatelink.cognitiveservices.azure.com`, `privatelink.openai.azure.com` and
+`privatelink.services.ai.azure.com` zones, so APIM reaches a public-access-disabled Foundry.
 
 ### Stage 3: schema
 The container list equals the quickstart's; `adminConfig` is added when the admin app is included.
@@ -152,7 +189,9 @@ selected project, checked by `client/bin/validate-config.mjs`.
 ### Stage 8: acceptance
 Requires the `acceptance` matrix. Checks: anonymous 401 at the gateway and at the resolver;
 each allowed pair 200; each denied pair the expected status; admin root 302 to V3, console 200,
-API 401 without a token; LLM logs in the workspace within 15 minutes.
+API 401 without a token. Telemetry: every allowed response's `x-ccof-request-id` (APIM
+`context.RequestId`) must appear as a `CorrelationId` in `ApiManagementGatewayLlmLog` within
+15 minutes; older rows do not count. With no allowed pair, telemetry is recorded as not applicable.
 
 ## Recovery
 
@@ -167,27 +206,17 @@ API 401 without a token; LLM logs in the workspace within 15 minutes.
 
 ### Evidence and scope
 
-The five Portal images below are existing, middle-masked captures from the earlier manual
-guide. They show navigation and forms, not the outcome of a new deployment. Their source
-captions and image hashes are in the
-[Portal image manifest](images/portal/screenshots.json).
-The screenshots in the [staged live report](../STAGED-LIVE-RUN-2026-10-20.md) are separately
-labelled command-output captures or Admin console captures; neither is a Portal blade.
+Each Portal step below lists the blade that shows the result of a stage. The five historical
+Portal images are middle-masked captures from the earlier manual guide and show navigation, not
+a new deployment's result ([image manifest](images/portal/screenshots.json)). The
+[Standard v2 and Foundry run report](../STAGED-STDV2-RUNS-2026-10-20.md) holds the read-back
+evidence of the SASET MSFT FDPO and Contoso runs and the status of the Playwright Portal
+walkthrough, which visits each step's blade on those runs' real resources.
 
-On 2026-10-20, Playwright opened the real Azure Portal for both FDPO and Contoso using
-the dedicated capture profile. Both redirected to **Sign in to Microsoft Azure**.
-No authentication was intercepted, no token was injected and no tenant configuration
-was changed. Fresh Portal captures and the Standard v2 runs remain pending sign-in.
-
-| Requested environment | Separate run record | Fresh Portal screenshots |
+| Environment | Standard v2 + new private Foundry | Directory permissions exercised |
 | --- | --- | --- |
-| SASET MSFT FDPO | Pending target confirmation; separate from personal FDPO | Pending FDPO Portal sign-in |
-| Personal FDPO | Earlier Basic v2 result exists; Standard v2 not tested | Pending FDPO Portal sign-in |
-| Contoso | Standard v2 and directory permission run not tested | Pending Contoso Portal sign-in |
-
-Each run has its own subscription, resource group, configuration directory and state
-directory. The current driver does not bind its state file to a subscription or tenant;
-sharing `.staged-state` between configurations can return outputs from another run.
+| SASET MSFT FDPO (FDPO tenant) | Stages 0-8 verified, 200 for admitted models, correlated telemetry | Merge into existing registrations; operator cannot create new ones (directory quota) |
+| Contoso | Stages 0-8 verified; Claude not purchasable on the sandbox subscription | New registrations and groups created; Graph application consent needs PIM activation |
 
 ### 0. Confirm the directory, subscription and permissions
 
@@ -225,9 +254,9 @@ wrong directory.
 
 ### Foundry prerequisite: account, deployment and endpoint
 
-The staged templates currently reference an existing Foundry account and deployments.
-They do not create a Foundry account, purchase a Marketplace offer, deploy a Claude model,
-or create its private endpoint.
+Stage 1 can create the account and its Claude deployments (`stage1.foundry`); Stage 2 creates its
+private endpoint and DNS (`backends[].privateEndpoint`). An existing account works as a backend
+too. Either way, these Portal checks confirm the setup:
 
 1. In the intended subscription, open or create the approved Foundry resource using the
    Microsoft Foundry service. Record the account resource ID and location.
@@ -245,8 +274,10 @@ or create its private endpoint.
    Record its approved private endpoint and DNS configuration. Public access is disabled
    only after the approved private path is verified.
 
-**Evidence still needed:** Foundry resource, Claude deployment details, offer acceptance
-where required, endpoint, private endpoint connection, and DNS from the APIM network.
+In the Foundry portal's deployment form, the Anthropic attestation fields (organization,
+country, industry) are required for Claude. Microsoft Q&A reports cases where the form does not
+show them; the Bicep path sends them as `modelProviderData`. An internal or sandbox subscription
+cannot purchase the offer at all.
 
 ### 2. Connect the caller networks
 
@@ -267,9 +298,8 @@ where required, endpoint, private endpoint connection, and DNS from the APIM net
 5. Test resolution and connectivity from the real caller network. A Portal DNS record
    or an approved connection alone does not prove this.
 
-**Current implementation gap:** Stage 2 attaches the Function Apps, but does not attach
-APIM or create the Foundry endpoint/DNS path. Selecting Standard v2 alone does not
-complete these steps. Outbound APIM integration also does not make its ingress private.
+Stage 2 performs steps 2-4 for a Stage 1 Standard v2 APIM and for backends marked
+`privateEndpoint`. Outbound APIM integration does not make its ingress private.
 
 ![Historical Functions subnet edit form](images/portal/03-4-middle-masked.png)
 
@@ -337,23 +367,17 @@ Neither check creates seed documents or grants item access.
 actual Azure and Graph permissions, an allowed request, expected denied requests,
 fresh correlated telemetry, and genuine signed-in Portal/Admin screenshots.
 
-### Review findings and current verification
+### Review findings
 
-| Finding | Source | Status |
-| --- | --- | --- |
-| Standard v2 selection does not configure APIM outbound VNet integration | `Staged.Resources.ps1`, `Invoke-Stage2` attaches only Function Apps | Unresolved; the APIM Portal step above is a separate operation |
-| Foundry provisioning is outside the staged templates | `Invoke-Stage0` reads existing accounts/deployments; Stage 4 grants access | Unresolved; account, model deployment and private connectivity remain prerequisites |
-| State is not bound to the deployment target | `Staged.Common.ps1`, `Read-StgState`/`Get-StgStage` use only the state path | Reproduced offline: outputs saved for one synthetic tenant/subscription/RG were returned for another; use separate directories |
-| Telemetry acceptance is not tied to this run | `Staged.Application.ps1`, `Invoke-Stage8` counts workspace rows from the previous two hours and finally accepts one request | Unresolved; current request IDs must be correlated before claiming a new-run telemetry pass |
-
-The existing offline Bicep and stage-contract tests pass, including 254 staged checks and
-the Stage 1 recursive boundary check. These tests do not establish Portal usability,
-Standard v2 networking, tenant permissions, or fresh-run telemetry correlation.
-
-The revised guide was rendered locally and checked in Edge through Playwright: all five
-historical Portal images loaded, the manual-walkthrough anchor existed and no page errors
-occurred. A broken-image negative control was detected; restoring the image returned all
-five to a loaded state. This is documentation validation, not Portal deployment evidence.
+| Finding | Status |
+| --- | --- |
+| Standard v2 selection did not configure APIM outbound VNet integration | Fixed: Stage 2 integrates and verifies it (both runs) |
+| Foundry provisioning was outside the stages | Fixed: optional Stage 1 account and deployments, Stage 2 private endpoint and DNS (both runs) |
+| State was not bound to the deployment target | Fixed: `state_target_mismatch`; offline test with a negative control |
+| Telemetry acceptance was not tied to the run | Fixed: correlation by request ID (SASET: 2 of 2 found) |
+| Claude deployment requires `modelProviderData` | Fixed: required configuration, API `2025-10-01-preview` |
+| Concurrent Stage 7 runs from one checkout collide in `admin/node_modules` | Documented: one Stage 7 at a time per checkout |
+| Graph application consent cannot be activated from Azure CLI | Open by design: interactive PIM activation, then `Grant-SyncGraphPermissions.ps1` |
 
 ## References
 

@@ -1,5 +1,12 @@
 # Current work
 
+## Standard v2 and Foundry, two tenants (S3, complete with open items)
+
+Verified 2026-10-20 in SASET MSFT FDPO and Contoso ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
+Open: Portal walkthrough screenshots need a persistent Portal sign-in; Graph application consent
+needs PIM activation in Contoso; Claude in Contoso needs a non-sandbox subscription.
+
+
 ## Staged deployment, stages 0-8
 
 **Active packet:** S2 — staged entry points for stages 2-8 and a live end-to-end run (complete).

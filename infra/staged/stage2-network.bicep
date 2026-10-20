@@ -16,6 +16,9 @@ param tags object = {}
 @description('mode create: { vnetName, addressSpace, apimNsgName, subnets { apim, privateEndpoints, functions } }. mode existing: { privateEndpointSubnetId, functionsSubnetId, apimSubnetId?, privateDnsZoneIds { cosmos, blob } }.')
 param network object
 
+@description('Foundry accounts in this resource group that get a private endpoint (account group): names. Zones: privatelink.cognitiveservices.azure.com, privatelink.openai.azure.com, privatelink.services.ai.azure.com, created and linked in create mode, or network.existing.privateDnsZoneIds.foundry { cognitiveServices, openAi, aiServices }.')
+param foundryAccounts array = []
+
 var appKeys = map(items(names.apps), a => a.key)
 var createNetwork = network.mode == 'create'
 
@@ -94,6 +97,64 @@ resource cosmosZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroup
   }
 }
 
+// Foundry private path (account sub-resource): one endpoint, three zone configurations, so the
+// cognitiveservices, openai and services.ai host names all resolve privately from the VNet.
+var foundryZoneNames = [
+  'privatelink.cognitiveservices.azure.com'
+  'privatelink.openai.azure.com'
+  'privatelink.services.ai.azure.com'
+]
+var wantFoundryZones = createNetwork && !empty(foundryAccounts)
+
+resource foundryZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for z in foundryZoneNames: if (wantFoundryZones) {
+  name: z
+  location: 'global'
+  tags: tags
+}]
+
+resource foundryZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (z, i) in foundryZoneNames: if (wantFoundryZones) {
+  parent: foundryZones[i]
+  name: '${network.?create.?vnetName ?? 'vnet'}-link'
+  location: 'global'
+  tags: tags
+  properties: {
+    virtualNetwork: { id: createNetwork ? net!.outputs.vnetId : '' }
+    registrationEnabled: false
+  }
+}]
+
+var foundryZoneIds = createNetwork ? map(foundryZoneNames, z => resourceId('Microsoft.Network/privateDnsZones', z)) : [
+  network.existing.?privateDnsZoneIds.?foundry.?cognitiveServices ?? ''
+  network.existing.?privateDnsZoneIds.?foundry.?openAi ?? ''
+  network.existing.?privateDnsZoneIds.?foundry.?aiServices ?? ''
+]
+
+resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = [for f in foundryAccounts: {
+  name: f
+}]
+
+resource foundryEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for (f, i) in foundryAccounts: {
+  name: '${f}-account-pe'
+  location: location
+  tags: tags
+  properties: {
+    subnet: { id: ids.privateEndpoints }
+    privateLinkServiceConnections: [
+      { name: 'account', properties: { privateLinkServiceId: foundry[i].id, groupIds: ['account'] } }
+    ]
+  }
+}]
+
+resource foundryZoneGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (f, i) in foundryAccounts: {
+  parent: foundryEndpoints[i]
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [for (z, j) in foundryZoneNames: { name: replace(z, '.', '-'), properties: { privateDnsZoneId: foundryZoneIds[j] } }]
+  }
+  dependsOn: [foundryZoneLinks]
+}]
+
+output foundryPrivateEndpointIds array = [for (f, i) in foundryAccounts: foundryEndpoints[i].id]
 output functionsSubnetId string = ids.functions
 output apimSubnetId string = ids.apim
 output privateEndpointSubnetId string = ids.privateEndpoints
