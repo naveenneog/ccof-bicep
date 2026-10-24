@@ -256,6 +256,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["timerEnabled", "schedule", "validitySeconds", "leaseSeconds", "ledgerTimeoutSeconds", "ledgerMaxRows", "maxStates", "writeConcurrency", "logAnalyticsEndpoint"],
+      "dependentRequired": { "softLimitPercent": ["pacingWindowMinutes"], "pacingWindowMinutes": ["softLimitPercent"] },
       "properties": {
         "timerEnabled": { "type": "boolean", "description": "AzureWebJobs.reconcileBudgets.Disabled is its negation. Must be true before onboarding Stage 5 (WP-REC)." },
         "schedule": { "type": "string", "pattern": "^0 \\*/([1-9]|[1-5][0-9]) \\* \\* \\* \\*$" },
@@ -265,6 +266,8 @@
         "ledgerMaxRows": { "type": "integer", "minimum": 1, "maximum": 500000 },
         "maxStates": { "type": "integer", "minimum": 1, "maximum": 1000000 },
         "writeConcurrency": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "softLimitPercent": { "type": "integer", "minimum": 1, "maximum": 99, "description": "RECONCILER_SOFT_LIMIT_PERCENT (ADR 0035): from this share of a person's budget the usage view warns and the pace halves. Set together with pacingWindowMinutes, or neither." },
+        "pacingWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 120, "description": "RECONCILER_PACING_WINDOW_MINUTES (ADR 0035): the remaining budget is spread over at least this many minutes. At least the reconciler interval; above the expected ledger delay." },
         "logAnalyticsEndpoint": { "$ref": "#/$defs/httpsOrigin", "description": "RECONCILER_LOG_ANALYTICS_ENDPOINT (WP-REC): the Log Analytics query API origin of the workspace's cloud, also the token audience; no path or trailing slash. Public cloud: https://api.loganalytics.io (Learn, Logs query API request format)." }
       }
     },

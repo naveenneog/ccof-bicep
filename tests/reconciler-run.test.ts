@@ -87,6 +87,19 @@ test("a budget line has exactly the fields agreed with WP-WB, in order, with exa
   assert.deepEqual([cyb?.scope, cyb?.personId, cyb?.budgetCcu, cyb?.mode, cyb?.activeMemberCount], ["group", null, null, "notify", 0]);
 });
 
+test("configured pacing reaches the written state and the budget line; a group line has no soft-limit flag", async () => {
+  const azure = pilot();
+  const { budgetLines } = await runOnce(azure, undefined, "run-1", { RECONCILER_SOFT_LIMIT_PERCENT: "80", RECONCILER_PACING_WINDOW_MINUTES: "10" });
+  const doc = azure.budgetStates.find((d) => d.personId === PERSON_A);
+  assert.deepEqual([doc?.softLimitPercent, doc?.softLimitReached], [80, false]);
+  // (25,000 - 0.15) CCU / 10 minutes / 0.0011 CCU per token = 2,272,713.6, rounded down to 2^21.
+  assert.equal(doc?.realtimeCeilingTokensPerMinute, 2_097_152);
+  assert.equal(budgetLines.find((l) => l.scope === "person" && l.personId === PERSON_A)?.softLimitReached, false);
+  assert.equal(budgetLines.find((l) => l.scope === "group")?.softLimitReached, null);
+  const unpaced = await runOnce(pilot());
+  assert.equal(unpaced.budgetLines.find((l) => l.scope === "person")?.softLimitReached, null, "no pacing: no flag");
+});
+
 test("the ledger query covers the UTC month and the configured gateway, with the matching timespan", async () => {
   const azure = pilot();
   await runOnce(azure);

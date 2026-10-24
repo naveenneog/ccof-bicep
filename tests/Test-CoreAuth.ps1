@@ -56,6 +56,10 @@ Import-Module (Join-Path $root 'scripts\Core.Answers.psm1') -Force
 Import-Module (Join-Path $root 'scripts\Core.Prereqs.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Test-CoreFakes.psm1') -Force
 $answers = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.example.json') -Raw)
+Assert 'example pacing window passes the interval rule' (@(Test-CoreAnswerRules -Answers $answers).code -notcontains 'pacing_window_too_short')
+$answers.reconciler.schedule = '0 */15 * * * *'; $answers.reconciler.validitySeconds = 3600; $answers.reconciler.pacingWindowMinutes = 10
+Assert 'answers refuse a pacing window shorter than the schedule interval' (@(Test-CoreAnswerRules -Answers $answers).code -contains 'pacing_window_too_short')
+$answers = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.example.json') -Raw)
 Assert 'new example defaults to a combined developer/gateway app' ($answers.identity.gatewayApi.appId -eq $answers.identity.developerSignIn.appId)
 foreach ($combinedMode in @($true, $false)) {
     if (-not $combinedMode) { $answers.identity.developerSignIn.appId = $dev }

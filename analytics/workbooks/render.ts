@@ -11,10 +11,16 @@ export interface RenderParameters {
   group?: string;
   developer?: string;
   model?: string;
+  // Admin console filters on the ledger's request-time backend and the model family (chargeback-queries.ts).
+  backend?: string;
+  family?: string;
+  classification?: string;
+  // Comma-separated project IDs resolved server-side from registry tags; "*" means no tag filter.
+  projects?: string;
 }
 
 const utc = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
-const parameterToken = /\{(?:Period|Project|TimeRange|Group|Developer|Model)[:}]/;
+const parameterToken = /\{(?:Period|Project|TimeRange|Group|Developer|Model|Backend|Family|Classification|Projects)[:}]/;
 // Person, request and scope identifiers stay in the workspace; verification prints aggregates only.
 const counted = ["requests", "pricedRequests", "partialRequests", "unpricedRequests", "unattributedRequests",
   "observedRequests", "noUsageRequests", "knownCostRequests", "runs", "statesWritten"];
@@ -29,7 +35,7 @@ const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
 export function validateRenderParameters(value: RenderParameters): RenderParameters {
   if (!["month", "previous", "custom"].includes(value.period)) throw new Error("period: invalid");
   if (typeof value.project !== "string" || !value.project || /[\u0000-\u001f]/.test(value.project)) throw new Error("project: required");
-  for (const key of ["group", "developer", "model"] as const) {
+  for (const key of ["group", "developer", "model", "backend", "family", "classification", "projects"] as const) {
     if (value[key] !== undefined && (typeof value[key] !== "string" || !value[key] || /[\u0000-\u001f]/.test(value[key]))) {
       throw new Error(`${key}: nonempty_filter_required`);
     }
@@ -50,6 +56,10 @@ export function renderQuery(query: string, parameters: RenderParameters): string
     .replaceAll("{Group:base64}", base64(p.group ?? "*"))
     .replaceAll("{Developer:base64}", base64(p.developer ?? "*"))
     .replaceAll("{Model:base64}", base64(p.model ?? "*"))
+    .replaceAll("{Backend:base64}", base64(p.backend ?? "*"))
+    .replaceAll("{Family:base64}", base64(p.family ?? "*"))
+    .replaceAll("{Classification:base64}", base64(p.classification ?? "*"))
+    .replaceAll("{Projects:base64}", base64(p.projects ?? "*"))
     .replaceAll("{TimeRange:start}", `datetime(${p.from ?? "null"})`)
     .replaceAll("{TimeRange:end}", `datetime(${p.to ?? "null"})`);
   if (parameterToken.test(rendered)) throw new Error("render: unresolved_parameter");

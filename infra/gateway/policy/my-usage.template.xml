@@ -1,0 +1,122 @@
+<!--
+  ccof-usage gateway policy (the developer's own usage), generated from configuration %%CONFIGURATION_ID%%
+  and template sha256 %%TEMPLATE_SHA256%%. Do not edit it in the portal: change
+  infra/gateway/policy/my-usage.template.xml and render with infra/gateway/render.ts.
+  Design: docs/USAGE-SELF-SERVICE.md. The caller's token is checked exactly as for Claude Messages;
+  the person is the token's oid, never a request value. The resolver answers with that person's
+  own documents only (src/resolver/my-usage.ts).
+-->
+<policies>
+  <inbound>
+    <base />
+    <!-- 1. Authentication: a Microsoft Entra access token for this gateway's API, issued by the
+         configured tenant (v1 or v2 issuer), with that tenant in tid. -->
+    <validate-jwt id="ccof-jwt" header-name="Authorization" require-scheme="Bearer" failed-validation-httpcode="401" output-token-variable-name="ccofJwt">
+      <openid-config url="%%OPENID_CONFIG_URL%%" />
+      <audiences>
+        %%AUDIENCE_ELEMENTS%%
+      </audiences>
+      <issuers>
+        <issuer>%%ISSUER_V1%%</issuer>
+        <issuer>%%ISSUER_V2%%</issuer>
+      </issuers>
+      <required-claims>
+        <claim name="tid" match="all">
+          <value>%%TENANT_ID%%</value>
+        </claim>
+      </required-claims>
+    </validate-jwt>
+    <!-- 2. The caller: oid must be a GUID. A person's token carries scp with the configured scope and
+         comes from a configured client application (azp, or appid in a v1 token; WP-SEC A3), because
+         any application granted the scope gets tokens that carry it. An app-only token (no scp) is
+         accepted only from the configured test clients, and only if its roles claim holds the
+         configured app role (WP-NET S1), matched exactly among the claim's values. -->
+    <set-variable name="ccofOid" value="@{
+        var oid = ((Jwt)context.Variables["ccofJwt"]).Claims.GetValueOrDefault("oid", "").ToLowerInvariant();
+        return System.Text.RegularExpressions.Regex.IsMatch(oid, "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") ? oid : "";
+    }" />
+    <set-variable name="ccofClientAppId" value="@{
+        var jwt = (Jwt)context.Variables["ccofJwt"];
+        return jwt.Claims.GetValueOrDefault("azp", jwt.Claims.GetValueOrDefault("appid", "")).ToLowerInvariant();
+    }" />
+    <set-variable name="ccofRefusal" value="@{
+        if ((string)context.Variables["ccofOid"] == "") { return "token_identity_missing"; }
+        var scopes = ((Jwt)context.Variables["ccofJwt"]).Claims.GetValueOrDefault("scp", "").Trim();
+        if (scopes != "") {
+            if (!(" " + scopes + " ").Contains(" %%DELEGATED_SCOPE%% ")) { return "token_scope_missing"; }
+            var delegatedClients = new string[] { %%DELEGATED_CLIENT_IDS%% };
+            return Array.IndexOf(delegatedClients, (string)context.Variables["ccofClientAppId"]) >= 0 ? "" : "token_client_not_allowed";
+        }
+        var testClients = new string[] { %%APP_ONLY_CLIENT_IDS%% };
+        string[] roles;
+        var hasRole = ((Jwt)context.Variables["ccofJwt"]).Claims.TryGetValue("roles", out roles) && roles != null && Array.IndexOf(roles, "%%APP_ONLY_ROLE%%") >= 0;
+        return %%ALLOW_APP_ONLY%% && Array.IndexOf(testClients, (string)context.Variables["ccofClientAppId"]) >= 0 && hasRole ? "" : "app_token_not_allowed";
+    }" />
+    <choose>
+      <when condition="@((string)context.Variables["ccofRefusal"] != "")">
+        <return-response>
+          <set-status code="403" reason="Forbidden" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"error":"not_authorized"}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!-- 3. Admission per person, with its own counter so usage checks never consume model calls. -->
+    <rate-limit-by-key id="ccof-usage-person" calls="%%PERSON_CALLS%%" renewal-period="%%PERSON_PERIOD%%" counter-key="@("ccof-usage:" + (string)context.Variables["ccofOid"])" />
+    <!-- 4. The resolver, with APIM's managed identity (ADR-0009), for this person only. -->
+    <authentication-managed-identity id="ccof-usage-resolver-credential" resource="%%RESOLVER_AUDIENCE%%" output-token-variable-name="ccofResolverToken" ignore-error="true" />
+    <choose>
+      <when condition="@(context.Variables.ContainsKey("ccofResolverToken") && !string.IsNullOrEmpty((string)context.Variables["ccofResolverToken"]))">
+        <send-request mode="new" response-variable-name="ccofUsageResponse" timeout="%%RESOLVER_TIMEOUT%%" ignore-error="true">
+          <set-url>%%USAGE_URL%%</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["ccofResolverToken"])</value>
+          </set-header>
+          <set-body>@(new JObject(new JProperty("personId", (string)context.Variables["ccofOid"])).ToString(Newtonsoft.Json.Formatting.None))</set-body>
+        </send-request>
+      </when>
+    </choose>
+    <set-variable name="ccofResolverToken" value="" />
+    <choose>
+      <when condition="@(context.Variables.ContainsKey("ccofUsageResponse") && context.Variables["ccofUsageResponse"] != null && ((IResponse)context.Variables["ccofUsageResponse"]).StatusCode == 200)">
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="Cache-Control" exists-action="override">
+            <value>no-store</value>
+          </set-header>
+          <set-body><![CDATA[@(((IResponse)context.Variables["ccofUsageResponse"]).Body.As<string>())]]></set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="503" reason="Service Unavailable" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="Retry-After" exists-action="override">
+            <value>%%RETRY_AFTER%%</value>
+          </set-header>
+          <set-body>{"error":"temporarily_unavailable"}</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

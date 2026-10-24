@@ -1,7 +1,9 @@
 import type { WorkbookAnswers } from "./config.ts";
 import { kqlString } from "./rate-card.ts";
 
-export function context(answers: WorkbookAnswers): string {
+export type ReportContext = Pick<WorkbookAnswers, "maxQueryDays" | "retentionDays" | "gatewayResourceId" | "reconcilerResourceId" | "budgetLookbackDays">;
+
+export function context(answers: ReportContext): string {
   return `let ReportNow = now();
 let PeriodMode = base64_decode_tostring("{Period:base64}");
 let ProjectFilter = base64_decode_tostring("{Project:base64}");
@@ -43,7 +45,18 @@ export function rollup(groupBy: string): string {
 | project-away knownCostSum`;
 }
 
-export function bounded(query: string, limit: number, sort: string): string {
+// offset > 0 pages through the same ordered rows (admin console); offset 0 is the workbook's text.
+export function bounded(query: string, limit: number, sort: string, offset = 0): string {
+  if (offset > 0) {
+    return `let Report = materialize(${query});
+let ReportRows = toscalar(Report | count);
+Report
+| order by ${sort}
+| extend reportRowNumber = row_number()
+| where reportRowNumber > ${offset}
+| take ${limit}
+| extend reportRows = ReportRows, displayedLimit = ${limit}, pageOffset = ${offset}, truncated = ReportRows > ${offset + limit}`;
+  }
   return `let Report = materialize(${query});
 let ReportRows = toscalar(Report | count);
 Report

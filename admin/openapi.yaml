@@ -1,0 +1,295 @@
+openapi: 3.0.3
+info:
+  title: CCOF project admin API
+  version: 3.0.0
+  description: >
+    Manage projects through the admin app managed identity. V2 adds optional capability-gated
+    directory lookup, inventory, cost definitions, health and telemetry. No permission grants,
+    network changes or membership writes are performed. See docs/ADMIN-V2.md.
+servers:
+  - url: https://{functionAppHost}/api
+    variables:
+      functionAppHost: { default: example-admin.azurewebsites.net }
+security:
+  - entra: []
+paths:
+  /projects:
+    get:
+      summary: List projects (reader)
+      responses:
+        "200": { description: Project summaries, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectList" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      summary: Create a project (editor). Create-only; an existing id returns 409.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+      responses:
+        "201": { description: Created, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      summary: Read one project (reader). Returns its ETag for later updates.
+      responses:
+        "200": { description: Project, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/classifications/{code}/family-policy:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/Code" }, { $ref: "#/components/parameters/IfMatch" }]
+    put:
+      summary: Replace one classification's family policy - admitted models and token limits (editor)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/FamilyPolicy" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/classifications/{code}/limits:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/Code" }, { $ref: "#/components/parameters/IfMatch" }]
+    patch:
+      summary: Change token limits only (editor). Supplied limit fields replace those fields; the result is validated as a whole.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                aggregateLimits: { $ref: "#/components/schemas/ScopePatch" }
+                families: { type: object, additionalProperties: { $ref: "#/components/schemas/ScopePatch" } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/settings:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/IfMatch" }]
+    put:
+      summary: Review/update project tags, single backend and classification budgets (editor)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                adminTags: { type: array, nullable: true, maxItems: 20, uniqueItems: true, items: { type: string, maxLength: 60 }, description: Null/empty removes optional metadata for v1 rollback }
+                displayName: { type: string, maxLength: 200 }
+                backendId: { type: string }
+                designatedSubscriptionId: { type: string, format: uuid, description: Required with a backend change }
+                budgets: { type: object, additionalProperties: { type: object } }
+      responses:
+        "200": { $ref: "#/components/responses/Updated" }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/projects:
+    get:
+      summary: Server-paged project search (reader)
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: tag, in: query, schema: { type: string, maxLength: 60 } }
+        - { name: backendId, in: query, schema: { type: string, maxLength: 80 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque continuation token returned by the previous query }
+        - { name: tags, in: query, schema: { type: string }, description: 'V3: comma-separated tags (up to 10), all must match' }
+        - { name: classification, in: query, schema: { type: string }, description: 'V3: only projects with this classification' }
+      responses:
+        "200": { description: Project documents and nullable next cursor }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/catalog:
+    get:
+      summary: Read configured or packaged model catalog and versioned rate card
+      responses:
+        "200": { description: Catalog with source/editable/enforcement fields and an ETag when persisted }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      summary: Save catalog (editor); If-None-Match * for creation, exact If-Match for replacement
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+        - { name: If-None-Match, in: header, schema: { type: string, enum: ["*"] } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [schemaVersion, models, rateCard] } } } }
+      responses:
+        "200": { description: Saved catalog; does not change deployed reconciler pricing }
+        default: { $ref: "#/components/responses/Error" }
+  /v2/{feature}:
+    get:
+      summary: Optional read-only integration; missing permissions disable only this capability
+      parameters:
+        - { name: feature, in: path, required: true, schema: { type: string, enum: [groups, inventory, deployments, budgets, runs, audit, health, prices, billed-cost, version] } }
+        - { name: q, in: query, schema: { type: string }, description: Group name prefix for groups (2-80 characters) }
+        - { name: resourceId, in: query, schema: { type: string }, description: Deployments require a Foundry account ID within server-configured scopes }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 }, description: Budgets page size }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 }, description: Budgets page offset }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Budgets project or group substring }
+        - { name: projectId, in: query, schema: { type: string, maxLength: 80 }, description: Budgets exact project }
+        - { name: minUsedPercent, in: query, schema: { type: number, minimum: 0, maximum: 10000 }, description: Budgets minimum percent used }
+        - { name: attention, in: query, schema: { type: boolean }, description: Budgets limited to exhausted, stale or partial groups }
+      responses:
+        "200": { description: "Capability state with observedAt, optional reason/permission/data; version returns version metadata. For budgets, data is { groups[], totals, basis }: per group spentCcu/spentUsd, budgetCcu/budgetUsd (null = no cap), remainingCcu/remainingUsd, usedPercent, completeness, fresh; totals across groups with lowerBound." }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/chargeback/{view}:
+    get:
+      summary: "V3 (ADMIN_V3_ENABLED=true): chargeback view built server-side by the workbook's own query builder; the browser never sends KQL"
+      parameters:
+        - { name: view, in: path, required: true, schema: { type: string, enum: [totals, groups, developers, models, families, projects, trend, coverage, unpriced, diagnostics] } }
+        - { name: period, in: query, schema: { type: string, enum: [month, previous, custom], default: month } }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: 'Custom only, UTC; [from, to) at most ADMIN_CHARGEBACK_MAX_QUERY_DAYS' }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: project, in: query, schema: { type: string } }
+        - { name: group, in: query, schema: { type: string, format: uuid } }
+        - { name: developer, in: query, schema: { type: string, format: uuid } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: backend, in: query, schema: { type: string }, description: Request-time backendId from the ledger }
+        - { name: family, in: query, schema: { type: string, enum: [haiku, sonnet, opus, fable, mythos, unknown] } }
+        - { name: interval, in: query, schema: { type: string, enum: [hour, day], default: day } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: "Capability state; data has rows, columns, page, truncated, period, rateCardVersion, basis (list price, not an invoice), observedAt, cached" }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/reconciler/{kind}:
+    get:
+      summary: "V3: reconciler runs (latest per outcome, freshness vs timer interval), budget snapshots (person and group scope) or their summary"
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [runs, snapshots, summary] } }
+        - { name: period, in: query, schema: { type: string, enum: [month, previous, custom] } }
+        - { name: scope, in: query, schema: { type: string, enum: [person, group] } }
+        - { name: project, in: query, schema: { type: string } }
+        - { name: classification, in: query, schema: { type: string } }
+        - { name: person, in: query, schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { type: string, enum: [current, expired, historical, invalid_event] } }
+        - { name: budgetState, in: query, schema: { type: string, enum: [available, exhausted, no_cap, unknown] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: Capability state with rows and paging; CCU amounts with exact USD equivalents }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/audit:
+    get:
+      summary: "V3: audit search with server-side filters and paging"
+      parameters:
+        - { name: project, in: query, schema: { type: string } }
+        - { name: actor, in: query, schema: { type: string, format: uuid } }
+        - { name: operation, in: query, schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: Capability state with rows (at, requestId, operation, outcome, projectId, actorOid, d) and paging }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/plan:
+    get:
+      summary: "V3: in-force models by family with USD per MTok rates and geography multipliers"
+      responses:
+        "200": { description: Models, rate card version and source }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      summary: "V3: budget-to-token plan; pure, no writes, no extra permission"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [monthlyBudget, members, sizing, mix, families] } } } }
+      responses:
+        "200": { description: Plan per family (blended and worst-case USD/MTok, monthly tokens, TPM), expected and worst-case spend, warnings }
+        "422": { description: invalid_plan_request with detail }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/rate-card/review:
+    post:
+      summary: "V3: validate a candidate rate card (parser, history rules, no past-dated prices) and return added/closed entries; save with PUT /v2/catalog"
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Review with version before/after, added, closed and unchanged entries }
+        default: { $ref: "#/components/responses/Error" }
+  /v3/{info}:
+    get:
+      summary: "V3: version (3.0.0) or configured capabilities and the caller's role"
+      parameters:
+        - { name: info, in: path, required: true, schema: { type: string, enum: [version, capabilities] } }
+      responses:
+        "200": { description: Version or capabilities }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    entra:
+      type: oauth2
+      description: Entra delegated access token for the admin API app registration (ADMIN_AUDIENCE / ADMIN_SCOPE).
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes: { "api://ccof-admin/Projects.Manage": Manage CCOF projects }
+  parameters:
+    ProjectId: { name: projectId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" } }
+    Code: { name: code, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" } }
+    IfMatch: { name: If-Match, in: header, required: true, description: ETag from the last read; "*" is refused., schema: { type: string } }
+  responses:
+    Updated:
+      description: Updated, or unchanged when the request matches the stored policy
+      headers: { ETag: { schema: { type: string } } }
+      content: { application/json: { schema: { type: object, properties: { projectId: { type: string }, changed: { type: boolean }, project: { $ref: "#/components/schemas/Project" } } } } }
+    Error:
+      description: "400 body, 401 token, 403 permission, 404 not found, 405 unsupported, 409 exists, 412 stale ETag, 413 too large, 422 invalid (problems lists field paths), 428 If-Match missing, 503 not configured"
+      content: { application/json: { schema: { type: object, properties: { error: { type: string }, requestId: { type: string }, problems: { type: array, items: { type: string } } } } } }
+  schemas:
+    Limit:
+      type: object
+      additionalProperties: false
+      description: Positive integers or null. tokenQuota and tokenQuotaPeriod are both null or both set.
+      properties:
+        tokensPerMinute: { type: integer, minimum: 1, nullable: true }
+        tokenQuota: { type: integer, minimum: 1, nullable: true }
+        tokenQuotaPeriod: { type: string, enum: [Hourly, Daily, Weekly, Monthly, Yearly], nullable: true }
+    ScopePatch:
+      type: object
+      additionalProperties: false
+      properties: { person: { $ref: "#/components/schemas/Limit" }, group: { $ref: "#/components/schemas/Limit" } }
+    FamilyPolicy:
+      type: object
+      required: [aggregateLimits, families]
+      properties:
+        aggregateLimits: { type: object, properties: { person: { $ref: "#/components/schemas/Limit" }, group: { $ref: "#/components/schemas/Limit" } } }
+        families:
+          type: object
+          description: Keys haiku, sonnet, opus (fable and mythos only for classification CYB).
+          additionalProperties:
+            type: object
+            properties:
+              models: { type: array, items: { type: string } }
+              person: { $ref: "#/components/schemas/Limit" }
+              group: { $ref: "#/components/schemas/Limit" }
+    Budget:
+      type: object
+      properties: { amount: { type: number, minimum: 0 }, currency: { type: string, enum: [USD, CCU] }, period: { type: string, enum: [monthly] } }
+    Classification:
+      type: object
+      required: [groupId, familyPolicy, personBudget, aggregateBudget, aggregateMode, onboardingMode]
+      properties:
+        groupId: { type: string, format: uuid, description: Entra security group object id }
+        classificationGroupDisplayName: { type: string }
+        familyPolicy: { $ref: "#/components/schemas/FamilyPolicy" }
+        personBudget: { $ref: "#/components/schemas/Budget" }
+        aggregateBudget: { allOf: [{ $ref: "#/components/schemas/Budget" }], nullable: true }
+        aggregateMode: { type: string, enum: [strict, notify] }
+        onboardingMode: { type: string, enum: [block, warn] }
+    Project:
+      type: object
+      required: [id, projectId, displayName, status, backendId, designatedSubscriptionId, supersedes, retiredAt, classifications]
+      properties:
+        id: { type: string, description: Must equal projectId }
+        projectId: { type: string }
+        displayName: { type: string, maxLength: 200 }
+        adminTags: { type: array, maxItems: 20, uniqueItems: true, items: { type: string, maxLength: 60 } }
+        status: { type: string, enum: [active] }
+        backendId: { type: string }
+        designatedSubscriptionId: { type: string, format: uuid }
+        supersedes: { type: string, nullable: true, enum: [null] }
+        retiredAt: { type: string, nullable: true, enum: [null] }
+        classifications: { type: object, additionalProperties: { $ref: "#/components/schemas/Classification" } }
+    ProjectList:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            type: object
+            properties:
+              projectId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              backendId: { type: string }
+              classifications: { type: array, items: { type: string } }
+              etag: { type: string }

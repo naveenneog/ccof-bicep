@@ -1,0 +1,126 @@
+// The real ProjectStore: the `projects` container (partition key /projectId) through @azure/cosmos with
+// the admin app's own managed identity. create never upserts; replace always carries If-Match.
+
+import { CosmosClient } from "@azure/cosmos";
+import type { Container } from "@azure/cosmos";
+import type { TokenCredential } from "@azure/identity";
+import type { ProjectStore } from "./api.ts";
+import type { Doc } from "./validation.ts";
+import type { CatalogStore } from "./v2.ts";
+
+function statusOf(err: unknown): number | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const e = err as { code?: unknown; statusCode?: unknown };
+  const value = typeof e.code === "number" ? e.code : e.statusCode;
+  return typeof value === "number" ? value : undefined;
+}
+
+export interface CosmosSettings {
+  endpoint: string;
+  database: string;
+  container: string;
+}
+
+export function readCosmosSettings(env: Readonly<Record<string, string | undefined>>): CosmosSettings | null {
+  const endpoint = env.COSMOS_ENDPOINT?.trim();
+  const database = env.COSMOS_DATABASE?.trim();
+  const container = env.ADMIN_PROJECTS_CONTAINER?.trim() || "projects";
+  if (!endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(:443)?\/?$/.test(endpoint) || !database) return null;
+  return { endpoint, database, container };
+}
+
+export function openContainer(settings: CosmosSettings, credential: TokenCredential): Container {
+  return new CosmosClient({ endpoint: settings.endpoint, aadCredentials: credential }).database(settings.database).container(settings.container);
+}
+
+export function createCosmosProjectStore(container: Container): ProjectStore {
+  return {
+    async list() {
+      const { resources } = await container.items.query<Doc>("SELECT * FROM c").fetchAll();
+      return resources.map((doc) => ({ doc, etag: String(doc._etag ?? "") }));
+    },
+    async listPage(query) {
+      const filters: string[] = [];
+      const parameters: { name: string; value: string }[] = [];
+      if (query.search) { filters.push("(CONTAINS(c.projectId, @search, true) OR CONTAINS(c.displayName, @search, true))"); parameters.push({ name: "@search", value: query.search }); }
+      if (query.tag) { filters.push("ARRAY_CONTAINS(c.adminTags, @tag)"); parameters.push({ name: "@tag", value: query.tag }); }
+      (query.tags ?? []).forEach((tag, i) => { filters.push(`ARRAY_CONTAINS(c.adminTags, @tag${i})`); parameters.push({ name: `@tag${i}`, value: tag }); });
+      if (query.classification) { filters.push("IS_DEFINED(c.classifications[@classification])"); parameters.push({ name: "@classification", value: query.classification }); }
+      if (query.backendId) { filters.push("c.backendId = @backend"); parameters.push({ name: "@backend", value: query.backendId }); }
+      const sql = `SELECT * FROM c${filters.length ? ` WHERE ${filters.join(" AND ")}` : ""} ORDER BY c.projectId`;
+      const page = await container.items.query<Doc>({ query: sql, parameters }, {
+        maxItemCount: query.limit, continuationToken: query.cursor,
+      }).fetchNext();
+      return { items: page.resources.map((doc) => ({ doc, etag: String(doc._etag ?? "") })), cursor: page.continuationToken };
+    },
+    async read(projectId) {
+      try {
+        const response = await container.item(projectId, projectId).read<Doc>();
+        if (!response.resource) return null;
+        return { doc: response.resource, etag: response.etag ?? String(response.resource._etag ?? "") };
+      } catch (err) {
+        if (statusOf(err) === 404) return null;
+        throw err;
+      }
+    },
+    async create(doc) {
+      try {
+        const response = await container.items.create(doc);
+        return response.etag ?? "";
+      } catch (err) {
+        if (statusOf(err) === 409) return "conflict";
+        throw err;
+      }
+    },
+    async replace(doc, etag) {
+      try {
+        const id = String(doc.projectId);
+        const response = await container.item(id, id).replace(doc, { accessCondition: { type: "IfMatch", condition: etag } });
+        return response.etag ?? "";
+      } catch (err) {
+        const status = statusOf(err);
+        if (status === 412 || status === 404) return "precondition_failed";
+        throw err;
+      }
+    },
+  };
+}
+
+export function createCatalogStore(container: Container): CatalogStore {
+  return {
+    async read() {
+      try {
+        const response = await container.item("catalog", "catalog").read<Doc>();
+        return response.resource ? { doc: response.resource, etag: response.etag ?? "" } : null;
+      } catch (err) { if (statusOf(err) === 404) return null; throw err; }
+    },
+    async save(doc, etag) {
+      const value = { ...doc, id: "catalog", scopeId: "catalog" };
+      try {
+        const response = etag
+          ? await container.item("catalog", "catalog").replace(value, { accessCondition: { type: "IfMatch", condition: etag } })
+          : await container.items.create(value);
+        return response.etag ?? null;
+      } catch (err) { if ([409, 412, 404].includes(statusOf(err) ?? 0)) return null; throw err; }
+    },
+  };
+}
+
+// Health probe: one point read of a non-existent item. 404 proves network reach and data-plane read
+// access; a 403 is classified by Cosmos's message without echoing it (it can contain the caller's IP).
+export async function probeCosmos(container: Container, log: (line: string) => void = () => {}): Promise<string> {
+  try {
+    await container.item("__ccof_admin_probe__", "__ccof_admin_probe__").read();
+    return "ok";
+  } catch (err) {
+    const status = statusOf(err);
+    if (status === 404) return "ok";
+    const message = String((err as { message?: unknown })?.message ?? "");
+    // IP addresses are masked; the rest of the provider message classifies the refusal.
+    log(JSON.stringify({ schema: "ccof.admin.health.v1", status: status ?? null, message: message.replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, "x.x.x.x").slice(0, 400) }));
+    if (status === 403 && /public (internet|network)|firewall|virtual network|private endpoint|network acl/i.test(message)) return "blocked_by_network";
+    if (status === 403) return "forbidden_data_role";
+    if (status === 401) return "unauthorized";
+    return status ? `error_${status}` : "unreachable";
+  }
+}

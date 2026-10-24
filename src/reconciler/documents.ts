@@ -25,6 +25,9 @@ export interface BudgetStateDocument {
   validUntil: string;
   completeness: Completeness;
   realtimeCeilingTokensPerMinute: number;
+  // Present only when the reconciler paces spend (ADR 0035).
+  softLimitPercent?: number;
+  softLimitReached?: boolean;
 }
 
 // Container `aggregateBudgetState`, partition key /scopeId.

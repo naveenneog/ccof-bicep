@@ -85,10 +85,13 @@ export function kqlChecks(): KqlCheck[] {
     budgetCheck("invalid-budget-is-unknown", 'personId startswith "6666"', 'snapshotState=="invalid_event" and isnull(spentCcu) and isnull(exhausted)'),
     budgetCheck("zero-budget-exhausted", 'personId startswith "aaaa"', 'budgetState=="exhausted" and spentCcu==decimal(0) and budgetCcu==decimal(0) and snapshotState=="current"'),
     budgetCheck("missing-count-invalid", 'personId startswith "bbbb"', 'snapshotState=="invalid_event" and budgetState=="unknown" and isnull(spentCcu)'),
-    '(BudgetSnapshots | summarize n=count() | project test="resource-and-period-isolation", passed=n==7)',
+    budgetCheck("soft-limit-warning", 'personId startswith "cccc"', 'budgetState=="warning" and not(exhausted) and snapshotState=="current"'),
+    budgetCheck("no-soft-limit-flag-is-available", 'personId startswith "5555"', 'budgetState=="available"'),
+    '(BudgetSnapshots | summarize n=count() | project test="resource-and-period-isolation", passed=n==8)',
   ].join(",\n");
   const budgetTests = ["latest-computed-not-ingested", "exhausted-notify-partial", "null-means-no-cap",
-    "expired-snapshot", "invalid-budget-is-unknown", "zero-budget-exhausted", "missing-count-invalid", "resource-and-period-isolation"];
+    "expired-snapshot", "invalid-budget-is-unknown", "zero-budget-exhausted", "missing-count-invalid", "resource-and-period-isolation",
+    "soft-limit-warning", "no-soft-limit-flag-is-available"];
   // The workbook's card version is date-shaped here, as config/rate-card.json's "2026-10-11" is (WP-E2E G5).
   const versionCard = compileRateCard({ ...workbookRateCard(), version: "2026-10-11" }).kql + "\n";
   const versionExpected = "union " + [

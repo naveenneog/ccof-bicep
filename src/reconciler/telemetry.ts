@@ -38,6 +38,8 @@ export const BUDGET_FIELDS = [
   "rateCardVersion",
   "computedAt",
   "validUntil",
+  // ADR 0035: person lines only, null without pacing; appended so earlier readers keep their fields.
+  "softLimitReached",
 ] as const;
 
 export interface LineContext {
@@ -80,6 +82,7 @@ export function personBudgetLine(context: LineContext, doc: BudgetStateDocument,
     rateCardVersion: context.rateCardVersion,
     computedAt: doc.computedAt,
     validUntil: doc.validUntil,
+    softLimitReached: doc.softLimitReached ?? null,
   });
 }
 
@@ -106,6 +109,7 @@ export function groupBudgetLine(context: LineContext, doc: AggregateBudgetStateD
     rateCardVersion: context.rateCardVersion,
     computedAt: doc.computedAt,
     validUntil: doc.validUntil,
+    softLimitReached: null,
   });
 }
 

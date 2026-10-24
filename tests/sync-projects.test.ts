@@ -91,7 +91,9 @@ test("an unexpected key is reported without its name, so free text from a docume
 
 test("project-level fields are required and checked", () => {
   assert.deepEqual(problemsOf(projectDoc("PILOT1", { id: "OTHER" })), ["id:not_equal_to_projectId"]);
-  assert.deepEqual(problemsOf(projectDoc("PILOT1", { status: "retired" })), ["status:not_active"]);
+  assert.deepEqual(problemsOf(projectDoc("PILOT1", { status: "suspended" })), ["status:not_active"]);
+  assert.deepEqual(problemsOf(projectDoc("PILOT1", { status: "retired" })), ["retiredAt:invalid"]);
+  assert.deepEqual(problemsOf(projectDoc("PILOT1", { status: "retired", retiredAt: "yesterday" })), ["retiredAt:invalid"]);
   assert.deepEqual(problemsOf(projectDoc("PILOT1", { backendId: "" })), ["backendId:invalid"]);
   assert.deepEqual(problemsOf(projectDoc("PILOT1", { classifications: {} })), ["classifications:empty"]);
   assert.deepEqual(problemsOf(null), ["document:not_an_object"]);
@@ -128,4 +130,19 @@ test("classification fields are checked, and an invalid classification code is n
   const badCode = projectDoc("PILOT1");
   (badCode.classifications as Record<string, unknown>)["bad code!"] = {};
   assert.deepEqual(problemsOf(badCode), ["classifications:invalid_code"]);
+});
+
+test("a retired project with retiredAt is a valid document marked retired, and keeps its classifications", () => {
+  const result = readProjectDocument(projectDoc("PILOT1", { status: "retired", retiredAt: "2026-10-22T10:00:00.000Z" }));
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.retired, true);
+    assert.ok(result.classifications.length > 0, "classifications are still parsed, so a snapshot of the old groups stays valid");
+  }
+  const active = readProjectDocument(projectDoc("PILOT1"));
+  assert.equal(active.ok && active.retired, false);
+});
+test("a project with a malformed failover field is refused with the field path", () => {
+  assert.deepEqual(problemsOf(projectDoc("PILOT1", { failover: { enabled: true, fallbackBackendIds: [], revision: 1, active: null } })), ["failover.fallbackBackendIds:required_when_enabled"]);
+  assert.deepEqual(problemsOf(projectDoc("PILOT1", { failover: { enabled: false, fallbackBackendIds: ["foundry-sample-hub"], revision: 1, active: null } })), ["failover.fallbackBackendIds:includes_primary"]);
 });

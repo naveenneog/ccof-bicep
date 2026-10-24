@@ -12,6 +12,7 @@ import { planSync } from "./plan.ts";
 import type { EntitlementWriter, ExistingEntitlement, Plan, SyncEvent } from "./plan-types.ts";
 import { readProjectDocument } from "./projects.ts";
 import type { ProjectReadResult } from "./projects.ts";
+import { effectiveRemovalLimits } from "./removal-limits.ts";
 import { parseZonedTimestamp } from "./types.ts";
 import { RUN_SCHEMA, emptyRunCounts, emptyTimings, formatEvent, formatRun } from "./telemetry.ts";
 import type { RunCounts, RunOutcome, RunSummary, RunTimings } from "./telemetry.ts";
@@ -22,6 +23,9 @@ export interface RunDependencies {
   entitlements: EntitlementWriter;
   leases: LeaseStore;
   readGroup(groupId: string, beforeRequest: () => Promise<void>): Promise<GroupReadResult>;
+  // The admin console's removal-limit override (removal-limits.ts); null when none is configured.
+  // Omitted: the app settings apply.
+  readRemovalLimits?(): Promise<unknown | null>;
   // Snapshot runs only: refuses a snapshot naming a group no valid project registers.
   checkGroups?(registered: ReadonlySet<string>): { reason: string; groupIds: string[] } | null;
 }
@@ -112,7 +116,8 @@ export function configFailure(problems: ConfigProblem[], context: RunContext): R
 }
 
 async function readGroups(projects: ProjectReadResult[], deps: RunDependencies, lease: Lease, state: RunState): Promise<Map<string, GroupReadResult>> {
-  const groupIds = [...new Set(projects.flatMap((p) => (p.ok ? p.classifications.map((c) => c.groupId) : [])))].sort();
+  // A retired project's groups are not read: its memberships are removed whatever they hold.
+  const groupIds = [...new Set(projects.flatMap((p) => (p.ok && !p.retired ? p.classifications.map((c) => c.groupId) : [])))].sort();
   const groups = new Map<string, GroupReadResult>();
   for (const groupId of groupIds) {
     let result: GroupReadResult;
@@ -192,13 +197,23 @@ async function execute(config: SyncConfig, deps: RunDependencies, lease: Lease, 
     return { outcome: "failed", reasons: ["entitlements_read_failed"] };
   }
 
+  const settingsLimits = { maxRemovalsPerRun: config.maxRemovalsPerRun, maxRemovalFraction: config.maxRemovalFraction };
+  let limits = effectiveRemovalLimits(settingsLimits, { ok: true, doc: null }, now());
+  if (deps.readRemovalLimits) {
+    let read: { ok: true; doc: unknown | null } | { ok: false };
+    try { read = { ok: true, doc: await deps.readRemovalLimits() }; } catch { read = { ok: false }; }
+    limits = effectiveRemovalLimits(settingsLimits, read, now());
+    const counts = { maxRemovalsPerRun: limits.limits.maxRemovalsPerRun, maxRemovalFractionPpm: Math.round(limits.limits.maxRemovalFraction * 1_000_000) };
+    if (limits.source === "admin") state.emit({ event: "notice", reason: "removal_limits_from_admin", counts });
+    else if (limits.reason !== "override_absent" && limits.reason !== "override_disabled") state.emit({ event: "notice", reason: limits.reason ?? "removal_limits_from_settings", counts });
+  }
   const planStart = now().getTime();
   const plan = planSync({
     projects,
     groups,
     existing,
     memberTypes: config.memberTypes,
-    removalLimits: { maxRemovalsPerRun: config.maxRemovalsPerRun, maxRemovalFraction: config.maxRemovalFraction },
+    removalLimits: limits.limits,
     now: now(),
   });
   state.timings.planMs = now().getTime() - planStart;

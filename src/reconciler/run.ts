@@ -120,7 +120,7 @@ async function readAndCompute(settings: ReconcilerSettings, assets: RunAssets, d
   // Null: a fresh answer. A number: the query API served a cached answer that many seconds old (WP-E2E G6).
   timings.ledgerResponseAgeSeconds = answer.responseAgeSeconds;
   const registry = readRegistry(projects, entitlements);
-  const result = reconcile({ registry, rows, rateCard: assets.rateCard, contractScheduleVersion: assets.schedule.version, period, computedAt, validUntil });
+  const result = reconcile({ registry, rows, rateCard: assets.rateCard, contractScheduleVersion: assets.schedule.version, period, computedAt, validUntil, pacing: settings.pacing });
   return { registry, result };
 }
 

@@ -33,3 +33,19 @@ PaaS-outside-VNet boundary rule without requiring a browser in CI.
 
 Real deployment Resource IDs, addresses and endpoint values do not belong in this
 public design diagram. Optional lines are not claims that those paths were deployed.
+
+## Disaster recovery view
+
+`dr-network-architecture.py` generates the left-to-right DR design with original Azure icons,
+regional VNet/subnet boundaries, and separate managed Cosmos and Log Analytics boundaries.
+The overview remains in `dr-active-passive.mmd` as a logical Mermaid view.
+
+```text
+python docs/diagrams/dr-network-architecture.py --png
+```
+
+This writes `docs/images/dr/dr-active-passive.svg`, its PNG preview, an editable
+`dr-active-passive.excalidraw` scene with embedded original icons, and
+`docs/images/dr/dr-render-manifest.json`. The manifest records generator and export hashes and
+the original icon hashes. Without `--png`, only the SVG is regenerated.
+The SVG embeds its icons and works without external requests.

@@ -1,5 +1,9 @@
 # Claude clients through the enterprise gateway
 
+The [user onboarding guide](runbooks/USER-ONBOARDING.md) provides the exported-file field tables,
+self-service sequence and Intune packaging procedure. This page contains the underlying client
+behavior and compatibility details.
+
 The default setup uses **Entra single sign-on**, not an Anthropic subscription or an API key.
 An ordinary Azure CLI login is not automatically accepted: the separately approved
 [manual Azure CLI route](runbooks/PUBLIC-ACCESS-WORKBOOK.md#13-hand-configurable-developer-sign-in-and-gateway-testing)

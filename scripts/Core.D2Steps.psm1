@@ -153,6 +153,10 @@ function Get-CoreAppSettings {
     $c.RECONCILER_LOG_ANALYTICS_WORKSPACE_ID = [string]$D1.workspace.customerId; $c.RECONCILER_LOG_ANALYTICS_ENDPOINT = [string]$rc.logAnalyticsEndpoint; $c.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID = [string]$D1.apim.id
     $c.RECONCILER_LEDGER_TIMEOUT_SECONDS = [string]$rc.ledgerTimeoutSeconds; $c.RECONCILER_LEDGER_MAX_ROWS = [string]$rc.ledgerMaxRows
     $c.RECONCILER_MAX_STATES = [string]$rc.maxStates; $c.RECONCILER_WRITE_CONCURRENCY = [string]$rc.writeConcurrency
+    # ADR 0035: the optional pacing pair, only when the answers set both.
+    if ($null -ne $rc.softLimitPercent -and $null -ne $rc.pacingWindowMinutes) {
+        $c.RECONCILER_SOFT_LIMIT_PERCENT = [string]$rc.softLimitPercent; $c.RECONCILER_PACING_WINDOW_MINUTES = [string]$rc.pacingWindowMinutes
+    }
     $c.RECONCILER_PROJECTS_CONTAINER = 'projects'; $c.RECONCILER_ENTITLEMENT_CONTAINER = 'entitlement'
     $c.RECONCILER_BUDGET_STATE_CONTAINER = 'budgetState'; $c.RECONCILER_AGGREGATE_STATE_CONTAINER = 'aggregateBudgetState'; $c.RECONCILER_LEASE_CONTAINER = 'reconcilerLease'
     $c.'AzureWebJobs.reconcileBudgets.Disabled' = if ($rc.timerEnabled) { 'false' } else { 'true' }

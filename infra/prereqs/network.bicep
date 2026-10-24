@@ -31,6 +31,9 @@ param subnets object
 @description('Default outbound access of the APIM and Functions integration subnets. VNets created after 2026-03-31 default every subnet to private (false), which leaves APIM and the Functions without internet egress (Graph, Log Analytics, Application Insights). Set false only where a NAT gateway or firewall provides egress.')
 param defaultOutboundAccess bool = true
 
+@description('Create the Cosmos and blob private DNS zones here. False for a DR secondary VNet, which links to the primary region\'s existing zones instead (infra/dr/dr-prerequisites.bicep): one zone set per name avoids split-brain DNS.')
+param createDnsZones bool = true
+
 // .? reads an absent runner as null: a caller may omit it, and a null-valued property is not relied on.
 var runnerSubnets = subnets.?runner == null ? [] : [
   {
@@ -106,13 +109,13 @@ var zoneNames = [
   'privatelink.blob.${environment().suffixes.storage}'
 ]
 
-resource dnsZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for zone in zoneNames: {
+resource dnsZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for zone in (createDnsZones ? zoneNames : []): {
   name: zone
   location: 'global'
   tags: tags
 }]
 
-resource dnsLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (zone, i) in zoneNames: {
+resource dnsLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (zone, i) in (createDnsZones ? zoneNames : []): {
   parent: dnsZones[i]
   name: '${vnetName}-link'
   location: 'global'
@@ -128,5 +131,5 @@ output apimSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subne
 output privateEndpointSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.privateEndpoints.name)
 output functionsSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.functions.name)
 output runnerSubnetId string = subnets.?runner == null ? '' : resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnets.runner.name)
-output cosmosDnsZoneId string = dnsZones[0].id
-output blobDnsZoneId string = dnsZones[1].id
+output cosmosDnsZoneId string = createDnsZones ? dnsZones[0].id : ''
+output blobDnsZoneId string = createDnsZones ? dnsZones[1].id : ''

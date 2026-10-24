@@ -39,6 +39,19 @@ separate controls. Optional reconciliation is not an inference-path dependency.
 
 ## Start here
 
+The Admin 3.2.0 operating guides cover the complete handoff:
+
+| Guide | Scope |
+| --- | --- |
+| [1. Deployment runbook](docs/runbooks/DEPLOYMENT-RUNBOOK.md) | Entra and managed-identity prerequisites, network design, staged Bicep, permission handoffs, Portal references and acceptance |
+| [2. Admin console operations](docs/runbooks/ADMIN-OPERATIONS.md) | Project/group access, models, budgets, retirement, audit and onboarding another Foundry backend |
+| [3. User onboarding](docs/runbooks/USER-ONBOARDING.md) | Exported JSON, self-service setup and an Intune packaging/qualification procedure |
+| [Disaster recovery (design)](docs/DR-ACTIVE-PASSIVE.md) | Active/passive across East US 2 and Central US: Front Door Premium with WAF, private Standard v2 APIMs, Foundry backend pools and circuit breakers, Cosmos read region and replicated Log Analytics |
+| [DR implementation and prerequisites](docs/design/DR-IMPLEMENTATION.md) | Feature-branch packets, Entra/identity/network handoffs, project-specific opt-in fallback and staged testing |
+
+The deployment guide identifies the approved source availability and the readiness assumptions
+for a one-hour execution target. Intune packaging examples are not a verified tenant rollout.
+
 1. Read [prerequisites](docs/QUICKSTART-PREREQUISITES.md) and
    [permissions](docs/PERMISSIONS.md).
 2. Choose [quickstart](docs/QUICKSTART.md),
@@ -89,6 +102,11 @@ Mock metrics validate the driver, not APIM, Cosmos, real inference or billing ca
 Do not aim a mock-only load command at an existing real Foundry route.
 
 ## Evidence and limits
+
+The [configurable staged deployment](docs/runbooks/STAGED-DEPLOYMENT-V2.md)
+runs CCOF in nine stages (`infra/staged/Invoke-StagedDeployment.ps1`), each with its own operator
+permissions, preview, apply and read-back. The [live run report](docs/STAGED-LIVE-RUN-2026-10-20.md)
+records all nine stages in a lab RG, from resources to authenticated model calls, with screenshots.
 
 Offline tests are not live acceptance. Earlier quickstart seed resynchronization was
 reported live-verified, but that does not prove the integrated v3 route, combined

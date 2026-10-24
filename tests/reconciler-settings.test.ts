@@ -25,6 +25,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     writeConcurrency: 8,
     cosmosEndpoint: "https://sample-pilot-cosmos.documents.azure.com:443/",
     cosmosDatabase: "ccof",
+    pacing: null,
     containers: {
       projects: "projects",
       entitlement: "entitlement",
@@ -50,6 +51,42 @@ test("a blank value is missing, not a default", () => {
   const result = readReconcilerSettings(validSettings({ RECONCILER_VALIDITY_SECONDS: "   " }));
   assert.equal(result.ok, false);
   if (!result.ok) assert.deepEqual(result.problems, [{ setting: "RECONCILER_VALIDITY_SECONDS", problem: "missing" }]);
+});
+
+test("spend pacing is read only as a pair; neither means no pacing, one alone names the other as missing", () => {
+  const both = readReconcilerSettings(validSettings({ RECONCILER_SOFT_LIMIT_PERCENT: "80", RECONCILER_PACING_WINDOW_MINUTES: "10" }));
+  assert.equal(both.ok && JSON.stringify(both.settings.pacing), JSON.stringify({ softLimitPercent: 80, windowMinutes: 10 }));
+  const neither = readReconcilerSettings(validSettings());
+  assert.equal(neither.ok && neither.settings.pacing, null);
+  for (const [present, absent] of [
+    ["RECONCILER_SOFT_LIMIT_PERCENT", "RECONCILER_PACING_WINDOW_MINUTES"],
+    ["RECONCILER_PACING_WINDOW_MINUTES", "RECONCILER_SOFT_LIMIT_PERCENT"],
+  ]) {
+    const result = readReconcilerSettings(validSettings({ [present]: "10" }));
+    assert.equal(result.ok, false, present);
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: absent, problem: "missing" }]);
+  }
+});
+
+test("the soft limit is 1-99 percent and the pacing window 1-120 minutes, whole numbers only", () => {
+  const pair = (percent: string, minutes: string) =>
+    readReconcilerSettings(validSettings({ RECONCILER_SOFT_LIMIT_PERCENT: percent, RECONCILER_PACING_WINDOW_MINUTES: minutes }));
+  for (const [percent, minutes, setting, problem] of [
+    ["0", "10", "RECONCILER_SOFT_LIMIT_PERCENT", "out_of_range"],
+    ["100", "10", "RECONCILER_SOFT_LIMIT_PERCENT", "out_of_range"],
+    ["80.5", "10", "RECONCILER_SOFT_LIMIT_PERCENT", "invalid"],
+    ["80", "0", "RECONCILER_PACING_WINDOW_MINUTES", "out_of_range"],
+    ["80", "121", "RECONCILER_PACING_WINDOW_MINUTES", "out_of_range"],
+    ["80", "-5", "RECONCILER_PACING_WINDOW_MINUTES", "invalid"],
+  ]) {
+    const result = pair(percent, minutes);
+    assert.equal(result.ok, false, `${percent}/${minutes}`);
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting, problem }]);
+  }
+  for (const [percent, minutes] of [["1", "2"], ["99", "120"]]) assert.equal(pair(percent, minutes).ok, true, `${percent}/${minutes}`);
+  const shorter = pair("80", "1");
+  assert.equal(shorter.ok, false, "a window shorter than the reconciler interval cannot bound the spend between runs");
+  if (!shorter.ok) assert.deepEqual(shorter.problems, [{ setting: "RECONCILER_PACING_WINDOW_MINUTES", problem: "shorter_than_interval" }]);
 });
 
 test("the schedule must be an every-N-minutes NCRONTAB, N from 1 to 59", () => {

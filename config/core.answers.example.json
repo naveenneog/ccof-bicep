@@ -234,6 +234,8 @@
     "ledgerMaxRows": 100000,
     "maxStates": 10000,
     "writeConcurrency": 8,
+    "softLimitPercent": 80,
+    "pacingWindowMinutes": 30,
     "logAnalyticsEndpoint": "https://api.loganalytics.io"
   },
   "gateway": {

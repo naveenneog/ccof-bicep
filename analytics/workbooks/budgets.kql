@@ -13,6 +13,8 @@ let BudgetSnapshots = FunctionAppLogs
     budgetCcu = todecimal(tostring(payload.budgetCcu)),
     exhausted = tobool(payload.exhausted), mode = tostring(payload.mode),
     completeness = tostring(payload.completeness),
+    // ADR 0035: true only on person lines from a pacing reconciler; absent or null on every other line.
+    softLimitReached = coalesce(tobool(payload.softLimitReached), false),
     // A typed read keeps a date-shaped version ("2026-10-11") a string; parse_json makes it a datetime (WP-E2E G5).
     rateCardVersion = extract_json("$.rateCardVersion", Message, typeof(string)),
     pricedRequests = tolong(payload.pricedRequests), partialRequests = tolong(payload.partialRequests),
@@ -38,7 +40,8 @@ let BudgetSnapshots = FunctionAppLogs
 | extend eventValid = coalesce(eventValidRaw, false)
 | extend snapshotState = case(not(eventValid), "invalid_event",
     periodEnd <= ReportNow, "historical", validUntil <= ReportNow, "expired", "current"),
-    budgetState = case(not(eventValid), "unknown", noCap, "no_cap", exhausted, "exhausted", "available"),
+    budgetState = case(not(eventValid), "unknown", noCap, "no_cap", exhausted, "exhausted",
+      scope == "person" and softLimitReached, "warning", "available"),
     snapshotAgeSeconds = datetime_diff("second", ReportNow, computedAt),
     eventDeliverySeconds = datetime_diff("second", eventIngestedAt, computedAt),
     rateCardMismatch = rateCardVersion != RateCardVersion

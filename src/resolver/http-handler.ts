@@ -16,6 +16,7 @@ import type { ConfigProblem } from "./config.ts";
 import type { ResolveDependencies, ResolveInput, ResolveResult } from "./decide.ts";
 import { refusalStatus, resolveRequest } from "./decide.ts";
 import type { BudgetEnforcement } from "./freshness.ts";
+import { readMyUsage } from "./my-usage.ts";
 
 export interface HandlerResponse {
   status: number;
@@ -263,6 +264,32 @@ export async function handleResolveRequest(
     logEvent(runtime, { event: "degraded", reasons: result.degradedReasons, ...ids, projectId: result.projectId });
   }
   return { status: 200, jsonBody: { ...result, resolverOutcome: result.degraded ? "degraded" : "success" } };
+}
+
+// POST /api/me/usage: the caller's own spend and budget per project (my-usage.ts). Same gate as
+// /api/resolve: only APIM calls it, with personId taken from the developer's validated token.
+// The body is exactly {"personId": "<oid>"}: a GUID, nothing else.
+const PERSON_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export async function handleMyUsageRequest(request: ResolverRequestContext, runtime: ResolverRuntime): Promise<HandlerResponse> {
+  const gate = openGate(request, runtime);
+  if (!gate.open) return refuseByGuard(gate.failure, runtime);
+  const body = request.body as Record<string, unknown> | null | undefined;
+  if (typeof body !== "object" || body === null || Object.keys(body).length !== 1 ||
+    typeof body.personId !== "string" || !PERSON_GUID.test(body.personId)) {
+    logEvent(runtime, { event: "refused", reason: "invalid_usage_request", httpStatus: 400 });
+    return { status: 400, jsonBody: { error: "invalid_request" } };
+  }
+  const personId = body.personId;
+  try {
+    const now = runtime.now();
+    const usage = await withinDeadline((signal) => readMyUsage(personId, gate.readiness.reads, now, signal), gate.readiness.requestDeadlineMs);
+    return { status: 200, jsonBody: { ...usage } };
+  } catch (err: unknown) {
+    const reason = err === DEADLINE_EXCEEDED ? "resolver_deadline_exceeded" : "registry_read_failed";
+    logEvent(runtime, { event: "failed", reason, errorCode: errorCodeOf(err), personId });
+    return { status: 503, jsonBody: { ...UNAVAILABLE } };
+  }
 }
 
 // GET /api/health: the resolver reports itself unhealthy (ADR-0008 decision 5)

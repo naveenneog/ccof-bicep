@@ -120,6 +120,8 @@ for the decisions behind every component below, and `docs/NETWORK.md` for the ne
 (VNets, subnets, private endpoints, the SIPA edge control, and cross-subscription connectivity) of
 the logical diagram below.
 
+Disaster recovery across two regions is a separate design: [DR-ACTIVE-PASSIVE.md](DR-ACTIVE-PASSIVE.md).
+
 ## 1. System overview
 
 ```mermaid

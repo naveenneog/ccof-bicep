@@ -77,6 +77,9 @@ function Test-CoreAnswerRules {
         if ($null -ne $minutes -and [long]$rec.validitySeconds -le ($minutes * 60 + [long]$rec.ledgerTimeoutSeconds)) {
             $p.Add((New-CoreRuleProblem 'reconciler.validitySeconds' 'validity_too_short' 'must exceed the schedule interval plus ledgerTimeoutSeconds'))
         }
+        if ($null -ne $minutes -and $null -ne $rec.pacingWindowMinutes -and [long]$rec.pacingWindowMinutes -lt $minutes) {
+            $p.Add((New-CoreRuleProblem 'reconciler.pacingWindowMinutes' 'pacing_window_too_short' 'must be at least the schedule interval'))
+        }
         if ([long]$rec.leaseSeconds -lt 2 * [long]$rec.ledgerTimeoutSeconds) {
             $p.Add((New-CoreRuleProblem 'reconciler.leaseSeconds' 'lease_too_short' 'must be at least twice ledgerTimeoutSeconds'))
         }

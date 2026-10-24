@@ -61,6 +61,8 @@ export interface ProjectMembership {
   subscriptionId?: string;
   familyPolicy: FamilyPolicy;
   backendId: string;
+  // ADR 0034: verified project-scoped APIM pool; absent means direct routing to backendId.
+  routeBackendId?: string;
   aggregateMode: "strict" | "notify";
   denormalizedAt: string;
   joinedAt: string;
@@ -111,6 +113,8 @@ export interface ResolveSuccess {
   classificationGroupId: string;
   classificationGroupDisplayName?: string;
   backendId: string;
+  // ADR 0034: present only for a verified project-scoped pool; the gateway sends to it instead of backendId.
+  routeBackendId?: string;
   familyPolicy: FamilyPolicy;
   budgetEnforcement: BudgetEnforcement["mode"];
   // Whether the gateway must apply the CCU aggregate ceiling; false whenever
@@ -212,6 +216,7 @@ export async function resolveRequest(
       ? { classificationGroupDisplayName: membership.classificationGroupDisplayName }
       : {}),
     backendId: membership.backendId,
+    ...(membership.routeBackendId !== undefined ? { routeBackendId: membership.routeBackendId } : {}),
     familyPolicy: membership.familyPolicy,
     personBudgetScope: `${input.personId}:${membership.projectId}`,
   };

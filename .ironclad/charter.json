@@ -1,0 +1,46 @@
+{
+  "_readme": "The machine-checkable half of this project's contract. Enforced by .ironclad/gate.mjs. Loosening anything here requires an ADR stating why (anti-drift M1).",
+  "version": 1,
+  "name": "claude-code-on-foundry",
+  "strictness": "standard",
+  "commands": {
+    "test": "npm test",
+    "lint": null,
+    "typecheck": "npx --no-install tsc --noEmit",
+    "build": "npm run build",
+    "a11y": null,
+    "coverage": null
+  },
+  "quality": {
+    "maxFileLines": 400,
+    "maxTestFileLines": 800,
+    "maxDebtMarkers": 20,
+    "coverageFloor": null,
+    "minTestRatio": 0.15,
+    "fileSizeExceptions": []
+  },
+  "ledger": {
+    "requireRoadmap": true,
+    "requireStatus": true,
+    "requireChangelog": true,
+    "requireAdr": true,
+    "maxUncommittedFiles": 15,
+    "maxUncommittedLines": 500,
+    "maxCommitsWithoutAdr": 40,
+    "architectureSignificantPaths": [
+      "src/**"
+    ]
+  },
+  "architecture": {
+    "boundaries": []
+  },
+  "security": {
+    "secretAllowlist": [],
+    "auditDependencies": true
+  },
+  "tests": {
+    "skipAllowlist": []
+  },
+  "ignore": [],
+  "commandTimeoutMs": 900000
+}
