@@ -19,7 +19,7 @@ client 56, `tests/Test-StagedStages.ps1` 356 checks, quickstart 88 and steps 30,
 Live (lab, 2026-10-24): warning, pace and block observed; $25 budget ended at 108.1%, $35 at 106.0%
 (ADR 0035 "Live test"). The ceiling is rounded down to a power of two after run 1. Run 3 ($15 load on
 $37.11, $52.11 budget): warning at 81.9%, 205 pace 429s, block 5 s after exhaustion, final 100.3% ($0.18 over).
-Open: BSL-05 per-request reservation (local 5b5b820) is not reviewed, deployed or live-tested.
+Open: BSL-05. The per-request reservation (local branch `feat/budget-burst-reservation`) was rejected in code review and is not shipped; see UNKNOWNS BSL-05.
 
 ## Disaster recovery implementation
 
