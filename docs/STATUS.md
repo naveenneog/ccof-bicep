@@ -2,7 +2,7 @@
 
 ## Budget soft limit and spend pacing
 
-**Packet:** BSL-1 on `feat/budget-soft-limit` (from `dd68460`, local, not pushed).
+**Packet:** BSL-1 on `feat/budget-soft-limit` (pushed to `origin/feat/budget-soft-limit`; no PR yet).
 Decision: [ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md). Unknowns: BSL-01 to BSL-04.
 
 Acceptance:
@@ -17,7 +17,9 @@ Proof (offline): root suite (one golden workbook digest updated for the KQL chan
 client 56, `tests/Test-StagedStages.ps1` 356 checks, quickstart 88 and steps 30, Bicep build;
 13 mutants caught with an unchanged test count.
 Live (lab, 2026-10-24): warning, pace and block observed; $25 budget ended at 108.1%, $35 at 106.0%
-(ADR 0035 "Live test"). The ceiling is rounded down to a power of two after run 1. Open: BSL-05 bursts.
+(ADR 0035 "Live test"). The ceiling is rounded down to a power of two after run 1. Run 3 ($15 load on
+$37.11, $52.11 budget): warning at 81.9%, 205 pace 429s, block 5 s after exhaustion, final 100.3% ($0.18 over).
+Open: BSL-05 per-request reservation (local 5b5b820) is not reviewed, deployed or live-tested.
 
 ## Disaster recovery implementation
 

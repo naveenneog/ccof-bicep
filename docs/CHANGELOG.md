@@ -12,6 +12,8 @@
 - `/usage` and `ccof-usage` show a soft-limit warning; admin Reconciler/Budgets show `warning`.
 - Paced ceiling rounded down to a power of two, so the gateway's pace counter key changes only when
   the remaining budget halves. Live runs: $25 budget ended at 108.1%, $35 at 106.0% (ADR 0035).
+- Live run 3 on the lab: $15 load against a $52.11 budget ended at 100.3%; warning at 81.9%,
+  205 pace 429s, block 5 s after the budget was marked exhausted (ADR 0035).
 - Deployment: quickstart/staged app settings, core answers schema and examples (80 / 30); answers reject a window shorter than the schedule interval.
 
 ## 2026-10-23 - DR routing, admin 3.3.0 and prerequisites, proven live

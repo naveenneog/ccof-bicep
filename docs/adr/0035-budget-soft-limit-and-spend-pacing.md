@@ -75,8 +75,21 @@ reconciler run after ingestion caught up.
 | --- | --- | --- | --- | --- | --- |
 | 1 | $25.00 | $10.09 | $16.94 | $27.03 (108.1%) | $2.03 |
 | 2 | $35.00 | $27.03 | $10.08 | $37.11 (106.0%), stopped by the test's $9 cap | $2.11 |
+| 3 | $52.11 | $37.11 | $15.19 | $52.29 (100.3%) | $0.18 |
 
-In both runs the ledger total equalled the starting spend plus the client's own per-call total.
+In runs 1 and 2 the ledger total equalled the starting spend plus the client's own per-call total.
+In run 3 it was 5229.485 CCU against 5229.614 expected (0.13 CCU short, ledger marked `partial`).
+
+**Run 3** ($15 load on top of the earlier spend; ceiling rounded to a power of two, no per-request
+reservation; 11:50-12:41 UTC):
+
+- **Warning.** First `softLimitReached: true` at the 12:10 reconciler run (81.9%).
+- **Pace.** 205 requests refused with the tokens-per-minute 429 between 11:57 and 12:36.
+  The last successful request started at 12:31:54.
+- **Block.** `exhausted` computed at 12:36:00; the first `budget_exhausted` refusal followed at
+  12:36:05, and all 331 later requests were refused.
+- **Other refusals.** 48 group daily-quota 403s (11:53-11:57, until the lab's group quota was raised),
+  19 Foundry 429s and two 503s.
 
 - **Warning.** `/usage` showed `softLimitReached: true` on the first reconciler run past 80% (run 1: 81.2%).
 - **Block.** Run 1: `exhausted` at 08:32:01 UTC; every request from 08:39 was refused with
@@ -91,6 +104,6 @@ In both runs the ledger total equalled the starting spend plus the client's own 
   admitted together three times. Overshoot is therefore about one burst of a person's parallel
   requests, not a fraction of the budget (BSL-05).
 
-Evidence: session `files\budget-live` (`run1`, `run2`: calls, `/usage` samples, summaries, reconciler log).
+Evidence: session `files\budget-live` (`run1`, `run2`, `run3`: calls, `/usage` samples, summaries, reconciler log).
 
 [ltl]: https://learn.microsoft.com/azure/api-management/llm-token-limit-policy
