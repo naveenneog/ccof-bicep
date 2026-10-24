@@ -2,6 +2,18 @@
 
 ## 2026-10-24 - Step-by-step deployment guide
 
+- Novice review (council): 16 findings addressed. The guide now covers the APIM choice (`apim.existing`
+  or a new public bootstrap), the 3-8 character prefix, creating the resource group before the Step 1
+  preview, the Portal deployment-name limit for Step 1, the complete Entra script for all three
+  registrations (run in the Contoso test tenant and deleted), a full Step 6 build and check, the
+  Application Insights read needed by Step 7, and a configuration-driven Step 8 with telemetry by
+  request ID. Placeholders in commands use `REPLACE-...`, which `cmd.exe` does not treat as redirection.
+- Lab brought to the branch head: Stage 3 added one missing Cosmos data-role grant; Stage 5 replaced
+  the gateway policy that still carried the rejected BSL-05 reservation; Stages 6, 7 and 8 verified.
+  SASLAB1 STD limits and person budget restored to their values before the budget tests
+  (person 500,000 and group 2,000,000 tokens a day; 25,000 CCU a month); Stage 8 showed
+  `person-quota-remaining 499980`.
+
 - [Deploy CCOF step by step](runbooks/DEPLOY-STEP-BY-STEP.md): steps 0-8, each with what it does, the
   permission needed, the driver command, Azure CLI commands, the Portal route and a check with
   screenshots. README and the runbooks index point to it first.
