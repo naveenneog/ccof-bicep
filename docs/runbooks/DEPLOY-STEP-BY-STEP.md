@@ -521,6 +521,10 @@ merges into these objects instead of creating new ones ([Stage 4 notes](STAGED-D
 as listed in the [deployment runbook](DEPLOYMENT-RUNBOOK.md#app-registrations). Groups:
 **Microsoft Entra ID** > **Groups** > **New group** (type **Security**) > **Members** > **Add members**.
 
+![Register an application form: single tenant](images/staged-portal/04-new-registration.png)
+
+![New Group form: Security group type, assigned membership](images/staged-portal/04-new-group.png)
+
 ![Gateway app Expose an API: access_as_user scope and the authorized clients](images/staged-portal/04-gateway-expose-api.png)
 
 ![Admin app App roles: CCOF.Projects.Write and CCOF.Projects.Read](images/staged-portal/04-admin-roles.png)
@@ -706,7 +710,13 @@ az apim show --subscription $apimSub -g $apimRg -n $apim `
 
 **Expect:** both subnets delegated, every endpoint `Approved`, your VNet in each zone's link list, each
 app on `snet-functions`, and APIM `External` on `snet-apim`.
-**Portal**
+
+**Portal.** To build: **Private endpoints** > **Create**, with **Resource** set to the target (Cosmos
+account `Sql`, storage account `blob`, Foundry account `account`), **Virtual Network** set to the
+private-endpoint subnet and **DNS** set to integrate with the private DNS zone; then each Function
+App > **Networking** > **Virtual network integration**, and APIM > **Network**. To check:
+
+![Create a private endpoint form: Basics, Resource, Virtual Network, DNS](images/staged-portal/06-create-private-endpoint.png)
 
 1. Foundry account > **Networking**: public access **Disabled**, private endpoint **Approved**.
 2. APIM > **Network**: outbound virtual network integration on the APIM subnet.
@@ -849,6 +859,11 @@ ApiManagementGatewayLlmLog
 | where TimeGenerated > ago(1h)
 | project TimeGenerated, CorrelationId, ModelName, PromptTokens, CompletionTokens
 ```
+
+The **Logs** page opens in **Simple mode**; the mode menu at the right of the toolbar switches to
+**KQL mode**, where the query is typed and **Run**.
+
+![Log Analytics Logs in KQL mode: gateway requests with model and token counts; refused requests have no model and 0 tokens](images/staged-portal/08-log-analytics-query.png)
 
 **Check.** 401 without a token; 200 for every allowed pair; the expected status for every denied pair;
 401 from the resolver; 302 from the admin root and 401 from its API without a token; and the
