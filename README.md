@@ -30,7 +30,8 @@ Details: [architecture](docs/ARCHITECTURE.md) ·
 | You want to | Read |
 | --- | --- |
 | Understand the parts and the words used | [Glossary](docs/GLOSSARY.md), then [architecture](docs/ARCHITECTURE.md) |
-| Deploy CCOF for an organisation, with separate identity, network and application teams (recommended) | [1. Deployment runbook](docs/runbooks/DEPLOYMENT-RUNBOOK.md), using the [staged deployment](docs/runbooks/STAGED-DEPLOYMENT-V2.md) |
+| Deploy CCOF for the first time, step by step, with a script, Azure CLI or Portal option for each step (start here) | [Deploy CCOF step by step](docs/runbooks/DEPLOY-STEP-BY-STEP.md) |
+| Hand identity, network and permission work to separate teams | [1. Deployment runbook](docs/runbooks/DEPLOYMENT-RUNBOOK.md), with the [driver reference](docs/runbooks/STAGED-DEPLOYMENT-V2.md) |
 | Deploy everything as one administrator into an existing network | [Cloud Shell quickstart](docs/runbooks/CLOUD-SHELL-QUICKSTART.md) |
 | Create the resources by hand in the Azure Portal | [Azure Portal deployment](docs/runbooks/AZURE-PORTAL-DEPLOYMENT.md) |
 | Configure resources that already exist, without Bicep | [Public access workbook](docs/runbooks/PUBLIC-ACCESS-WORKBOOK.md) |

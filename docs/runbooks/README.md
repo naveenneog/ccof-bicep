@@ -4,7 +4,8 @@ Step-by-step guides. Read them in this order for a new deployment:
 
 | Order | Runbook | Who uses it | What it covers |
 |---|---|---|---|
-| 1 | [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md) | Platform, identity and network teams | Entra apps and groups, managed identities, network, the staged deployment and acceptance |
+| 1 | [DEPLOY-STEP-BY-STEP.md](DEPLOY-STEP-BY-STEP.md) | Anyone deploying CCOF for the first time | Steps 0-8, each with a script, Azure CLI and Portal option, how to check it, and screenshots |
+| 1a | [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md) | Platform, identity and network teams | Handoff details: Entra apps and groups, managed identities, network design, permission-separated execution |
 | 2 | [ADMIN-OPERATIONS.md](ADMIN-OPERATIONS.md) | CCOF administrators | Projects, people, models, limits, budgets, retirement, audit, another Foundry backend |
 | 3 | [USER-ONBOARDING.md](USER-ONBOARDING.md) | Service desk, developers, Intune packaging | Client files, sign-in and Claude Code / Desktop setup |
 

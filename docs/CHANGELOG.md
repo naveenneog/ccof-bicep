@@ -1,5 +1,19 @@
 # Change log
 
+## 2026-10-24 - Step-by-step deployment guide
+
+- [Deploy CCOF step by step](runbooks/DEPLOY-STEP-BY-STEP.md): steps 0-8, each with what it does, the
+  permission needed, the driver command, Azure CLI commands, the Portal route and a check with
+  screenshots. README and the runbooks index point to it first.
+- Run screenshots are read-only driver previews of every step against the Fabrikam lab (2026-10-24),
+  in the current step numbering. Read-only Azure CLI commands from the guide were run against the lab;
+  the Entra `az ad` and Graph commands were run in the Contoso test tenant and the objects deleted.
+- Nine more Portal pages captured live (subscription access, resource providers, resource group,
+  APIM, Foundry, Cosmos, APIs, group members, custom template deployment). The pseudonym map now also
+  covers the operator's surname, email domain and avatar initials, and an abbreviated sandbox
+  subscription name in one earlier image; an OCR sweep of all 161 repository images finds no real
+  identifier.
+
 ## 2026-10-24 - Documentation for new readers, pseudonymous screenshots
 
 - README: what CCOF is, how it works in five steps, a "which guide to read" table, one current-release

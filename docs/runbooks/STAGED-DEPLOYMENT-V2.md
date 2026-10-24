@@ -2,7 +2,8 @@
 
 Customer-facing procedures: [deployment](DEPLOYMENT-RUNBOOK.md),
 [admin operations and additional Foundry backends](ADMIN-OPERATIONS.md),
-[user and Intune onboarding](USER-ONBOARDING.md). This page is the driver reference.
+[user and Intune onboarding](USER-ONBOARDING.md). This page is the driver reference; the
+[step-by-step guide](DEPLOY-STEP-BY-STEP.md) walks through the same stages with Azure CLI and Portal options.
 
 CCOF deploys in nine stages, run one at a time by
 [`infra/staged/Invoke-StagedDeployment.ps1`](../../infra/staged/Invoke-StagedDeployment.ps1).

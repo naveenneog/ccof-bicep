@@ -3,8 +3,10 @@
 ## Documentation for new readers
 
 Done 2026-10-24 on `feat/budget-soft-limit`: README entry points, glossary, budgets page, historical
-banners, link test and pseudonymous screenshots (see [CHANGELOG](CHANGELOG.md)). Not done: the 85 older
-middle-masked Portal images under `runbooks/images/portal/` and splitting the two long workbooks.
+banners, link test, pseudonymous screenshots and the
+[step-by-step deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) (see [CHANGELOG](CHANGELOG.md)).
+Not done: the 85 older middle-masked Portal images under `runbooks/images/portal/` and splitting the
+two long workbooks.
 
 ## Budget soft limit and spend pacing
 

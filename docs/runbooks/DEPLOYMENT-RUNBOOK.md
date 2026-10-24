@@ -4,6 +4,8 @@ Applies to the staged deployment and Admin **3.3.0** ([current release](../../RE
 This guide covers a same-tenant gateway with private Foundry backends, four Function Apps,
 Cosmos, the admin console and the chargeback workbook.
 [Admin operations](ADMIN-OPERATIONS.md) and [user onboarding](USER-ONBOARDING.md) follow deployment.
+A first deployment, one step at a time with script, Azure CLI and Portal options, is in
+[Deploy CCOF step by step](DEPLOY-STEP-BY-STEP.md); this runbook holds the handoff details it links to.
 
 | Before you start | |
 | --- | --- |
