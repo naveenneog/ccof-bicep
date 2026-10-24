@@ -102,7 +102,10 @@ reservation; 11:50-12:41 UTC):
   (`max_tokens`). A per-minute counter admits every waiting request at once when it refills or when
   the key changes, and counts them only when they finish. In run 2, 12 streams (about $1.92) were
   admitted together three times. Overshoot is therefore about one burst of a person's parallel
-  requests, not a fraction of the budget (BSL-05).
+  requests, not a fraction of the budget (BSL-05). Two ways to bound the burst at the gateway were
+  ruled out: a per-request reservation is counted only at the end of the outbound pipeline
+  ([rate-limit-by-key](https://learn.microsoft.com/azure/api-management/rate-limit-by-key-policy)),
+  and `limit-concurrency` releases its slot when a stream's headers arrive (BSL-06, measured).
 
 Evidence: session `files\budget-live` (`run1`, `run2`, `run3`: calls, `/usage` samples, summaries, reconciler log).
 

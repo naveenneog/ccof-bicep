@@ -2,6 +2,12 @@
 
 ## 2026-10-24 - Step-by-step deployment guide
 
+- BSL-06 measured on a temporary lab probe API (deleted afterwards): APIM `limit-concurrency` releases
+  its slot when a streamed response's headers arrive, so a per-person concurrency cap does not bound
+  BSL-05 bursts. ADR 0035 and UNKNOWNS updated.
+- Portal routes gain live captures of the Register an application, New Group and Create a private
+  endpoint forms and of the Logs page in KQL mode.
+
 - Novice review (council): 16 findings addressed. The guide now covers the APIM choice (`apim.existing`
   or a new public bootstrap), the 3-8 character prefix, creating the resource group before the Step 1
   preview, the Portal deployment-name limit for Step 1, the complete Entra script for all three
