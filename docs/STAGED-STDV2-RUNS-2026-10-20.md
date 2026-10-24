@@ -1,13 +1,13 @@
-# Standard v2 and Foundry staged runs — SASET MSFT FDPO and Contoso, 2026-10-20
+# Standard v2 and Foundry staged runs — Fabrikam lab and Contoso, 2026-10-20
 
 Two independent runs of [`Invoke-StagedDeployment.ps1`](../infra/staged/Invoke-StagedDeployment.ps1)
 with a **Standard v2** API Management instance, a **new private Foundry account** created by Stage 1,
 and a separate configuration and state directory each. Stage numbers in this report are the order\nbefore 2026-10-21 (network = Stage 2, schema 3, grants 4, Entra 5, configuration 6); the runbook now\nruns the network as Stage 6. Runbook:
 [configurable staged deployment](runbooks/STAGED-DEPLOYMENT-V2.md).
 
-| | SASET MSFT FDPO | Contoso |
+| | Fabrikam lab | Contoso |
 | --- | --- | --- |
-| Tenant / subscription | FDPO tenant, subscription "SASET MSFT FDPO" | Contoso tenant, "ME-MngEnvMCAP189112" subscription |
+| Tenant / subscription | Fabrikam tenant, subscription "Fabrikam AI Platform (Dev)" | Contoso tenant, "Contoso-Sandbox-01" subscription |
 | Operator access | Reader on the subscription; Owner on one resource group only | Owner at the tenant root management group; directory role Global Reader active (others eligible through PIM) |
 | Resource group | Existing shared RG `rg-lab-shared` (holds another team's APIM and Foundry); `sharedResourceGroup: true` | New RG `rg-lab2` |
 | APIM | New Standard v2, outbound VNet integration on `snet-apim`, public ingress | Same |
@@ -18,10 +18,10 @@ and a separate configuration and state directory each. Stage numbers in this rep
 
 ## Results by stage
 
-| Stage | SASET MSFT FDPO | Contoso |
+| Stage | Fabrikam lab | Contoso |
 | --- | --- | --- |
 | 0 | Pass (53 s): providers, Flex region, Claude models offered in eastus2 | First run failed correctly: `Microsoft.AlertsManagement` NotRegistered. Registered by the subscription Owner, then pass (48 s) |
-| 1 | what-if: 37 creates, the 4 existing SASET resources `Ignore`. First apply failed (finding 1); guarded rerun verified (273 s) | Same finding 1; guarded rerun verified (156 s) |
+| 1 | what-if: 37 creates, the 4 existing Fabrikam lab resources `Ignore`. First apply failed (finding 1); guarded rerun verified (273 s) | Same finding 1; guarded rerun verified (156 s) |
 | 2 | 6 private endpoints Approved with DNS; APIM `External` on `snet-apim`, identity unchanged; 4 apps integrated (740 s) | Same (759 s) |
 | 3 | 9 containers (196 s) | 9 containers (198 s) |
 | 4 | Azure RBAC, 13 Cosmos data grants, Cognitive Services User on the new Foundry (322 s) | Same (322 s) |
@@ -32,16 +32,16 @@ and a separate configuration and state directory each. Stage numbers in this rep
 
 ## Evidence
 
-Command-output captures of the live logs and read-back JSON. Identifiers are masked in the middle;
+Command-output captures of the live logs and read-back JSON. Names, IDs, subscriptions and hosts are pseudonyms with the same shape as the real values;
 local paths are replaced by `<config-dir>`; no token or setting value is shown.
 
-![SASET Stage 0](images/staged-stdv2/saset-00-stage0.png)
-![SASET Stage 1 preview in a shared RG](images/staged-stdv2/saset-01a-shared-rg-preview.png)
-![SASET Stage 1](images/staged-stdv2/saset-01-stage1.png)
+![Fabrikam lab Stage 0](images/staged-stdv2/fabrikam-00-stage0.png)
+![Fabrikam lab Stage 1 preview in a shared RG](images/staged-stdv2/fabrikam-01a-shared-rg-preview.png)
+![Fabrikam lab Stage 1](images/staged-stdv2/fabrikam-01-stage1.png)
 ![Foundry setup findings](images/staged-stdv2/both-01x-foundry-marketplace.png)
-![SASET Stage 2](images/staged-stdv2/saset-02-stage2.png)
-![SASET Stage 4](images/staged-stdv2/saset-04-stage4.png)
-![SASET Stage 8](images/staged-stdv2/saset-08-stage8.png)
+![Fabrikam lab Stage 2](images/staged-stdv2/fabrikam-02-stage2.png)
+![Fabrikam lab Stage 4](images/staged-stdv2/fabrikam-04-stage4.png)
+![Fabrikam lab Stage 8](images/staged-stdv2/fabrikam-08-stage8.png)
 ![Contoso Stage 0](images/staged-stdv2/contoso-00-stage0.png)
 ![Contoso Stage 1](images/staged-stdv2/contoso-01-stage1.png)
 ![Contoso Stage 2](images/staged-stdv2/contoso-02-stage2.png)
@@ -58,7 +58,7 @@ local paths are replaced by `<config-dir>`; no token or setting value is shown.
 | 2 | Contoso subscription: "This subscription is internal or sandbox. Only $0.00 products or test products can be purchased." | Subscription limit, not a template defect. `stage1.foundry.modelDeploymentsBlocked` records the reason; Stage 0 warns and Stage 8 records telemetry as not applicable |
 | 3 | Standard v2 alone did not integrate APIM with the VNet | Stage 2 PATCHes APIM to `virtualNetworkType: External` on the APIM subnet (keeping its identity), waits for `Succeeded`, and verifies subnet and identity |
 | 4 | Foundry provisioning and its private path were outside the stages | Stage 1 optionally creates the account and deployments; Stage 2 creates its private endpoint with the cognitiveservices, openai and services.ai zones |
-| 5 | SASET allows writes only in an RG that holds another team's resources | `sharedResourceGroup: true`: Stage 1 compares changes with exact resource IDs in the prior Stage 1 deployment operations; name prefixes do not establish ownership, and all deletes are refused |
+| 5 | Fabrikam lab allows writes only in an RG that holds another team's resources | `sharedResourceGroup: true`: Stage 1 compares changes with exact resource IDs in the prior Stage 1 deployment operations; name prefixes do not establish ownership, and all deletes are refused |
 | 6 | Stage 7 of both runs, started at the same time from one checkout, failed: `npm ci` EPERM on `admin/node_modules` | Run Stage 7 for one target at a time per checkout (documented). Sequential reruns passed |
 | 7 | State could be reused across targets | `state.json` now records tenant, subscription and RG; a mismatch stops with `state_target_mismatch`. Offline test with a negative control |
 | 8 | Telemetry acceptance counted any recent rows | Stage 8 queries `ApiManagementGatewayLlmLog` for exactly this run's `x-ccof-request-id` values (APIM `context.RequestId` = `CorrelationId`) and requires every one |
@@ -72,13 +72,13 @@ local paths are replaced by `<config-dir>`; no token or setting value is shown.
 
 ## Final bug-bash recheck — 2026-10-20
 
-- Stage 1 verify-only inventory passed in SASET (139 s) and Contoso (129 s).
-- Stage 4 grants were reapplied and verified with exact Stage 1 resource scopes in SASET (62 s) and
+- Stage 1 verify-only inventory passed in Fabrikam lab (139 s) and Contoso (129 s).
+- Stage 4 grants were reapplied and verified with exact Stage 1 resource scopes in Fabrikam lab (62 s) and
   Contoso (64 s).
 - Stage 2 retries skipped the authoritative VNet deployment and verified DNS links, private
-  endpoints, Function App integration and Standard v2 APIM integration in SASET (101 s) and Contoso
+  endpoints, Function App integration and Standard v2 APIM integration in Fabrikam lab (101 s) and Contoso
   (111 s). No network resources were redeployed.
-- Stage 8 passed in SASET (157 s): anonymous/resolver 401, two admitted model calls 200, two denied
+- Stage 8 passed in Fabrikam lab (157 s): anonymous/resolver 401, two admitted model calls 200, two denied
   calls 403, admin 302/200/401, and both request IDs found in telemetry. Contoso passed in 16 s:
   anonymous/resolver 401, zero admitted calls because no model is available, two denied calls 403,
   admin 302/200/401; telemetry was correctly marked not applicable.
@@ -91,7 +91,7 @@ The stages were renumbered so that the network is Stage 6, the last setup stage,
 deployments were rechecked with the new driver. Both `state.json` files moved to the new keys on
 first read (backup `state.layout1.json`).
 
-| | SASET MSFT FDPO | Contoso |
+| | Fabrikam lab | Contoso |
 | --- | --- | --- |
 | `network.mode` | `create` (lab) | `verify` (default): the existing VNet treated as customer-built |
 | Stages rerun | 2 schema (210 s, deployment `stage2-schema`), 3 grants (65 s, `stage3-grants`), 5 configuration (99 s, `stage5-config`), 6 network (117 s; VNet deployment skipped, integrations verified), 8 | 6 network (91 s), 7 code and data (1306 s), 8 |
@@ -110,7 +110,7 @@ direct snapshot run read the same groups with HTTP 200 minutes later, and the re
 
 The guide's manual Portal steps were turned into 20 Portal steps per run (generated from each
 run's real resource IDs, with the text each page is expected to show). Two dedicated Edge
-profiles were signed in to FDPO and Contoso by the account owner. On 2026-10-20 those sessions
+profiles were signed in to Fabrikam and Contoso by the account owner. On 2026-10-20 those sessions
 ended when the automation closed the windows; on 2026-10-21 the profiles were reopened, the
 sessions were still valid, and the walkthrough ran against both deployments. No authentication was
 intercepted or bypassed.
@@ -121,7 +121,7 @@ intercepted or bypassed.
 | Guide PowerShell blocks | Parse without errors |
 | Manual Portal steps covered by deep links | Every section 0-8 and the Foundry section maps to 1-4 Portal steps (20 per run) |
 | Portal walkthrough, Contoso (2026-10-21) | 19 of 20 steps pass. `06-apim-apis`: the APIs blade stayed on "Service is getting ready..." in four afternoon attempts; it passed in the morning run, and ARM lists the `Claude Messages (staged)` API with the service `Succeeded` |
-| Portal walkthrough, FDPO/SASET (2026-10-21) | 20 of 20 steps pass (`00-subscription-access` and `06-apim-apis` on a targeted rerun) |
+| Portal walkthrough, Fabrikam lab (2026-10-21) | 20 of 20 steps pass (`00-subscription-access` and `06-apim-apis` on a targeted rerun) |
 | Walkthrough negative control | `06-resolver-auth` opened on the Function App overview (without the Authentication menu entry) reports `mismatch`; the Authentication blade reports `pass` |
 
 Walkthrough fixes made during the run (in [tests/playwright](../tests/playwright/README.md)):
@@ -131,9 +131,9 @@ Walkthrough fixes made during the run (in [tests/playwright](../tests/playwright
 - `06-resolver-auth` previously passed on any page that contained "Microsoft"; it now requires
   "Require authentication". The subscription check now requires "Active permanent assignments".
 - A new browser tab stopped at the account picker. The walker reuses the signed-in Portal tab and
-  its host (`ms.portal.azure.com` for FDPO) instead; no account was selected on the operator's
+  its host (`ms.portal.azure.com` for Fabrikam) instead; no account was selected on the operator's
   behalf.
-- In the shared FDPO resource group (56 resources) and subscription IAM (60 inherited
+- In the shared Fabrikam resource group (56 resources) and subscription IAM (60 inherited
   assignments), the expected rows sat outside the rendered list. Those steps type into the
   blade's own filter box.
 
@@ -147,7 +147,7 @@ Rerun steps: [tests/playwright](../tests/playwright/README.md).
 
 ## Retained resources
 
-Both deployments remain and incur charges (Standard v2 APIM, Flex apps, Cosmos, Foundry). SASET
+Both deployments remain and incur charges (Standard v2 APIM, Flex apps, Cosmos, Foundry). Fabrikam lab
 resources share `rg-lab-shared` with another team: removal must name the `lab1-*`
 resources individually, never the RG. Contoso objects: RG `rg-lab2`, three
 `CCOF ... lab2` app registrations, three `CCOF-CONLAB*` groups. Removal is a separate approval.

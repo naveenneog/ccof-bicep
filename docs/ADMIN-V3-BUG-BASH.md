@@ -1,5 +1,7 @@
 # Admin console V3 bug bash (2026-10-19)
 
+> **Test record from 19 October 2026, kept for reference.** Current behaviour: [ADMIN-V3](ADMIN-V3.md).
+
 Scope: the V3 console (`/api/console-v3`) and the admin Function App only. No resolver, sync or
 reconciler code or host settings were changed. V2 (`/api/console`) is unchanged and still works.
 

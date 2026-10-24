@@ -31,6 +31,33 @@ See the [screenshot inventory and pending captures](images/portal/README.md).
 Some original SVG slots remain explicitly pending because no matching real capture
 is available; they are not replaced with synthetic Portal evidence.
 
+## Modules
+
+Each module can be followed on its own. Command blocks that change Azure are marked `# WRITE:`.
+
+- [01. Decide names, capacity and operator access](#01-decide-names-capacity-and-operator-access)
+- [02. Register providers and create the resource group](#02-register-providers-and-create-the-resource-group)
+- [03. Create or connect the network and private DNS](#03-create-or-connect-the-network-and-private-dns)
+- [04. Workspace and Application Insights](#04-workspace-and-application-insights)
+- [05. Create sync and reconciler identities](#05-create-sync-and-reconciler-identities)
+- [06. Entra applications and classification groups](#06-entra-applications-and-classification-groups)
+- [07. Foundry account, deployments and gateway grant](#07-foundry-account-deployments-and-gateway-grant)
+- [08. Cosmos DB account, database and eight containers](#08-cosmos-db-account-database-and-eight-containers)
+- [09. Storage accounts and deployment containers](#09-storage-accounts-and-deployment-containers)
+- [10. Create and connect the three Function Apps](#10-create-and-connect-the-three-function-apps)
+- [11. API Management](#11-api-management)
+- [12. Private resolver ingress and network acceptance](#12-private-resolver-ingress-and-network-acceptance)
+- [13. Record values once; reload after each shell reconnect](#13-record-values-once-reload-after-each-shell-reconnect)
+- [14. Generate UI configuration artifacts, without deploying](#14-generate-ui-configuration-artifacts-without-deploying)
+- [15. Administrator grants app access, one app at a time](#15-administrator-grants-app-access-one-app-at-a-time)
+- [16. Graph permissions: a separate privileged approval](#16-graph-permissions-a-separate-privileged-approval)
+- [17. Apply settings and lock the resolver to APIM](#17-apply-settings-and-lock-the-resolver-to-apim)
+- [18. Build and publish one app's code](#18-build-and-publish-one-apps-code)
+- [19. Create the API, operation, backend entities and policy](#19-create-the-api-operation-backend-entities-and-policy)
+- [20. Diagnostics and complete chargeback workbook](#20-diagnostics-and-complete-chargeback-workbook)
+- [21. Seed the registry inside the VNet, then enable approved timers](#21-seed-the-registry-inside-the-vnet-then-enable-approved-timers)
+- [22. Client configuration and customer acceptance](#22-client-configuration-and-customer-acceptance)
+
 ## Quick path: where am I?
 
 Answer the first question that applies, then jump to the listed step.

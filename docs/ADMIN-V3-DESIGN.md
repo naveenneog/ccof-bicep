@@ -1,5 +1,7 @@
 # Admin console V3: design and required changes
 
+> **Design record.** Admin V3 has since been built and deployed (current version 3.3.0); operating instructions are in [ADMIN-V3](ADMIN-V3.md) and [admin operations](runbooks/ADMIN-OPERATIONS.md).
+
 Status: **built (package 3.0.0), not deployed**. Phases 1–4 below are implemented and tested on the
 local demo; V3 is served only with `ADMIN_V3_ENABLED=true`, and V2 (`/api/console`) is unchanged.
 Settings, permissions, upgrade and rollback: [ADMIN-V3.md](ADMIN-V3.md). See §12 for what was built

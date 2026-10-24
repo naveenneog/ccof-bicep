@@ -3,8 +3,8 @@
 The sync is the only writer of `entitlement` (`docs/PILOT.md` C-4). For every active `projects`
 document, it reads each classification group's direct members from Microsoft Graph and writes each
 person's `projectMemberships`. Adding a person to a registered group grants a membership on the next
-run; removing them takes it away. Rules and reasons: [ADR-0016](adr/0016-group-sync-projection-rules-and-safety.md).
-Packet evidence: [WP-SYNC](status/WP-SYNC.md).
+run; removing them takes it away. Rules and reasons: ADR-0016 (internal record, not published).
+Packet evidence: WP-SYNC (internal record, not published).
 
 ## How a run works
 
@@ -52,7 +52,7 @@ file (`infra/sync/sync.answers.pilot.json`) and validates them with the app's ow
 | `COSMOS_ENDPOINT`, `COSMOS_DATABASE` | The registry account (`https://<account>.documents.azure.com:443/`) and database |
 | `SYNC_PROJECTS_CONTAINER`, `SYNC_ENTITLEMENT_CONTAINER`, `SYNC_LEASE_CONTAINER` | Three distinct containers |
 | `SYNC_LEASE_SECONDS` | Lease duration; at least 2 × (`SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS` + `SYNC_GRAPH_TIMEOUT_SECONDS`) |
-| `SYNC_MEMBER_TYPES` | `user`, or `user,servicePrincipal` to admit test identities. With `servicePrincipal`, every group read adds the service-principal read (step 3). Pilot: `user,servicePrincipal`, owner approval (c) of 2026-10-11 ([WP-SYNC-SP](status/WP-SYNC-SP.md)) |
+| `SYNC_MEMBER_TYPES` | `user`, or `user,servicePrincipal` to admit test identities. With `servicePrincipal`, every group read adds the service-principal read (step 3). Pilot: `user,servicePrincipal`, owner approval (c) of 2026-10-11 (WP-SYNC-SP (internal record, not published)) |
 | `SYNC_MAX_REMOVALS_PER_RUN`, `SYNC_MAX_REMOVAL_FRACTION` | Removal limits; a run is refused only when it exceeds both |
 | `SYNC_LIMITS_CONTAINER` (optional) | Container holding the admin console's removal-limit override (`adminConfig`). Unset: the override is not read. Must differ from the entitlement and lease containers |
 | `SYNC_GRAPH_MAX_RETRIES`, `SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS`, `SYNC_GRAPH_TIMEOUT_SECONDS` | Graph retry budget, longest wait honoured, request timeout |
@@ -76,8 +76,8 @@ Stage 3 assignment `sync-limits-reader`; Stage 5 sets the setting when the admin
 
 ## Deleted and disabled members (P-9)
 
-Rule: [ADR-0016](adr/0016-group-sync-projection-rules-and-safety.md), amendment from P-9. Evidence:
-[WP-SYNC](status/WP-SYNC.md), "P-9: deleted and disabled members".
+Rule: ADR-0016 (internal record, not published), amendment from P-9. Evidence:
+WP-SYNC (internal record, not published), "P-9: deleted and disabled members".
 
 | Member | What Graph returns | Effect |
 |---|---|---|

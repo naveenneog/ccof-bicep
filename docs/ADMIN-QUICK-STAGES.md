@@ -1,5 +1,7 @@
 # Admin app: quick, modular customer deployment
 
+> **Historical.** The current deployment, including the admin app, is the [staged deployment](runbooks/STAGED-DEPLOYMENT-V2.md) described in the [deployment runbook](runbooks/DEPLOYMENT-RUNBOOK.md).
+
 Use this only if the customer now permits an approved administrator to clone the repository.
 The no-clone, Portal-first option remains the [Public Access Workbook, Modules 18-24](runbooks/PUBLIC-ACCESS-WORKBOOK.md#admin-hand-configuration).
 This is an optional faster path, not a replacement for that in-progress workbook.

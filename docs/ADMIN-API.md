@@ -1,5 +1,7 @@
 # Project admin console and API
 
+> **Historical.** This page describes the first admin API. The current console and API are described in [ADMIN-V3](ADMIN-V3.md) and [admin operations](runbooks/ADMIN-OPERATIONS.md).
+
 > **v2 release:** see [Admin v2 capabilities, optional permissions and VDI
 > upgrade/rollback](ADMIN-V2.md). The Phase 1 description below documents the
 > original baseline. V2 adds optional Graph lookup, tags, reviewed backend/budget

@@ -38,8 +38,8 @@ listed only merges, and Stage 8 passed the full acceptance matrix again in 29 s.
 
 ## Screenshots
 
-Command-output captures render the live stage logs. Identifiers have their middle masked;
-no token or setting value is shown.
+Command-output captures render the live stage logs. Names, IDs, subscriptions and hosts are pseudonyms with the same shape as the real values;
+local paths are shown as `<config-dir>`; no token or setting value is shown.
 
 **Stage 0 — read-only checks**
 ![Stage 0](images/staged/00-stage0-checks.png)
@@ -80,16 +80,20 @@ The console captures load the deployed console. The capture harness answered onl
 every API call to the deployed app with a real signed-in user token. The top bar therefore
 reads "Demo editor"; all data comes from the deployed API.
 
+The console screenshots below were retaken on 24 October 2026 from the Fabrikam lab deployment
+(admin 3.3.0, after the budget tests), with the same harness. API responses were pseudonymised
+before display, and write requests were blocked.
+
 ![Console overview](images/staged/console-light-overview.png)
-![Cost drill-down for STGLAB1](images/staged/console-light-overview-stglab1-drill.png)
+![Cost drill-down for SASLAB1](images/staged/console-light-overview-drill.png)
 ![Chargeback](images/staged/console-light-chargeback.png)
 ![Projects](images/staged/console-light-projects.png)
 ![Project onboarding downloads](images/staged/console-light-project-onboarding.png)
 ![Health](images/staged/console-light-health.png)
 ![Overview, dark theme](images/staged/console-dark-overview.png)
 
-Chargeback read $0.000328 known list cost for 4 priced requests (96 tokens), coverage
-complete. The console rounds this to $0.00 (finding 9).
+On 20 October, chargeback read $0.000328 known list cost for 4 priced requests (96 tokens), coverage
+complete; the console rounded this to $0.00 (finding 9).
 
 ## Findings and fixes
 

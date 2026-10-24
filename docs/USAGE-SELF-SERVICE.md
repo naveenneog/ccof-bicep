@@ -15,7 +15,7 @@ CCOF budget (this month, your own use)
 
 Flags appear when the budget is exhausted, the figures are older than the reconciler's freshness
 window, or some usage is not yet priced. When the reconciler paces spend
-([ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md)), a project past the soft limit shows:
+([budgets and spend pacing](BUDGETS.md)), a project past the soft limit shows:
 
 ```text
   PILOT1 / STD: $85.00 of $100.00 used (85.0%), $15.00 left, as of 2026-10-24 09:55 UTC [WARNING: past the 80% soft limit, requests are slowed until the budget resets]
@@ -68,9 +68,9 @@ Permissions: none new. The resolver's Cosmos DB Built-in Data Reader at database
 filter, remaining-amount floor, decimal-string check, the token-`oid`-only body and the 403 refusal
 branch each fail their named test when broken.
 
-## Live verification (SASET, 23 October 2026)
+## Live verification (Fabrikam lab, 23 October 2026)
 
-63 streamed `claude-sonnet-5` calls through the SASET gateway as one developer (project SASLAB1/STD),
+63 streamed `claude-sonnet-5` calls through the Fabrikam lab gateway as one developer (project SASLAB1/STD),
 recorded independently by a load script from each response's `usage` (3,465 input and 1,008,000
 output tokens, no cache), priced at rate card 2026-10-11:
 

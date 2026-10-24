@@ -1,20 +1,26 @@
 # Runbooks
 
-Copy-paste runbooks. Each step is a block you paste as-is; values come from one variables block at
-the top.
+Step-by-step guides. Read them in this order for a new deployment:
 
-**Current customer sequencing:** start with
-[STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md) for the four-stage
-service / separate access-team / application / customer-network plan and private
-VDI v2 updates. It documents the resource-only Bicep
-entry point under `infra\staged`, secure defaults and APIM's
-explicit new-public-bootstrap gate; the integrated quickstart is not a substitute.
+| Order | Runbook | Who uses it | What it covers |
+|---|---|---|---|
+| 1 | [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md) | Platform, identity and network teams | Entra apps and groups, managed identities, network, the staged deployment and acceptance |
+| 2 | [ADMIN-OPERATIONS.md](ADMIN-OPERATIONS.md) | CCOF administrators | Projects, people, models, limits, budgets, retirement, audit, another Foundry backend |
+| 3 | [USER-ONBOARDING.md](USER-ONBOARDING.md) | Service desk, developers, Intune packaging | Client files, sign-in and Claude Code / Desktop setup |
 
-| Runbook | Use it for |
+Command reference for the deployment driver: [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md).
+
+Other ways to deploy, for specific situations:
+
+| Runbook | Use it when |
 |---|---|
-| [STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md) | Current ownership/acceptance gates, checked existing-resource commands, central DNS diagnostics, workbook corrections and private v1→v2 update/rollback |
-| [AZURE-PORTAL-DEPLOYMENT.md](AZURE-PORTAL-DEPLOYMENT.md) | Creating and connecting every resource in the Azure Portal; Cloud Shell only for artifact generation, per-app access grants and code publish |
-| [CLOUD-SHELL-QUICKSTART.md](CLOUD-SHELL-QUICKSTART.md) | Deploying the core from Azure Cloud Shell into an existing VNet: discovery, form, validation, preview, deployment, member sync, checks, diagnostics |
+| [CLOUD-SHELL-QUICKSTART.md](CLOUD-SHELL-QUICKSTART.md) | One administrator holds every role and deploys into an existing VNet from Azure Cloud Shell |
+| [AZURE-PORTAL-DEPLOYMENT.md](AZURE-PORTAL-DEPLOYMENT.md) | Resources must be created by hand in the Azure Portal; Cloud Shell is used only for artifacts, access grants and code publishing |
+| [PUBLIC-ACCESS-WORKBOOK.md](PUBLIC-ACCESS-WORKBOOK.md) | The resources already exist and need configuration, seeding, client files and reports, without Bicep |
+| [STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md) | **Historical** four-stage plan and private VDI v1-to-v2 admin update; kept for reference |
+
+The Portal deployment workbook starts with a linked module list; the public access workbook starts with
+a progress sheet. Each module can be followed on its own.
 
 Diagnostic scripts live in [`scripts/diagnostics/`](../../scripts/diagnostics/):
 
@@ -22,12 +28,4 @@ Diagnostic scripts live in [`scripts/diagnostics/`](../../scripts/diagnostics/):
 |---|---|
 | `Find-SeedError.ps1` | Names the exact form field behind `seed_document_invalid` (read-only) |
 | `windows-az-utf8/az.ps1` | Windows only: Azure CLI in UTF-8 mode for `'charmap' codec` errors |
-# Existing resources and manual completion
-
-Use [PUBLIC-ACCESS-WORKBOOK.md](PUBLIC-ACCESS-WORKBOOK.md) when the platform resources
-already exist. It is the no-Bicep configuration/seed/client/report path, not a full
-quickstart infrastructure redeployment. Modules 13–16 include full plain client source,
-approved Azure CLI trust, reporting readers, optional monetary activation and customer-owned
-private cutover. Its module numbers differ from the resource-creation guide below.
-
-Real screenshots and their limits are listed in the [screenshot inventory](images/portal/README.md).
+Screenshots used in the Portal guides and their limits are listed in the [screenshot inventory](images/portal/README.md).

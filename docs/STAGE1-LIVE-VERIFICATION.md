@@ -1,5 +1,7 @@
 # Stage 1 live verification — 2026-10-20
 
+> **Test record from 20 October 2026, kept as evidence.** The current deployment guide is the [deployment runbook](runbooks/DEPLOYMENT-RUNBOOK.md).
+
 > The RG `ccof-stage1-20261020-rg` was deleted on 2026-10-20 (approved). Stages 1-8 then ran in
 > a new RG: see the [staged live run report](STAGED-LIVE-RUN-2026-10-20.md).
 

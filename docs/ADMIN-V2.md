@@ -1,5 +1,7 @@
 # Admin console v2: private-VDI upgrade and optional capabilities
 
+> **Historical.** This page describes admin console 2.0.1. The current version is described in [ADMIN-V3](ADMIN-V3.md) and [admin operations](runbooks/ADMIN-OPERATIONS.md).
+
 Release source: `feat/admin-console-v2`; package version `2.0.1`.
 This is an **admin-app-only** upgrade. It does not deploy to the customer's
 environment, change the gateway/sync/reconciler binaries, grant permissions,

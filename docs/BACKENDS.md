@@ -7,7 +7,7 @@ the ways the gateway can reach Claude:
 - on other providers.
 
 All rows were researched on 2026-10-11 from the primary sources cited. The decision record is
-[ADR-0007](adr/0007-backend-connectivity-options.md) (Proposed).
+ADR-0007 (internal record, not published) (Proposed).
 
 ## 1. Summary
 

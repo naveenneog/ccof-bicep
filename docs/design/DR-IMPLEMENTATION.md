@@ -12,19 +12,19 @@ handoffs, not in this public repository. No inference-spend exercise is part of 
 
 | Test environment | Intended use | Ownership boundary |
 | --- | --- | --- |
-| SASET | Positive Claude calls and later continuity comparisons | Existing shared RG; only explicitly scoped CCOF resources can be changed |
+| Fabrikam lab | Positive Claude calls and later continuity comparisons | Existing shared RG; only explicitly scoped CCOF resources can be changed |
 | Contoso | Negative cases and infrastructure acceptance | Existing sandbox restriction prevents a successful Claude purchase; never counted as inference acceptance |
 | Supplied third subscription | Additional same-tenant Foundry/APIM compatibility and failure tests | Existing APIM and Foundry are discovery-only until an approved adoption manifest lists allowed changes |
 
-The supplied third environment and SASET have the same tenant identifier but different
+The supplied third environment and Fabrikam lab have the same tenant identifier but different
 subscriptions. Contoso is a different tenant and remains an isolated test environment; its
-endpoints are not automatically inserted into a SASET project pool.
+endpoints are not automatically inserted into a Fabrikam lab project pool.
 
 Read-only discovery on 2026-10-23:
 
 | Environment | Result | Meaning |
 | --- | --- | --- |
-| SASET | APIM Standard v2 and Foundry in East US 2; two deployments listed | Resource visibility only; no new model calls, failover or standby test |
+| Fabrikam lab | APIM Standard v2 and Foundry in East US 2; two deployments listed | Resource visibility only; no new model calls, failover or standby test |
 | Contoso | APIM Standard v2 and Foundry in East US 2; zero deployments listed | Infrastructure/negative tests only; no positive model proof |
 | Supplied third subscription | ARM subscription metadata and the exact APIM, Foundry and deployment-list reads returned HTTP 403 with the tenant-pinned lab profile | Access blocker for this identity; not evidence that the resources do not exist. Reader at the target scope is the initial discovery prerequisite; later deployment/consent permissions are separate |
 
@@ -46,12 +46,12 @@ Live results:
 | Environment | Result |
 | --- | --- |
 | Contoso | P0 passed except the known blocker (no Claude deployment). P2 in Central US: VNet with delegated APIM/Functions subnets, private-endpoint subnet, links to the five primary DNS zones, two-way peering `Connected`, identities `sync-b`/`reconciler-b`. Wrong prefix, missing identity and wrong tenant all failed closed. Stages 5 and 7 deployed admin 3.3 and the fragment policy. Publisher negative: a registry URL that differs from the project's APIM backend was refused, the project stayed unpublished and no pool entity was written |
-| SASET | P0 passed. P2 in Central US in the existing resource group (no resource-group create right; recorded opt-in). Stages 5 and 7 deployed admin 3.3 and the new gateway policy. SASLAB1 proof: pool member primary served 200; primary member broken (404) tripped its breaker and the fallback member served 200; restored primary served 200; failover off returned routing to `foundry-lab1`. Quotas raised for the test and restored, all in the change record |
+| Fabrikam lab | P0 passed. P2 in Central US in the existing resource group (no resource-group create right; recorded opt-in). Stages 5 and 7 deployed admin 3.3 and the new gateway policy. SASLAB1 proof: pool member primary served 200; primary member broken (404) tripped its breaker and the fallback member served 200; restored primary served 200; failover off returned routing to `foundry-lab1`. Quotas raised for the test and restored, all in the change record |
 | Third subscription | Still HTTP 403 on subscription, resource group, Foundry and APIM for the lab identity; Reader on `rg-lab3` is required before P0 |
 
 Limits observed:
 
-- SASET has one Claude account, so the fallback entry points at the same account. The proof
+- Fabrikam lab has one Claude account, so the fallback entry points at the same account. The proof
   covers routing, breaker scope and publication, not regional independence.
 - The request that trips a breaker is returned to the client; APIM breaker state is per gateway
   node. A policy-level retry is a separate decision (streamed bodies).

@@ -25,7 +25,7 @@ driver moves an existing `state.json` to the new numbers on first read (backup
 `state.layout1.json`).
 
 Standard v2 APIM with a new private Foundry account ran in two tenants on 2026-10-20: the
-SASET MSFT FDPO subscription (shared resource group, existing Entra objects) passed end to end
+Fabrikam lab subscription (shared resource group, existing Entra objects) passed end to end
 with 200 responses; Contoso (new Entra objects) passed every stage, with model calls blocked
 because its sandbox subscription cannot buy the Claude offer.
 The [manual Portal walkthrough](#manual-portal-walkthrough) maps each stage to Portal checks.
@@ -143,7 +143,7 @@ Marketplace offers:
 - Internal or sandbox subscriptions cannot buy it ("Only $0.00 products or test products can be
   purchased"). Record that with `modelDeploymentsBlocked`; the rest of the stages still deploy.
 - The operator needs to create resources and accept the Marketplace offer on the subscription;
-  Owner on one resource group was sufficient in the SASET run.
+  Owner on one resource group was sufficient in the Fabrikam lab run.
 
 ### Stage 1 in a shared resource group
 With `sharedResourceGroup: true`, Stage 1 runs what-if first and refuses a Modify or Deploy for a
@@ -183,7 +183,7 @@ delegated-snapshot` needs none ([PERMISSIONS.md](../PERMISSIONS.md), rows 2-3).
 the gateway policy's delegated clients. Developers can then use `az account get-access-token`
 ([client modes](../CLIENTS.md)); Stage 8 uses it for its test calls.
 `admin.extraAllowedClientIds` is also preauthorized on the admin app for `Projects.Manage`
-and read back after the merge (fix `dfd49af`).
+and read back after the merge.
 
 ### Stage 5: configuration
 Application settings are written as a complete set per app; this stage is the only settings
@@ -259,24 +259,25 @@ API 401 without a token. Telemetry: every allowed response's `x-ccof-request-id`
 
 Each Portal step below lists the blade that shows the result of a stage. Images under
 `images/staged-portal/` are captures of the Contoso Standard v2 deployment (2026-10-21), taken by
-the Playwright walkthrough from the signed-in Portal; GUIDs, the signed-in account, the directory
-name and the subscription name are masked. The five historical images are middle-masked captures
+the Playwright walkthrough from the signed-in Portal. Resource names, IDs and the subscription name
+were then replaced with pseudonyms of the same shape (Contoso lab resources appear as `cto1020-...`);
+the signed-in account is hidden. The five historical images are middle-masked captures
 from the earlier manual guide and show navigation, not a new deployment's result
 ([image manifest](images/portal/screenshots.json)). The
 [Standard v2 and Foundry run report](../STAGED-STDV2-RUNS-2026-10-20.md) holds the read-back
-evidence of the SASET MSFT FDPO and Contoso runs and the status of the Playwright Portal
+evidence of the Fabrikam lab and Contoso runs and the status of the Playwright Portal
 walkthrough, which visits each step's blade on those runs' real resources.
 
 | Environment | Standard v2 + new private Foundry | Directory permissions exercised |
 | --- | --- | --- |
-| SASET MSFT FDPO (FDPO tenant) | Stages 0-8 verified, 200 for admitted models, correlated telemetry | Merge into existing registrations; operator cannot create new ones (directory quota) |
+| Fabrikam lab (Fabrikam tenant) | Stages 0-8 verified, 200 for admitted models, correlated telemetry | Merge into existing registrations; operator cannot create new ones (directory quota) |
 | Contoso | Stages 0-8 verified; Claude not purchasable on the sandbox subscription | New registrations and groups created; Graph application consent needs PIM activation |
 
 ### 0. Confirm the directory, subscription and permissions
 
 1. Open [Azure Portal](https://portal.azure.com). The account menu's **Switch directory**
    selects the intended directory. **Subscriptions** shows the subscription name and ID.
-   SASET and personal FDPO are different subscriptions in the same tenant.
+   The Fabrikam lab and the personal subscription are different subscriptions in the same tenant.
 2. Open the selected subscription's **Access control (IAM) > Check access > View my access**.
    Record the effective Azure role and scope for the operator.
 3. Open **Microsoft Entra ID > Roles and administrators**. Record the directory role used
@@ -469,7 +470,7 @@ remains a separate privileged step (refused in Contoso without an active admin r
 | Standard v2 selection did not configure APIM outbound VNet integration | Fixed: Stage 6 integrates it (modes `existing`/`create`) or checks it (`verify`) |
 | Foundry provisioning was outside the stages | Fixed: optional Stage 1 account and deployments; Stage 6 private endpoint and DNS (both runs) |
 | State was not bound to the deployment target | Fixed: `state_target_mismatch`; offline test with a negative control |
-| Telemetry acceptance was not tied to the run | Fixed: correlation by request ID (SASET: 2 of 2 found) |
+| Telemetry acceptance was not tied to the run | Fixed: correlation by request ID (Fabrikam lab: 2 of 2 found) |
 | Claude deployment requires `modelProviderData` | Fixed: required configuration, API `2025-10-01-preview` |
 | Concurrent Stage 7 runs from one checkout collide in `admin/node_modules` | Documented: one Stage 7 at a time per checkout |
 | Graph application consent cannot be activated from Azure CLI | Open by design: interactive PIM activation, then `Grant-SyncGraphPermissions.ps1` |

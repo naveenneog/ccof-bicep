@@ -113,7 +113,7 @@ test("below the soft limit the ceiling spreads the remaining budget over one pac
 });
 
 // The gateway keys its pace counter by the ceiling (ADR 0035), so a ceiling that moves with every
-// reconciler run opens a fresh counter each run; SASET 2026-10-24 admitted 4-6 streams a minute
+// reconciler run opens a fresh counter each run; lab run 2026-10-24 admitted 4-6 streams a minute
 // against a pace of one. Powers of two keep the key until the remaining budget halves.
 test("the paced ceiling is a power of two at or below the exact value, unchanged by small spend changes", () => {
   const a = paced("1", 5)?.realtimeCeilingTokensPerMinute; // 22.7 exact

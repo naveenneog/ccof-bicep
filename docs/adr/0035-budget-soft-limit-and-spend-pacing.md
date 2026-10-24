@@ -7,7 +7,7 @@ Branch: `feat/budget-soft-limit`.
 
 A person's monthly budget is enforced by the reconciler's `exhausted` flag. The reconciler reads
 the Log Analytics ledger, so the flag trails real spend by the ingestion delay plus one timer
-interval. The 2026-10-23 SASET run measured about nine minutes before spend appeared in
+interval. The 2026-10-23 Fabrikam lab run measured about nine minutes before spend appeared in
 every report (session evidence `files\usage-test`).
 
 The reconciler also writes `realtimeCeilingTokensPerMinute` into each `budgetState` document, and the resolver

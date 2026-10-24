@@ -1,7 +1,7 @@
 # 2. Admin console operations and Foundry onboarding
 
-Applies to Admin **3.2.0** with fixes in `dfd49af`, deployed using the
-[deployment runbook](DEPLOYMENT-RUNBOOK.md).
+Applies to Admin **3.3.0**, deployed using the [deployment runbook](DEPLOYMENT-RUNBOOK.md).
+Who: CCOF administrators with the `CCOF.Projects.Write` (editor) or `CCOF.Projects.Read` (reader) app role.
 The console is `https://<actual-admin-host>/api/console-v3`.
 Developer setup is in [user onboarding](USER-ONBOARDING.md).
 
@@ -21,12 +21,12 @@ The admin enterprise app requires assignment. The UI and API both enforce the re
 A missing integration reports `disabled`, `permission_required`, `unavailable` or `partial`;
 it is not evidence that the underlying account/user/budget is absent.
 
-Initial checks: `/api/v3/version` reports 3.2.0; Health shows the intended telemetry/resource
+Initial checks: `/api/v3/version` reports 3.3.0; Health shows the intended telemetry/resource
 scopes; the reader has no save/retire controls; the editor can perform a reviewed test edit.
 Names beside object IDs are current Entra labels, not historical accounting keys.
 `User.Read.All` on the **admin managed identity** and `ADMIN_USER_NAMES_ENABLED=true` enable them.
 
-![Admin Overview with cost drill-down; synthetic example, not customer billing](../images/staged/console-light-overview-stglab1-drill.png)
+![Admin Overview with cost drill-down; Fabrikam lab with pseudonymous names, list price, not an invoice](../images/staged/console-light-overview-drill.png)
 
 ## 2. Console page map
 
@@ -73,9 +73,9 @@ Definition: [`admin/src/chargeback.ts`](../../admin/src/chargeback.ts).
 8. **Project > Onboarding > classification** produces both files for those users. The banner must
    say ready; `REPLACE-...` fields mean the admin client settings are incomplete.
 
-![Projects table; synthetic console example](../images/staged/console-light-projects.png)
+![Projects table; Fabrikam lab, pseudonymous identifiers](../images/staged/console-light-projects.png)
 
-![Project Onboarding tab with file previews; synthetic console example](../images/staged/console-light-project-onboarding.png)
+![Project Onboarding tab with file previews; Fabrikam lab, pseudonymous identifiers](../images/staged/console-light-project-onboarding.png)
 
 ### Limits and budgets
 
@@ -95,7 +95,7 @@ workload changes affect cost. **Apply to limits** fills a draft; review/save is 
 Fable/Mythos families require `CYB` under the current family contract.
 There is no cross-project per-person spending cap.
 
-**Soft limit and spend pacing** ([ADR 0035](../adr/0035-budget-soft-limit-and-spend-pacing.md)).
+**Soft limit and spend pacing** ([plain-English summary](../BUDGETS.md), [ADR 0035](../adr/0035-budget-soft-limit-and-spend-pacing.md)).
 The reconciler app settings `RECONCILER_SOFT_LIMIT_PERCENT` and `RECONCILER_PACING_WINDOW_MINUTES`
 (answers `reconciler.softLimitPercent` and `reconciler.pacingWindowMinutes`; examples use 80 and 30)
 apply to every person budget of the deployment. With both set:
@@ -110,8 +110,10 @@ The window is at least the reconciler interval (answers validation rejects less)
 (`maxIngestionDelaySeconds` on the reconciler run line). With neither setting, the reconciler writes
 the unpaced ceiling (the whole remaining budget per minute), which the gateway also applies.
 A pace 429 is answered like other token limits, with `Retry-After`. The ceiling is rounded down to a
-power of two. Overshoot is about one burst of the person's parallel requests (live test: 6-8% of a
-$25-35 budget with 12 parallel Sonnet streams; ADR 0035).
+power of two. Overshoot is about one burst of the person's parallel requests (live tests: 6-8% of a
+$25-35 budget, then 0.3% of $52.11, with 12 parallel Sonnet streams; [budgets](../BUDGETS.md)).
+
+![Budgets page: group budgets, the person past the soft limit or exhausted, burn-down; Fabrikam lab](../images/staged/console-light-budgets.png)
 
 ### Multiple groups/projects
 
@@ -150,17 +152,17 @@ Other projects remain intact. Group objects, reporting and audit history are ret
 There is no reactivate/delete button. Old sync code freezes rather than removes a retired
 project, so the 3.2 admin **and sync packages** are required.
 
-![Retirement confirmation; synthetic 3.2 console example](../images/staged/console-32-retire-confirm.png)
+![Retirement confirmation with the project ID typed, before selecting Retire; Fabrikam lab](../images/staged/console-32-retire-confirm.png)
 
 The removal guard withholds ordinary removals only when **both** the maximum count and fraction
-are exceeded. Retired memberships are excluded from that fraction's base after `dfd49af`.
+are exceeded. Retired memberships are excluded from that fraction's base.
 An enabled, valid, unexpired override is read from `adminConfig` at each run when sync has
 `SYNC_LIMITS_CONTAINER=adminConfig` and its container-level Data Reader grant.
 Missing/disabled/expired/invalid/unreadable overrides fall back to app settings.
 The UI offers expiry up to 90 days or no expiry; a reason is recorded. Disabling a test override
 restores app-setting behavior. [Sync contract](../SYNC.md).
 
-![Removal limits, dark theme; synthetic 3.2 console example](../images/staged/console-32-removal-limits.png)
+![Removal limits page; Fabrikam lab](../images/staged/console-32-removal-limits.png)
 
 ## 6. Audit and change investigation
 
@@ -182,7 +184,7 @@ successive ranges. **Telemetry** includes refused authentication/validation atte
 workspace retention. Current names are display labels; object IDs remain the evidence keys.
 No-op project edits do not create change records.
 
-![Permanent change record with retirement and removal-limit edits; synthetic 3.2 example](../images/staged/console-32-audit-changes.png)
+![Change record (Audit page); Fabrikam lab, pseudonymous identifiers](../images/staged/console-32-audit-changes.png)
 
 ## 7. Add another same-tenant Foundry backend
 
@@ -305,6 +307,8 @@ Failover is off for every project until an editor switches it on. Contract:
 [ADR 0034](../adr/0034-dr-project-routing-and-prerequisites.md),
 [DR implementation](../design/DR-IMPLEMENTATION.md).
 
+![Backends page: two registered Foundry backends, one with a circuit breaker; Fabrikam lab, pseudonymous names](../images/staged/console-light-backends.png)
+
 | Step | Where | Result |
 | --- | --- | --- |
 | 1. Register the primary | **Backends** > Register backend: the project's APIM backend ID, Foundry `/anthropic` URL, deployments, inference geography, an enabled circuit breaker | Registry entry in `adminConfig`; no project changes |
@@ -321,7 +325,7 @@ member carries its registry breaker on a project-only APIM entity, so one projec
 moves another project. Usage stays on the primary backend ID; the serving member is in
 `ApiManagementGatewayLogs.BackendId`.
 
-Behaviour measured on SASET (2026-10-23): the request that trips a breaker fails once (no retry);
+Behaviour measured on Fabrikam lab (2026-10-23): the request that trips a breaker fails once (no retry);
 later requests go to the next member until the trip time ends. Breaker state is per gateway node,
 so a second node can return one more failure before its own breaker opens. Only managed-identity
 backends route to a pool.

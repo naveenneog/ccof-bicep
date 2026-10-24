@@ -1,14 +1,18 @@
 # 1. Deployment runbook
 
-Applies to the staged deployment and Admin **3.2.0**, including fixes in `dfd49af`.
+Applies to the staged deployment and Admin **3.3.0** ([current release](../../README.md#current-release)).
 This guide covers a same-tenant gateway with private Foundry backends, four Function Apps,
 Cosmos, the admin console and the chargeback workbook.
 [Admin operations](ADMIN-OPERATIONS.md) and [user onboarding](USER-ONBOARDING.md) follow deployment.
 
-**Release availability:** `dfd49af` was verified locally and deployed to the Contoso lab on
-22 October 2026. It has not been pushed. A customer needs the approved source archive containing
-that commit, or a published release that contains it; cloning an older `main` is insufficient.
-The source commit, package hashes, configuration and stage state identify a deployment.
+| Before you start | |
+| --- | --- |
+| Who | Platform operator, with handoffs to the Entra administrator (section 1) and the network team (section 2) |
+| Needs | The approved source commit, PowerShell 7, Node 22+, Azure CLI with Bicep, and the access listed per stage |
+| Time | About one hour of execution once approvals, capacity and network are ready (see below); provisioning can add more |
+
+Record the source commit, package hashes, configuration and stage state: together they identify a deployment.
+The `main` branch does not yet contain this release ([current release](../../README.md#current-release)).
 
 ## Readiness and the one-hour target
 
@@ -20,7 +24,7 @@ endpoint approvals can exceed that window.
 The 22 October Contoso **code-only Stage 7 rerun took 1,364 seconds (22.7 minutes)**, including
 four packages, seed verification and a membership snapshot. Its Stage 8 took 21 seconds, but had
 no successful model-inference test because the sandbox cannot purchase Claude. The earlier
-[SASET run](../STAGED-STDV2-RUNS-2026-10-20.md) includes admitted-model 200 responses and correlated
+[Fabrikam lab run](../STAGED-STDV2-RUNS-2026-10-20.md) includes admitted-model 200 responses and correlated
 telemetry. These are different acceptance results, not interchangeable proof.
 
 | Before the execution window | Ready when |
@@ -56,11 +60,12 @@ Microsoft Azure CLI application ID: **`04b07795-8ddb-461a-bbee-02f9e1bf7b46`**.
 For the command-line acceptance route it needs both scope preauthorization and the runtime
 allowed-client entry. In the staged JSON these are `entra.allowAzureCliClient: true` for the
 gateway and `admin.extraAllowedClientIds: ["04b07795-8ddb-461a-bbee-02f9e1bf7b46"]` for admin.
-The fix in `dfd49af` preauthorizes the latter during Stage 4. This does not assign the operator
+Stage 4 preauthorizes the latter. This does not assign the operator
 an admin role or bypass Conditional Access.
 
 Portal path: **Microsoft Entra ID > App registrations > application > Expose an API**.
-The following real lab capture shows the scope and authorized clients, with GUID middles masked.
+The following lab capture shows the scope and authorized clients; names and IDs are pseudonyms
+(the Azure CLI client ID is the real public value).
 Names in screenshots are navigation examples, not customer values.
 
 ![Gateway scope and authorized clients, Portal capture 21 October 2026](images/staged-portal/04-gateway-expose-api.png)

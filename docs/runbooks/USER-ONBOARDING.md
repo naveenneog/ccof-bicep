@@ -1,6 +1,7 @@
 # 3. User onboarding: self-service and Microsoft Intune
 
-Applies to the client files exported by Admin **3.2.0**.
+Applies to the client files exported by Admin **3.2.0 and later** (current: 3.3.0).
+Who: the service desk or packaging team, and developers setting up their own machine.
 The platform deployment and project setup are covered by the
 [deployment](DEPLOYMENT-RUNBOOK.md) and [admin](ADMIN-OPERATIONS.md) guides.
 
@@ -37,7 +38,7 @@ Admin console path: **Projects > project > Onboarding > Classification**.
 The ready banner means the required client settings were present, not that the developer already
 has group membership or can make a model call.
 
-![Onboarding tab and both downloads; synthetic console example](../images/staged/console-light-project-onboarding.png)
+![Onboarding tab and both downloads; Fabrikam lab, pseudonymous identifiers](../images/staged/console-light-project-onboarding.png)
 
 ### `onboarding.json` field map
 

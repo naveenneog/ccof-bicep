@@ -1,5 +1,11 @@
 # Current work
 
+## Documentation for new readers
+
+Done 2026-10-24 on `feat/budget-soft-limit`: README entry points, glossary, budgets page, historical
+banners, link test and pseudonymous screenshots (see [CHANGELOG](CHANGELOG.md)). Not done: the 85 older
+middle-masked Portal images under `runbooks/images/portal/` and splitting the two long workbooks.
+
 ## Budget soft limit and spend pacing
 
 **Packet:** BSL-1 on `feat/budget-soft-limit` (pushed to `origin/feat/budget-soft-limit`; no PR yet).
@@ -29,7 +35,7 @@ are implemented and proven live on `feat/CCOF-DISASTER-RECOVERY` (local, not pus
 
 - Admin 3.3.0: backend registry with optional circuit breaker, per-project failover, routing
   publication. Gateway forwards a verified project pool; sync/resolver carry `routeBackendId`.
-- SASET: Stages 5 and 7 deployed; SASLAB1 failover proven (primary broken, fallback served,
+- Fabrikam lab: Stages 5 and 7 deployed; SASLAB1 failover proven (primary broken, fallback served,
   restore, switch off). Contoso: P0-P2 in Central US verified. Third subscription: HTTP 403.
 - Standard v2 refused API policies over 16 KiB from 2026-10-23; the gateway policy now deploys as
   per-section policy fragments.
@@ -49,7 +55,7 @@ Contract: [DR implementation](design/DR-IMPLEMENTATION.md). Decision:
 DR-01 is design and read-only discovery, not a DR deployment or a completed failover test.
 
 Discovery, 2026-10-23:
-- SASET and Contoso subscription/tenant and exact resource reads passed using isolated profiles.
+- Fabrikam lab and Contoso subscription/tenant and exact resource reads passed using isolated profiles.
   Both APIMs are Standard v2 in East US 2. Foundry deployment lists contain two and zero models,
   respectively; listing a deployment is not a successful inference test.
 - Supplied third subscription: subscription metadata and exact APIM/Foundry/deployment reads
@@ -94,7 +100,7 @@ No live directory lookup, customer deployment or Graph permission change was per
 
 ## Standard v2 and Foundry, two tenants (S3, complete with open items)
 
-Verified 2026-10-20 in SASET MSFT FDPO and Contoso ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
+Verified 2026-10-20 in Fabrikam lab and Contoso ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
 Open: Portal walkthrough screenshots need a persistent Portal sign-in; Graph application consent
 needs PIM activation in Contoso; Claude in Contoso needs a non-sandbox subscription.
 

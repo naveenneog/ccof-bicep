@@ -4,7 +4,7 @@ Task-based procedures: [admin operations and Foundry onboarding](runbooks/ADMIN-
 [deployment handoff](runbooks/DEPLOYMENT-RUNBOOK.md), and
 [self-service/Intune user onboarding](runbooks/USER-ONBOARDING.md).
 
-Release source: `feat/admin-console-v2`; package version **3.2.0**. Design: [ADMIN-V3-DESIGN.md](ADMIN-V3-DESIGN.md).
+Package version **3.3.0** ([current release](../README.md#current-release)). Design: [ADMIN-V3-DESIGN.md](ADMIN-V3-DESIGN.md).
 One ZIP serves both consoles. V2 stays at `/api/console` and is unchanged; V3 is at
 `/api/console-v3` and is served only when `ADMIN_V3_ENABLED=true`. This is an
 **admin-app-only** upgrade up to 3.1.0: no gateway, sync or reconciler change, no new Entra app, roles or scopes.
@@ -29,6 +29,10 @@ settings, verification and rollback. Names are memory-only; filters use object I
   completed with its result. If the record cannot be written, the change is refused with 503
   `change_log_unavailable` and nothing is modified (`admin/src/change-log.ts`). Audit and Activity read it;
   the telemetry audit (refused attempts included) stays available as a second source.
+
+**3.3.0:** Backends page (register Foundry backends, optional circuit breaker), optional per-project
+backend failover with routing publication ([DR implementation](design/DR-IMPLEMENTATION.md)), and the
+budget soft-limit `warning` state on Budgets and Reconciler ([budgets](BUDGETS.md)).
 
 A sync older than 3.2.0 treats a retired project as frozen (`status:not_active`): nothing is removed,
 and the override is not read. Upgrade the sync package together with the admin package.
@@ -138,9 +142,9 @@ People: reading needs `CCOF.Projects.Read` (or `ADMIN_READER_IDS`); changes need
 | `GET /api/v3/plan` | In-force models by family, geography multipliers, rate card version and source |
 | `POST /api/v3/plan` | Budget assistant: `monthlyBudget {amount, currency USD/CCU}`, `members`, `geography`, `sizing`, `mix`, `families[{family, model?, budgetPercent}]`, working days/hours, burst. Pure; no writes. 422 with `detail` on invalid input. |
 | `POST /api/v3/rate-card/review` | Validates a candidate rate card with the reconciler's parser and the history rules (version must change, recorded entries unchanged, new or closed entries not in the past) and returns added/closed/unchanged. Saving stays `PUT /api/v2/catalog` with If-Match. |
-| `GET /api/v3/version`, `/capabilities` | `3.2.0`; which features are configured (including `changeLog`, `removalLimits`) and the caller's role |
+| `GET /api/v3/version`, `/capabilities` | `3.3.0`; which features are configured (including `changeLog`, `removalLimits`) and the caller's role |
 
-`/api/v2/version` and `/api/health` report 3.2.0. `/api/v2/projects` accepts `tags` (comma-separated, all
+`/api/v2/version` and `/api/health` report 3.3.0. `/api/v2/projects` accepts `tags` (comma-separated, all
 must match, up to 10) and `classification`.
 
 ## Upgrade from the VDI

@@ -1,5 +1,19 @@
 # Change log
 
+## 2026-10-24 - Documentation for new readers, pseudonymous screenshots
+
+- README: what CCOF is, how it works in five steps, a "which guide to read" table, one current-release
+  table and four screenshots. New [glossary](GLOSSARY.md) and [budgets and spend pacing](BUDGETS.md).
+- Superseded pages carry a **Historical**, **Design record** or **Test record** line at the top;
+  the runbooks index gives the reading order. The Portal deployment workbook has a linked module list.
+- Main guides state Admin 3.3.0 and who uses them; references to an unpublished commit were removed.
+- 35 links to unpublished ADRs, status pages and images became plain text; `tests/docs-links.test.ts`
+  fails on any relative Markdown link or image that does not resolve.
+- Screenshots: stage-run and budget-test terminal captures re-rendered from the original transcripts,
+  admin console recaptured read-only from the Fabrikam lab (writes blocked), and 13 Portal captures
+  repainted. Names, IDs, subscriptions and hosts are pseudonyms of the same shape; OCR of all 55
+  changed images finds none of the real values. Lab environments are named Fabrikam lab and Contoso.
+
 ## 2026-10-24 - Budget soft limit and spend pacing
 
 - [ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md): the gateway did not apply the
@@ -25,7 +39,7 @@
   runs P0 discover, P1/P2 bootstrap (secondary VNet, DNS links, peering, identity shells) and verify.
 - Gateway policy deployed as per-section policy fragments: Standard v2 began refusing API policy
   documents over 16 KiB (documented limit 512 KiB).
-- Live: Contoso and SASET P0-P2 in Central US; SASET Stages 5 and 7; SASLAB1 failover drill with
+- Live: Contoso and Fabrikam lab P0-P2 in Central US; Fabrikam lab Stages 5 and 7; SASLAB1 failover drill with
   restore and switch-off; test quotas restored. Third subscription still HTTP 403.
   Evidence: [DR implementation](design/DR-IMPLEMENTATION.md#implemented-and-proven-2026-10-23).
 
@@ -37,7 +51,7 @@
   project-specific optional failover, off by default. Backend registration does not authorize project
   routing; compatible fallback selection, isolated breaker scope, verified publication and audit are
   required. No admin/gateway behaviour changes are implemented in this packet.
-- Read-only ARM discovery: SASET and Contoso visible; the supplied third subscription and its exact
+- Read-only ARM discovery: Fabrikam lab and Contoso visible; the supplied third subscription and its exact
   APIM/Foundry targets return HTTP 403. Identifiers/evidence stay in session-private inventory files.
   No deployment, inference-spend test, consent or resource mutation was performed.
 - Existing stages 0-8 are not renumbered. Runtime backend administration, pool publication, accounting
@@ -87,8 +101,8 @@
   Claude Code `usage` skill. No new Azure resource, Entra app or permission. Staged Stage 5 deploys the
   API; Stage 7 the resolver. See [USAGE-SELF-SERVICE.md](USAGE-SELF-SERVICE.md).
 - Tests: resolver 4, gateway render 4, client 3; 7/7 mutants caught.
-- Live on SASET: $10.09 of real calls; `/usage`, the admin reconciler snapshot, admin chargeback and the
-  load script's own total all equal 1,008.7586 CCU. SASET reconciler timer is now enabled
+- Live on Fabrikam lab: $10.09 of real calls; `/usage`, the admin reconciler snapshot, admin chargeback and the
+  load script's own total all equal 1,008.7586 CCU. Fabrikam lab reconciler timer is now enabled
   (`reconciler.timerEnabled: true`).
 
 ## 2026-10-23 — Developers CSV includes user names
@@ -192,7 +206,7 @@
 
 ## 2026-10-21 — Portal walkthrough on both Standard v2 deployments
 
-- Playwright walked the guide's 20 Portal steps on the signed-in FDPO/SASET and Contoso Portals:
+- Playwright walked the guide's 20 Portal steps on the signed-in Fabrikam lab and Contoso Portals:
   20/20 and 19/20 pass; the remaining Contoso step is the APIs blade staying on "Service is getting
   ready..." while ARM lists the API ([report](STAGED-STDV2-RUNS-2026-10-20.md#portal-walkthrough-with-playwright)).
 - Walker fixes in `tests/playwright`: blade-menu navigation for sub-blades without a stable deep
@@ -213,10 +227,10 @@
   saved outputs match exactly or the relevant ARM outputs confirm the stable projection.
 - Logged findings B-10 through B-15 in [`BUGS-FOUND.md`](../BUGS-FOUND.md). Offline staged,
   customer-deployment, quickstart and public-manual checks pass. Stage 1, Stage 2 and Stage 8
-  acceptance rechecks and the Stage 4 grant recheck pass in both SASET and Contoso
+  acceptance rechecks and the Stage 4 grant recheck pass in both Fabrikam lab and Contoso
   ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
 
-## 2026-10-20 — Standard v2 and private Foundry, SASET MSFT FDPO and Contoso
+## 2026-10-20 — Standard v2 and private Foundry, Fabrikam lab and Contoso
 
 - Stage 1 can create a keyless private Foundry account with Claude deployments
   (`foundry-account.bicep`; `modelProviderData` required, API `2025-10-01-preview`).
@@ -225,7 +239,7 @@
 - `sharedResourceGroup` and the guarded Stage 1 rerun: what-if must not change resources outside
   the deployment's prefix. State is bound to tenant/subscription/RG. Stage 8 correlates telemetry by
   this run's request IDs.
-- Live: SASET MSFT FDPO (shared RG) stages 0-8 with 200 responses; Contoso stages 0-8 with new
+- Live: Fabrikam lab (shared RG) stages 0-8 with 200 responses; Contoso stages 0-8 with new
   Entra objects, Claude blocked by the sandbox subscription, Graph consent refused without an active
   admin role ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
 
@@ -234,10 +248,10 @@
 - Added click paths for the staged guide, Foundry setup prerequisites, Standard v2 outbound
   networking, IAM and Entra checks, and the operations that still need Bicep or CLI.
 - Embedded five existing masked Portal screenshots beside the relevant steps. They are
-  labelled historical navigation references, not new FDPO/Contoso deployment evidence.
-- Real Playwright Portal probes for FDPO and Contoso reached the Microsoft sign-in page.
+  labelled historical navigation references, not new Fabrikam/Contoso deployment evidence.
+- Real Playwright Portal probes for Fabrikam and Contoso reached the Microsoft sign-in page.
   Fresh blade captures and the requested Standard v2 runs remain blocked on sign-in and
-  confirmation of the separate SASET/personal FDPO targets.
+  confirmation of the separate Fabrikam lab/personal subscription targets.
 - Documented unresolved APIM integration, Foundry provisioning, cross-target state reuse
   (reproduced offline) and uncorrelated telemetry acceptance. Bicep compilation and existing
   stage tests pass but do not prove those missing behaviours.

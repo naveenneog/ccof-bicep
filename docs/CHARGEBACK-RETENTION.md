@@ -164,7 +164,7 @@ priced for multi-year cold retention the way Archive-tier Blob Storage is.
 intra-period in `budgetState` (`docs/LLD.md`) — this record is a closed-period snapshot of that same
 accounting, not a new pricing concept. `basis: "settled"` means billed CCU allocated by contract-cost
 share, and `captureVarianceCcu` is the period's billed minus predicted CCU for the project's designated
-subscription ([ADR-0005](adr/0005-real-cost-from-marketplace-ccu-billing.md); replaced
+subscription (ADR-0005 (internal record, not published); replaced
 `rateSource: "cost-management-price-sheet"` on 2026-10-11). `ttl` (Cosmos's own per-item expiry,
 seconds) is illustrative
 at 2 years; the real figure is a cost/dispute-window trade-off the owner should set, independent of
@@ -191,7 +191,7 @@ for the periodic rollup.
 - **Whether request-level detail must survive long-term** (`docs/UNKNOWNS.md` U-16) is likewise not
   answered here — the Auxiliary/Lake fallback is named and costed, not built, pending that answer.
 - **Rate accuracy** (whether the rollup's figures are the customer's real, discounted cost) is
-  [ADR-0005](adr/0005-real-cost-from-marketplace-ccu-billing.md) (`docs/MARKETPLACE-COST.md`): the rollup
+  ADR-0005 (internal record, not published) (`docs/MARKETPLACE-COST.md`): the rollup
   records settled figures that sum to each designated subscription's billed CCU.
 - **Who is authorized to read an Archive-tier report, or to configure/alter a WORM policy itself**
   is a `docs/PERMISSIONS.md`/`docs/CHECKPOINT-SETUP.md`-shaped question (a new checkpointed stage, most
