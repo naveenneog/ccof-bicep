@@ -10,8 +10,9 @@
 - 35 links to unpublished ADRs, status pages and images became plain text; `tests/docs-links.test.ts`
   fails on any relative Markdown link or image that does not resolve.
 - Screenshots: stage-run and budget-test terminal captures re-rendered from the original transcripts,
-  admin console recaptured read-only from the Fabrikam lab (writes blocked), and 13 Portal captures
-  repainted. Names, IDs, subscriptions and hosts are pseudonyms of the same shape; OCR of all 55
+  admin console recaptured read-only from the Fabrikam lab (writes blocked), and 13 Portal pages
+    captured live from the signed-in Fabrikam lab Portal on 2026-10-24, each checked for its expected
+    value, with page text replaced by pseudonyms before capture. Names, IDs, subscriptions and hosts are pseudonyms of the same shape; OCR of all 55
   changed images finds none of the real values. Lab environments are named Fabrikam lab and Contoso.
 
 ## 2026-10-24 - Budget soft limit and spend pacing

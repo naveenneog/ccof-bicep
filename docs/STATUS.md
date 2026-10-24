@@ -101,8 +101,8 @@ No live directory lookup, customer deployment or Graph permission change was per
 ## Standard v2 and Foundry, two tenants (S3, complete with open items)
 
 Verified 2026-10-20 in Fabrikam lab and Contoso ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
-Open: Portal walkthrough screenshots need a persistent Portal sign-in; Graph application consent
-needs PIM activation in Contoso; Claude in Contoso needs a non-sandbox subscription.
+Open: Graph application consent needs PIM activation in Contoso; Claude in Contoso needs a
+non-sandbox subscription. Portal screenshots were recaptured live from the Fabrikam lab on 2026-10-24.
 
 
 ## Staged deployment, stages 0-8

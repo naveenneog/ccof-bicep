@@ -68,7 +68,7 @@ The following lab capture shows the scope and authorized clients; names and IDs 
 (the Azure CLI client ID is the real public value).
 Names in screenshots are navigation examples, not customer values.
 
-![Gateway scope and authorized clients, Portal capture 21 October 2026](images/staged-portal/04-gateway-expose-api.png)
+![Gateway scope and authorized clients, Portal capture 24 October 2026](images/staged-portal/04-gateway-expose-api.png)
 
 **App registration > Authentication** shows public-client redirects. This historical
 reference includes an additional Desktop browser callback from that lab; only the callbacks

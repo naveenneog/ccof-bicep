@@ -258,10 +258,12 @@ API 401 without a token. Telemetry: every allowed response's `x-ccof-request-id`
 ### Evidence and scope
 
 Each Portal step below lists the blade that shows the result of a stage. Images under
-`images/staged-portal/` are captures of the Contoso Standard v2 deployment (2026-10-21), taken by
-the Playwright walkthrough from the signed-in Portal. Resource names, IDs and the subscription name
-were then replaced with pseudonyms of the same shape (Contoso lab resources appear as `cto1020-...`);
-the signed-in account is hidden. The five historical images are middle-masked captures
+`images/staged-portal/` are live captures of the Fabrikam lab Standard v2 deployment, taken on
+2026-10-24 by the Playwright walkthrough from the signed-in Portal. Each capture passed its check:
+the blade showed the expected value (for example `Cognitive Services User` on the Foundry account).
+Before each capture, names, IDs and the subscription name in the page were replaced with pseudonyms
+of the same shape (Fabrikam lab resources appear as `fab1020-...`); the signed-in account is hidden.
+The Azure CLI client ID `04b07795-8ddb-461a-bbee-02f9e1bf7b46` is the real public value. The five historical images are middle-masked captures
 from the earlier manual guide and show navigation, not a new deployment's result
 ([image manifest](images/portal/screenshots.json)). The
 [Standard v2 and Foundry run report](../STAGED-STDV2-RUNS-2026-10-20.md) holds the read-back
@@ -307,7 +309,7 @@ wrong directory.
 
 ![Historical Portal resource-group creation form; not a new deployment result](images/portal/02-2-middle-masked.png)
 
-![Resource group Deployments, captured 2026-10-21 under the earlier numbering (stage3-schema, stage4-grants, stage6-config); new deployments are named stage2-schema, stage3-grants, stage5-config and stage6-network](images/staged-portal/01-rg-deployments.png)
+![Resource group Deployments, captured 2026-10-24: current names (stage2-schema, stage3-grants, stage5-config) above the 2026-10-20 run's earlier numbering (stage3-schema, stage4-grants, stage6-config)](images/staged-portal/01-rg-deployments.png)
 
 ![API Management Managed identities: system assigned identity on](images/staged-portal/01-apim-identity.png)
 

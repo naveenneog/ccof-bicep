@@ -122,6 +122,7 @@ intercepted or bypassed.
 | Manual Portal steps covered by deep links | Every section 0-8 and the Foundry section maps to 1-4 Portal steps (20 per run) |
 | Portal walkthrough, Contoso (2026-10-21) | 19 of 20 steps pass. `06-apim-apis`: the APIs blade stayed on "Service is getting ready..." in four afternoon attempts; it passed in the morning run, and ARM lists the `Claude Messages (staged)` API with the service `Succeeded` |
 | Portal walkthrough, Fabrikam lab (2026-10-21) | 20 of 20 steps pass (`00-subscription-access` and `06-apim-apis` on a targeted rerun) |
+| Portal re-verification, Fabrikam lab (2026-10-24) | 13 of 13 published steps pass after Stages 5 and 7 of the DR and budget work; page text pseudonymised before capture, no real identifier found by OCR (the check finds them on an unpseudonymised capture) |
 | Walkthrough negative control | `06-resolver-auth` opened on the Function App overview (without the Authentication menu entry) reports `mismatch`; the Authentication blade reports `pass` |
 
 Walkthrough fixes made during the run (in [tests/playwright](../tests/playwright/README.md)):
