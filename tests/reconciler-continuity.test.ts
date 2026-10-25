@@ -110,6 +110,8 @@ test("gate on, refusal (a): no listed gateway has a record newer than now minus 
   assertRefused(azure, run, "ledger_continuity_gap");
   assert.equal(run.continuityCondition, "no_recent_record");
   assert.deepEqual(run.continuityGateways, iso(stale));
+  const boundary = pilot({ continuity: continuityBody(HEALTHY.map((g) => ({ ...g, newest: "2026-10-11T12:45:00Z" }))) });
+  assert.equal((await runOnce(boundary)).run.reason, "ledger_continuity_gap", "a record exactly 900 s old is not newer than now minus the gap");
 });
 
 test("gate on, (a) is per deployment: one recent gateway is enough, and the bound is the configured gap", async () => {
@@ -127,6 +129,8 @@ test("gate on, refusal (b): the earliest record is later than period start plus 
   assertRefused(azure, run, "ledger_continuity_gap");
   assert.equal(run.continuityCondition, "early_history_missing");
   assert.equal(run.persistedSpendNonZero, true);
+  const atBound = await runOnce(pilot({ continuity: continuityBody([{ ...HEALTHY[0], earliest: "2026-10-01T00:15:00Z" }, HEALTHY[1]]) }));
+  assert.equal(atBound.run.outcome, "written", "an earliest record exactly at period start plus the gap is not later than it");
 });
 
 test("gate on, (b) needs persisted spend in this period: none, zero or last month's does not refuse", async () => {
