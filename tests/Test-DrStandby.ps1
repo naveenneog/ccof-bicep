@@ -22,6 +22,14 @@ Check 'network template has endpointNameSuffix defaulting to empty' ($n.paramete
 $nAll = if ($n.resources -is [array]) { @($n.resources) } else { @($n.resources.PSObject.Properties.Value) }
 $pes = @($nAll | Where-Object { $_.type -ceq 'Microsoft.Network/privateEndpoints' })
 Check 'every private endpoint name ends with the suffix' ($pes.Count -eq 3 -and @($pes | Where-Object { $_.name -notmatch "parameters\('endpointNameSuffix'\)\)\]$" }).Count -eq 0)
+
+# Both regions' admin apps read usage from both gateways (ADMIN_GATEWAY_RESOURCE_IDS, DR-05); the
+# setting is written only when a list is configured, so a single-region deployment is unchanged.
+$s5 = Build 'infra/staged/stage5-config.bicep'
+$s5All = if ($s5.resources -is [array]) { @($s5.resources) } else { @($s5.resources.PSObject.Properties.Value) }
+$adminSettings = @($s5All | Where-Object { $_.type -ceq 'Microsoft.Web/sites/config' })[0]
+$props = "$($adminSettings.properties)"
+Check 'admin settings add ADMIN_GATEWAY_RESOURCE_IDS only for a non-empty list' ($props -match "union\(" -and $props -match "if\(empty\(variables\('adminGatewayList'\)\), createObject\(\)" -and $props -match "ADMIN_GATEWAY_RESOURCE_IDS")
 $reader = @($byType['Microsoft.Authorization/roleAssignments'] | Where-Object { $_.name -match 'logReader' })[0]
 Check 'workspace reader name: unsalted form kept, salted form added' ($reader.name -match "if\(empty\(parameters\('assignmentNameSalt'\)\), guid\(resourceId\('Microsoft.OperationalInsights/workspaces'.*variables\('logReader'\)\), guid\(.*parameters\('assignmentNameSalt'\)\)\)")
 $cosmos = @($byType['Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments'])[0]
@@ -92,6 +100,10 @@ Check 'standby config: existing standby subnets and shared zones' ($b.network.mo
 Check 'standby config: no second Foundry private endpoint' ($b.backends[0].privateEndpoint -eq $false)
 Check 'standby config: standby section set' ($b.standby.stage1DeploymentName -ceq 'dr-standby-shells' -and $b.standby.endpointNameSuffix -ceq '-b')
 Check 'primary configuration not modified' ($primary.syncTimerEnabled -eq $true -and $primary.backends[0].privateEndpoint -eq $true -and $primary.location -ceq 'eastus2')
+$gw = @('/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/a', '/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/b')
+$b2 = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones -GatewayResourceIds $gw
+Check 'standby config: reconciler and admin read both gateways' ((@($b2.reconciler.ledgerGatewayResourceIds) -join ',') -ceq ($gw -join ',') -and (@($b2.admin.gatewayResourceIds) -join ',') -ceq ($gw -join ','))
+Check 'standby config without the list: no list keys' (-not $b.reconciler.Contains('ledgerGatewayResourceIds'))
 
 $ps1 = [ordered]@{ names = $pn; cosmosAccountId = '/c'; cosmosEndpoint = 'https://c'; workspaceId = '/w'; workspaceCustomerId = 'ws' }
 $shells = [ordered]@{ apps = @{ resolver = @{ functionApp = 'lab1-abc-b-resolver' } }; apimId = '/apim-b'; apimName = 'apim-b'; apimPrincipalId = 'p-apim'; apimGatewayUrl = 'https://b'
@@ -112,4 +124,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 40) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 43) { exit 1 }

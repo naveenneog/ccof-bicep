@@ -75,7 +75,10 @@ $vnetId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Network/vi
 $zone = { param($n) "/subscriptions/$($dr.dnsZones.subscriptionId)/resourceGroups/$($dr.dnsZones.resourceGroup)/providers/Microsoft.Network/privateDnsZones/$n" }
 $zoneIds = @{ cosmos = (& $zone 'privatelink.documents.azure.com'); blob = (& $zone 'privatelink.blob.core.windows.net')
     foundry = @{ cognitiveServices = (& $zone 'privatelink.cognitiveservices.azure.com'); openAi = (& $zone 'privatelink.openai.azure.com'); aiServices = (& $zone 'privatelink.services.ai.azure.com') } }
-$bCfg = New-DrStandbyStagedConfig -Primary $primaryCfg -Dr $dr -VnetId $vnetId -ZoneIds $zoneIds
+$shellsFile = Join-Path $standbyStateDir 'standby.state.json'
+$gatewayIds = @()
+if (Test-Path -LiteralPath $shellsFile) { $sh = (Get-Content -LiteralPath $shellsFile -Raw | ConvertFrom-Json -AsHashtable -Depth 100).phases['Shells']; if ($sh) { $gatewayIds = @($pS1.apimId, $sh.outputs.apimId) } }
+$bCfg = New-DrStandbyStagedConfig -Primary $primaryCfg -Dr $dr -VnetId $vnetId -ZoneIds $zoneIds -GatewayResourceIds $gatewayIds
 $bCfg.__path = Join-Path $standbyStateDir 'standby.staged.config.json'
 $bCfg | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $bCfg.__path -Encoding utf8NoBOM
 $script:StateDir = $standbyStateDir
@@ -163,7 +166,7 @@ switch ($Phase) {
     # Region B's stage state: its own Stage 1, and the primary's Stage 2 (schema) and Stage 4 (Entra),
     # which both regions share.
     Save-StgStage $bCfg 1 $s1; Save-StgStage $bCfg 2 $pS2; Save-StgStage $bCfg 4 $pS4
-    Save-DrPhase 'Shells' @{ apim = $s1.apimName; apimPrincipalId = $s1.apimPrincipalId; apps = @($s1.names.apps.Values | ForEach-Object { $_.functionApp }) }
+    Save-DrPhase 'Shells' @{ apimId = $s1.apimId; apim = $s1.apimName; apimPrincipalId = $s1.apimPrincipalId; apps = @($s1.names.apps.Values | ForEach-Object { $_.functionApp }) }
 }
 'Grants' { $null = Get-DrPhase 'Shells'; $o = Invoke-Stage3 $bCfg -Apply:$Apply; if ($Apply) { Save-StgStage $bCfg 3 $o; Save-DrPhase 'Grants' @{ cosmosAssignments = @($o.cosmosAssignmentIds).Count } } }
 'Config' {
