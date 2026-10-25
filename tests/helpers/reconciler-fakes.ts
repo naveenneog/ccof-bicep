@@ -70,10 +70,29 @@ export function ledgerBody(rows: ReadonlyArray<Record<string, unknown>>): Record
   };
 }
 
+// The continuity query's answer (DR-05): one row per gateway with records in the period.
+export function continuityBody(rows: ReadonlyArray<{ gatewayResourceId: string; earliest: string; newest: string }>): Record<string, unknown> {
+  return {
+    tables: [
+      {
+        name: "PrimaryResult",
+        columns: [{ name: "gatewayResourceId", type: "string" }, { name: "earliest", type: "datetime" }, { name: "newest", type: "datetime" }],
+        rows: rows.map((r) => [r.gatewayResourceId, r.earliest, r.newest]),
+      },
+    ],
+  };
+}
+
 export interface FakeAzureOptions {
   projects?: unknown[];
   entitlements?: unknown[];
   ledger?: unknown | (() => Promise<unknown>);
+  // The continuity gate's per-gateway answer (DR-05); any query that is not the ledger query gets it.
+  continuity?: unknown | (() => Promise<unknown>);
+  // Budget states already in Cosmos, by document id (DR-05 continuity gate reads them).
+  persistedBudgetStates?: Record<string, unknown>;
+  persistedAggregateStates?: Record<string, unknown>;
+  failStateRead?: unknown;
   // The query API's Age header, in seconds, for an answer served from its cache; null for a fresh answer.
   ledgerAgeSeconds?: number | null;
   // Fail the nth state write (1-based) with this error.
@@ -113,9 +132,19 @@ export class FakeAzure {
       queryLedger: async (query, timespan) => {
         this.calls.push("queryLedger");
         this.queries.push({ query, timespan });
-        const ledger = this.options.ledger;
-        const body = typeof ledger === "function" ? await (ledger as () => Promise<unknown>)() : ledger;
+        const answer = query.includes("CcofUsageLedger(") ? this.options.ledger : this.options.continuity;
+        const body = typeof answer === "function" ? await (answer as () => Promise<unknown>)() : answer;
         return { body, responseAgeSeconds: this.options.ledgerAgeSeconds ?? null };
+      },
+      readBudgetState: async (id, personId) => {
+        this.calls.push(`readBudgetState:${id}:${personId}`);
+        if (this.options.failStateRead !== undefined) throw this.options.failStateRead;
+        return structuredClone(this.options.persistedBudgetStates?.[id] ?? null);
+      },
+      readAggregateState: async (id) => {
+        this.calls.push(`readAggregateState:${id}`);
+        if (this.options.failStateRead !== undefined) throw this.options.failStateRead;
+        return structuredClone(this.options.persistedAggregateStates?.[id] ?? null);
       },
       writeBudgetState: async (doc) => this.write(() => this.budgetStates.push(structuredClone(doc))),
       writeAggregateState: async (doc) => this.write(() => this.aggregateStates.push(structuredClone(doc))),

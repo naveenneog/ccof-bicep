@@ -2,7 +2,9 @@
 // decision, written as an app setting by infra/reconciler: there are no
 // defaults, and a missing or invalid value refuses the run before any Azure
 // call. Problems name the setting and a code, never the value. The pacing
-// pair (ADR 0035) is the one optional group: neither set means no pacing.
+// pair (ADR 0035) is optional: neither set means no pacing. DR-05 adds three
+// optional settings: the gateway list and the ledger continuity gate (off by
+// default) with its maximum gap (900 s by default).
 
 import { gatewayListProblem, includesGateway, splitGatewayList } from "../contracts/gateway-resource-ids.ts";
 import type { SpendPacing } from "./compute-ceiling.ts";
@@ -34,7 +36,13 @@ export interface ReconcilerSettings {
   cosmosDatabase: string;
   // ADR 0035: null unless both pacing settings are set.
   pacing: SpendPacing | null;
+  // DR-05 ledger continuity gate: null unless RECONCILER_CONTINUITY_GATE is "on".
+  continuity: ContinuityGate | null;
   containers: ReconcilerContainers;
+}
+
+export interface ContinuityGate {
+  maxGapSeconds: number;
 }
 
 export interface SettingProblem {
@@ -94,7 +102,10 @@ const RANGES = {
   RECONCILER_WRITE_CONCURRENCY: [1, 32],
   RECONCILER_SOFT_LIMIT_PERCENT: [1, 99],
   RECONCILER_PACING_WINDOW_MINUTES: [1, 120],
+  RECONCILER_CONTINUITY_MAX_GAP_SECONDS: [60, 86_400],
 } as const;
+
+const DEFAULT_CONTINUITY_MAX_GAP_SECONDS = 900;
 
 class Reader {
   readonly problems: SettingProblem[] = [];
@@ -184,6 +195,18 @@ function readPacing(r: Reader, settings: Settings, intervalMinutes: number | und
   return { softLimitPercent, windowMinutes };
 }
 
+// DR-05 (docs/DR-ACTIVE-PASSIVE.md, failover runbook step 5): the gate is "on" or "off" (absent: off).
+// The maximum gap is optional (default 900 s) and is checked whenever it is set.
+function readContinuity(r: Reader, settings: Settings): ContinuityGate | undefined {
+  const gate = settings.RECONCILER_CONTINUITY_GATE?.trim();
+  if (gate && gate !== "on" && gate !== "off") return r.fail("RECONCILER_CONTINUITY_GATE", "invalid");
+  const maxGapSeconds = settings.RECONCILER_CONTINUITY_MAX_GAP_SECONDS?.trim()
+    ? r.integer("RECONCILER_CONTINUITY_MAX_GAP_SECONDS")
+    : DEFAULT_CONTINUITY_MAX_GAP_SECONDS;
+  if (gate !== "on" || maxGapSeconds === undefined) return undefined;
+  return { maxGapSeconds };
+}
+
 // RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS (DR) is optional; without it the single id is required.
 // With both, the single id must be one of the list, so two settings cannot name different gateways.
 function readGateways(r: Reader, settings: Settings): string[] | undefined {
@@ -221,6 +244,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
   const cosmosDatabase = r.matching("COSMOS_DATABASE", COSMOS_NAME);
   const containers = readContainers(r);
   const pacing = readPacing(r, settings, intervalMinutes);
+  const continuity = readContinuity(r, settings);
 
   // A healthy run renews state before the previous run's state lapses only if
   // the validity outlasts the interval plus the longest ledger read.
@@ -252,6 +276,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
       cosmosEndpoint: cosmosEndpoint as string,
       cosmosDatabase: cosmosDatabase as string,
       pacing: pacing ?? null,
+      continuity: continuity ?? null,
       containers: containers as ReconcilerContainers,
     },
   };

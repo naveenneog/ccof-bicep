@@ -57,6 +57,17 @@ async function readAll(container: Container): Promise<unknown[]> {
   return resources;
 }
 
+// One document by id and partition key; null when it does not exist.
+async function readItem(container: Container, id: string, partitionKey: string): Promise<unknown> {
+  try {
+    const response = await container.item(id, partitionKey).read<Record<string, unknown>>();
+    return response.resource ?? null;
+  } catch (err) {
+    if (statusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
 const fetchAdapter: FetchLike = (url, init) => fetch(url, init);
 
 export function createReconcilerDependencies(settings: ReconcilerSettings, credential: TokenCredential): RunDependencies {
@@ -81,6 +92,9 @@ export function createReconcilerDependencies(settings: ReconcilerSettings, crede
       },
       fetch: fetchAdapter,
     }),
+    // Point reads for the continuity gate (DR-05): items/read is in the reconciler's custom role.
+    readBudgetState: (id, personId) => readItem(budgetState, id, personId),
+    readAggregateState: (id) => readItem(aggregateState, id, id),
     // Upsert: every run writes every state, renewing validUntil (ADR-0018).
     writeBudgetState: async (doc) => {
       await budgetState.items.upsert(doc);

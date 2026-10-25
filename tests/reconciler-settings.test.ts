@@ -26,6 +26,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     cosmosEndpoint: "https://sample-pilot-cosmos.documents.azure.com:443/",
     cosmosDatabase: "ccof",
     pacing: null,
+    continuity: null,
     containers: {
       projects: "projects",
       entitlement: "entitlement",
@@ -201,6 +202,36 @@ test("DR: each listed gateway id passes the APIM pattern; at most 4, no duplicat
   }
   const four = withList(ids(4));
   assert.equal(four.ok && four.settings.gatewayResourceIds.length, 4);
+});
+
+test("DR continuity gate: off unless RECONCILER_CONTINUITY_GATE is on; the maximum gap defaults to 900 seconds", () => {
+  const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
+  const absent = read({});
+  assert.equal(absent.ok && absent.settings.continuity, null);
+  const off = read({ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "120" });
+  assert.equal(off.ok && off.settings.continuity, null);
+  const on = read({ RECONCILER_CONTINUITY_GATE: "on" });
+  assert.deepEqual(on.ok && on.settings.continuity, { maxGapSeconds: 900 });
+  for (const [value, seconds] of [["60", 60], ["86400", 86400]] as const) {
+    const bound = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: value });
+    assert.deepEqual(bound.ok && bound.settings.continuity, { maxGapSeconds: seconds }, value);
+  }
+});
+
+test("DR continuity gate: values are on/off only, and the gap is a whole number from 60 to 86400 seconds", () => {
+  const cases: Array<[Record<string, string>, string, string]> = [
+    [{ RECONCILER_CONTINUITY_GATE: "ON" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "true" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "59" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "86401" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "15m" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "0" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+  ];
+  for (const [overrides, setting, problem] of cases) {
+    const result = readReconcilerSettings(validSettings(overrides));
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting, problem }], JSON.stringify(overrides));
+  }
 });
 
 test("the reconciler never writes into a container it reads or another writer's container", () => {

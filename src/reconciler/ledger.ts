@@ -64,9 +64,14 @@ export class LedgerReadError extends Error {
 const APIM_RESOURCE_ID = /^\/subscriptions\/[0-9a-fA-F-]{36}\/resourceGroups\/[A-Za-z0-9._-]+\/providers\/Microsoft\.ApiManagement\/service\/[A-Za-z0-9-]+$/;
 const LEDGER_FUNCTION = /\blet\s+CcofUsageLedger\s*=\s*\(/;
 
+// Every gateway id placed in a ledger or continuity query passes here first.
+export function assertGatewayIds(gatewayResourceIds: readonly string[]): void {
+  if (gatewayListProblem(gatewayResourceIds, APIM_RESOURCE_ID) !== undefined) throw new Error("the gateway resource id list is not 1-4 distinct APIM resource ids");
+}
+
 export function buildLedgerQuery(ledgerFunctionKql: string, period: BudgetPeriod, gatewayResourceIds: readonly string[]): string {
   if (!LEDGER_FUNCTION.test(ledgerFunctionKql)) throw new Error("the ledger KQL does not define CcofUsageLedger");
-  if (gatewayListProblem(gatewayResourceIds, APIM_RESOURCE_ID) !== undefined) throw new Error("the gateway resource id list is not 1-4 distinct APIM resource ids");
+  assertGatewayIds(gatewayResourceIds);
   const from = period.start.toISOString();
   const to = period.end.toISOString();
   // A request refused before any backend call (WP-TEL's usageSource
@@ -83,6 +88,25 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 // and `rows`; a non-fatal error returns 200 with an `error` property, code
 // PartialError, beside whatever rows were returned.
 export function parseLedgerResponse(body: unknown, maxRows: number): LedgerRow[] {
+  const { names, rows } = readPrimaryResult(body);
+  const index = new Map<LedgerColumn, number>();
+  for (const column of LEDGER_COLUMNS) {
+    const position = names.indexOf(column);
+    if (position < 0) throw new LedgerReadError("ledger_response_invalid", `column:${column}`);
+    index.set(column, position);
+  }
+  // At the limit the service may have stopped early; the period would be
+  // under-counted without any error to show for it.
+  if (rows.length >= maxRows) throw new LedgerReadError("ledger_row_limit_reached", String(rows.length));
+  return rows.map((row) => {
+    const record = {} as Record<LedgerColumn, unknown>;
+    for (const column of LEDGER_COLUMNS) record[column] = row[index.get(column) as number];
+    return record;
+  });
+}
+
+// The PrimaryResult table's column names and rows; anything else is a failed read.
+export function readPrimaryResult(body: unknown): { names: string[]; rows: unknown[][] } {
   if (!isObject(body)) throw new LedgerReadError("ledger_response_invalid", "body");
   if (body.error !== undefined && body.error !== null) {
     const code = isObject(body.error) && typeof body.error.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(body.error.code) ? body.error.code : undefined;
@@ -94,19 +118,9 @@ export function parseLedgerResponse(body: unknown, maxRows: number): LedgerRow[]
     throw new LedgerReadError("ledger_response_invalid", "PrimaryResult");
   }
   const names = table.columns.map((column) => (isObject(column) && typeof column.name === "string" ? column.name : ""));
-  const index = new Map<LedgerColumn, number>();
-  for (const column of LEDGER_COLUMNS) {
-    const position = names.indexOf(column);
-    if (position < 0) throw new LedgerReadError("ledger_response_invalid", `column:${column}`);
-    index.set(column, position);
-  }
-  // At the limit the service may have stopped early; the period would be
-  // under-counted without any error to show for it.
-  if (table.rows.length >= maxRows) throw new LedgerReadError("ledger_row_limit_reached", String(table.rows.length));
-  return table.rows.map((row) => {
+  const rows = table.rows.map((row) => {
     if (!Array.isArray(row) || row.length !== names.length) throw new LedgerReadError("ledger_response_invalid", "row");
-    const record = {} as Record<LedgerColumn, unknown>;
-    for (const column of LEDGER_COLUMNS) record[column] = row[index.get(column) as number];
-    return record;
+    return row as unknown[];
   });
+  return { names, rows };
 }
