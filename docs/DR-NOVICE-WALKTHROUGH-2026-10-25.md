@@ -48,6 +48,40 @@ The first Stage 1 apply created resources before read-back failed; the retry rec
 `stage1-services` deployment and verified it without another resource write. The false read-back
 failure and its regression test are recorded in commit `088e400`.
 
+### Two-region backend failover drill: Central US account in a second subscription
+
+The earlier Fabrikam proof used a fallback entry that pointed at the same Foundry account. This drill
+added a Foundry account in the standby region, in a second subscription of the same tenant, and made
+the primary fail in four ways. Primary: project SASLAB1 on `fab1020-foundry` (East US 2, subscription
+Fabrikam AI Platform (Dev)). Fallback: `fabdrcus1025` (Central US, subscription
+Fabrikam-Shared-Services-01). Each call was matched to `ApiManagementGatewayLogs` by request ID.
+
+| Setup step | Result |
+| --- | --- |
+| Claude quota for Central US | Quota is per subscription and model, and the same pool is reported in every region (`az cognitiveservices usage list -l centralus` and `-l eastus2` gave identical figures). Global Standard `claude-haiku-4-5` was 80/80, so a lab deployment (`fabman-foundry2`) went from 20 to 10 (N-23) |
+| Fallback account | `infra/staged/foundry-account.bicep` deployed `fabdrcus1025` in Central US, public network access disabled, `claude-haiku-4-5` and `claude-sonnet-5` Global Standard, 10 each, the same versions as the primary |
+| Network | Private endpoint `fabdrcus1025-account-pe` in the standby VNet's `snet-pe` (from DR P2), DNS zone group on the three Foundry zones; A record `10.80.1.6`; peering `Connected` |
+| Access | Cognitive Services User for the primary APIM's managed identity on the new account; it is in the same tenant, so no other change was needed |
+| Registry and pool | `PUT /api/v3/backends/foundry-cus-drill` (201); SASLAB1 fallback list changed to it (revision 2, `pending_publication`); `Publish-ProjectRouting.ps1 -Apply` (`verified`); snapshot apply (1 document replaced) |
+
+| Injection on the primary | Primary response | Breaker | Served by Central US |
+| --- | --- | --- | --- |
+| Model deployment `claude-haiku-4-5` deleted in ARM | 200 on every call for the 8.5 minutes until the deployment was recreated | Not opened | 0 of 20 calls (N-22) |
+| Private endpoint connection rejected | First `Timeout` (504), then `BackendConnectionFailure` (502), then 403 on every call | Not opened | 0 of 24 calls (N-20, N-21) |
+| Capacity 1 (1 request per minute) | 200 for 12 of 16 calls; the other 4 were 403, as after the endpoint recreation; no 429 | Not opened | 0 of 16 calls (N-22) |
+| Pool member URL changed to a path that returns 404 | 404 | Opened after one failure; reopened after each 2-minute trip while the fault lasted | 22 of 26 calls; the other 4 were the 404s that opened or reopened the breaker. After the URL was restored, 8 of 8 calls went to the primary |
+| Pool member URL changed to an unreachable address, `errorReasons` added | `Timeout` | Opened after one timeout; one 21-second timeout per trip window | 9 of 12 calls |
+| Same address, the published breaker (no `errorReasons`) | `Timeout` | Not opened | 0 of 4 calls |
+
+The fallback in another region and subscription serves as soon as the primary's breaker opens. The
+breaker as published before this change opens only on response codes 404, 429 and 500-599, so a
+primary that does not answer, the usual form of a regional or network outage, never moves traffic
+(N-20). The routing publisher now adds `errorReasons` (fix and tests in this change). SASLAB1 was
+then republished as revision 4 with the fixed publisher (off with no fallbacks, then on with the same
+fallback; `errorReasons` read back from APIM). With the primary member made unreachable, 2 calls
+timed out (one per gateway node) and the next 4 were served from Central US; after the URL was
+restored, 4 of 4 calls went to the primary.
+
 ## Issues and required fixes
 
 Severity: **Blocker** stops the DR setup; **High** stops a novice without outside help;
@@ -74,6 +108,10 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 | N-17 | High | Stage 4 `admin.extraAllowedClientIds`; DR publisher | Both the first DR publisher attempt and the fresh Contoso run found Azure CLI not preauthorized on the admin app: P0 reported `entra.admin:azure_cli_not_preauthorized`, then the workstation token request returned `AADSTS65001 consent_required` for Microsoft Azure CLI. The gateway token itself worked. | Set `admin.extraAllowedClientIds` to include `04b07795-8ddb-461a-bbee-02f9e1bf7b46` before Stage 4. If Stage 4 is already complete, add it and rerun Stages 4, 5 and 7. P0 checks the preauthorization; the [DR Cloud Shell runbook, Step 2.0](runbooks/DR-CLOUD-SHELL.md#20-azure-cli-as-an-admin-client-workstation-n-17) now documents it. |
 | N-18 | High | `infra/staged/Staged.Common.ps1` `Get-StgSite` | The first Contoso Stage 1 apply created resources but stopped at `verify_failed: <resolver> VNet subnet is '', expected ''`. Azure returned `null` for the unattached Flex app subnet; the verifier compared it to an empty string. | Normalize `virtualNetworkSubnetId` to a string in `Get-StgSite`. Regression test: null subnet returns `''`; mutation check fails before the fix. Fixed in `088e400`. |
 | N-19 | Medium | [Step-by-step guide](runbooks/DEPLOY-STEP-BY-STEP.md), network before Step 0 | The first network attempt put the VNet in the resource group selected for CCOF. Stage 1 refused the non-empty group. | Use a distinct network resource group; added to the guide before Step 0. |
+| N-20 | Blocker | `infra/dr/ProjectRouting.psm1` `New-MemberBackendBody` | With the primary unreachable, every call timed out (504) or failed to connect (502) and none moved to the Central US member. The published breaker lists only `statusCodeRanges`; a backend that gives no response has no status code. | Publish `failureCondition.errorReasons = ['BackendConnectionFailure', 'Timeout']` with every enabled breaker, and treat a member without them as unverified. Tested live (9 of 12 calls served by Central US with them, 0 of 4 without) and fixed in this change. Pools verified before this change keep the old breaker until a new revision is published. |
+| N-21 | Medium | Drill method | A rejected private endpoint connection cannot be approved again (`PrivateLinkStatusChangeNotAllowed: Status change from 'Rejected' to 'Approved' is not supported`). The primary stayed down until the endpoint was deleted and recreated; after the new endpoint showed `Approved`, calls returned 403 for about 2 minutes and then intermittently until about 4.5 minutes. | Do not reject a private endpoint connection to simulate an outage. The runbook's drill uses the pool member URL ([DR Cloud Shell runbook, 6.6](runbooks/DR-CLOUD-SHELL.md#66-drill-prove-that-a-fallback-serves-workstation)). |
+| N-22 | Low | Drill method | Deleting the primary's model deployment and setting its capacity to 1 did not make Foundry return 404 or 429 during the test (200 for the 8.5 minutes until the deployment was recreated; no 429 at 1 request per minute). | Same as N-21. |
+| N-23 | Low | [DR Cloud Shell runbook](runbooks/DR-CLOUD-SHELL.md#61-register-the-backends), 6.1 | A fallback account in another region needs its own Claude deployments. The subscription's Claude quota is shared by all regions, so a deployment in the standby region uses quota the primary region may need. | 6.1 shows the quota check and the options (another subscription, or a lower capacity elsewhere). |
 
 ## Evidence
 
@@ -157,6 +195,16 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 
 ![P2 preview, apply and read-back passed in Contoso](images/dr-novice/dr-contoso-p2.png)
 
+### Two-region backend failover drill (N-20 to N-22)
+
+![Primary answers 404: the breaker opens and the Central US member serves; failback after the fault ends](images/dr-novice/dr-drill-404-failover.png)
+
+![Primary private endpoint rejected: timeouts and 403s, no failover](images/dr-novice/dr-drill-network-no-failover.png)
+
+![Unreachable primary: Central US serves with errorReasons; the control without them times out on every call](images/dr-novice/dr-drill-error-reasons.png)
+
+![Revision 4 from the fixed publisher: errorReasons read back; unreachable primary fails over, then failback](images/dr-novice/dr-drill-r4-publisher.png)
+
 ## Changes made in the lab
 
 | Change | Created or changed | Reversal |
@@ -168,6 +216,11 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 | Contoso DR prerequisites | New standby VNet, two peering links, five DNS links and identity shells in `ccof-dr-cus-20261023-rg` | Remove the two peering links, five DNS links, standby VNet and identity shells after review |
 | Contoso workspace replication | Workspace replication enabled to Central US | REST PUT with `properties.replication.enabled: false`; verify `Succeeded` before disabling |
 | Contoso single-region resources | Resource groups `rg-contoso-nov-20261025` and `rg-contoso-net-20261025`; Stage 1 includes a Standard v2 APIM and provisioned Cosmos account; the Foundry account has no deployments. Per-project client/backend state and Stage 8 evidence are under Cloud Shell `$HOME/ccof-private` | Cleanup is a separate approved operation; inventory the exact resources first |
+| Drill: fallback account | Resource group `fab-dr-cus-foundry-rg` (Central US, Fabrikam-Shared-Services-01) with `fabdrcus1025` and two deployments of 10; its private endpoint in the standby VNet; Cognitive Services User for the primary APIM identity | Delete the private endpoint, then the resource group (the account is then soft-deleted; purge it to release the name) |
+| Drill: quota | `fabman-foundry2` `claude-haiku-4-5` capacity 20 → 10 | Set capacity back to 20 after the fallback account is deleted |
+| Drill: routing | Registry entry `foundry-cus-drill`; SASLAB1 fallback list `foundry-cus-drill`, pool revision 4 verified with `errorReasons` (revision 2 published first); two snapshot applies | Project Settings > Backend failover: change the fallback list or clear the switch, then publish and apply a snapshot |
+| Drill: primary | `claude-haiku-4-5` on `fab1020-foundry` deleted and recreated (capacity 10, same version); capacity set to 1 and back to 10; private endpoint `fab1020-foundry-account-pe` deleted and recreated (new address `10.66.2.7`); pool member URL changed and restored to the saved value | None needed; each was restored and checked (8 of 8 calls 200 on the primary) |
 
 Fabrikam lab model calls: one Claude Haiku request of 16 output tokens. Contoso model calls: zero;
-the sandbox subscription cannot purchase Claude.
+the sandbox subscription cannot purchase Claude. Drill model calls: 163 requests of at most 8 output
+tokens each (`claude-haiku-4-5` and `claude-sonnet-5`).

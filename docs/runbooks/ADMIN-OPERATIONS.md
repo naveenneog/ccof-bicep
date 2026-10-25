@@ -344,6 +344,15 @@ later requests go to the next member until the trip time ends. Breaker state is 
 so a second node can return one more failure before its own breaker opens. Only managed-identity
 backends route to a pool.
 
+The publisher adds `errorReasons` `BackendConnectionFailure` and `Timeout` to every enabled breaker,
+so a primary that does not answer opens it as well as the configured status codes. In the
+2026-10-25 drill, an unreachable primary with the breaker published before this change timed out on
+every call and never moved traffic; with `errorReasons`, a Central US account in a second subscription
+served after one 21-second timeout per node and trip window
+([walkthrough N-20](../DR-NOVICE-WALKTHROUGH-2026-10-25.md#issues-and-required-fixes)). A pool
+published before that change gets them only from a new revision; the steps are in the
+[DR runbook, 6.6](DR-CLOUD-SHELL.md#66-drill-prove-that-a-fallback-serves-workstation).
+
 ## 8. Troubleshooting
 
 | Symptom | Check |

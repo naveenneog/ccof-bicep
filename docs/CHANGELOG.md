@@ -1,5 +1,11 @@
 # Change log
 
+## 2026-10-25 - Two-region backend failover drill
+
+- [Drill record](DR-NOVICE-WALKTHROUGH-2026-10-25.md#two-region-backend-failover-drill-central-us-account-in-a-second-subscription): SASLAB1's fallback moved to a Foundry account in Central US in a second subscription of the same tenant. When the primary answered 404, the breaker opened and Central US served 22 of 26 calls; traffic returned to the primary after the fault.
+- Fix (N-20): a primary that does not answer never opened the published breaker, which counted only response codes; an unreachable primary timed out on every call (0 of 4 failed over). `infra/dr/ProjectRouting.psm1` now publishes `failureCondition.errorReasons` `BackendConnectionFailure` and `Timeout` with every enabled breaker and treats a member without them as unverified. Two new checks in `tests/Test-ProjectRouting.ps1` (26 pass); each was shown to fail with its line removed. Live: Central US served 9 of 12 calls with `errorReasons`; revision 4 published by the fixed publisher failed over after 2 timeouts. Pools verified earlier keep the old breaker until a new revision is published ([DR runbook 6.6](runbooks/DR-CLOUD-SHELL.md#66-drill-prove-that-a-fallback-serves-workstation)).
+- [DR runbook](runbooks/DR-CLOUD-SHELL.md): 6.1 covers a fallback account in another subscription and the region-shared Claude quota (N-23). The new 6.6 is a reversible drill that changes the pool member URL. A rejected private endpoint connection cannot be approved again (N-21), and deleting a deployment or lowering its capacity did not cause a failover (N-22).
+
 ## 2026-10-25 - DR walkthrough from the documentation
 
 - [DR walkthrough](DR-NOVICE-WALKTHROUGH-2026-10-25.md): a first-time operator followed the README and linked guides in Azure Cloud Shell. In the Fabrikam lab, P0-P2, per-project failover and workspace replication were applied; D1-D6 remain unavailable. In a fresh Contoso sandbox, Stages 0-8 were applied (Stage 8 from the workstation); P2 and workspace replication were applied; the sandbox had no Claude deployment, so there was no positive model call. 19 issues are logged with screenshots and fixes; the main blockers are standby identity grants, provisioned Cosmos and missing D1-D6 tooling.

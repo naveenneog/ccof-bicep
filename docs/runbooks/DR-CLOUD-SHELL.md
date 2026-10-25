@@ -528,6 +528,23 @@ fallback, a Foundry account in the standby region with the same models, its priv
 Cognitive Services User grant for APIM's identity, as in
 [admin operations section 7](ADMIN-OPERATIONS.md#7-add-another-same-tenant-foundry-backend).
 
+The fallback account can be in another subscription of the same tenant. In the 2026-10-25 drill, a
+Central US account in a second subscription served with three additions: its private endpoint in the
+standby VNet's private-endpoint subnet with a DNS zone group on the Foundry zones, Cognitive Services
+User for the primary APIM's managed identity, and the deployments below
+([walkthrough](../DR-NOVICE-WALKTHROUGH-2026-10-25.md#two-region-backend-failover-drill-central-us-account-in-a-second-subscription)).
+Claude quota belongs to the subscription and is reported the same in every region, so deployments in
+the standby region use quota that the primary region shares (N-23). Free quota per model:
+
+```powershell
+az cognitiveservices usage list -l $standbyRegion -o json | ConvertFrom-Json |
+    Where-Object { $_.name.value -like '*claude*' } | ForEach-Object { '{0}  {1}/{2}' -f $_.name.value, $_.currentValue, $_.limit }
+```
+
+**Expect:** one line per SKU and model, for example `AIServices.GlobalStandard.claude-haiku-4-5.Azure  70/80`.
+The fallback deployments need the primary's SKU (inference geography) and model names; 6.2 refuses a
+fallback that lacks a model the project admits.
+
 ### 6.1 Register the backends
 
 Admin console > **Backends** > **Register backend**, once for the primary and once per fallback:
@@ -692,6 +709,60 @@ request body, so its `|` and `( )` characters never reach `cmd.exe`.
 
 **Check.** Usage stays on the project's primary backend ID; the serving member is in
 `ApiManagementGatewayLogs.BackendId` ([admin operations 7D](ADMIN-OPERATIONS.md#d-optional-per-project-backend-failover-admin-33)).
+
+### 6.6 Drill: prove that a fallback serves (workstation)
+
+**What it does.** Points the pool's first member (the primary) at a path that returns 404 for a few
+minutes, so its breaker opens and the next member serves, then restores the saved URL. Only the
+project's own pool member changes; projects with failover off and the Foundry account are not
+touched. Rejecting the primary's private endpoint connection is not a usable drill: a rejected
+connection cannot be approved again, and the endpoint has to be recreated (N-21). Deleting a model
+deployment or lowering its capacity did not produce 404 or 429 in the lab (N-22).
+
+In the window from 6.5, with the member ID from 6.3 (`ccof-m-PROJECT-HASH-rREVISION-0`, the
+current revision):
+
+```powershell
+$work = "$HOME\ccof-dr-drill"
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+$memberId = 'REPLACE-member-0-id'
+$mu = "https://management.azure.com$apimId/backends/${memberId}?api-version=2024-05-01"
+az rest --method get --url $mu -o json | Set-Content "$work/member0-saved.json"
+$saved = Get-Content "$work/member0-saved.json" -Raw | ConvertFrom-Json
+if (-not $saved.properties.url) { throw "member $memberId was not read; check the ID and the sign-in" }
+$saved.properties.url
+$saved.properties.circuitBreaker.rules[0].failureCondition | ConvertTo-Json -Compress
+```
+
+**Expect:** the primary's `/anthropic` URL, and a failure condition with `errorReasons`
+`BackendConnectionFailure` and `Timeout`. Without them (a pool published before 2026-10-25), a
+primary that does not answer never moves traffic (N-20): publish a new revision first. In 6.2 switch
+failover off with no fallbacks and save, then switch it on with the same fallbacks and save (the
+revision goes up twice; state `pending publication`), then 6.3 and 6.4. Then run this block again
+with the new revision's member ID from the 6.3 output: members of the earlier revision stay in APIM
+but are no longer in the pool, so changing them has no effect.
+
+```powershell
+@{ properties = @{ url = "$($saved.properties.url)-dr-drill-404" } } | ConvertTo-Json | Set-Content "$work/member0-drill.json"
+az rest --method patch --url $mu --body "@$work/member0-drill.json" --headers Content-Type=application/json "If-Match=*" -o none
+```
+
+Then run the 6.5 call block five times, about ten seconds apart, and the 6.5 log query for each
+request ID.
+
+**Expect:** the first call (one per gateway node) returns 404 with `BackendId` ending `-0`; the next
+calls return 200 with `BackendId` ending `-1` and the fallback's host in `BackendUrl`. Every
+`tripDuration` (120 seconds in the lab) one call probes the primary again and returns 404.
+
+```powershell
+@{ properties = @{ url = $saved.properties.url } } | ConvertTo-Json | Set-Content "$work/member0-restore.json"
+az rest --method patch --url $mu --body "@$work/member0-restore.json" --headers Content-Type=application/json "If-Match=*" -o none
+(az rest --method get --url $mu -o json | ConvertFrom-Json).properties.url -eq $saved.properties.url
+```
+
+**Expect:** `True`. After the trip duration, the 6.5 block returns 200 with `BackendId` ending `-0`.
+
+![Drill: the primary answers 404, the Central US member serves, then failback](../images/dr-novice/dr-drill-404-failover.png)
 
 ---
 

@@ -11,6 +11,9 @@ Set-StrictMode -Version Latest
 $script:PoolId = '^ccof-pool-[a-z0-9-]{1,50}-r[0-9]{1,9}$'
 $script:MemberId = '^ccof-m-[a-z0-9-]{1,50}-r[0-9]{1,9}-[0-9]$'
 $script:ApimId = '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]{1,50}$'
+# Gateway LastErrorReason values for a backend that gave no response; APIM accepted them in failureCondition.errorReasons
+# and the breaker then opened on an unreachable primary (lab drill 2026-10-25, docs/DR-NOVICE-WALKTHROUGH-2026-10-25.md).
+$script:NoResponseErrorReasons = @('BackendConnectionFailure', 'Timeout')
 
 function ConvertTo-IsoSeconds([int]$Seconds) { "PT$($Seconds)S" }
 
@@ -45,6 +48,8 @@ function New-MemberBackendBody {
                         count            = [int]$b.failureCount
                         interval         = ConvertTo-IsoSeconds $b.failureIntervalSeconds
                         statusCodeRanges = @($b.statusCodeRanges | ForEach-Object { [ordered]@{ min = [int]$_.min; max = [int]$_.max } })
+                        # A primary that does not answer has no status code; without these a regional outage never opens the breaker.
+                        errorReasons     = $script:NoResponseErrorReasons
                     }
                     tripDuration     = ConvertTo-IsoSeconds $b.tripDurationSeconds
                     acceptRetryAfter = [bool]$b.acceptRetryAfter
@@ -87,6 +92,10 @@ function Compare-PublishedRouting {
         if ($wantBreaker -and $rules.Count -ne 1) { $diff.Add("member:$($m.memberBackendId):breaker_missing") }
         if (-not $wantBreaker -and $rules.Count -ne 0) { $diff.Add("member:$($m.memberBackendId):breaker_unexpected") }
         if ($wantBreaker -and $rules.Count -eq 1 -and [int]$rules[0].failureCondition.count -ne [int]$m.circuitBreaker.failureCount) { $diff.Add("member:$($m.memberBackendId):breaker_count") }
+        if ($wantBreaker -and $rules.Count -eq 1) {
+            $reasons = @(if ($rules[0].failureCondition.PSObject.Properties['errorReasons']) { $rules[0].failureCondition.errorReasons })
+            if ((($reasons | Sort-Object) -join ',') -cne (($script:NoResponseErrorReasons | Sort-Object) -join ',')) { $diff.Add("member:$($m.memberBackendId):breaker_error_reasons") }
+        }
     }
     $diff.ToArray()
 }

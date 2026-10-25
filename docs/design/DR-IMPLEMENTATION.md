@@ -48,11 +48,13 @@ Live results:
 | Contoso | P0 passed except the known blocker (no Claude deployment). P2 in Central US: VNet with delegated APIM/Functions subnets, private-endpoint subnet, links to the five primary DNS zones, two-way peering `Connected`, identities `sync-b`/`reconciler-b`. Wrong prefix, missing identity and wrong tenant all failed closed. Stages 5 and 7 deployed admin 3.3 and the fragment policy. Publisher negative: a registry URL that differs from the project's APIM backend was refused, the project stayed unpublished and no pool entity was written |
 | Fabrikam lab | P0 passed. P2 in Central US in the existing resource group (no resource-group create right; recorded opt-in). Stages 5 and 7 deployed admin 3.3 and the new gateway policy. SASLAB1 proof: pool member primary served 200; primary member broken (404) tripped its breaker and the fallback member served 200; restored primary served 200; failover off returned routing to `foundry-lab1`. Quotas raised for the test and restored, all in the change record |
 | Third subscription | Still HTTP 403 on subscription, resource group, Foundry and APIM for the lab identity; Reader on `rg-lab3` is required before P0 |
+| Fabrikam lab, two regions (2026-10-25) | SASLAB1 fallback moved to a Central US account in a second subscription of the same tenant (private endpoint in the P2 standby VNet, Cognitive Services User for the primary APIM identity). Primary 404: breaker opened and Central US served 22 of 26 calls; failback 8 of 8. Unreachable primary: no failover with the published breaker (0 of 4); with `errorReasons` Central US served 9 of 12; republished revision 4 from the fixed publisher served from Central US after 2 timeouts. Record: [walkthrough](../DR-NOVICE-WALKTHROUGH-2026-10-25.md#two-region-backend-failover-drill-central-us-account-in-a-second-subscription) |
 
 Limits observed:
 
-- Fabrikam lab has one Claude account, so the fallback entry points at the same account. The proof
-  covers routing, breaker scope and publication, not regional independence.
+- Fabrikam lab had one Claude account until 2026-10-25, so the first proof covered routing, breaker
+  scope and publication, not regional independence. The 2026-10-25 drill used a Central US account
+  in a second subscription; it covers backend failover across regions, not a standby APIM or data.
 - The request that trips a breaker is returned to the client; APIM breaker state is per gateway
   node. A policy-level retry is a separate decision (streamed bodies).
 - From 2026-10-23 both Standard v2 gateways refused API policy documents over 16 KiB, including
