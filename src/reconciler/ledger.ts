@@ -4,6 +4,7 @@
 // short of a complete PrimaryResult table is a failed read: a partial or
 // malformed answer must never read as "no usage" (ADR-0014).
 
+import { gatewayListProblem } from "../contracts/gateway-resource-ids.ts";
 import type { BudgetPeriod } from "./period.ts";
 
 // The ledger columns the reconciler uses, by their names in ledger.kql.
@@ -58,19 +59,20 @@ export class LedgerReadError extends Error {
 }
 
 // The value is placed inside a KQL string literal: no quote or backslash can
-// pass this pattern (the same pattern as the setting).
+// pass this pattern (the same pattern as the setting). Several gateways (DR)
+// are joined with commas; no accepted id contains one.
 const APIM_RESOURCE_ID = /^\/subscriptions\/[0-9a-fA-F-]{36}\/resourceGroups\/[A-Za-z0-9._-]+\/providers\/Microsoft\.ApiManagement\/service\/[A-Za-z0-9-]+$/;
 const LEDGER_FUNCTION = /\blet\s+CcofUsageLedger\s*=\s*\(/;
 
-export function buildLedgerQuery(ledgerFunctionKql: string, period: BudgetPeriod, gatewayResourceId: string): string {
+export function buildLedgerQuery(ledgerFunctionKql: string, period: BudgetPeriod, gatewayResourceIds: readonly string[]): string {
   if (!LEDGER_FUNCTION.test(ledgerFunctionKql)) throw new Error("the ledger KQL does not define CcofUsageLedger");
-  if (!APIM_RESOURCE_ID.test(gatewayResourceId)) throw new Error("the gateway resource id is not an APIM resource id");
+  if (gatewayListProblem(gatewayResourceIds, APIM_RESOURCE_ID) !== undefined) throw new Error("the gateway resource id list is not 1-4 distinct APIM resource ids");
   const from = period.start.toISOString();
   const to = period.end.toISOString();
   // A request refused before any backend call (WP-TEL's usageSource
   // "no-backend-call") has no usage: filtered here, it never counts toward
   // RECONCILER_LEDGER_MAX_ROWS (security council, 2026-10-11).
-  return `${ledgerFunctionKql}\nCcofUsageLedger(datetime(${from}), datetime(${to}), '${gatewayResourceId}')\n| where usageSource != "no-backend-call"\n| project ${LEDGER_COLUMNS.join(", ")}\n`;
+  return `${ledgerFunctionKql}\nCcofUsageLedger(datetime(${from}), datetime(${to}), '${gatewayResourceIds.join(",")}')\n| where usageSource != "no-backend-call"\n| project ${LEDGER_COLUMNS.join(", ")}\n`;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>

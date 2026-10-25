@@ -4,6 +4,7 @@
 // call. Problems name the setting and a code, never the value. The pacing
 // pair (ADR 0035) is the one optional group: neither set means no pacing.
 
+import { gatewayListProblem, includesGateway, splitGatewayList } from "../contracts/gateway-resource-ids.ts";
 import type { SpendPacing } from "./compute-ceiling.ts";
 
 export interface ReconcilerContainers {
@@ -23,7 +24,8 @@ export interface ReconcilerSettings {
   // The query API's base URL for the workspace's cloud; the token audience
   // is the same URL (public cloud: https://api.loganalytics.io).
   logAnalyticsEndpoint: string;
-  gatewayResourceId: string;
+  // One APIM id, or up to four (active/passive DR): the ledger counts each request once.
+  gatewayResourceIds: string[];
   ledgerTimeoutSeconds: number;
   ledgerMaxRows: number;
   maxStates: number;
@@ -62,6 +64,8 @@ export const SETTING_NAMES = [
   "RECONCILER_AGGREGATE_STATE_CONTAINER",
   "RECONCILER_LEASE_CONTAINER",
 ] as const;
+
+export const GATEWAY_LIST_SETTING = "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS";
 
 export const PACING_SETTING_NAMES = ["RECONCILER_SOFT_LIMIT_PERCENT", "RECONCILER_PACING_WINDOW_MINUTES"] as const;
 
@@ -180,6 +184,22 @@ function readPacing(r: Reader, settings: Settings, intervalMinutes: number | und
   return { softLimitPercent, windowMinutes };
 }
 
+// RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS (DR) is optional; without it the single id is required.
+// With both, the single id must be one of the list, so two settings cannot name different gateways.
+function readGateways(r: Reader, settings: Settings): string[] | undefined {
+  const list = settings[GATEWAY_LIST_SETTING]?.trim();
+  if (!list) {
+    const single = r.matching("RECONCILER_LEDGER_GATEWAY_RESOURCE_ID", APIM_RESOURCE_ID);
+    return single === undefined ? undefined : [single];
+  }
+  const ids = splitGatewayList(list);
+  const problem = gatewayListProblem(ids, APIM_RESOURCE_ID);
+  if (problem !== undefined) return r.fail(GATEWAY_LIST_SETTING, problem);
+  const single = settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID?.trim();
+  if (single && !includesGateway(ids, single)) return r.fail(GATEWAY_LIST_SETTING, "single_not_in_list");
+  return ids;
+}
+
 export function readReconcilerSettings(settings: Settings): SettingsResult {
   const r = new Reader(settings);
   const managedIdentityClientId = r.matching("RECONCILER_MANAGED_IDENTITY_CLIENT_ID", GUID)?.toLowerCase();
@@ -191,7 +211,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
   const endpointLa = r.raw("RECONCILER_LOG_ANALYTICS_ENDPOINT");
   const logAnalyticsEndpoint =
     endpointLa === undefined ? undefined : isHttpsOrigin(endpointLa) ? endpointLa : r.fail("RECONCILER_LOG_ANALYTICS_ENDPOINT", "invalid");
-  const gatewayResourceId = r.matching("RECONCILER_LEDGER_GATEWAY_RESOURCE_ID", APIM_RESOURCE_ID);
+  const gatewayResourceIds = readGateways(r, settings);
   const ledgerTimeoutSeconds = r.integer("RECONCILER_LEDGER_TIMEOUT_SECONDS");
   const ledgerMaxRows = r.integer("RECONCILER_LEDGER_MAX_ROWS");
   const maxStates = r.integer("RECONCILER_MAX_STATES");
@@ -224,7 +244,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
       leaseSeconds: leaseSeconds as number,
       workspaceId: workspaceId as string,
       logAnalyticsEndpoint: logAnalyticsEndpoint as string,
-      gatewayResourceId: gatewayResourceId as string,
+      gatewayResourceIds: gatewayResourceIds as string[],
       ledgerTimeoutSeconds: ledgerTimeoutSeconds as number,
       ledgerMaxRows: ledgerMaxRows as number,
       maxStates: maxStates as number,

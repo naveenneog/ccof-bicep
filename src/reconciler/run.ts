@@ -110,7 +110,7 @@ async function readAndCompute(settings: ReconcilerSettings, assets: RunAssets, d
   const t0 = now().getTime();
   const [projects, entitlements] = await step("registry_read_failed", () => Promise.all([deps.readProjects(), deps.readEntitlements()]));
   const t1 = now().getTime();
-  const query = await step("ledger_query_invalid", async () => buildLedgerQuery(assets.ledgerKql, period, settings.gatewayResourceId));
+  const query = await step("ledger_query_invalid", async () => buildLedgerQuery(assets.ledgerKql, period, settings.gatewayResourceIds));
   const answer = await step("ledger_read_failed", () => deps.queryLedger(query, `${period.start.toISOString()}/${period.end.toISOString()}`));
   const rows = await step("ledger_read_failed", async () =>
     parseLedgerResponse(answer.body, settings.ledgerMaxRows).map((row) => classifyRow(row, period, assets.rateCard, assets.schedule)),

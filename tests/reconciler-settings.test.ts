@@ -18,7 +18,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     leaseSeconds: 300,
     workspaceId: "00000000-0000-4000-8000-000001100000",
     logAnalyticsEndpoint: "https://api.loganalytics.io",
-    gatewayResourceId: "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim",
+    gatewayResourceIds: ["/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim"],
     ledgerTimeoutSeconds: 60,
     ledgerMaxRows: 100000,
     maxStates: 10000,
@@ -156,6 +156,51 @@ test("identifiers are validated: GUIDs, the APIM resource id, the Cosmos endpoin
     assert.equal(result.ok, false, `${name}=${value}`);
     if (!result.ok) assert.deepEqual(result.problems, [{ setting: name, problem: "invalid" }], `${name}=${value}`);
   }
+});
+
+const APIM_A = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim";
+const APIM_B = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-dr-rg/providers/Microsoft.ApiManagement/service/sample-dr-apim";
+const LIST = "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS";
+
+function withList(list: string, single?: string) {
+  const settings = validSettings({ [LIST]: list });
+  if (single === undefined) delete settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID;
+  else settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID = single;
+  return readReconcilerSettings(settings);
+}
+
+test("DR: a gateway id list alone is read in order, trimmed; the single setting is then optional", () => {
+  const result = withList(` ${APIM_A} , ${APIM_B} `);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (result.ok) assert.deepEqual(result.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+});
+
+test("DR: with both settings the single id must be in the list (case-insensitively), else a named refusal", () => {
+  const agree = withList(`${APIM_A},${APIM_B}`, APIM_B.replace("sample-dr-apim", "SAMPLE-DR-APIM"));
+  assert.equal(agree.ok, true, JSON.stringify(agree));
+  if (agree.ok) assert.deepEqual(agree.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+  const disagree = withList(APIM_B, APIM_A);
+  assert.equal(disagree.ok, false);
+  if (!disagree.ok) assert.deepEqual(disagree.problems, [{ setting: LIST, problem: "single_not_in_list" }]);
+});
+
+test("DR: each listed gateway id passes the APIM pattern; at most 4, no duplicates, no empty entries", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `${APIM_A}${i}`).join(",");
+  const cases: Array<[string, string]> = [
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg/providers/Microsoft.Web/sites/x`, "invalid"],
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg'|take 1/providers/Microsoft.ApiManagement/service/apim`, "invalid"],
+    [`${APIM_A},,${APIM_B}`, "invalid"],
+    [`${APIM_A},`, "invalid"],
+    [ids(5), "too_many"],
+    [`${APIM_A},${APIM_A.replace("sample-pilot-apim", "SAMPLE-PILOT-APIM")}`, "duplicate"],
+  ];
+  for (const [list, problem] of cases) {
+    const result = withList(list);
+    assert.equal(result.ok, false, list);
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: LIST, problem }], list);
+  }
+  const four = withList(ids(4));
+  assert.equal(four.ok && four.settings.gatewayResourceIds.length, 4);
 });
 
 test("the reconciler never writes into a container it reads or another writer's container", () => {
