@@ -104,6 +104,14 @@ $gw = @('/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/ser
 $b2 = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones -GatewayResourceIds $gw
 Check 'standby config: reconciler and admin read both gateways' ((@($b2.reconciler.ledgerGatewayResourceIds) -join ',') -ceq ($gw -join ',') -and (@($b2.admin.gatewayResourceIds) -join ',') -ceq ($gw -join ','))
 Check 'standby config without the list: no list keys' (-not $b.reconciler.Contains('ledgerGatewayResourceIds'))
+$primaryApim = '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a'
+$standbyApim = '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b'
+$gwids = @(Get-DrGatewayResourceIds -PrimaryApimId $primaryApim -StandbyApimId $standbyApim)
+Check 'both APIM IDs are preserved in the gateway list' ($gwids.Count -eq 2 -and $gwids[0] -ceq $primaryApim -and $gwids[1] -ceq $standbyApim)
+$threw = $false; try { $null = Get-DrGatewayResourceIds -PrimaryApimId $primaryApim } catch { $threw = "$_" -match 'standby_gateway_id_missing' }
+Check 'missing standby APIM ID is refused, not serialized as an empty list item' $threw
+$threw = $false; try { $null = Get-DrGatewayResourceIds -PrimaryApimId $primaryApim -StandbyApimId "$standbyApim,garbage" } catch { $threw = "$_" -match 'standby_gateway_id_invalid' }
+Check 'invalid standby APIM ID is refused' $threw
 
 $ps1 = [ordered]@{ names = $pn; cosmosAccountId = '/c'; cosmosEndpoint = 'https://c'; workspaceId = '/w'; workspaceCustomerId = 'ws' }
 $shells = [ordered]@{ apps = @{ resolver = @{ functionApp = 'lab1-abc-b-resolver' } }; apimId = '/apim-b'; apimName = 'apim-b'; apimPrincipalId = 'p-apim'; apimGatewayUrl = 'https://b'
@@ -124,4 +132,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 43) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 46) { exit 1 }

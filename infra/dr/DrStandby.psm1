@@ -107,6 +107,19 @@ function New-DrStandbyStage1Outputs {
     }
 }
 
+function Get-DrGatewayResourceIds {
+    param([Parameter(Mandatory)] [string]$PrimaryApimId, [string]$StandbyApimId)
+    $ids = @($PrimaryApimId, $StandbyApimId | Where-Object { $_ })
+    $ids = @($ids | Where-Object { $_ } | Select-Object -Unique)
+    if ($ids.Count -lt 2) { throw 'standby_gateway_id_missing: both primary and standby APIM resource IDs are required for cross-region accounting.' }
+    foreach ($id in $ids) {
+        if ($id -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]{1,50}$') {
+            throw "standby_gateway_id_invalid: $id"
+        }
+    }
+    return $ids
+}
+
 # What the Data phase still has to do to a Cosmos account (ARM GET, API 2024-05-15-preview).
 function Get-DrCosmosSteps {
     param([Parameter(Mandatory)] $Account, [Parameter(Mandatory)] [string]$SecondaryLocation)
@@ -124,4 +137,4 @@ function Get-DrCosmosSteps {
     $steps.ToArray()
 }
 
-Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrCosmosSteps
+Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, Get-DrCosmosSteps

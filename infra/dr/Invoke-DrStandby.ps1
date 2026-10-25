@@ -75,9 +75,13 @@ $vnetId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Network/vi
 $zone = { param($n) "/subscriptions/$($dr.dnsZones.subscriptionId)/resourceGroups/$($dr.dnsZones.resourceGroup)/providers/Microsoft.Network/privateDnsZones/$n" }
 $zoneIds = @{ cosmos = (& $zone 'privatelink.documents.azure.com'); blob = (& $zone 'privatelink.blob.core.windows.net')
     foundry = @{ cognitiveServices = (& $zone 'privatelink.cognitiveservices.azure.com'); openAi = (& $zone 'privatelink.openai.azure.com'); aiServices = (& $zone 'privatelink.services.ai.azure.com') } }
-$shellsFile = Join-Path $standbyStateDir 'standby.state.json'
-$gatewayIds = @()
-if (Test-Path -LiteralPath $shellsFile) { $sh = (Get-Content -LiteralPath $shellsFile -Raw | ConvertFrom-Json -AsHashtable -Depth 100).phases['Shells']; if ($sh) { $gatewayIds = @($pS1.apimId, $sh.outputs.apimId) } }
+$standbyStageState = Join-Path $standbyStateDir 'state.json'
+$standbyApimId = ''
+if (Test-Path -LiteralPath $standbyStageState) {
+    $bState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    if ($bState.stages['1']) { $standbyApimId = [string]$bState.stages['1'].outputs.apimId }
+}
+$gatewayIds = if ($standbyApimId) { @(Get-DrGatewayResourceIds -PrimaryApimId $pS1.apimId -StandbyApimId $standbyApimId) } else { @() }
 $bCfg = New-DrStandbyStagedConfig -Primary $primaryCfg -Dr $dr -VnetId $vnetId -ZoneIds $zoneIds -GatewayResourceIds $gatewayIds
 $bCfg.__path = Join-Path $standbyStateDir 'standby.staged.config.json'
 $bCfg | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $bCfg.__path -Encoding utf8NoBOM
