@@ -50,8 +50,10 @@ and subscriptions in them are pseudonyms with the same shape as the real values.
 | Git | `git --version` | [git-scm.com](https://git-scm.com/) |
 | Azure CLI with Bicep | `az version` and `az bicep version` | [Install the Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) |
 
-Azure Cloud Shell (PowerShell) has all four; it reaches Azure management endpoints, not private
-endpoints inside your network ([Cloud Shell quickstart](CLOUD-SHELL-QUICKSTART.md)).
+Azure Cloud Shell (PowerShell) has the first three and the Azure CLI; its Bicep CLI is added with
+`az bicep install` ([Cloud Shell sign-in](#a-separate-azure-cli-sign-in)). Cloud Shell reaches Azure
+management endpoints, not private endpoints inside your network
+([Cloud Shell quickstart](CLOUD-SHELL-QUICKSTART.md)).
 
 ### Source code
 
@@ -95,6 +97,28 @@ az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o 
 
 **Expect:** your tenant, subscription and account.
 
+**In Azure Cloud Shell.** Cloud Shell is already signed in with the Portal account. A separate
+profile and `az login` there start a device-code sign-in, which Conditional Access policies that
+require a managed device refuse
+([lab screenshot](../images/dr-novice/dr-n03b-conditional-access.png)). In Cloud Shell, the
+variable block above is followed by this block instead of the sign-in block:
+
+```powershell
+Remove-Item Env:AZURE_CONFIG_DIR -ErrorAction SilentlyContinue   # keep Cloud Shell's own sign-in
+$cfg   = "$HOME/ccof-private/staged.config.json"
+$state = "$HOME/ccof-private/.staged-state"
+az account set --subscription $sub        # Cloud Shell's default subscription can be another one
+az bicep install                          # Cloud Shell has no Bicep CLI by default
+az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o table
+```
+
+The deployment driver does not read `AZURE_CONFIG_DIR` (`infra/staged/Invoke-StagedDeployment.ps1`
+and `infra/staged/Staged.*.ps1` contain no reference to it), so Cloud Shell needs no value for it.
+Files under `$HOME` survive the session only when Cloud Shell has a storage account
+([Persist files in Cloud Shell](https://learn.microsoft.com/azure/cloud-shell/persisting-shell-storage));
+otherwise the configuration file and `.staged-state` are downloaded before the session ends.
+Step 8 does not run in Cloud Shell ([Step 8](#step-8-test-end-to-end)).
+
 On Windows, `az` passes its arguments through `cmd.exe`. Values containing `( ) | & < > ^` are
 interpreted by `cmd.exe`, so this guide keeps them out of `az` arguments and puts request bodies in
 files ([driver reference](STAGED-DEPLOYMENT-V2.md#how-a-stage-runs)).
@@ -106,9 +130,9 @@ repository and replace each value that starts with `REPLACE`; the driver refuses
 contains one.
 
 ```powershell
-New-Item -ItemType Directory C:\private\ccof -Force | Out-Null
+New-Item -ItemType Directory (Split-Path $cfg) -Force | Out-Null
 Copy-Item infra\staged\staged.config.example.json $cfg
-notepad $cfg
+notepad $cfg                                        # Cloud Shell: code $cfg
 ```
 
 | Field | What to enter | Where to find it |
@@ -118,6 +142,7 @@ notepad $cfg
 | `resourceGroup`, `location` | A new, empty resource group and its region (for example `eastus2`) | Your naming standard |
 | `stage1.prefix` | 3 to 8 lowercase letters or digits used in resource names | Your choice |
 | `apim` and `stage1.approveNewPublicApimBootstrap` | **Either** an existing APIM: `apim.existing` with its `name`, `resourceGroup` and `subscriptionId` (system-assigned identity on). **Or** a new one: `approveNewPublicApimBootstrap: true` with `apimPublisherEmail` and `apimPublisherName`; it is created with public ingress, because APIM cannot be created private before a private endpoint exists. With neither, Step 3 stops with `apim_missing`. | [Stage 1 notes](STAGED-DEPLOYMENT-V2.md#stage-1-resources-only) |
+| `stage1.cosmosCapacityMode` and `cosmos.capacityMode` | Cosmos DB capacity; the two fields go together. `serverless` and `serverless` (the default) for a single-region deployment. `provisioned` and `provisioned-autoscale` when disaster recovery is planned: a serverless account runs in one region and cannot add another ([Cosmos DB serverless](https://learn.microsoft.com/azure/cosmos-db/serverless); lab error `Serverless accounts do not support multiple regions`). With `provisioned-autoscale` the database gets autoscale throughput up to `cosmos.autoscaleMaxThroughput` RU/s (at least 1000). A serverless account can later be changed in place to provisioned throughput, one way only ([change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)); this was not run in the lab. | `infra/staged/main.bicep` (`cosmosCapacityMode`: `serverless`, `provisioned`), `infra/staged/stage2-schema.bicep` (`capacityMode`: `serverless`, `provisioned-autoscale`) |
 | `stage1.foundry` | `create: true` for a new Foundry account with Claude deployments, or `false` to use an existing one | [Foundry section](STAGED-DEPLOYMENT-V2.md#stage-1-foundry-optional) |
 | `backends` | Each Foundry account, its deployment names and inference geography | Portal: Foundry account > **Models + endpoints** |
 | `groups` | Project, classification and Entra group for each team, with allowed model families and budgets | [Admin operations](ADMIN-OPERATIONS.md#limits-and-budgets) |
@@ -806,6 +831,15 @@ in the `ApiManagementGatewayLlmLog` table within 15 minutes. Allowed requests us
 
 **Who runs it.** A member of each allowed project's group, with Azure CLI allowed as a client of the
 gateway app (`entra.allowAzureCliClient: true`), and Log Analytics Reader on the workspace.
+
+**Where it runs.** A workstation signed in with `az login`, on a device that meets the tenant's
+Conditional Access policy; not Azure Cloud Shell. The driver (`infra/staged/Staged.Application.ps1`)
+and the commands below request the gateway token with
+`az account get-access-token --scope api://.../access_as_user`. Cloud Shell's managed-identity
+credential refuses custom `api://` audiences (`Audience api://... is not a supported MSI token
+audience`), and `az login --scope` in Cloud Shell is the device-code sign-in described under
+[A separate Azure CLI sign-in](#a-separate-azure-cli-sign-in)
+([lab screenshot](../images/dr-novice/dr-n11-token-audience.png)).
 
 **Script**
 
