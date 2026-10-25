@@ -181,6 +181,7 @@ test("gate on: a failed continuity read or a failed or malformed state read writ
     ["continuity partial", { continuity: { ...continuityBody(HEALTHY), error: { code: "PartialError" } } }, "ledger_partial_result"],
     ["state read", { failStateRead: Object.assign(new Error("boom"), { code: 503 }) }, "budget_state_read_failed"],
     ["state malformed", { persistedBudgetStates: { [PERSON_A_STATE]: personState("lots") } }, "budget_state_read_failed"],
+    ["state negative", { persistedBudgetStates: { [PERSON_A_STATE]: personState("-5") } }, "budget_state_read_failed"],
   ];
   for (const [label, options, reason] of failures) {
     const azure = pilot(options);
