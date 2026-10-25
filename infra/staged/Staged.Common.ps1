@@ -327,6 +327,17 @@ function Enter-StgStage7Lock {
 
 function Assert-Stg { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw "verify_failed: $Message" } }
 
+# Role assignments (ARM: properties.principalId; Cosmos SQL: principalId) held by this deployment's
+# principals. A standby region (infra/dr) adds its own grants to the shared workspace and Cosmos account.
+function Select-StgOwnAssignments {
+    param([object[]]$Assignments, [Parameter(Mandatory)] $Principals)
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in @($Principals.Values)) { if ($p) { [void]$ids.Add([string]$p) } }
+    return @($Assignments | Where-Object {
+        $_ -and $ids.Contains([string]$(if ($_.PSObject.Properties['properties']) { $_.properties.principalId } else { $_.principalId }))
+    })
+}
+
 function Invoke-StgAzJson {
     # az with JSON output parsed, retried by Invoke-QsAz on transient token errors.
     param([string[]]$Arguments)

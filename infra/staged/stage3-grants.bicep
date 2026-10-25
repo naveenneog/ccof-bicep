@@ -31,6 +31,9 @@ param apimResourceId string = ''
 @description('Foundry backends: id, subscriptionId, resourceGroup, accountName, assignCognitiveServicesUser.')
 param backends array = []
 
+@description('Empty for the primary region. A standby region (infra/dr) passes its own value, so its grants on the shared workspace and Cosmos account get their own names instead of replacing the primary region\'s.')
+param assignmentNameSalt string = ''
+
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logReader = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -74,7 +77,7 @@ resource publisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (
 }]
 
 resource workspaceReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for k in workspaceReaders: {
-  name: guid(workspace.id, k, logReader)
+  name: empty(assignmentNameSalt) ? guid(workspace.id, k, logReader) : guid(workspace.id, k, logReader, assignmentNameSalt)
   scope: workspace
   properties: {
     principalId: principals[k]
@@ -175,7 +178,7 @@ resource roleDefinitions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitio
 @batchSize(1)
 resource assignments 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = [for a in activeAssignments: {
   parent: account
-  name: guid(account.id, 'ccof-staged', a.id)
+  name: empty(assignmentNameSalt) ? guid(account.id, 'ccof-staged', a.id) : guid(account.id, 'ccof-staged', a.id, assignmentNameSalt)
   properties: {
     roleDefinitionId: startsWith(a.role, 'custom:')
       ? '${account.id}/sqlRoleDefinitions/${guid(account.id, 'ccof-staged', substring(a.role, 7))}'
@@ -191,7 +194,7 @@ output metricsPublisherAssignmentIds array = [for (k, i) in appKeys: publisher[i
 output workspaceReaderAssignmentIds array = [for (k, i) in workspaceReaders: workspaceReader[i].id]
 output cosmosAssignmentIds array = [for a in activeAssignments: a.id]
 output cosmosAssignmentDetails array = [for a in activeAssignments: {
-  id: guid(account.id, 'ccof-staged', a.id)
+  id: empty(assignmentNameSalt) ? guid(account.id, 'ccof-staged', a.id) : guid(account.id, 'ccof-staged', a.id, assignmentNameSalt)
   principalId: principals[a.principal]
   roleDefinitionId: startsWith(a.role, 'custom:')
     ? '${account.id}/sqlRoleDefinitions/${guid(account.id, 'ccof-staged', substring(a.role, 7))}'
