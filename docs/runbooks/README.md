@@ -8,6 +8,7 @@ Step-by-step guides. Read them in this order for a new deployment:
 | 1a | [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md) | Platform, identity and network teams | Handoff details: Entra apps and groups, managed identities, network design, permission-separated execution |
 | 2 | [ADMIN-OPERATIONS.md](ADMIN-OPERATIONS.md) | CCOF administrators | Projects, people, models, limits, budgets, retirement, audit, another Foundry backend |
 | 3 | [USER-ONBOARDING.md](USER-ONBOARDING.md) | Service desk, developers, Intune packaging | Client files, sign-in and Claude Code / Desktop setup |
+| 4 | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md) | Operators adding disaster recovery after a single-region deployment | The DR parts deployable today, in Azure Cloud Shell: standby network and identities (P0-P2), workspace replication, per-project backend failover; and the parts not deployable yet |
 
 Command reference for the deployment driver: [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md).
 
