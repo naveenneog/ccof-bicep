@@ -1,17 +1,18 @@
 // WP-E2E (docs/status/WP-E2E.md): one row per request in [fromTime, toTime), UTC, half-open, with the
 // gateway outcome, the ccof.usage.v1 and ccof.resolver.v1 traces and the LLM log row side by side.
 // Read-only. Ids and counts only: no prompt, response or header is read.
-// Append CcofE2eCalls(fromTime, toTime, gatewayResourceId) to invoke.
-let CcofE2eCalls = (fromTime:datetime, toTime:datetime, resourceId:string) {
+// Append CcofE2eCalls(fromTime, toTime, gatewayResourceIds) to invoke: one APIM id or several joined by commas.
+let CcofE2eCalls = (fromTime:datetime, toTime:datetime, resourceIds:string) {
+    let gatewayIds = split(resourceIds, ",");
     let llmRows = ApiManagementGatewayLlmLog
         | where TimeGenerated >= fromTime and TimeGenerated < toTime
-        | where isnotempty(resourceId) and _ResourceId =~ resourceId
+        | where isnotempty(resourceIds) and _ResourceId in~ (gatewayIds)
         | project llmCorrelationId = tolower(tostring(CorrelationId)), llmAt = TimeGenerated, llmIngestedAt = ingestion_time(),
             llmModel = tostring(ModelName), llmPromptTokens = tolong(PromptTokens),
             llmCompletionTokens = tolong(CompletionTokens), isStreamCompletion = tostring(IsStreamCompletion);
     ApiManagementGatewayLogs
     | where TimeGenerated >= fromTime and TimeGenerated < toTime
-    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | where isnotempty(resourceIds) and _ResourceId in~ (gatewayIds)
     | extend gatewayCorrelationId = tolower(tostring(CorrelationId)), gatewayIngestedAt = ingestion_time()
     | mv-apply traceRecord = TraceRecords on (
         summarize usageTraces = make_list_if(tostring(traceRecord.message), tostring(traceRecord.source) == "ccof.usage.v1"),

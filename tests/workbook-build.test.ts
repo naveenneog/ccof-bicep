@@ -60,6 +60,39 @@ test("workbook configuration refuses unknown answers rather than ignoring misspe
   assert.throws(() => validateAnswers({ ...workbookAnswers(), unsuspected: true }), /unknown_field/);
 });
 
+const drGateway = () => workbookAnswers().gatewayResourceId.replace("fixture-apim", "fixture-dr-apim");
+
+test("DR: optional gatewayResourceIds widens every usage query to the listed gateways; absent, the workbook is unchanged", async () => {
+  const { buildWorkbook } = await buildModule();
+  const { validateAnswers } = await configModule();
+  const single = workbookAnswers().gatewayResourceId;
+  const listed = { ...workbookAnswers(), gatewayResourceIds: [single, drGateway()] };
+  assert.deepEqual(validateAnswers(listed).gatewayResourceIds, [single, drGateway()]);
+  const one = buildWorkbook(workbookAnswers(), workbookRateCard(), fixtureLedger);
+  const two = buildWorkbook(listed, workbookRateCard(), fixtureLedger);
+  assert.ok(one.preamble.includes(`let GatewayResourceId = "${single}";`), one.preamble);
+  assert.ok(two.preamble.includes(`let GatewayResourceId = "${single},${drGateway()}";`), two.preamble);
+  assert.notEqual(one.parameters.contentTags.value["ccof-answers"], two.parameters.contentTags.value["ccof-answers"]);
+});
+
+test("DR: gatewayResourceIds must be 1-4 distinct APIM ids that include gatewayResourceId", async () => {
+  const { validateAnswers } = await configModule();
+  const single = workbookAnswers().gatewayResourceId;
+  const cases: Array<[unknown, string]> = [
+    ["not-an-array", "invalid_format"],
+    [[], "invalid_format"],
+    [[single, workbookAnswers().reconcilerResourceId], "invalid_format"],
+    [[single, `${drGateway()}"`], "invalid_format"],
+    [[single, 1], "invalid_format"],
+    [[single, ...[1, 2, 3, 4].map((n) => `${drGateway()}${n}`)], "too_many"],
+    [[single, single.toUpperCase().replace("/SUBSCRIPTIONS/", "/subscriptions/")], "duplicate"],
+    [[drGateway()], "single_not_in_list"],
+  ];
+  for (const [value, problem] of cases) {
+    assert.throws(() => validateAnswers({ ...workbookAnswers(), gatewayResourceIds: value }), new RegExp(`gatewayResourceIds: ${problem}`), JSON.stringify(value));
+  }
+});
+
 const settings = () => ({ defaultProjectId: "*", maxRows: 1000, topUsers: 25, maxQueryDays: 62, budgetLookbackDays: 31 });
 
 test("workbook settings for WP-CORE's answers file accept exactly the report settings", async () => {

@@ -41,7 +41,7 @@ function rowValues(overrides: Record<string, unknown> = {}): unknown[] {
 }
 
 test("the query is WP-TEL's ledger function invoked over the half-open UTC month for one gateway", () => {
-  const query = buildLedgerQuery(LEDGER_KQL, OCTOBER, APIM);
+  const query = buildLedgerQuery(LEDGER_KQL, OCTOBER, [APIM]);
   assert.ok(query.startsWith(LEDGER_KQL), "the ledger function text is used unchanged");
   assert.ok(
     query.includes(`CcofUsageLedger(datetime(2026-10-01T00:00:00.000Z), datetime(2026-11-01T00:00:00.000Z), '${APIM}')`),
@@ -51,18 +51,43 @@ test("the query is WP-TEL's ledger function invoked over the half-open UTC month
 });
 
 test("requests refused before any backend call are filtered in the query, so they never count toward the row limit (council finding)", () => {
-  const query = buildLedgerQuery(LEDGER_KQL, OCTOBER, APIM);
+  const query = buildLedgerQuery(LEDGER_KQL, OCTOBER, [APIM]);
   assert.equal(query.split('| where usageSource != "no-backend-call"').length - 1, 1);
 });
 
 test("the query refuses a gateway id that could break out of its KQL string literal", () => {
   for (const id of [`${APIM}'`, `${APIM}' | take 1 //`, "/subscriptions/x/resourceGroups/rg/providers/Microsoft.ApiManagement/service/a\\b"]) {
-    assert.throws(() => buildLedgerQuery(LEDGER_KQL, OCTOBER, id), /gateway resource id/);
+    assert.throws(() => buildLedgerQuery(LEDGER_KQL, OCTOBER, [id]), /gateway resource id/);
   }
 });
 
 test("the query refuses a ledger text that does not define CcofUsageLedger (a packaging defect)", () => {
-  assert.throws(() => buildLedgerQuery("ApiManagementGatewayLlmLog | take 1", OCTOBER, APIM), /CcofUsageLedger/);
+  assert.throws(() => buildLedgerQuery("ApiManagementGatewayLlmLog | take 1", OCTOBER, [APIM]), /CcofUsageLedger/);
+});
+
+const APIM_B = APIM.replace("sample-pilot-apim", "sample-dr-apim");
+
+test("DR: several gateways are passed to the ledger function as one comma-separated literal; one gateway is unchanged", () => {
+  const query = buildLedgerQuery(LEDGER_KQL, OCTOBER, [APIM, APIM_B]);
+  assert.ok(query.includes(`datetime(2026-11-01T00:00:00.000Z), '${APIM},${APIM_B}')`), query.slice(LEDGER_KQL.length));
+  assert.equal(buildLedgerQuery(LEDGER_KQL, OCTOBER, [APIM]), `${LEDGER_KQL}\nCcofUsageLedger(datetime(2026-10-01T00:00:00.000Z), datetime(2026-11-01T00:00:00.000Z), '${APIM}')\n| where usageSource != "no-backend-call"\n| project ${LEDGER_COLUMNS.join(", ")}\n`);
+});
+
+test("DR: the query refuses an empty list, more than 4 gateways, a duplicate or any unsafe entry", () => {
+  const five = Array.from({ length: 5 }, (_, i) => `${APIM}${i}`);
+  for (const ids of [[], five, [APIM, APIM.toUpperCase().replace(/^\/SUBSCRIPTIONS/, "/subscriptions")], [APIM, `${APIM_B}'`]]) {
+    assert.throws(() => buildLedgerQuery(LEDGER_KQL, OCTOBER, ids), /gateway resource id/, JSON.stringify(ids));
+  }
+});
+
+test("DR: the ledger function filters both gateway tables on the id list with in~ and keeps one row per request id", () => {
+  const filters = LEDGER_KQL.match(/\| where isnotempty\(resourceIds\) and _ResourceId in~ \(gatewayIds\)/g) ?? [];
+  assert.equal(filters.length, 2, "ApiManagementGatewayLogs and ApiManagementGatewayLlmLog");
+  assert.doesNotMatch(LEDGER_KQL, /_ResourceId =~/);
+  assert.match(LEDGER_KQL, /let gatewayIds = split\(resourceIds, ","\);/);
+  const dedupe = LEDGER_KQL.search(/\| summarize arg_max\(ingestedAt, \*\) by gatewayRequestId\r?\n/);
+  assert.ok(dedupe > 0, "a request id seen in both gateways' logs is counted once");
+  assert.ok(dedupe < LEDGER_KQL.lastIndexOf("| project timestamp, ingestedAt, gatewayResourceId, gatewayRequestId"), "after every per-gateway step, before the projection");
 });
 
 test("a response recorded from sample-pilot-law on 2026-10-11 parses into one record per row, keyed by column", () => {

@@ -18,7 +18,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     leaseSeconds: 300,
     workspaceId: "00000000-0000-4000-8000-000001100000",
     logAnalyticsEndpoint: "https://api.loganalytics.io",
-    gatewayResourceId: "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim",
+    gatewayResourceIds: ["/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim"],
     ledgerTimeoutSeconds: 60,
     ledgerMaxRows: 100000,
     maxStates: 10000,
@@ -26,6 +26,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     cosmosEndpoint: "https://sample-pilot-cosmos.documents.azure.com:443/",
     cosmosDatabase: "ccof",
     pacing: null,
+    continuity: null,
     containers: {
       projects: "projects",
       entitlement: "entitlement",
@@ -155,6 +156,81 @@ test("identifiers are validated: GUIDs, the APIM resource id, the Cosmos endpoin
     const result = readReconcilerSettings(validSettings({ [name]: value }));
     assert.equal(result.ok, false, `${name}=${value}`);
     if (!result.ok) assert.deepEqual(result.problems, [{ setting: name, problem: "invalid" }], `${name}=${value}`);
+  }
+});
+
+const APIM_A = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim";
+const APIM_B = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-dr-rg/providers/Microsoft.ApiManagement/service/sample-dr-apim";
+const LIST = "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS";
+
+function withList(list: string, single?: string) {
+  const settings = validSettings({ [LIST]: list });
+  if (single === undefined) delete settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID;
+  else settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID = single;
+  return readReconcilerSettings(settings);
+}
+
+test("DR: a gateway id list alone is read in order, trimmed; the single setting is then optional", () => {
+  const result = withList(` ${APIM_A} , ${APIM_B} `);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (result.ok) assert.deepEqual(result.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+});
+
+test("DR: with both settings the single id must be in the list (case-insensitively), else a named refusal", () => {
+  const agree = withList(`${APIM_A},${APIM_B}`, APIM_B.replace("sample-dr-apim", "SAMPLE-DR-APIM"));
+  assert.equal(agree.ok, true, JSON.stringify(agree));
+  if (agree.ok) assert.deepEqual(agree.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+  const disagree = withList(APIM_B, APIM_A);
+  assert.equal(disagree.ok, false);
+  if (!disagree.ok) assert.deepEqual(disagree.problems, [{ setting: LIST, problem: "single_not_in_list" }]);
+});
+
+test("DR: each listed gateway id passes the APIM pattern; at most 4, no duplicates, no empty entries", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `${APIM_A}${i}`).join(",");
+  const cases: Array<[string, string]> = [
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg/providers/Microsoft.Web/sites/x`, "invalid"],
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg'|take 1/providers/Microsoft.ApiManagement/service/apim`, "invalid"],
+    [`${APIM_A},,${APIM_B}`, "invalid"],
+    [`${APIM_A},`, "invalid"],
+    [ids(5), "too_many"],
+    [`${APIM_A},${APIM_A.replace("sample-pilot-apim", "SAMPLE-PILOT-APIM")}`, "duplicate"],
+  ];
+  for (const [list, problem] of cases) {
+    const result = withList(list);
+    assert.equal(result.ok, false, list);
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: LIST, problem }], list);
+  }
+  const four = withList(ids(4));
+  assert.equal(four.ok && four.settings.gatewayResourceIds.length, 4);
+});
+
+test("DR continuity gate: off unless RECONCILER_CONTINUITY_GATE is on; the maximum gap defaults to 900 seconds", () => {
+  const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
+  const absent = read({});
+  assert.equal(absent.ok && absent.settings.continuity, null);
+  const off = read({ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "120" });
+  assert.equal(off.ok && off.settings.continuity, null);
+  const on = read({ RECONCILER_CONTINUITY_GATE: "on" });
+  assert.deepEqual(on.ok && on.settings.continuity, { maxGapSeconds: 900 });
+  for (const [value, seconds] of [["60", 60], ["86400", 86400]] as const) {
+    const bound = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: value });
+    assert.deepEqual(bound.ok && bound.settings.continuity, { maxGapSeconds: seconds }, value);
+  }
+});
+
+test("DR continuity gate: values are on/off only, and the gap is a whole number from 60 to 86400 seconds", () => {
+  const cases: Array<[Record<string, string>, string, string]> = [
+    [{ RECONCILER_CONTINUITY_GATE: "ON" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "true" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "59" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "86401" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "15m" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "0" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+  ];
+  for (const [overrides, setting, problem] of cases) {
+    const result = readReconcilerSettings(validSettings(overrides));
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting, problem }], JSON.stringify(overrides));
   }
 });
 

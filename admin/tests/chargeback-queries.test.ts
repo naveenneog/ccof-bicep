@@ -5,7 +5,7 @@ import { buildWorkbook } from "../../analytics/workbooks/build.ts";
 import { buildChargebackWorkbook } from "../../analytics/workbooks/chargeback.ts";
 import { chargebackQueries, reconcilerQueryBase } from "../../analytics/workbooks/chargeback-queries.ts";
 import { workbookAnswers } from "../../tests/helpers/workbook-fixtures.ts";
-import { buildChargebackQuery, prepareRateCard, readChargebackFilters } from "../src/chargeback.ts";
+import { buildChargebackQuery, prepareRateCard, readChargebackFilters, readChargebackSettings } from "../src/chargeback.ts";
 
 const card = JSON.parse(await readFile(new URL("../../config/rate-card.json", import.meta.url), "utf8"));
 const ledger = await readFile(new URL("../../analytics/ledger.kql", import.meta.url), "utf8");
@@ -50,6 +50,36 @@ test("server binding resolves every workbook parameter and encodes values", () =
     assert.doesNotMatch(q, /\{[A-Za-z]+:(base64|start|end)\}/, view);
     assert.match(q, /datetime\(2026-10-01T00:00:00.000Z\)/);
     assert.ok(q.includes(Buffer.from("foundry-eus2").toString("base64")), view);
+  }
+});
+
+test("DR: ADMIN_GATEWAY_RESOURCE_IDS widens the chargeback ledger to every listed gateway; absent, the query is unchanged", () => {
+  const prepared = prepareRateCard(card);
+  const single = answers.gatewayResourceId;
+  const dr = single.replace("fixture-apim", "fixture-dr-apim");
+  const env = { ADMIN_WORKSPACE_ID: "11111111-2222-4333-8444-555555555555", ADMIN_GATEWAY_RESOURCE_ID: single };
+  const one = readChargebackSettings(env);
+  const two = readChargebackSettings({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: `${single}, ${dr}` });
+  assert.ok(one.ok && two.ok);
+  if (!one.ok || !two.ok) return;
+  const f = readChargebackFilters(new URLSearchParams("period=month"), NOW, 62);
+  const q1 = buildChargebackQuery("totals", f, one.value, { ledger, pricing, budgets }, prepared, []);
+  const q2 = buildChargebackQuery("totals", f, two.value, { ledger, pricing, budgets }, prepared, []);
+  assert.ok(q1.includes(`let GatewayResourceId = "${single}";`));
+  assert.ok(q2.includes(`let GatewayResourceId = "${single},${dr}";`));
+  assert.equal(q2.replace(`"${single},${dr}"`, `"${single}"`), q1);
+  const listOnly = readChargebackSettings({ ADMIN_WORKSPACE_ID: env.ADMIN_WORKSPACE_ID, ADMIN_GATEWAY_RESOURCE_IDS: dr });
+  assert.ok(listOnly.ok && listOnly.value.gatewayResourceIds?.join() === dr);
+});
+
+test("DR: an invalid ADMIN_GATEWAY_RESOURCE_IDS, or one that omits ADMIN_GATEWAY_RESOURCE_ID, is chargeback_settings_invalid", () => {
+  const single = answers.gatewayResourceId;
+  const dr = single.replace("fixture-apim", "fixture-dr-apim");
+  const ws = "11111111-2222-4333-8444-555555555555";
+  for (const list of [`${single},,${dr}`, `${single},${single.toUpperCase().replace("/SUBSCRIPTIONS/", "/subscriptions/")}`,
+    [1, 2, 3, 4, 5].map((n) => `${dr}${n}`).join(","), `${single},${dr}'`, dr]) {
+    const result = readChargebackSettings({ ADMIN_WORKSPACE_ID: ws, ADMIN_GATEWAY_RESOURCE_ID: single, ADMIN_GATEWAY_RESOURCE_IDS: list });
+    assert.equal(result.ok ? "ok" : result.reason, "chargeback_settings_invalid", list);
   }
 });
 

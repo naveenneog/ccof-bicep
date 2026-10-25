@@ -58,3 +58,17 @@ Both reconciler settings are required together; with neither, the reconciler beh
 A shorter window allows faster spend but more overshoot: a review simulation reached about 149% of
 budget with 10 minutes and about 100% with 30 ([ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md#consequences)).
 How to set them: [admin operations, soft limit and spend pacing](runbooks/ADMIN-OPERATIONS.md#limits-and-budgets).
+
+### Disaster recovery settings (DR-05)
+
+Optional; with none set the reconciler behaves as before. Design: [DR required changes](DR-ACTIVE-PASSIVE.md#required-changes).
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` | not set (the single `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` is used) | Comma-separated APIM resource IDs (1-4, no duplicates) whose logs are read as one ledger; a request ID in both gateways' logs is counted once. Must include `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` when both are set |
+| `RECONCILER_CONTINUITY_GATE` | `off` | `on` makes each run check the ledger and the persisted states before writing; it writes nothing and logs outcome `refused` (`ledger_continuity_gap` or `spend_would_decrease`) when the check fails |
+| `RECONCILER_CONTINUITY_MAX_GAP_SECONDS` | `900` | 60-86400. The newest record of at least one gateway must be newer than now minus this; the month's earliest record must be no later than the month start plus this while persisted spend this month is non-zero |
+
+With the gate on, a period without any new gateway record for longer than the gap (for example a quiet
+night) also refuses writes; budget figures then age and pass `RESOLVER_BUDGET_STATE_HARD_LIMIT_SECONDS`
+as in any reconciler outage.

@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
+
+- Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated, 1-4 distinct APIM resource IDs). `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid; with both set the single ID must be in the list, otherwise the run logs `settings_invalid` with `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS:single_not_in_list`.
+- `analytics/ledger.kql`: `CcofUsageLedger` takes one APIM ID or a comma-joined list, filters with `in~`, and keeps one row per `gatewayRequestId`, so a request in both gateways' logs counts once. The workbook and admin chargeback digests change with the ledger text.
+- Workbook answer `gatewayResourceIds` and admin setting `ADMIN_GATEWAY_RESOURCE_IDS` (same rules); without them the workbook and admin queries are unchanged.
+- Deployment: `reconciler.ledgerGatewayResourceIds` (quick-start/staged Bicep, Core D2), `gatewayResourceIds` (reconciler answers), `ledgerGatewayResourceIds` (manual helpers). Without a list the rendered settings are byte-identical (`tests/Test-DrLedgerGateways.ps1`). The standalone reconciler package now includes `dist/contracts`.
+- Reconciler continuity gate, off by default: `RECONCILER_CONTINUITY_GATE=on`, `RECONCILER_CONTINUITY_MAX_GAP_SECONDS` (default 900). Refusals: `ledger_continuity_gap` (`no_recent_record`, `early_history_missing`) and `spend_would_decrease`; a refused run writes nothing. Details: [DR required changes](DR-ACTIVE-PASSIVE.md#required-changes).
+
 ## 2026-10-25 - Two-region backend failover drill
 
 - [Drill record](DR-NOVICE-WALKTHROUGH-2026-10-25.md#two-region-backend-failover-drill-central-us-account-in-a-second-subscription): SASLAB1's fallback moved to a Foundry account in Central US in a second subscription of the same tenant. When the primary answered 404, the breaker opened and Central US served 22 of 26 calls; traffic returned to the primary after the fault.

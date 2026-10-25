@@ -1,7 +1,7 @@
 // WP-E2E (docs/status/WP-E2E.md): the usage ledger of [fromTime, toTime), UTC, half-open, grouped by
 // project, classification, person and how each row was measured. Token sums count known values only;
 // the *Known columns say how many rows knew each category. Read-only.
-// Prepend analytics/ledger.kql, then append CcofE2eLedgerTotals(fromTime, toTime, gatewayResourceId).
+// Prepend analytics/ledger.kql, then append CcofE2eLedgerTotals(fromTime, toTime, gatewayResourceIds).
 let CcofE2eLedgerTotals = (fromTime:datetime, toTime:datetime, resourceId:string) {
     CcofUsageLedger(fromTime, toTime, resourceId)
     | summarize requests = count(), streamedRequests = countif(streamed),

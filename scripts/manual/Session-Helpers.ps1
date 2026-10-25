@@ -330,6 +330,8 @@ function New-CcofAppSettings {
             $s.RECONCILER_PROJECTS_CONTAINER='projects'; $s.RECONCILER_ENTITLEMENT_CONTAINER='entitlement'
             $s.RECONCILER_BUDGET_STATE_CONTAINER='budgetState'; $s.RECONCILER_AGGREGATE_STATE_CONTAINER='aggregateBudgetState'
             $s.RECONCILER_LEASE_CONTAINER='reconcilerLease'; $s.'AzureWebJobs.reconcileBudgets.Disabled'='true'
+            # DR-05: the optional list of APIM ids whose logs hold this deployment's usage.
+            if ($C.ledgerGatewayResourceIds) { $s.RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS = @($C.ledgerGatewayResourceIds) -join ',' }
         }
     }
     foreach ($key in @($s.Keys)) {

@@ -108,6 +108,15 @@ test("the ledger query covers the UTC month and the configured gateway, with the
   assert.ok(azure.queries[0].query.includes("CcofUsageLedger(datetime(2026-10-01T00:00:00.000Z), datetime(2026-11-01T00:00:00.000Z), '/subscriptions/"));
 });
 
+test("DR: with RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS the one ledger query covers every listed gateway", async () => {
+  const a = validSettings().RECONCILER_LEDGER_GATEWAY_RESOURCE_ID as string;
+  const b = a.replace("sample-pilot-apim", "sample-dr-apim");
+  const azure = pilot();
+  await runOnce(azure, undefined, "run-1", { RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS: `${a},${b}` });
+  assert.equal(azure.queries.length, 1);
+  assert.ok(azure.queries[0].query.includes(`, '${a},${b}')\n`), azure.queries[0].query.slice(-400));
+});
+
 // The detector for WP-E2E G6: with Cache-Control no-cache every answer is fresh, so a number here means the
 // query API served a cached answer that many seconds old.
 test("the run line reports the ledger answer's cache age: null when fresh, its seconds when cached", async () => {

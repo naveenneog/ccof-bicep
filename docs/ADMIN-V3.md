@@ -84,6 +84,7 @@ change.
 | `ADMIN_V3_ENABLED` | V3 console and `/api/v3/*` | `true` to serve; anything else returns 404 (V2 unaffected) |
 | `ADMIN_USER_NAMES_ENABLED` | Entra user labels | `true`; admin managed identity Graph `User.Read.All` application permission with consent. No changes to sync or telemetry. |
 | `ADMIN_GATEWAY_RESOURCE_ID` | Chargeback, Overview cost | Full ARM ID of the APIM instance (`_ResourceId` of `ApiManagementGatewayLogs`) |
+| `ADMIN_GATEWAY_RESOURCE_IDS` | Chargeback, Overview cost (optional, DR) | Comma-separated APIM ARM IDs (1-4, no duplicates) whose logs hold usage, for example the primary and standby APIM; must include `ADMIN_GATEWAY_RESOURCE_ID` when both are set. An invalid list gives `chargeback_settings_invalid` |
 | `ADMIN_CHARGEBACK_WORKSPACE_ID` | Chargeback (optional) | Workspace GUID holding the gateway logs; defaults to `ADMIN_WORKSPACE_ID` |
 | `ADMIN_CHARGEBACK_MAX_QUERY_DAYS` | Chargeback (optional) | 31–366, default 62 |
 | `ADMIN_LOG_RETENTION_DAYS` | Chargeback (optional) | Workspace retention, default 90; earlier periods are flagged `retention_truncated` |

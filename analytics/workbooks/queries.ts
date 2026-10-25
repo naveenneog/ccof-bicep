@@ -1,7 +1,10 @@
 import type { WorkbookAnswers } from "./config.ts";
 import { kqlString } from "./rate-card.ts";
 
-export type ReportContext = Pick<WorkbookAnswers, "maxQueryDays" | "retentionDays" | "gatewayResourceId" | "reconcilerResourceId" | "budgetLookbackDays">;
+export type ReportContext = Pick<WorkbookAnswers, "maxQueryDays" | "retentionDays" | "gatewayResourceId" | "gatewayResourceIds" | "reconcilerResourceId" | "budgetLookbackDays">;
+
+// CcofUsageLedger reads one APIM id or several joined by commas (active/passive DR).
+const gatewayLiteral = (answers: ReportContext): string => kqlString(answers.gatewayResourceIds?.join(",") ?? answers.gatewayResourceId);
 
 export function context(answers: ReportContext): string {
   return `let ReportNow = now();
@@ -15,7 +18,7 @@ let RangeValid = isnotnull(FromTime) and isnotnull(ToTime) and FromTime < ToTime
     and ToTime - FromTime <= ${answers.maxQueryDays} * 1d;
 // Rows older than the workspace retention are gone: such a period can only give lower bounds.
 let RetentionTruncated = RangeValid and FromTime < ReportNow - ${answers.retentionDays} * 1d;
-let GatewayResourceId = ${kqlString(answers.gatewayResourceId)};
+let GatewayResourceId = ${gatewayLiteral(answers)};
 let ReconcilerResourceId = ${kqlString(answers.reconcilerResourceId)};
 let BudgetLookbackDays = ${answers.budgetLookbackDays};
 `;

@@ -1,3 +1,4 @@
+import { gatewayListProblem, includesGateway } from "../../src/contracts/gateway-resource-ids.ts";
 import { fields, positiveInteger, text } from "./rate-card.ts";
 
 export interface WorkbookAnswers {
@@ -11,6 +12,8 @@ export interface WorkbookAnswers {
   workbookDisplayName: string;
   workspaceResourceId: string;
   gatewayResourceId: string;
+  // Optional (active/passive DR): every APIM whose logs hold this deployment's usage, including gatewayResourceId.
+  gatewayResourceIds?: string[];
   reconcilerResourceId: string;
   rateCardPath: string;
   ledgerPath: string;
@@ -48,7 +51,7 @@ export function validateWorkbookSettings(value: unknown): WorkbookSettings {
 }
 
 export function validateAnswers(value: unknown): WorkbookAnswers {
-  const answers = fields(value, "answers", required);
+  const answers = fields(value, "answers", required, ["gatewayResourceIds"]);
   if (answers.schemaVersion !== 1) throw new Error("schemaVersion: must_be_1");
   const settingKeys: readonly string[] = workbookSettingKeys;
   for (const key of required.filter(key => key !== "schemaVersion" && key !== "retentionDays" && !settingKeys.includes(key))) {
@@ -67,6 +70,14 @@ export function validateAnswers(value: unknown): WorkbookAnswers {
   };
   for (const [key, provider] of Object.entries(providers)) {
     check(key, new RegExp(`^/subscriptions/${guid}/resourceGroups/${name}/providers/${provider}/${name}$`, "i"));
+  }
+  if (answers.gatewayResourceIds !== undefined) {
+    const list = answers.gatewayResourceIds;
+    const apim = new RegExp(`^/subscriptions/${guid}/resourceGroups/${name}/providers/${providers.gatewayResourceId}/${name}$`, "i");
+    if (!Array.isArray(list) || !list.every((id) => typeof id === "string")) throw new Error("gatewayResourceIds: invalid_format");
+    const problem = gatewayListProblem(list, apim);
+    if (problem !== undefined) throw new Error(`gatewayResourceIds: ${problem === "invalid" ? "invalid_format" : problem}`);
+    if (!includesGateway(list, answers.gatewayResourceId as string)) throw new Error("gatewayResourceIds: single_not_in_list");
   }
   for (const key of ["rateCardPath", "ledgerPath"]) {
     // Two leading separators in any mix (\\, //, \/, /\) open UNC or device paths on Windows.
