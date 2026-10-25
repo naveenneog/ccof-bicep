@@ -4,6 +4,7 @@
 // KQL base64-encoded, after it has been validated here. The browser never sends KQL.
 
 import { ApiError, isGuid } from "./auth.ts";
+import { gatewayListProblem, includesGateway, splitGatewayList } from "../../src/contracts/gateway-resource-ids.ts";
 import { isIdentifier, isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 import { chargebackQueries, lf, reconcilerQueryBase, reportingRateCard, sha256, usageQueryBase } from "../../analytics/workbooks/chargeback-queries.ts";
@@ -35,7 +36,7 @@ const FAMILY = ["haiku", "sonnet", "opus", "fable", "mythos", "unknown"];
 
 export interface QuerySources { ledger: string; pricing: string; budgets: string }
 export type Configured<T> = { ok: true; value: T; permission: string } | { ok: false; reason: string; permission: string };
-export interface ChargebackSettings { workspaceId: string; gatewayResourceId: string; maxQueryDays: number; retentionDays: number }
+export interface ChargebackSettings { workspaceId: string; gatewayResourceId: string; gatewayResourceIds?: string[]; maxQueryDays: number; retentionDays: number }
 export interface ReconcilerSettings { workspaceId: string; resourceIds: string[]; intervalMinutes: number; lookbackDays: number }
 export interface AuditSettings { workspaceId: string; resourceIds: string[] }
 
@@ -48,14 +49,17 @@ const intSetting = (v: string | undefined, fallback: number, min: number, max: n
 export function readChargebackSettings(env: Readonly<Record<string, string | undefined>>): Configured<ChargebackSettings> {
   const permission = "Log Analytics Reader on the gateway telemetry workspace (ADMIN_CHARGEBACK_WORKSPACE_ID, else ADMIN_WORKSPACE_ID)";
   const workspaceId = env.ADMIN_CHARGEBACK_WORKSPACE_ID || env.ADMIN_WORKSPACE_ID || "";
-  const gatewayResourceId = env.ADMIN_GATEWAY_RESOURCE_ID ?? "";
+  const list = env.ADMIN_GATEWAY_RESOURCE_IDS?.trim() ? splitGatewayList(env.ADMIN_GATEWAY_RESOURCE_IDS) : undefined;
+  const gatewayResourceId = env.ADMIN_GATEWAY_RESOURCE_ID || list?.[0] || "";
   if (!workspaceId || !gatewayResourceId) return { ok: false, reason: "chargeback_not_configured", permission };
   const maxQueryDays = intSetting(env.ADMIN_CHARGEBACK_MAX_QUERY_DAYS, 62, 31, 366);
   const retentionDays = intSetting(env.ADMIN_LOG_RETENTION_DAYS, 90, 1, 4383);
-  if (!isGuid(workspaceId) || !APIM_ID.test(gatewayResourceId) || maxQueryDays === null || retentionDays === null) {
+  // ADMIN_GATEWAY_RESOURCE_IDS (active/passive DR): 1-4 distinct APIM ids that include ADMIN_GATEWAY_RESOURCE_ID.
+  const listInvalid = list !== undefined && (gatewayListProblem(list, APIM_ID) !== undefined || !includesGateway(list, gatewayResourceId));
+  if (!isGuid(workspaceId) || !APIM_ID.test(gatewayResourceId) || listInvalid || maxQueryDays === null || retentionDays === null) {
     return { ok: false, reason: "chargeback_settings_invalid", permission };
   }
-  return { ok: true, value: { workspaceId, gatewayResourceId, maxQueryDays, retentionDays }, permission };
+  return { ok: true, value: { workspaceId, gatewayResourceId, ...(list ? { gatewayResourceIds: list } : {}), maxQueryDays, retentionDays }, permission };
 }
 
 export function readReconcilerSettings(env: Readonly<Record<string, string | undefined>>): Configured<ReconcilerSettings> {
@@ -159,8 +163,8 @@ export function prepareRateCard(rateCard: unknown): PreparedCard {
   return { card, text, sha: sha256(text), version: String(rateCard.version ?? "") };
 }
 
-function reportSettings(cb: { gatewayResourceId: string; maxQueryDays: number; retentionDays: number }, reconcilerId = "", lookbackDays = 31) {
-  return { maxQueryDays: cb.maxQueryDays, retentionDays: cb.retentionDays, gatewayResourceId: cb.gatewayResourceId, reconcilerResourceId: reconcilerId, budgetLookbackDays: lookbackDays };
+function reportSettings(cb: { gatewayResourceId: string; gatewayResourceIds?: string[]; maxQueryDays: number; retentionDays: number }, reconcilerId = "", lookbackDays = 31) {
+  return { maxQueryDays: cb.maxQueryDays, retentionDays: cb.retentionDays, gatewayResourceId: cb.gatewayResourceId, gatewayResourceIds: cb.gatewayResourceIds, reconcilerResourceId: reconcilerId, budgetLookbackDays: lookbackDays };
 }
 
 // The bound chargeback KQL for one view: the workbook builder's text with admin options, rendered.
