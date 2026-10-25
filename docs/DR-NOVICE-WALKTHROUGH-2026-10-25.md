@@ -42,7 +42,7 @@ account has no model deployment. No successful Claude call was attempted.
 | DR P1/P2 | Bootstrap preview, apply and Verify passed in the existing Central US group: standby VNet/subnets/NSG, two-way peering, five DNS links and two identity shells |
 | Workspace replication | REST update accepted; after the asynchronous operation, `replication.provisioningState` reached `Succeeded` |
 | Admin CLI preauthorization | Discover initially reported `entra.admin:azure_cli_not_preauthorized`; the workstation token request returned AADSTS65001. Adding Azure CLI to `admin.extraAllowedClientIds` and reapplying Stages 4, 5 and 7 fixed token acquisition (N-17) |
-| Network resource-group choice | The first network attempt placed the network in the same group intended for Stage 1. Stage 1 refused the non-empty group. The guide now uses a separate network resource group (N-20) |
+| Network resource-group choice | The first network attempt placed the VNet in the same group intended for Stage 1. Stage 1 refused the non-empty group. The guide now uses a separate network resource group (N-19) |
 
 The first Stage 1 apply created resources before read-back failed; the retry recognized the existing
 `stage1-services` deployment and verified it without another resource write. The false read-back
@@ -73,7 +73,7 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 | N-16 | Low | Admin console, project Settings | The backend field shows "Inventory unavailable: type the APIM backend ID". | Name the missing permission or setting behind the inventory read, or hide the hint when the backend is already set. |
 | N-17 | High | Stage 4 `admin.extraAllowedClientIds`; DR publisher | Both the first DR publisher attempt and the fresh Contoso run found Azure CLI not preauthorized on the admin app: P0 reported `entra.admin:azure_cli_not_preauthorized`, then the workstation token request returned `AADSTS65001 consent_required` for Microsoft Azure CLI. The gateway token itself worked. | Set `admin.extraAllowedClientIds` to include `04b07795-8ddb-461a-bbee-02f9e1bf7b46` before Stage 4. If Stage 4 is already complete, add it and rerun Stages 4, 5 and 7. P0 checks the preauthorization; the [DR Cloud Shell runbook, Step 2.0](runbooks/DR-CLOUD-SHELL.md#20-azure-cli-as-an-admin-client-workstation-n-17) now documents it. |
 | N-18 | High | `infra/staged/Staged.Common.ps1` `Get-StgSite` | The first Contoso Stage 1 apply created resources but stopped at `verify_failed: <resolver> VNet subnet is '', expected ''`. Azure returned `null` for the unattached Flex app subnet; the verifier compared it to an empty string. | Normalize `virtualNetworkSubnetId` to a string in `Get-StgSite`. Regression test: null subnet returns `''`; mutation check fails before the fix. Fixed in `088e400`. |
-| N-20 | Medium | [Step-by-step guide](runbooks/DEPLOY-STEP-BY-STEP.md), network before Step 0 | The first network attempt put the VNet in the resource group selected for CCOF. Stage 1 refused the non-empty group. | Use a distinct network resource group; added to the guide before Step 0. |
+| N-19 | Medium | [Step-by-step guide](runbooks/DEPLOY-STEP-BY-STEP.md), network before Step 0 | The first network attempt put the VNet in the resource group selected for CCOF. Stage 1 refused the non-empty group. | Use a distinct network resource group; added to the guide before Step 0. |
 
 ## Evidence
 
@@ -127,7 +127,7 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 
 ![No Front Door template, no standby region, no second Cosmos region, no grants for the standby identities](images/dr-novice/dr-n14-missing-tooling.png)
 
-### Contoso staged deployment and DR prerequisites (N-18 to N-20)
+### Contoso staged deployment and DR prerequisites (N-17 to N-19)
 
 ![Stage 1 created resources but its null-subnet read-back failed before the fix](images/dr-novice/dr-contoso-n18-stage1-readback.png)
 
@@ -145,6 +145,18 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 
 ![Azure CLI not preauthorized on the admin app; P0 and the workstation request expose the error](images/dr-novice/dr-contoso-n19-admin-preauth.png)
 
+![Contoso Stage 1 deployment succeeded but its first read-back failed on null versus empty subnet](images/dr-novice/dr-contoso-n18-stage1-readback.png)
+
+![Stage 1 retry verified; Stages 2 and 3 applied and verified](images/dr-novice/dr-contoso-stages1-3.png)
+
+![Stages 4 to 7 applied and verified, including seed and membership snapshot](images/dr-novice/dr-contoso-stages4-7.png)
+
+![Contoso Stage 8 acceptance passed, with no model calls or telemetry expected](images/dr-novice/dr-contoso-stage8.png)
+
+![P0 reported the sandbox's missing Claude deployment; other checks were read-only](images/dr-novice/dr-contoso-p0.png)
+
+![P2 preview, apply and read-back passed in Contoso](images/dr-novice/dr-contoso-p2.png)
+
 ## Changes made in the lab
 
 | Change | Created or changed | Reversal |
@@ -155,5 +167,7 @@ Severity: **Blocker** stops the DR setup; **High** stops a novice without outsid
 | Contoso staged deployment | New single-region sandbox stack; Stage 8 has no model calls | The example config and state remain in Cloud Shell `$HOME/ccof-private`; resource cleanup is a separate approved operation |
 | Contoso DR prerequisites | New standby VNet, two peering links, five DNS links and identity shells in `ccof-dr-cus-20261023-rg` | Remove the two peering links, five DNS links, standby VNet and identity shells after review |
 | Contoso workspace replication | Workspace replication enabled to Central US | REST PUT with `properties.replication.enabled: false`; verify `Succeeded` before disabling |
+| Contoso single-region resources | Resource groups `rg-contoso-nov-20261025` and `rg-contoso-net-20261025`; Stage 1 includes a Standard v2 APIM and provisioned Cosmos account; the Foundry account has no deployments. Per-project client/backend state and Stage 8 evidence are under Cloud Shell `$HOME/ccof-private` | Cleanup is a separate approved operation; inventory the exact resources first |
 
-Model calls: one Claude Haiku request of 16 output tokens.
+Fabrikam lab model calls: one Claude Haiku request of 16 output tokens. Contoso model calls: zero;
+the sandbox subscription cannot purchase Claude.

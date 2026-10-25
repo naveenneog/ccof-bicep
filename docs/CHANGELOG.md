@@ -2,8 +2,9 @@
 
 ## 2026-10-25 - DR walkthrough from the documentation
 
-- [DR walkthrough](DR-NOVICE-WALKTHROUGH-2026-10-25.md): a first-time operator followed the README and linked guides in Azure Cloud Shell. In the Fabrikam lab, P0-P2, per-project failover and workspace replication were applied; D1-D6 remain unavailable. In a fresh Contoso sandbox, Stages 0-8 were applied (Stage 8 from the workstation); P2 and workspace replication were applied; the sandbox had no Claude deployment, so there was no positive model call. 20 issues are logged with screenshots and fixes; the main blockers are standby identity grants, provisioned Cosmos and missing D1-D6 tooling.
+- [DR walkthrough](DR-NOVICE-WALKTHROUGH-2026-10-25.md): a first-time operator followed the README and linked guides in Azure Cloud Shell. In the Fabrikam lab, P0-P2, per-project failover and workspace replication were applied; D1-D6 remain unavailable. In a fresh Contoso sandbox, Stages 0-8 were applied (Stage 8 from the workstation); P2 and workspace replication were applied; the sandbox had no Claude deployment, so there was no positive model call. 19 issues are logged with screenshots and fixes; the main blockers are standby identity grants, provisioned Cosmos and missing D1-D6 tooling.
 - The walkthrough caught a false Stage 1 verification failure: Flex returned a null subnet when no VNet integration was configured. `Get-StgSite` now normalizes the value; a regression test failed before the fix and 357 staged checks pass after it (commit `088e400`).
+- The second Contoso run also exposed missing admin-app preauthorization for Microsoft Azure CLI. `admin.extraAllowedClientIds` was set and Stages 4, 5 and 7 reapplied before the workstation Stage 8 run. Eight pseudonymised Cloud Shell screenshots cover the Contoso deployment and DR results; OCR of all 195 repository images finds no real identifier.
 
 ## 2026-10-24 - Step-by-step deployment guide
 
