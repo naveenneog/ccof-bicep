@@ -18,6 +18,7 @@ param syncClientId string
 param reconcilerClientId string
 param resolverAppInsightsConnection string
 param syncAppInsightsConnection string
+param reconcilerAppInsightsConnection string
 param workspaceCustomerId string
 param apimId string
 param resolver object
@@ -96,6 +97,8 @@ var reconcilerSettings = {
   AzureWebJobsStorage__credential: 'managedidentity'
   AzureWebJobsStorage__clientId: reconcilerClientId
   CCOF_APP_ROLE: 'reconciler'
+  APPLICATIONINSIGHTS_CONNECTION_STRING: reconcilerAppInsightsConnection
+  APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD;ClientId=${reconcilerClientId}'
   COSMOS_ENDPOINT: cosmosEndpoint
   COSMOS_DATABASE: databaseName
   RECONCILER_MANAGED_IDENTITY_CLIENT_ID: reconcilerClientId

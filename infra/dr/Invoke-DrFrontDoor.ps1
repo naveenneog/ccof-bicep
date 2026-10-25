@@ -94,7 +94,7 @@ $parameters = New-DrFrontDoorParameters -Stem $profileStem `
     -StandbyAdminSiteId $bAdminSite.id -StandbyAdminHost $bAdminSite.properties.defaultHostName -StandbyAdminLocation ([string]$dr.secondary.location) `
     -WafMode $(if ($dr.frontDoor.wafMode) { [string]$dr.frontDoor.wafMode } else { 'Detection' }) `
     -ProbeIntervalSeconds $(if ($dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 }) `
-    -DisablePrimaryOrigins:($Phase -eq 'DrainPrimary') -DisablePrimaryAdminOrigins:($Phase -eq 'DrainPrimary') -Tags $fdTags
+    -DisablePrimaryOrigins:$false -DisablePrimaryAdminOrigins:$false -SimulatePrimaryFailure:($Phase -eq 'DrainPrimary') -Tags $fdTags
 
 $mode = if ($Apply) { 'apply' } else { 'preview' }
 Write-Host "== Front Door $Phase ($mode), profile $profileStem, resource group $rg"
@@ -132,8 +132,8 @@ switch ($Phase) {
         Save-FdState $state
         Write-Host "Front Door deployed: https://$($out.endpointHostName)"
         if ($Phase -eq 'Deploy') { Write-Host 'Private Link requests are not yet approved. Run -Phase Approve after reviewing the pending origins.' }
-        elseif ($Phase -eq 'DrainPrimary') { Write-Host 'Primary APIM and admin origins are disabled; verify requests through region B.' }
-        elseif ($Phase -eq 'RestorePrimary') { Write-Host 'Primary APIM and admin origins are enabled; verify traffic returns to region A.' }
+        elseif ($Phase -eq 'DrainPrimary') { Write-Host 'The primary APIM and admin origin host headers are faulted; AFD probes should fail and select region B.' }
+        elseif ($Phase -eq 'RestorePrimary') { Write-Host 'Primary origin host headers are restored; verify traffic returns to region A.' }
     }
     'Approve' {
         $state = Get-FdState

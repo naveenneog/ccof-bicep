@@ -145,6 +145,7 @@ function New-DrFrontDoorParameters {
         [int]$ProbeIntervalSeconds = 30,
         [switch]$DisablePrimaryOrigins,
         [switch]$DisablePrimaryAdminOrigins,
+        [switch]$SimulatePrimaryFailure,
         [hashtable]$Tags = @{}
     )
     if ($Stem -cnotmatch '^[a-z][a-z0-9-]{2,39}$') { throw 'frontdoor_stem_invalid: lowercase letters, digits and hyphens, 3-40 chars; endpoint name must be globally unique.' }
@@ -173,6 +174,7 @@ function New-DrFrontDoorParameters {
         stem = $Stem; tags = $Tags; apimOrigins = $apim; adminOrigins = $admin
         disablePrimaryOrigins = [bool]$DisablePrimaryOrigins
         disablePrimaryAdminOrigins = [bool]$DisablePrimaryAdminOrigins
+        simulatePrimaryFailure = [bool]$SimulatePrimaryFailure
         wafMode = $WafMode; probeIntervalSeconds = $ProbeIntervalSeconds
     }
 }

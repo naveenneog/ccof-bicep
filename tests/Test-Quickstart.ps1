@@ -76,10 +76,10 @@ $d1 = [ordered]@{
     apps = @{
         resolver = @{ storageAccountId = '/s/r'; appInsightsId = '/ai/r'; clientId = $null }
         sync = @{ storageAccountId = '/s/s'; appInsightsId = '/ai/s'; clientId = 'c-s' }
-        reconciler = @{ storageAccountId = '/s/c'; appInsightsId = $null; clientId = 'c-c' }
+        reconciler = @{ storageAccountId = '/s/c'; appInsightsId = '/ai/c'; clientId = 'c-c' }
     }
 }
-$d2Settings = Get-CoreAppSettings -Answers $answers -D1 $d1 -Connections @{ resolver = 'cs'; sync = 'cs' }
+$d2Settings = Get-CoreAppSettings -Answers $answers -D1 $d1 -Connections @{ resolver = 'cs'; sync = 'cs'; reconciler = 'cs' }
 # The quick-start's own settings, each named in ADR-0024: the switch of the registry seed function
 # (src/sync/registry-seed.ts), which the staged path never registers (it never sets CCOF_SEED_DOCUMENTS).
 $settingAdditions = @{ resolver = @(); sync = @('AzureWebJobs.registrySeed.Disabled'); reconciler = @() }
@@ -115,8 +115,8 @@ if ($compiled) {
     Assert-True 'main.bicep reads no Application Insights component itself (ARM would read it before the app modules create it)' ($early.Count -eq 0) $earlyText.Substring(0, [Math]::Min(300, $earlyText.Length))
     $settingsModule = @($compiled.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and $_.name -match 'qs-settings' })[0]
     $settingsParams = if ($settingsModule) { $settingsModule.properties.parameters } else { @{} }
-    $fromOutputs = @('resolver', 'sync') | Where-Object { [string]$settingsParams["${_}AppInsightsConnection"].value -match "outputs\.appInsightsConnectionString\.value" }
-    Assert-True 'the settings module takes both connection strings from the app modules outputs' (@($fromOutputs).Count -eq 2) "resolver=$($settingsParams['resolverAppInsightsConnection'].value) sync=$($settingsParams['syncAppInsightsConnection'].value)"
+    $fromOutputs = @('resolver', 'sync', 'reconciler') | Where-Object { [string]$settingsParams["${_}AppInsightsConnection"].value -match "outputs\.appInsightsConnectionString\.value" }
+    Assert-True 'the settings module takes all three connection strings from the app modules outputs' (@($fromOutputs).Count -eq 3) "resolved=$($fromOutputs -join ',')"
 }
 # --- Parity 3: Cosmos data-plane roles equal D3's data ---
 $sources = @('infra/poc/resolver-auth.assignments.json', 'infra/sync/sync.assignments.json', 'infra/reconciler/reconciler-permissions.json', 'docs/examples/onboarding.permissions.json')

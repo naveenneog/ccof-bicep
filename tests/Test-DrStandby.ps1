@@ -31,6 +31,12 @@ $s5All = if ($s5.resources -is [array]) { @($s5.resources) } else { @($s5.resour
 $adminSettings = @($s5All | Where-Object { $_.type -ceq 'Microsoft.Web/sites/config' })[0]
 $props = "$($adminSettings.properties)"
 Check 'admin settings add ADMIN_GATEWAY_RESOURCE_IDS only for a non-empty list' ($props -match "union\(" -and $props -match "if\(empty\(variables\('adminGatewayList'\)\), createObject\(\)" -and $props -match "ADMIN_GATEWAY_RESOURCE_IDS")
+$appSettings = Build 'infra/quickstart/modules/app-settings.bicep'
+$recSettings = "$($appSettings.variables.reconcilerSettings)"
+Check 'reconciler receives its workspace App Insights connection string' ($recSettings -match 'APPLICATIONINSIGHTS_CONNECTION_STRING' -and $recSettings -match "parameters\('reconcilerAppInsightsConnection'\)")
+Check 'reconciler logs authenticate to workspace-based App Insights' ($recSettings -match 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING' -and $recSettings -match 'Authorization=AAD')
+$stage5Source = Get-Content (Join-Path $repo 'infra/staged/stage5-config.bicep') -Raw
+Check 'Stage 5 passes the reconciler component connection string to app-settings' ($stage5Source -match 'reconcilerAppInsightsConnection\s*:\s*reconcilerInsights\.properties\.ConnectionString')
 $reader = @($byType['Microsoft.Authorization/roleAssignments'] | Where-Object { $_.name -match 'logReader' })[0]
 Check 'workspace reader name: unsalted form kept, salted form added' ($reader.name -match "if\(empty\(parameters\('assignmentNameSalt'\)\), guid\(resourceId\('Microsoft.OperationalInsights/workspaces'.*variables\('logReader'\)\), guid\(.*parameters\('assignmentNameSalt'\)\)\)")
 $cosmos = @($byType['Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments'])[0]
@@ -64,11 +70,15 @@ $wafPolicy = "$((& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPol
 Check 'WAF preserves the managed JavaScript challenge expiration' ($wafPolicy -match 'javascriptChallengeExpirationInMinutes.*30')
 Check 'primary gateway drain control defaults off' ($fd.parameters.disablePrimaryOrigins.defaultValue -eq $false)
 Check 'primary admin drain control defaults off' ($fd.parameters.disablePrimaryAdminOrigins.defaultValue -eq $false)
+Check 'primary failure injection defaults off' ($fd.parameters.simulatePrimaryFailure.defaultValue -eq $false)
 $fdOriginEnabled = $origins | ConvertTo-Json -Depth 20
 Check 'primary gateway can be drained independently by priority' ($fdOriginEnabled -match "if\(and\(equals\(parameters\('apimOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('disablePrimaryOrigins'\)\), 'Disabled', 'Enabled'\)")
+$fdOriginHost = "$($origins | ConvertTo-Json -Depth 20)"
+Check 'primary gateway fault is an origin-host-header 404' ($fdOriginHost -match "if\(and\(equals\(parameters\('apimOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('simulatePrimaryFailure'\)\), 'dr-drill.invalid', parameters\('apimOrigins'\)\[copyIndex\(\)\].hostName\)")
 $allFdOrigins = & $fdType 'Microsoft.Cdn/profiles/originGroups/origins'
 $fdAdminOriginEnabled = $allFdOrigins | Where-Object { $_.name -match 'adminOrigins' } | ConvertTo-Json -Depth 20
 Check 'primary admin can be drained independently by priority' ($fdAdminOriginEnabled -match "if\(and\(equals\(parameters\('adminOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('disablePrimaryAdminOrigins'\)\), 'Disabled', 'Enabled'\)")
+Check 'primary admin origin gets the same reversible health fault' ($fdAdminOriginEnabled -match "if\(and\(equals\(parameters\('adminOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('simulatePrimaryFailure'\)\), 'dr-drill.invalid', parameters\('adminOrigins'\)\[copyIndex\(\)\].hostName\)")
 $front = New-DrFrontDoorParameters -Stem 'contoso-dr' `
     -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' `
     -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' `
@@ -88,8 +98,8 @@ $drained = New-DrFrontDoorParameters -Stem 'contoso-dr' `
     -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' `
     -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' `
     -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' `
-    -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' -DisablePrimaryOrigins -DisablePrimaryAdminOrigins
-Check 'drain settings disable only the primary origins' ($drained.disablePrimaryOrigins -and $drained.disablePrimaryAdminOrigins -and $drained.apimOrigins[0].priority -eq 1 -and $drained.apimOrigins[1].priority -eq 2)
+    -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' -SimulatePrimaryFailure
+Check 'drain settings fault both primary origins but preserve standby priority' ($drained.simulatePrimaryFailure -and -not $drained.disablePrimaryOrigins -and -not $drained.disablePrimaryAdminOrigins -and $drained.apimOrigins[0].priority -eq 1 -and $drained.apimOrigins[1].priority -eq 2)
 $threw = $false; try { $null = New-DrFrontDoorParameters -Stem 'Bad_Name' -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' -StandbyApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b' -StandbyApimHost 'apim-b.azure-api.net' -StandbyApimLocation 'centralus' -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' } catch { $threw = "$_" -match 'frontdoor_stem_invalid' }
 Check 'Front Door stem rejects uppercase and underscores before az' $threw
 Check 'Front Door parameters default to WAF detection' ($front.wafMode -ceq 'Detection' -and $front.probeIntervalSeconds -eq 30)
@@ -192,4 +202,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 69) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 75) { exit 1 }

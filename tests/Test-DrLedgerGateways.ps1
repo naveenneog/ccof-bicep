@@ -1,8 +1,9 @@
 #Requires -Version 7.0
 # DR-05 (docs/DR-ACTIVE-PASSIVE.md, "Required changes", Accounting): every deployment path that writes the
 # reconciler's settings accepts an optional list of APIM ids for RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS.
-# Without the list each path renders exactly what it rendered before DR-05: the SHA-256 digests below were
-# recorded from the pre-DR-05 code (commit 0d7ad7a) with the same inputs. Offline; no Azure call.
+# Without the list each deployment path omits RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS. The staged
+# reconciler now also receives its workspace-based App Insights connection (previously missing,
+# which prevented continuity-gate telemetry); its default settings digest is pinned below. Offline.
 
 $ErrorActionPreference = 'Stop'
 $script:Pass = 0
@@ -143,7 +144,7 @@ Assert-True 'app-settings.bicep compiles' ($exit -eq 0)
 if ($exit -eq 0) {
     $arm = ($text -join "`n") | ConvertFrom-Json -AsHashtable -Depth 100
     $digest = Get-Digest ($arm.variables.reconcilerSettings | ConvertTo-Json -Compress -Depth 20)
-    Assert-True 'app-settings.bicep: the reconcilerSettings variable is byte-identical to before DR-05' ($digest -eq '484997518b0fc4b24459ea8fdade20b068560f674ed294e915efa002231dd6cb') $digest
+    Assert-True 'app-settings.bicep: the reconciler has App Insights connection/auth and no APIM list by default' ($digest -eq '4c49814f0470bb81ef75f1c6548d2a03cab5a108278c1d160f6d788a828d17ad') $digest
     $site = @($arm.resources | Where-Object { $_.name -match 'apps\.reconciler\.functionApp' -and $_.name -match 'appsettings' })
     $properties = if ($site.Count) { [string]$site[0].properties } else { '' }
     Assert-True 'app-settings.bicep: the reconciler''s settings union the optional ledger list' ($properties -ceq "[union(variables('reconcilerSettings'), variables('reconcilerPacing'), variables('reconcilerLedgerGateways'))]") $properties

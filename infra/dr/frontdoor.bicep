@@ -29,6 +29,9 @@ param disablePrimaryOrigins bool = false
 @description('For the DR drill, disable the priority-1 admin origin while leaving the standby origin enabled.')
 param disablePrimaryAdminOrigins bool = false
 
+@description('Inject a reversible origin-host-header fault on both priority-1 origins. The private-link targets and TLS host names stay unchanged; AFD health probes receive an HTTP 404 and should select region B.')
+param simulatePrimaryFailure bool = false
+
 @description('Detection logs WAF matches without blocking. Model prompts and code can match managed rules, so tune exclusions in Detection before Prevention.')
 @allowed(['Detection', 'Prevention'])
 param wafMode string = 'Detection'
@@ -78,7 +81,7 @@ resource origins 'Microsoft.Cdn/profiles/originGroups/origins@2024-02-01' = [for
   name: o.name
   properties: {
     hostName: o.hostName
-    originHostHeader: o.hostName
+    originHostHeader: (o.priority == 1 && simulatePrimaryFailure) ? 'dr-drill.invalid' : o.hostName
     httpsPort: 443
     httpPort: 80
     priority: o.priority
@@ -116,7 +119,7 @@ resource adminOriginResources 'Microsoft.Cdn/profiles/originGroups/origins@2024-
   name: o.name
   properties: {
     hostName: o.hostName
-    originHostHeader: o.hostName
+    originHostHeader: (o.priority == 1 && simulatePrimaryFailure) ? 'dr-drill.invalid' : o.hostName
     httpsPort: 443
     httpPort: 80
     priority: o.priority

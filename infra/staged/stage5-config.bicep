@@ -60,6 +60,9 @@ resource resolverInsights 'Microsoft.Insights/components@2020-02-02' existing = 
 resource syncInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: names.apps.sync.appInsights
 }
+resource reconcilerInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: names.apps.reconciler.appInsights
+}
 resource reconcilerSite 'Microsoft.Web/sites@2024-04-01' existing = {
   name: names.apps.reconciler.functionApp
 }
@@ -75,6 +78,7 @@ module settings '../quickstart/modules/app-settings.bicep' = {
     reconcilerClientId: reconcilerClientId
     resolverAppInsightsConnection: resolverInsights.properties.ConnectionString
     syncAppInsightsConnection: syncInsights.properties.ConnectionString
+    reconcilerAppInsightsConnection: reconcilerInsights.properties.ConnectionString
     workspaceCustomerId: workspace.properties.customerId
     apimId: apimService.id
     resolver: resolver

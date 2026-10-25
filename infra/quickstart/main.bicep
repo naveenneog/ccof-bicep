@@ -266,6 +266,7 @@ module settings 'modules/app-settings.bicep' = {
     // fresh deployment starts, before the modules create them (ResourceNotFound, live run 2026-10-13).
     resolverAppInsightsConnection: apps[0].outputs.appInsightsConnectionString
     syncAppInsightsConnection: apps[1].outputs.appInsightsConnectionString
+    reconcilerAppInsightsConnection: apps[2].outputs.appInsightsConnectionString
     workspaceCustomerId: workspace.outputs.customerId
     apimId: apimService.id
     resolver: resolver
