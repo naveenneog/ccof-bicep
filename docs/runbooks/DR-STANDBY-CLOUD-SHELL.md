@@ -3,9 +3,11 @@
 **For:** an operator who finished the single-region deployment ([Deploy CCOF step by step](DEPLOY-STEP-BY-STEP.md))
 and wants to build the second-region ("region B") copy of the CCOF services with the staged DR driver.
 **Time:** one to two hours of commands, spread over several Cloud Shell sessions.
-**Result:** a standby APIM and four Function Apps in the standby region, Cosmos DB with a second read
-region, region B grants, settings and private networking, the same code as region A, and a read-only
-check that both writers are off. **Region B does not serve traffic and no writer is promoted.**
+**Result after sections 1-10:** a standby APIM and four Function Apps in the standby region, Cosmos DB
+with a second read region, region B grants, settings and private networking, the same code as region
+A, and a read-only check that both writers are off. These build steps do not change Front Door routing
+or promote a writer. Section 11 records a separate live drill that sent traffic to region B; failover
+remains partial and unqualified.
 
 > **Partial, unqualified drill.** A live drill was run on **2026-10-25/26** (section 11). It is **not**
 > an end-to-end successful failover: traffic moved to region B, but the standby writers were never
@@ -18,10 +20,11 @@ State of the work on **2026-10-26** (read this first):
 | --- | --- | --- |
 | P0-P2: standby network, DNS links, identity shells | Implemented; proven live in two lab environments by 2026-10-23 | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md), [ROADMAP](../ROADMAP.md) (DR-06) |
 | Region B driver, phases `Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify` | Run live in the lab on 2026-10-25 (all phases recorded; the `Code` phase on commit `c8475f0`). Offline tests in `tests/Test-DrStandby.ps1` | [`infra/dr/Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1), section 11 |
-| Workspace replication, per-project backend failover | Replication enabled 2026-10-25T07:09Z; **switchover not done** (time-gated, section 11.5). Per-project backend failover: region B reached the Central US fallback (section 11.2) | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace) |
+| Workspace replication, per-project backend failover | Replication enabled 2026-10-25T07:09Z; switchover was not eligible before 2026-10-26T07:09Z (12:39 IST). No switchover was recorded at the 2026-10-26 01:50 IST checkpoint. Region B reached the Central US fallback (section 11.2) | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace) |
 | Front Door Premium with private origins | Deployed in the lab on branch `feat/dr-standby` (commit `786352e`); gateway and admin routes returned HTTP 200 | Section 11.1 |
 | Failover and failback of the whole stack (promotion, drills) | **Partial.** Traffic failover to region B observed; writer promotion refused by the continuity gate; failback not done (DR-08 not complete) | [ROADMAP](../ROADMAP.md), section 11 |
 | Production operator continuity gate | Enabled on region B for one run; it **refused before any write** (`ledger_continuity_gap` / `early_history_missing`). It was not bypassed | Section 11.3 |
+| Live lab state, read back 2026-10-26 03:22 IST | Front Door primary-origin fault still active; Cosmos write region Central US; both `syncEntitlement` and `reconcileBudgets` timers disabled in A and B; B continuity gate `on` | Section 11.3 |
 
 So after sections 1-10 the standby stack **exists and is fenced**, but the DR design as a whole is not
 finished. The standby Foundry fallback is a different mechanism (backends and project pools in
@@ -528,15 +531,16 @@ the other resources one by one in the Portal or with `az` only after reviewing w
 ## 11. Live drill record, 2026-10-25/26: partial and unqualified
 
 **This is not an end-to-end successful failover.** It records what was actually checked in the lab
-(region A in East US 2, region B in Central US, fallback Foundry in Central US). No real resource names,
-IDs or screenshots are included. Build commits are on branch `feat/dr-standby`, not on this docs branch.
+(region A in East US 2, region B in Central US, fallback Foundry in Central US). No real resource names
+or IDs are included. No screenshot of this live drill was retained; section 11.2 records the
+sanitized Log Analytics result instead. Build commits are on branch `feat/dr-standby`, not on this docs branch.
 
 | Outcome | Result |
 | --- | --- |
 | Traffic moved to region B | Yes (11.2) |
 | Fallback Foundry in Central US reached from B | Yes, with intermittent 504s (11.2) |
 | Standby writer promoted / standby wrote anything | **No**: refused by the continuity gate (11.3) |
-| Workspace switchover | **No**: time-gated, not yet eligible (11.5) |
+| Workspace switchover | **No** at the 2026-10-26 01:50 IST checkpoint; the 24-hour window did not open until 12:39 IST (11.5) |
 | Failback to region A | **No** (11.6) |
 
 ### 11.1 Front Door baseline
@@ -562,15 +566,29 @@ Cognitive Services User role on the fallback account.
 **Open issue:** later keepalive calls through B returned **intermittent model-service 504s** with
 successful 200s between failures. Region B is routing, but it is **not qualified**: the cause is not yet known.
 
-Gateway-log evidence for B (`ApiManagementGatewayLogs`, last-two-hours query, workspace query output):
+Gateway-log evidence for B (`ApiManagementGatewayLogs`, fixed 30-minute query window):
 
 | Fact | Value |
 | --- | --- |
-| HTTP 504 responses | 16, between 2026-10-25T19:21:04Z and 19:48:42Z |
-| Backend member on every 504 row | the priority-1 member |
-| `LastErrorSource` / `LastErrorSection` / `LastErrorReason` | `request-forwarder` / `backend` / `Timeout` |
-| `BackendResponseCode` | empty |
-| Other requests | reached the Central US fallback and returned 200 |
+| Responses in the 2026-10-25T19:20:00Z-19:50:00Z window | 16 HTTP 504s from the priority-1 member |
+| HTTP 200s in the same window | 15 from the Central US fallback; 1 from the priority-1 member |
+| 504 `LastErrorSource` / `LastErrorSection` / `LastErrorReason` | `request-forwarder` / `backend` / `Timeout` |
+| 504 `BackendResponseCode` | None; APIM recorded no response from the priority-1 member |
+
+The aggregation query, with the region B APIM resource ID substituted, was:
+
+```kusto
+let windowStart = datetime(2026-10-25T19:20:00Z);
+let windowEnd = datetime(2026-10-25T19:50:00Z);
+ApiManagementGatewayLogs
+| where TimeGenerated between (windowStart .. windowEnd)
+| where _ResourceId =~ '<region-B APIM resource ID>'
+| summarize requests=count()
+    by ResponseCode, BackendId, BackendResponseCode, LastErrorSource, LastErrorReason
+```
+
+For Azure CLI, use `--timespan P30D`; otherwise the CLI time-range argument can exclude this
+historical window. The Log Analytics portal time picker must also include 2026-10-25.
 
 This narrows the symptom to an APIM request-forwarder timeout to the priority-1 member: the gateway
 got no backend response. It does **not** establish the root cause, and it does not explain why the
@@ -597,16 +615,18 @@ maximum gap. Evidence:
 | Maximum continuity gap | 900 seconds |
 
 October history before 2026-10-20 is not in the gateway log of either region, so the gate cannot prove
-that a writer would see all spend. **The gate was not bypassed, disabled or loosened.** Both reconciler timers
-are now disabled; B's gate setting is `on`. Cosmos was writing in Central US and Front Door was serving B at the last checkpoint.
+that a writer would see all spend. **The gate was not bypassed, disabled or loosened.** Readback at
+2026-10-26 03:22 IST confirmed the `syncEntitlement` and `reconcileBudgets` timers are disabled in both
+regions, B's gate setting is `on`, Cosmos writes in Central US, and the primary Front Door origin still
+has the reversible drill fault. No writer promotion or standby write occurred.
 
 ### 11.4 Safe resume
 
-1. Keep both reconciler timers disabled. Do not set the gate to `off`, raise the maximum gap, or edit
-   persisted budget state to make the run pass.
-2. Find where the missing October history is (older records in the workspace, a prior workspace, or an
-   export) and whether it can be made part of the ledger source. Re-run the ledger-extent query; the
-   gate must pass on its own evidence.
+1. Keep both writer functions (`syncEntitlement` and `reconcileBudgets`) disabled in both regions.
+   Do not set the gate to `off`, raise the maximum gap, or edit persisted budget state to make the run pass.
+2. Find whether earlier October history exists in an archived or prior workspace and whether the
+   ledger can read that source. Re-run the ledger-extent query; the gate must pass on its own evidence.
+   Do not create synthetic ledger rows.
 3. Investigate the 504s (11.2) with region B's gateway logs and the fallback account's metrics.
 4. Only then decide on promotion. Promotion requires Cosmos writes in the intended region, B's gate
    `on`, and one logged run that writes. This guide does not describe those steps as done.
@@ -614,16 +634,17 @@ are now disabled; B's gate setting is `on`. Cosmos was writing in Central US and
 ### 11.5 Time-gated workspace switchover
 
 Workspace replication to Central US was enabled **2026-10-25T07:09Z**. The earliest permitted switchover
-is **2026-10-26T07:09Z** (24 hours later). It had not occurred when this was written. After that time, run
-the switchover from [DR-CLOUD-SHELL.md Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace),
-then repeat the ledger-extent query and gate check from 11.4 step 2. Do not treat the switchover as
-a fix for missing history without that re-check.
+is **2026-10-26T07:09Z (12:39 IST)**, 24 hours later. At the 2026-10-26 03:22 IST checkpoint, that
+time had not arrived; the last recorded readback at 01:50 IST showed no switchover. After 12:39 IST,
+first read the workspace state, then use [DR-CLOUD-SHELL.md Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace)
+if the service reports it is eligible. Record the outcome and repeat the ledger-extent query and gate
+check from 11.4 step 2. Do not treat the switchover as a fix for missing history without that re-check.
 
 ### 11.6 Not done
 
 - Writer promotion and any standby write.
 - Workspace switchover.
-- Failback: restore the primary origins (`RestorePrimary`), return Cosmos write priority to region A, and
-  re-enable only A's writers, then verify. Until this is done, treat the lab as running in a failed-over
-  state and record who owns restoring it.
+- Failback: restore the primary origins (`RestorePrimary`), return Cosmos write priority to region A,
+  keep B fenced, and verify. Do not enable A's budget reconciler until its continuity gate passes on
+  complete history. No failback was done; the lab remains in a failed-over state.
 - Root cause of the 504s, and the missing October ledger history.

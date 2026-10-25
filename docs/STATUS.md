@@ -39,6 +39,13 @@ are implemented and proven live, and merged to `main` on 2026-10-25; results in
   publication. Gateway forwards a verified project pool; sync/resolver carry `routeBackendId`.
 - Fabrikam lab: Stages 5 and 7 deployed; SASLAB1 failover proven (primary broken, fallback served,
   restore, switch off). Contoso: P0-P2 in Central US verified. Third subscription: HTTP 403.
+- Fabrikam full-DR lab (2026-10-26 03:22 IST): Front Door routed traffic to B; Cosmos wrote in Central
+  US; the continuity gate refused B reconciliation before writes (`early_history_missing`). Both
+  `syncEntitlement` and `reconcileBudgets` timers are disabled in A and B; B's gate remains `on`.
+  The primary-origin drill fault is still active. No writer promotion, workspace switchover or
+  failback occurred. B had 16 APIM request-forwarder timeouts, 15 fallback HTTP 200s, and one primary
+  backend HTTP 200 in the same 30-minute window; the timeout root cause is unknown. The lab is
+  not qualified; see the [partial drill record](runbooks/DR-STANDBY-CLOUD-SHELL.md#11-live-drill-record-2026-10-2526-partial-and-unqualified).
 - Standard v2 refused API policies over 16 KiB from 2026-10-23; the gateway policy now deploys as
   per-section policy fragments.
 
