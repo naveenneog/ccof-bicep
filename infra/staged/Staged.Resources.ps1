@@ -357,7 +357,7 @@ function Invoke-Stage6 {
         foreach ($key in $saved.Keys) { if ($key -cne 'verify' -and $key -cne 'durationSeconds') { $out[$key] = $saved[$key] } }
         Write-Host 'Stage 6 create-mode VNet already exists; skipping the authoritative network deployment.'
     } else {
-        $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-network.bicep' -Name 'stage6-network' -Apply:$Apply -Parameters $parameters
+        $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-network.bicep' -Name (Get-StgDeploymentName $Cfg 'stage6-network') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 6 $parameters)
     }
     $apps = @($s1.names.apps.Keys | Sort-Object)
     $integrateApim = $s1.apimName -and $Cfg.stage1.apimSku -in 'StandardV2', 'PremiumV2'
@@ -452,7 +452,8 @@ function Invoke-Stage3 {
     $params = @{ names = $s1.names; principals = $s1.principals; databaseName = $Cfg.cosmos.databaseName; roleNames = $Cfg.cosmos.roleNames
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name 'stage3-grants' -Apply:$Apply -Parameters $params
+    $params = Add-StgStandbyParameters $Cfg 3 $params
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name (Get-StgDeploymentName $Cfg 'stage3-grants') -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
     $v = [ordered]@{ azure = @(); cosmos = @(); foundry = @() }
     $roleNames = @{ 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' = 'Storage Blob Data Owner'; '3913510d-42f4-4e42-8a64-420c390055eb' = 'Monitoring Metrics Publisher'; '73c42c96-874c-492b-b04d-ab87d138a893' = 'Log Analytics Reader' }

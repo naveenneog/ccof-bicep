@@ -283,7 +283,7 @@ function Test-StgExactResourceScope { param([string]$Scope, [string[]]$ResourceI
 
 function Get-StgStage1TargetIds {
     param($Cfg)
-    $root = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Resources/deployments/stage1-services"
+    $root = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Resources/deployments/$(Get-StgStage1DeploymentName $Cfg)"
     $queue = [Collections.Generic.Queue[string]]::new()
     $queue.Enqueue($root)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -336,6 +336,30 @@ function Select-StgOwnAssignments {
     return @($Assignments | Where-Object {
         $_ -and $ids.Contains([string]$(if ($_.PSObject.Properties['properties']) { $_.properties.principalId } else { $_.principalId }))
     })
+}
+
+# A DR standby region (infra/dr/Invoke-DrStandby.ps1) runs these stage functions with a `standby`
+# section in its derived configuration. Without that section nothing changes.
+function Get-StgStandbyOption { param($Cfg, [string]$Name)
+    if (-not ($Cfg -is [Collections.IDictionary] -and $Cfg.Contains('standby') -and $Cfg.standby)) { return '' }
+    return [string]$Cfg.standby[$Name]
+}
+function Get-StgStage1DeploymentName { param($Cfg)
+    $n = Get-StgStandbyOption $Cfg 'stage1DeploymentName'
+    if ($n) { return $n } else { return 'stage1-services' }
+}
+function Get-StgDeploymentName { param($Cfg, [string]$Name)
+    if (Get-StgStandbyOption $Cfg 'stage1DeploymentName') { return "dr-standby-$Name" } else { return $Name }
+}
+function Add-StgStandbyParameters {
+    param($Cfg, [int]$Stage, [hashtable]$Parameters)
+    if (-not (Get-StgStandbyOption $Cfg 'stage1DeploymentName')) { return $Parameters }
+    switch ($Stage) {
+        3 { $Parameters.assignmentNameSalt = Get-StgStandbyOption $Cfg 'assignmentNameSalt' }
+        5 { $Parameters.workbookContent = @{}; $Parameters.workbookContentTags = @{} }
+        6 { $Parameters.endpointNameSuffix = Get-StgStandbyOption $Cfg 'endpointNameSuffix' }
+    }
+    return $Parameters
 }
 
 function Invoke-StgAzJson {

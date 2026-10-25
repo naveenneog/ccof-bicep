@@ -21,6 +21,9 @@ param network object
 @description('Foundry accounts in this resource group that get a private endpoint (account group): names. Zones: privatelink.cognitiveservices.azure.com, privatelink.openai.azure.com, privatelink.services.ai.azure.com, created and linked in create mode, or network.existing.privateDnsZoneIds.foundry { cognitiveServices, openAi, aiServices }.')
 param foundryAccounts array = []
 
+@description('Empty for the primary region. A standby region in the same resource group (infra/dr) passes its own value, for example -b, so its private endpoints do not take the primary region\'s names.')
+param endpointNameSuffix string = ''
+
 var appKeys = map(items(names.apps), a => a.key)
 var createNetwork = network.mode == 'create'
 
@@ -60,7 +63,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = {
 }
 
 resource storageEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for (k, i) in appKeys: {
-  name: '${names.apps[k].storageAccount}-blob-pe'
+  name: '${names.apps[k].storageAccount}-blob-pe${endpointNameSuffix}'
   location: location
   tags: tags
   properties: {
@@ -80,7 +83,7 @@ resource storageZoneGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGro
 }]
 
 resource cosmosEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
-  name: '${names.cosmosAccount}-sql-pe'
+  name: '${names.cosmosAccount}-sql-pe${endpointNameSuffix}'
   location: location
   tags: tags
   properties: {
@@ -136,7 +139,7 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = [f
 }]
 
 resource foundryEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for (f, i) in foundryAccounts: {
-  name: '${f}-account-pe'
+  name: '${f}-account-pe${endpointNameSuffix}'
   location: location
   tags: tags
   properties: {
