@@ -58,5 +58,56 @@ Check 'primary: Stage 5 keeps the workbook' ((Add-StgStandbyParameters $primaryC
 Check 'Stage 1 deployment name: primary default, standby own' ((Get-StgStage1DeploymentName $primaryCfg) -ceq 'stage1-services' -and (Get-StgStage1DeploymentName $standbyCfg) -ceq 'dr-standby-shells')
 Check 'stage deployment names: primary unchanged, standby prefixed' ((Get-StgDeploymentName $primaryCfg 'stage5-config') -ceq 'stage5-config' -and (Get-StgDeploymentName $standbyCfg 'stage5-config') -ceq 'dr-standby-stage5-config')
 
+# ---- infra/dr/DrStandby.psm1
+Import-Module (Join-Path $repo 'infra/dr/DrStandby.psm1') -Force
+function New-DrCfg { $c = Get-Content (Join-Path $repo 'infra/dr/dr.config.example.json') -Raw | ConvertFrom-Json
+    $c.standby.stagedConfigPath = 'staged.config.json'; $c.standby.stagedStateDirectory = '.staged-state'; $c.standby.stateDirectory = '.dr-standby-state'
+    $c.standby.apim.publisherEmail = 'platform@contoso.example'; $c.standby.apim.publisherName = 'Contoso'; $c }
+Check 'complete standby section has no problems' (@(Get-DrStandbyProblems (New-DrCfg)).Count -eq 0)
+$x = Get-DrStandbyProblems (Get-Content (Join-Path $repo 'infra/dr/dr.config.example.json') -Raw | ConvertFrom-Json)
+Check 'example placeholders are refused by name' ($x -contains 'standby.stagedConfigPath:placeholder' -and $x -contains 'standby.apim.publisherEmail:placeholder')
+$c = New-DrCfg; $c.standby.nameSuffix = 'B-1'; Check 'name suffix must be 1-2 lowercase characters' (@(Get-DrStandbyProblems $c) -contains 'standby.nameSuffix:one_or_two_lowercase_letters_or_digits')
+$c = New-DrCfg; $c.secondary.location = $c.primary.location; Check 'standby in the primary location refused' (@(Get-DrStandbyProblems $c) -contains 'secondary.location:same_as_primary')
+$c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_or_PremiumV2')
+$c = New-DrCfg; $c.cosmos.autoscaleMaxThroughput = 1500; Check 'autoscale max must be a multiple of 1000' (@(Get-DrStandbyProblems $c) -contains 'cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000')
+$c = New-DrCfg; $c.cosmos.convertServerless = 'yes'; Check 'convertServerless must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'cosmos.convertServerless:true_or_false')
+$c = New-DrCfg; $c.standby.functionsPublicNetworkAccess = 'Open'; Check 'public access must be Enabled or Disabled' (@(Get-DrStandbyProblems $c) -contains 'standby.functionsPublicNetworkAccess:Enabled_or_Disabled')
+
+$pn = @{ deploymentPrefix = 'lab1'; cosmosAccount = 'lab1-abc-cosmos'; logAnalyticsWorkspace = 'lab1-abc-law'
+    apps = @{ resolver = @{ functionApp = 'lab1-abc-resolver'; storageAccount = 'lab1abcres' } } }
+$n = Get-DrStandbyNames $pn 'b'
+Check 'standby names derive from the primary stem' ($n.stem -ceq 'lab1-abc-b' -and $n.storageStem -ceq 'lab1abcb' -and $n.deploymentPrefix -ceq 'lab1b')
+$threw = $false; try { $null = Get-DrStandbyNames @{ deploymentPrefix = 'x'; apps = @{ resolver = @{ functionApp = 'x-resolver'; storageAccount = 'lab1abcdefghijklmnopqrres' } } } 'bb' } catch { $threw = "$_" -match 'standby_storage_name_too_long' }
+Check 'storage names over 24 characters refused' $threw
+
+$primary = [ordered]@{ location = 'eastus2'; syncTimerEnabled = $true; reconciler = @{ timerEnabled = $true }; stage1 = @{ apimSku = 'StandardV2' }
+    backends = @(@{ id = 'foundry-a'; privateEndpoint = $true }); network = @{ mode = 'create' }; __path = 'x' }
+$zones = @{ cosmos = '/z/documents'; blob = '/z/blob' }
+$b = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones
+Check 'standby config: standby location' ($b.location -ceq 'centralus')
+Check 'standby config: both writers off' ($b.syncTimerEnabled -eq $false -and $b.reconciler.timerEnabled -eq $false)
+Check 'standby config: existing standby subnets and shared zones' ($b.network.mode -ceq 'existing' -and $b.network.existing.functionsSubnetId -ceq '/v/standby/subnets/snet-functions' -and $b.network.existing.privateDnsZoneIds.cosmos -ceq '/z/documents')
+Check 'standby config: no second Foundry private endpoint' ($b.backends[0].privateEndpoint -eq $false)
+Check 'standby config: standby section set' ($b.standby.stage1DeploymentName -ceq 'dr-standby-shells' -and $b.standby.endpointNameSuffix -ceq '-b')
+Check 'primary configuration not modified' ($primary.syncTimerEnabled -eq $true -and $primary.backends[0].privateEndpoint -eq $true -and $primary.location -ceq 'eastus2')
+
+$ps1 = [ordered]@{ names = $pn; cosmosAccountId = '/c'; cosmosEndpoint = 'https://c'; workspaceId = '/w'; workspaceCustomerId = 'ws' }
+$shells = [ordered]@{ apps = @{ resolver = @{ functionApp = 'lab1-abc-b-resolver' } }; apimId = '/apim-b'; apimName = 'apim-b'; apimPrincipalId = 'p-apim'; apimGatewayUrl = 'https://b'
+    functionApps = @(@{ key = 'resolver'; service = @{ principalId = 'p-res'; clientId = '' } }, @{ key = 'sync'; service = @{ principalId = 'p-sync'; clientId = 'c-sync' } }, @{ key = 'reconciler'; service = @{ principalId = 'p-rec'; clientId = 'c-rec' } }) }
+$ids = @{ sync = @{ name = 'sync-b'; principalId = 'P-SYNC' }; reconciler = @{ name = 'rec-b'; principalId = 'p-rec' } }
+$s1b = New-DrStandbyStage1Outputs -Primary $ps1 -Shells $shells -Identities $ids -StandbyNames $n
+Check 'standby Stage 1: own apps and APIM, shared Cosmos and workspace' ($s1b.names.apps.resolver.functionApp -ceq 'lab1-abc-b-resolver' -and $s1b.apimName -ceq 'apim-b' -and $s1b.names.cosmosAccount -ceq 'lab1-abc-cosmos' -and $s1b.cosmosEndpoint -ceq 'https://c' -and $s1b.names.deploymentPrefix -ceq 'lab1b')
+Check 'standby Stage 1: principals and client ids from the standby apps' ($s1b.principals.sync -ceq 'p-sync' -and $s1b.clientIds.reconciler -ceq 'c-rec')
+$ids.sync.principalId = 'someone-else'; $threw = $false; try { $null = New-DrStandbyStage1Outputs -Primary $ps1 -Shells $shells -Identities $ids -StandbyNames $n } catch { $threw = "$_" -match 'standby_identity_mismatch' }
+Check 'an app not running as its P1 identity is refused' $threw
+
+function Acct($caps, $mode, $locs, $auto, $transition) { [pscustomobject]@{ properties = [pscustomobject]@{ capabilities = @($caps | ForEach-Object { [pscustomobject]@{ name = $_ } }); capacityMode = $mode
+    capacityModeChangeTransitionState = $(if ($transition) { [pscustomobject]@{ capacityModeTransitionStatus = $transition } } else { $null })
+    locations = @($locs | ForEach-Object { [pscustomobject]@{ locationName = $_ } }); enableAutomaticFailover = $auto } } }
+Check 'serverless single region: convert, add region, enable failover' ((@(Get-DrCosmosSteps (Acct @('EnableServerless') 'Serverless' @('East US 2') $false $null) 'centralus') -join ',') -ceq 'convert_to_provisioned,add_secondary_region,enable_service_managed_failover')
+Check 'conversion in progress: wait only' ((@(Get-DrCosmosSteps (Acct @('EnableServerless') 'Serverless' @('East US 2') $false 'InProgress') 'centralus') -join ',') -ceq 'wait_capacity_change')
+Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosSteps (Acct @('EnableServerless') 'Provisioned' @('East US 2') $false 'Completed') 'centralus') -notcontains 'convert_to_provisioned')
+Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
+
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 16) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 39) { exit 1 }

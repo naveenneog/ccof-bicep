@@ -40,5 +40,18 @@
     "gatewayAppId": "REPLACE-00000000-0000-4000-8000-000000000003",
     "resolverAppId": "REPLACE-00000000-0000-4000-8000-000000000004",
     "adminAppId": "REPLACE-00000000-0000-4000-8000-000000000005"
+  },
+  "standby": {
+    "stagedConfigPath": "REPLACE-path-to-primary-staged.config.json",
+    "stagedStateDirectory": "REPLACE-path-to-primary-.staged-state",
+    "stateDirectory": "REPLACE-path-to-.dr-standby-state",
+    "nameSuffix": "b",
+    "functionsPublicNetworkAccess": "Disabled",
+    "storagePublicNetworkAccess": "Disabled",
+    "apim": { "sku": "StandardV2", "units": 1, "publisherEmail": "REPLACE-platform-team@example.com", "publisherName": "REPLACE-Platform Team" }
+  },
+  "cosmos": {
+    "convertServerless": false,
+    "autoscaleMaxThroughput": 1000
   }
 }
