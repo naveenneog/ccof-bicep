@@ -19,8 +19,10 @@ import { Reconciler } from "./pages/reconciler.tsx";
 import { Foundry } from "./pages/foundry.tsx";
 import { Health } from "./pages/health.tsx";
 import { Audit } from "./pages/audit.tsx";
+import { RemovalLimits } from "./pages/removal-limits.tsx";
 import { CostDefinitions } from "./pages/cost-definitions.tsx";
 import { HelpPage } from "./pages/help.tsx";
+import { UserDirectoryProvider } from "./components/user-identity.tsx";
 
 try { applyTheme((localStorage.getItem("ccof.v3.theme") as ThemeChoice) || "system"); } catch { applyTheme("system"); }
 
@@ -44,6 +46,7 @@ function Page() {
     case "foundry": page = <Foundry />; break;
     case "health": page = <Health />; break;
     case "audit": page = <Audit query={route.query} />; break;
+    case "removal-limits": page = <RemovalLimits />; break;
     case "cost-definitions": page = <CostDefinitions />; break;
     case "help": page = <HelpPage />; break;
     default: page = <div className="page"><h1 id="page-title" tabIndex={-1}>Page not found</h1><p><a href="#/overview">Go to the overview</a></p></div>;
@@ -90,7 +93,7 @@ function App() {
     );
   }
   if (!session) return <Center><p className="muted" role="status">Checking your access…</p></Center>;
-  return <SessionContext.Provider value={session}><ToastHost><Page /></ToastHost></SessionContext.Provider>;
+  return <SessionContext.Provider value={session}><UserDirectoryProvider><ToastHost><Page /></ToastHost></UserDirectoryProvider></SessionContext.Provider>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

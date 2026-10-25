@@ -1,6 +1,6 @@
 // Stage 1 (optional): a NEW Microsoft Foundry (AIServices) account with its Claude model deployments.
 // Keyless (disableLocalAuth), and public network access as approved (Disabled for a private backend:
-// Stage 2 then creates its private endpoint and DNS). No role assignment here: Stage 4 grants the APIM
+// Stage 6 checks, or in modes existing/create creates, its private endpoint and DNS). No role assignment here: Stage 3 grants the APIM
 // identity Cognitive Services User. Claude deployments are Marketplace-backed models; the subscription
 // must be eligible and the offer terms accepted, or ARM refuses the deployment by name.
 targetScope = 'resourceGroup'

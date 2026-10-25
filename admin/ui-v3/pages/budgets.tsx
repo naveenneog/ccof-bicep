@@ -5,6 +5,7 @@ import { href } from "../lib/router.ts";
 import { CapabilityNotice, DataTable, ErrorNote, Field, Loading, PageHeader, Section, Segmented, StatePill } from "../components/ui.tsx";
 import { BurnDown, Meter } from "../components/charts.tsx";
 import { PagerLite } from "./project-detail.tsx";
+import { UserIdentity } from "../components/user-identity.tsx";
 
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 
@@ -15,7 +16,7 @@ export function SnapshotTable({ rows, scope }: { rows: any[]; scope: string }) {
       columns={[
         { key: "projectId", label: "Project", render: (r) => <a href={href(`/projects/${encodeURIComponent(r.projectId)}/budgets`)}>{r.projectId}</a> },
         { key: "classification", label: "Group" },
-        ...(scope !== "group" ? [{ key: "personId", label: "Person", render: (r: any) => r.personId ? <code>{String(r.personId).slice(0, 8)}…</code> : <span className="muted">group</span> }] : []),
+        ...(scope !== "group" ? [{ key: "personId", label: "Person", render: (r: any) => r.personId ? <UserIdentity objectId={r.personId} /> : <span className="muted">group</span> }] : []),
         { key: "spentCcu", label: "Spent", align: "end", render: (r) => <span title={`${r.spentCcu ?? "—"} CCU`}>{usd(r.spentUsd)}</span> },
         { key: "budgetCcu", label: "Budget", align: "end", render: (r) => r.budgetCcu === null ? <span className="muted">no cap</span> : <span title={`${r.budgetCcu} CCU`}>{usd(r.budgetUsd)}</span> },
         { key: "usedPercent", label: "Used", render: (r) => <span className="budget-cell"><Meter value={r.usedPercent === null ? null : Number(r.usedPercent)} max={100} label={`${pct(r.usedPercent)} used`} /><span>{pct(r.usedPercent)}</span></span> },

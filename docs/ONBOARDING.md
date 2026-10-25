@@ -1,6 +1,6 @@
 # Onboarding
 
-WP-ONB implements the P-2 stage contract. [ADR-0012](adr/0012-explicit-onboarding-decisions-and-private-apply.md) records the private-runner boundary and the owner's explicit-decision requirement.
+WP-ONB implements the P-2 stage contract. ADR-0012 records the private-runner boundary and the owner's explicit-decision requirement.
 
 ## Decisions and confirmation
 

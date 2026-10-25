@@ -1,6 +1,6 @@
 {
   "name": "ccof-project-admin",
-  "version": "3.0.0",
+  "version": "3.2.0",
   "private": true,
   "type": "module",
   "main": "dist/admin/src/function-app.js",

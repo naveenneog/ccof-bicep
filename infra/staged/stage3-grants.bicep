@@ -1,4 +1,4 @@
-// Stage 4: runtime access grants for the Stage 1 identities, and nothing else.
+// Stage 3: runtime access grants for the Stage 1 identities, and nothing else.
 //   Azure RBAC: each app on its own deployment storage (Storage Blob Data Owner) and Application
 //   Insights (Monitoring Metrics Publisher); reconciler and admin on the workspace (Log Analytics
 //   Reader); the APIM identity on each Foundry account (Cognitive Services User, cross-scope).
@@ -84,7 +84,7 @@ resource workspaceReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }]
 
 module foundryRoles '../quickstart/modules/foundry-role.bicep' = [for b in backends: if (!empty(apimPrincipalId) && (b.?assignCognitiveServicesUser ?? true)) {
-  name: '${names.deploymentPrefix}-stage4-foundry-${b.id}'
+  name: '${names.deploymentPrefix}-stage3-foundry-${b.id}'
   scope: resourceGroup(b.subscriptionId, b.resourceGroup)
   params: { accountName: b.accountName, principalId: apimPrincipalId, apimResourceId: apimResourceId }
 }]
@@ -138,7 +138,9 @@ var cosmosRoleDefinitions = [
 ]
 
 // The quickstart's assignments without the runner VM (the staged path seeds through the sync app),
-// plus the admin editor on projects and adminConfig only (no delete, no upsert, no budget containers).
+// plus the admin editor on projects and adminConfig only (no delete, no upsert, no budget containers),
+// and the sync's read access to adminConfig for the removal limits set in the admin console.
+// adminConfig exists only with the admin app, so assignments on it need the admin principal.
 // 00000000-0000-0000-0000-000000000001 is Cosmos DB Built-in Data Reader.
 var cosmosAssignments = [
   { id: 'resolver-cosmos-data-reader', principal: 'resolver', role: '00000000-0000-0000-0000-000000000001', container: '', when: '' }
@@ -154,8 +156,9 @@ var cosmosAssignments = [
   { id: 'qs-sync-backends-writer', principal: 'sync', role: 'custom:onbProjectWriter', container: 'backends', when: '' }
   { id: 'admin-projects-editor', principal: 'admin', role: 'custom:adminProjectEditor', container: 'projects', when: '' }
   { id: 'admin-config-editor', principal: 'admin', role: 'custom:adminProjectEditor', container: 'adminConfig', when: '' }
+  { id: 'sync-limits-reader', principal: 'sync', role: '00000000-0000-0000-0000-000000000001', container: 'adminConfig', when: '' }
 ]
-var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode) && !empty(principals[?a.principal] ?? ''))
+var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode) && !empty(principals[?a.principal] ?? '') && (a.container != 'adminConfig' || !empty(principals.?admin ?? '')))
 
 resource roleDefinitions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions@2024-11-15' = [for d in cosmosRoleDefinitions: {
   parent: account
@@ -187,4 +190,15 @@ output storageOwnerAssignmentIds array = [for (k, i) in appKeys: storageOwner[i]
 output metricsPublisherAssignmentIds array = [for (k, i) in appKeys: publisher[i].id]
 output workspaceReaderAssignmentIds array = [for (k, i) in workspaceReaders: workspaceReader[i].id]
 output cosmosAssignmentIds array = [for a in activeAssignments: a.id]
+output cosmosAssignmentDetails array = [for a in activeAssignments: {
+  id: guid(account.id, 'ccof-staged', a.id)
+  principalId: principals[a.principal]
+  roleDefinitionId: startsWith(a.role, 'custom:')
+    ? '${account.id}/sqlRoleDefinitions/${guid(account.id, 'ccof-staged', substring(a.role, 7))}'
+    : '${account.id}/sqlRoleDefinitions/${a.role}'
+  scope: empty(a.container) ? '${account.id}/dbs/${databaseName}' : '${account.id}/dbs/${databaseName}/colls/${a.container}'
+}]
+output storageOwnerDetails array = [for (k, i) in appKeys: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobOwner), scope: storage[i].id }]
+output metricsPublisherDetails array = [for (k, i) in appKeys: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', metricsPublisher), scope: insights[i].id }]
+output workspaceReaderDetails array = [for k in workspaceReaders: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', logReader), scope: workspace.id }]
 output foundryGrants array = [for b in backends: (!empty(apimPrincipalId) && (b.?assignCognitiveServicesUser ?? true)) ? b.id : '']

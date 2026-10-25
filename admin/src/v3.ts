@@ -24,6 +24,13 @@ import { buildClientFiles, readClientSettings } from "./client-config.ts";
 import type { ChargebackView, Configured, QuerySources } from "./chargeback.ts";
 import type { GroupMetadata } from "../../analytics/workbooks/chargeback-queries.ts";
 import { ccuToUsdText, DECIMAL_TEXT } from "./units.ts";
+import { readUserIds } from "./user-directory.ts";
+import type { UserDirectory } from "./user-directory.ts";
+import { auditRow, beginChange } from "./change-log.ts";
+import type { ChangeLog } from "./change-log.ts";
+import { limitsFromBody, MAX_OVERRIDE_DAYS, overrideState, publicLimits } from "./sync-limits.ts";
+import type { LimitsStore } from "./sync-limits.ts";
+import { ValidationError } from "./validation.ts";
 
 export const MAX_PLAN_BYTES = 16 * 1024;
 export const MAX_RATE_CARD_BYTES = 1024 * 1024;
@@ -33,8 +40,12 @@ export interface V3Dependencies {
   authenticate: Authenticator | null;
   projects: ProjectStore | null;
   catalogStore: CatalogStore | null;
+  // Both live in the adminConfig container; null when ADMIN_CONFIG_CONTAINER is not set.
+  changeLog?: ChangeLog | null;
+  limitsStore?: LimitsStore | null;
   defaultCatalog: Doc | null;
   operations: Operations;
+  directory?: UserDirectory;
   env: Readonly<Record<string, string | undefined>>;
   // The packaged KQL sources (ledger.kql, pricing.kql, budgets.kql); null when the package lacks them.
   sources: QuerySources | null;
@@ -158,6 +169,11 @@ async function projectsForTags(deps: V3Dependencies, tags: string[]): Promise<st
   return [...new Set(ids)].sort();
 }
 
+class LimitsInvalid extends ApiError {
+  readonly problems: string[];
+  constructor(problems: string[]) { super(422, "invalid_removal_limits"); this.problems = problems; }
+}
+
 export async function handleV3Request(request: ApiRequest, deps: V3Dependencies): Promise<ApiResponse> {
   const requestId = deps.newId();
   const url = new URL(request.path, "https://admin.invalid");
@@ -168,6 +184,13 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
     if (!deps.authenticate) throw new ApiError(503, "admin_auth_not_configured");
     const actor = await deps.authenticate(request.headers("authorization"));
     actorOid = actor.oid;
+    if (path === "directory/users") {
+      if (method !== "POST") throw new ApiError(405, "method_not_allowed");
+      if ([...url.searchParams].length) throw new ApiError(400, "unknown_parameter");
+      const ids = readUserIds(parseJson(request.body, MAX_PLAN_BYTES));
+      if (!deps.directory) return response(200, { state: "unavailable", reason: "user_directory_unavailable", observedAt: deps.now().toISOString() });
+      return response(200, await deps.directory.lookup(ids, deps.log, request.headers("x-ccof-refresh") === "true"));
+    }
     if (path === "version" && method === "GET") return response(200, { version: ADMIN_VERSION, api: "v3", consoles: ["v2", "v3"], projectApi: "v1-compatible" });
     if (path === "capabilities" && method === "GET") {
       const cb = readChargebackSettings(deps.env), rec = readReconcilerSettings(deps.env), au = readAuditSettings(deps.env);
@@ -178,6 +201,9 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
           projects: deps.projects ? "configured" : "project_store_not_configured",
           chargeback: state(cb), reconciler: state(rec), audit: state(au), queries: deps.sources ? "packaged" : "packaged_queries_unavailable",
           catalogStore: deps.catalogStore ? "configured" : "ADMIN_CONFIG_CONTAINER_not_set",
+          changeLog: deps.changeLog ? "configured" : "ADMIN_CONFIG_CONTAINER_not_set",
+          removalLimits: deps.limitsStore ? "configured" : "ADMIN_CONFIG_CONTAINER_not_set",
+          userNames: deps.env.ADMIN_USER_NAMES_ENABLED === "true" ? "configured" : "ADMIN_USER_NAMES_ENABLED_not_set",
         },
       });
     }
@@ -204,8 +230,43 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
       const review = reviewRateCard(card?.rateCard ?? null, candidate, deps.now());
       return response(200, { review, basedOn: card ? { version: card.rateCard.version ?? null, source: card.source } : null });
     }
+    if (path === "sync/removal-limits") {
+      if ([...url.searchParams].length) throw new ApiError(400, "unknown_parameter");
+      const current = deps.limitsStore ? await deps.limitsStore.read() : null;
+      if (method === "GET") {
+        return response(200, {
+          limits: publicLimits(current?.doc ?? null), etag: current?.etag ?? null, state: overrideState(current?.doc ?? null, deps.now()),
+          editable: Boolean(deps.limitsStore && actor.canWrite), maxOverrideDays: MAX_OVERRIDE_DAYS,
+          reason: deps.limitsStore ? null : "ADMIN_CONFIG_CONTAINER and a scoped Cosmos data role are required to save removal limits.",
+          fallback: "Without an enabled, unexpired override the sync uses its app settings SYNC_MAX_REMOVALS_PER_RUN and SYNC_MAX_REMOVAL_FRACTION.",
+          appliesWhen: "The sync reads this document at the start of each run when SYNC_LIMITS_CONTAINER is set on the sync app.",
+          observedAt: deps.now().toISOString(),
+        });
+      }
+      if (method !== "PUT") throw new ApiError(405, "method_not_allowed");
+      if (!actor.canWrite) throw new ApiError(403, "write_permission_required");
+      if (!deps.limitsStore) throw new ApiError(503, "limits_store_not_configured");
+      let doc: Doc;
+      try { doc = limitsFromBody(parseJson(request.body, MAX_PLAN_BYTES), actor.oid, deps.now()); } catch (err) {
+        throw err instanceof ValidationError ? new LimitsInvalid(err.problems) : err;
+      }
+      const match = request.headers("if-match");
+      if (current && (!match || match === "*")) throw new ApiError(428, "if_match_required");
+      if (current && current.etag !== match || !current && request.headers("if-none-match") !== "*") throw new ApiError(412, "etag_mismatch");
+      const before = publicLimits(current?.doc ?? null) ?? {};
+      const changed = ["enabled", "maxRemovalsPerRun", "maxRemovalFraction", "expiresAt", "reason"]
+        .filter((k) => canonical(before[k] ?? null) !== canonical(doc[k] ?? null)).map((k) => ({ path: k, before: before[k] ?? null, after: doc[k] ?? null }));
+      const pending = await beginChange(deps.changeLog, { requestId, at: deps.now().toISOString(), actorOid: actor.oid, operation: "v3/sync/removal-limits",
+        projectId: null, changes: changed, details: { etagBefore: current?.etag ?? null } }, deps.now, deps.log);
+      let etag: string | null;
+      try { etag = await deps.limitsStore.save(doc, current?.etag ?? null); } catch (err) { await pending.finish("unconfirmed", { code: "write_failed" }); throw err; }
+      if (!etag) { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
+      await pending.finish("updated", { etagAfter: etag });
+      deps.log(JSON.stringify({ schema: "ccof.admin.audit.v1", at: deps.now().toISOString(), requestId, actorOid, operation: "v3/sync/removal-limits",
+        outcome: "updated", projectId: null, etagAfter: etag, changes: changed }));
+      return response(200, { limits: publicLimits(doc), etag, state: overrideState(doc, deps.now()), editable: true, maxOverrideDays: MAX_OVERRIDE_DAYS, observedAt: deps.now().toISOString() });
+    }
     if (method !== "GET") throw new ApiError(405, "method_not_allowed");
-
     const clientFiles = /^projects\/([^/]+)\/client-config$/.exec(path);
     if (clientFiles) {
       const projectId = decodeURIComponent(clientFiles[1]);
@@ -289,8 +350,26 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
         return data;
       }));
     }
-    if (path === "audit") {
-      const cfg = readAuditSettings(deps.env);
+    if (path === "audit/changes") {
+      const filters = readAuditFilters(url.searchParams, deps.now());
+      const observedAt = deps.now().toISOString();
+      if (!deps.changeLog) {
+        return response(200, { state: "disabled", reason: "ADMIN_CONFIG_CONTAINER_not_set", observedAt,
+          permission: "ADMIN_CONFIG_CONTAINER and a scoped Cosmos data role on the adminConfig container." });
+      }
+      try {
+        const { rows, matched } = await deps.changeLog.list(filters);
+        return response(200, { state: "available", observedAt, data: {
+          source: "change_log", rows: rows.map(auditRow), truncated: false,
+          page: { offset: filters.offset, limit: filters.limit, returned: rows.length, matched,
+            nextOffset: filters.offset + rows.length < matched ? filters.offset + rows.length : null },
+        } });
+      } catch {
+        deps.log(JSON.stringify({ schema: "ccof.admin.integration.v2", capability: "change_log", code: "request_failed", requestId }));
+        return response(200, { state: "unavailable", reason: "change_log_unreadable", observedAt });
+      }
+    }
+    if (path === "audit") {      const cfg = readAuditSettings(deps.env);
       const filters = readAuditFilters(url.searchParams, deps.now());
       return response(200, await capability(deps, cfg, "audit", async () => {
         if (!cfg.ok || !deps.operations.query) throw new ProviderError(503, "audit_unavailable");
@@ -308,9 +387,9 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 503;
     const code = err instanceof ApiError ? err.code : "integration_or_registry_unavailable";
-    if (status === 401 || status === 403) {
+    if (status === 401 || status === 403 || path === "sync/removal-limits" && method === "PUT") {
       deps.log(JSON.stringify({ schema: "ccof.admin.audit.v1", at: deps.now().toISOString(), requestId, actorOid, operation: `v3/${path}`, outcome: "refused", status, code }));
     } else deps.log(JSON.stringify({ schema: "ccof.admin.integration.v2", operation: `v3/${path}`, status, code, requestId }));
-    return response(status, { error: code, requestId });
+    return response(status, { error: code, requestId, ...(err instanceof LimitsInvalid ? { problems: err.problems } : {}) });
   }
 }

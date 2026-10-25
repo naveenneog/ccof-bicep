@@ -1,5 +1,9 @@
 # Claude on Foundry — Azure API Management gateway
 
+**Branch `feat/admin-console-v2`: single-region deployment with Admin 3.2.0.** This branch keeps the
+single-region design and its admin console. The `main` branch holds the later Admin 3.3, budget
+soft limit, step-by-step deployment guide and the proposed active/passive disaster recovery design.
+
 Deploy an identity-aware Claude gateway on Microsoft Foundry, with project routing,
 per-family quotas, directory synchronization and fixed-price usage reporting.
 This repository contains sanitized source and synthetic examples—not a running service.
@@ -38,6 +42,17 @@ separate controls. Optional reconciliation is not an inference-path dependency.
   [draw.io source](docs/diagrams/ccof-network-architecture.drawio).
 
 ## Start here
+
+The Admin 3.2.0 operating guides cover the complete handoff:
+
+| Guide | Scope |
+| --- | --- |
+| [1. Deployment runbook](docs/runbooks/DEPLOYMENT-RUNBOOK.md) | Entra and managed-identity prerequisites, network design, staged Bicep, permission handoffs, Portal references and acceptance |
+| [2. Admin console operations](docs/runbooks/ADMIN-OPERATIONS.md) | Project/group access, models, budgets, retirement, audit and onboarding another Foundry backend |
+| [3. User onboarding](docs/runbooks/USER-ONBOARDING.md) | Exported JSON, self-service setup and an Intune packaging/qualification procedure |
+
+The deployment guide identifies the approved source availability and the readiness assumptions
+for a one-hour execution target. Intune packaging examples are not a verified tenant rollout.
 
 1. Read [prerequisites](docs/QUICKSTART-PREREQUISITES.md) and
    [permissions](docs/PERMISSIONS.md).

@@ -2,8 +2,8 @@
 
 The `claude-messages` API on API Management enforces, for every request: the developer's Microsoft
 Entra token, their entitlement through the resolver, the model allow-list of their classification, and
-the per-person and per-group token limits. Decision record: [ADR-0017](adr/0017-gateway-policy-entitlement-and-limits.md).
-Evidence, availability settings and failure modes: [WP-GW status](status/WP-GW.md).
+the per-person and per-group token limits. Decision record: ADR-0017.
+Evidence, availability settings and failure modes: WP-GW status.
 
 ## Files
 

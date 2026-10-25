@@ -116,6 +116,10 @@ a:hover { color: var(--ink); }
 .hint { font-size: var(--text-xs); color: var(--muted); }
 .small { font-size: var(--text-xs); }
 .block { display: block; }
+.user-identity { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 100%; white-space: normal; vertical-align: middle; }
+.user-identity-name { font-weight: 600; overflow-wrap: anywhere; }
+.user-identity-id, .user-identity-upn { overflow-wrap: anywhere; white-space: normal; }
+.hbar-label:has(.user-identity) { overflow: visible; white-space: normal; }
 .cap { text-transform: capitalize; }
 .nowrap { white-space: nowrap; }
 .wrap { overflow-wrap: anywhere; }
@@ -603,3 +607,6 @@ button.donut-legend-row.is-selected { background: var(--primary-tint); border-co
   button.donut-legend-row.is-selected { outline: 2px solid Highlight; }
   .nav-item.is-active { outline: 2px solid Highlight; }
 }
+
+.check-inline { display: flex; gap: var(--s2); align-items: center; font-size: var(--text-sm); min-height: 2.25rem; }
+.plain-list { margin: 0 0 var(--s3); padding-left: 1.2rem; display: grid; gap: var(--s1); font-size: var(--text-sm); }

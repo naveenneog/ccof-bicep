@@ -1,5 +1,8 @@
 # Staged deployment live run — 2026-10-20
 
+Stage numbers in this report are the order before 2026-10-21 (network = Stage 2, schema 3, grants 4,
+Entra 5, configuration 6). The [runbook](runbooks/STAGED-DEPLOYMENT-V2.md) now runs the network as Stage 6.
+
 Result: **all nine stages passed** in a new lab resource group, ending with authenticated
 model calls through the gateway and live data in the Admin V3 console.
 
@@ -78,7 +81,7 @@ every API call to the deployed app with a real signed-in user token. The top bar
 reads "Demo editor"; all data comes from the deployed API.
 
 ![Console overview](images/staged/console-light-overview.png)
-![Cost drill-down for STGLAB1](images/staged/console-light-overview-stglab1-drill.png)
+![Cost drill-down for STGLAB1](images/staged/console-light-overview-drill.png)
 ![Chargeback](images/staged/console-light-chargeback.png)
 ![Projects](images/staged/console-light-projects.png)
 ![Project onboarding downloads](images/staged/console-light-project-onboarding.png)

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { XmlElement } from "../infra/gateway/apim-xml.ts";
 import { attr, descendants, parseApimXml, textOf } from "../infra/gateway/apim-xml.ts";
 import type { GatewayConfig } from "../infra/gateway/config.ts";
-import { renderFromFile, renderPolicy } from "../infra/gateway/render.ts";
+import { loadTemplates, renderFromFile, renderPolicy, usageUrlFor } from "../infra/gateway/render.ts";
 import { sampleConfig } from "./helpers/gateway-fixtures.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -537,10 +537,52 @@ describe("rendering from files", () => {
     rmSync(scratch, { recursive: true, force: true });
     mkdirSync(scratch, { recursive: true });
     const out = renderFromFile(path.join(repoRoot, "tests", "fixtures", "gateway-public.json"), scratch);
-    assert.deepEqual(readdirSync(scratch).sort(), ["claude-messages.policy.xml", "render.json"]);
+    assert.deepEqual(readdirSync(scratch).sort(), ["claude-messages.policy.xml", "claude-messages.usage.policy.xml", "render.json"]);
     assert.match(out.result.policyXml, /\{\{foundry-crosstenant-client-secret\}\}/);
     const ignored = spawnSync("git", ["check-ignore", "-q", path.relative(repoRoot, out.policyPath)], { cwd: repoRoot });
     assert.equal(ignored.status, 0, "rendered output is not git-ignored");
     rmSync(scratch, { recursive: true, force: true });
+  });
+});
+
+describe("own-usage API policy (docs/USAGE-SELF-SERVICE.md)", () => {
+  const usage = parseApimXml(rendered.usagePolicyXml ?? "");
+  const usageInbound = usage.children.find((c): c is XmlElement => c.kind === "element" && c.name === "inbound")!;
+  const block = (xml: string, from: string, to: string) => { const s = xml.indexOf(from); return xml.slice(s, xml.indexOf(to, s)).replace(/\s+/g, " "); };
+  test("is rendered with the main policy and checks the token exactly as Claude Messages does", () => {
+    assert.ok(rendered.usagePolicyXml && rendered.usagePolicySha256 && rendered.usageTemplateSha256);
+    assert.equal(rendered.usagePolicyXml.includes("%%"), false);
+    assert.equal(block(rendered.usagePolicyXml, "<validate-jwt", "</validate-jwt>"), block(rendered.policyXml, "<validate-jwt", "</validate-jwt>"), "same validate-jwt");
+    for (const name of ["ccofOid", "ccofClientAppId", "ccofRefusal"]) {
+      assert.equal(textOf(setVariable(name, usageInbound)[0]) + attr(setVariable(name, usageInbound)[0], "value"),
+        textOf(setVariable(name)[0]) + attr(setVariable(name)[0], "value"), name);
+    }
+  });
+  test("refuses before any resolver call, rate-limits per person and sends only the token's oid", () => {
+    const kids = usageInbound.children.filter((c): c is XmlElement => c.kind === "element").map((c) => attr(c, "id") || c.name);
+    assert.ok(kids.indexOf("choose") < kids.indexOf("ccof-usage-person"), "refusal before admission");
+    const refusal = usageInbound.children.find((c): c is XmlElement => c.kind === "element" && c.name === "choose")!;
+    const when = descendants(refusal).find((e) => e.name === "when")!;
+    assert.match(attr(when, "condition") ?? "", /ccofRefusal"\] != ""/, "a refused token (wrong scope, client or identity) is blocked");
+    assert.ok(descendants(when).some((e) => e.name === "set-status" && attr(e, "code") === "403"), "blocked with 403");
+    assert.ok(kids.indexOf("ccof-usage-person") < kids.indexOf("ccof-usage-resolver-credential"), "admission before the resolver");
+    assert.match(attr(byId("ccof-usage-person", usage), "counter-key") ?? "", /ccof-usage:.*ccofOid/);
+    const send = descendants(usage).find((e) => e.name === "send-request")!;
+    assert.equal(textOf(descendants(send).find((e) => e.name === "set-url")!), usageUrlFor(config.resolver.url));
+    const body = textOf(descendants(send).find((e) => e.name === "set-body")!);
+    assert.match(body, /JProperty\("personId", \(string\)context\.Variables\["ccofOid"\]\)/);
+    assert.doesNotMatch(body, /Request\.(Headers|Url|Body)/, "nothing from the request reaches the resolver");
+    assert.doesNotMatch(rendered.usagePolicyXml ?? "", /forward-request/, "the usage API never forwards to a model backend");
+  });
+  test("the main policy and its digest are unchanged by the usage template", () => {
+    const { usage: _u, ...withoutUsage } = loadTemplates();
+    const mainOnly = renderPolicy(config, { templates: withoutUsage });
+    assert.equal(mainOnly.policySha256, rendered.policySha256);
+    assert.equal(mainOnly.templateSha256, rendered.templateSha256);
+    assert.equal(mainOnly.usagePolicyXml, undefined);
+  });
+  test("the usage route is derived from the resolver URL", () => {
+    assert.equal(usageUrlFor("https://r.example.net/api/resolve"), "https://r.example.net/api/me/usage");
+    assert.throws(() => usageUrlFor("https://r.example.net/api/other"), /must end with \/resolve/);
   });
 });

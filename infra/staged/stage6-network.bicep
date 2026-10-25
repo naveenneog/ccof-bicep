@@ -1,8 +1,10 @@
-// Stage 2: private network paths for the Stage 1 services.
+// Stage 6 (modes existing and create; opt-in): private network paths for the Stage 1 services.
+// The default network.mode verify does not use this template: the customer builds the network and
+// Stage 6 only runs the read-only check scripts/manual/Test-NetworkConfiguration.ps1.
 // Creates (mode create) or references (mode existing) the VNet, subnets and private DNS zones, then a
 // private endpoint with a DNS zone group for every service storage account (blob) and the Cosmos
 // account (Sql). Function App VNet integration is a property of each existing site; the stage driver
-// sets it one app at a time (Invoke-StagedDeployment.ps1 -Stage 2), because Flex apps joining one
+// sets it one app at a time (Invoke-StagedDeployment.ps1 -Stage 6), because Flex apps joining one
 // subnet in parallel failed with ServiceAssociationLinkLease (infra/quickstart/main.bicep note).
 // No role assignment, application setting, schema or code here.
 targetScope = 'resourceGroup'
@@ -24,7 +26,7 @@ var createNetwork = network.mode == 'create'
 
 // Authoritative subnet list: run create mode once per VNet (infra/prereqs/network.bicep header).
 module net '../prereqs/network.bicep' = if (createNetwork) {
-  name: '${names.deploymentPrefix}-stage2-vnet'
+  name: '${names.deploymentPrefix}-stage6-vnet'
   params: {
     location: location
     tags: tags
@@ -155,6 +157,8 @@ resource foundryZoneGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGro
 }]
 
 output foundryPrivateEndpointIds array = [for (f, i) in foundryAccounts: foundryEndpoints[i].id]
+output foundryPrivateDnsZoneIds array = foundryZoneIds
+output vnetId string = createNetwork ? net!.outputs.vnetId : first(split(ids.functions, '/subnets/'))
 output functionsSubnetId string = ids.functions
 output apimSubnetId string = ids.apim
 output privateEndpointSubnetId string = ids.privateEndpoints

@@ -168,7 +168,7 @@ output apimPrincipalId string = approveNewPublicApimBootstrap ? apimService!.out
 output apimGatewayUrl string = approveNewPublicApimBootstrap ? apimService!.outputs.gatewayUrl : ''
 output apimStatus string = approveNewPublicApimBootstrap ? 'new-public-shell-needs-approved-private-cutover' : 'deferred-no-public-bootstrap-approved'
 // The resource names later stages read (quickstart `names` shape, infra/quickstart/main.bicepparam).
-// Stage 3 adds cosmosDatabase; Stage 4 adds cosmosRoles. Inventory only: no setting or grant.
+// Stage 2 adds cosmosDatabase; Stage 3 adds cosmosRoles. Inventory only: no setting or grant.
 output names object = {
   deploymentPrefix: prefix
   subscriptionId: subscription().subscriptionId

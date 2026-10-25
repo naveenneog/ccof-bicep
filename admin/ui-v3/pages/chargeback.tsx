@@ -8,6 +8,8 @@ import { BurnDown, HBars, SplitBar, StackedColumns } from "../components/charts.
 import { ChartPanel, FAMILIES, TOKEN_CATEGORIES, bucketLabel, trendBuckets } from "../components/panels.tsx";
 import { PagerLite } from "./project-detail.tsx";
 import { useDebounced } from "./projects.tsx";
+import { UserIdentity, useUserNames } from "../components/user-identity.tsx";
+import { withUserNames } from "../lib/user-names.ts";
 
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,7 +27,7 @@ const common: Column<any>[] = [
 const VIEWS: Record<string, { label: string; columns: Column<any>[] }> = {
   groups: { label: "Groups", columns: [{ key: "groupId", label: "Entra group", render: (r) => <><span>{(r.groupNameSnapshots ?? [])[0] ?? "(unknown name)"}</span><code className="block muted">{r.groupId}</code></> },
     { key: "groupProjects", label: "Projects", render: (r) => (r.groupProjects ?? []).join(", ") }, ...common] },
-  developers: { label: "Developers", columns: [{ key: "person", label: "Entra Object ID", render: (r) => <code>{r.person}</code> }, ...common] },
+  developers: { label: "Developers", columns: [{ key: "person", label: "User / object ID", render: (r) => <UserIdentity objectId={r.person} /> }, ...common] },
   models: { label: "Models", columns: [{ key: "model", label: "Model", render: (r) => <code>{r.model}</code> }, ...common] },
   families: { label: "Families", columns: [{ key: "modelFamily", label: "Family", render: (r) => <span className="cap">{r.modelFamily}</span> }, ...common] },
   projects: { label: "Projects", columns: [{ key: "projectLabel", label: "Project", render: (r) => <a href={href(`/projects/${encodeURIComponent(r.projectLabel)}`)}>{r.projectLabel}</a> }, ...common] },
@@ -105,13 +107,16 @@ export function Chargeback({ query }: { query: URLSearchParams }) {
     return { points, budget, days };
   }, [trend.data, budgets.data, f.period, f.interval]);
 
+  const userNames = useUserNames();
   const exportRows = async () => {
     setExporting(true);
     try {
       const r = await api(`/api/v3/chargeback/${view}${filterQs({ limit: 500, offset: 0 })}`);
       if (!ok(r.data)) throw new Error(`Export unavailable: ${r.data.state}`);
       const d = r.data.data;
-      download(`ccof-chargeback-${view}-${d.period.from.slice(0, 10)}.csv`, toCsv(d.columns, d.rows, {
+      // Developers: object ID stays the accounting key; current display name and UPN are added beside it.
+      const table = view === "developers" && userNames ? await withUserNames(d.columns, d.rows, "person", (id) => userNames.get(id)) : { columns: d.columns, rows: d.rows };
+      download(`ccof-chargeback-${view}-${d.period.from.slice(0, 10)}.csv`, toCsv(table.columns, table.rows, {
         view, periodStart: d.period.from, periodEnd: d.period.to, rateCardVersion: d.rateCardVersion, basis: d.basis,
         rows: d.rows.length, matched: d.page?.matched ?? d.rows.length, truncated: d.truncated, observedAt: d.observedAt,
       }));

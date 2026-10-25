@@ -1,12 +1,15 @@
 // The project admin API, framework-free so it is tested with a fake store and fake clock.
 // Core project operations plus v2 reviewed settings (tags, one backend/subscription and budgets).
-// Project ids, group ids and status are not editable; deletion and group replacement remain absent.
+// Project ids and group ids are not editable. Status changes only through retire (active to retired,
+// one way); deletion and group replacement remain absent.
 // Every write requires the stored ETag (If-Match) and emits one ccof.admin.audit.v1 line.
 
 import { ApiError } from "./auth.ts";
 import type { Actor, Authenticator } from "./auth.ts";
 import { ValidationError, applyLimitPatch, assertValidFamilyPolicy, assertValidProject, canonical, isIdentifier, isObject, stripSystem } from "./validation.ts";
 import type { Doc } from "./validation.ts";
+import { beginChange } from "./change-log.ts";
+import type { ChangeEntry, ChangeLog, PendingChange } from "./change-log.ts";
 
 export const AUDIT_SCHEMA = "ccof.admin.audit.v1";
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -42,6 +45,8 @@ export interface ApiResponse {
 export interface ApiDependencies {
   authenticate: Authenticator | null; // null: authentication is not configured, so every request is refused
   store: ProjectStore | null; // null: storage is not configured
+  // The permanent change record (adminConfig); when configured, a change it cannot record is refused.
+  changeLog?: ChangeLog | null;
   log(line: string): void;
   now(): Date;
   newId(): string;
@@ -52,6 +57,7 @@ type Route =
   | { op: "read"; projectId: string }
   | { op: "create" }
   | { op: "settings"; projectId: string }
+  | { op: "retire"; projectId: string }
   | { op: "familyPolicy"; projectId: string; code: string }
   | { op: "limits"; projectId: string; code: string };
 
@@ -65,6 +71,7 @@ function route(method: string, path: string): Route | "method_not_allowed" | nul
   if (!isIdentifier(projectId)) return null;
   if (parts.length === 2) return m === "GET" ? { op: "read", projectId } : "method_not_allowed";
   if (parts.length === 3 && parts[2] === "settings") return m === "PUT" ? { op: "settings", projectId } : "method_not_allowed";
+  if (parts.length === 3 && parts[2] === "retire") return m === "POST" ? { op: "retire", projectId } : "method_not_allowed";
   if (parts.length === 5 && parts[2] === "classifications" && isIdentifier(parts[3])) {
     if (parts[4] === "family-policy") return m === "PUT" ? { op: "familyPolicy", projectId, code: parts[3] } : "method_not_allowed";
     if (parts[4] === "limits") return m === "PATCH" ? { op: "limits", projectId, code: parts[3] } : "method_not_allowed";
@@ -119,12 +126,14 @@ async function classificationUpdate(
   request: ApiRequest,
   r: { projectId: string; code: string },
   update: (currentPolicy: Doc, body: unknown) => Doc,
+  begin: (changed: ChangeEntry[], details: Doc) => Promise<PendingChange>,
 ): Promise<{ response: ApiResponse; audit: Record<string, unknown> }> {
   const etag = requireIfMatch(request);
   const body = parseBody(request);
   const current = await store.read(r.projectId);
   if (!current) throw new ApiError(404, "project_not_found");
   if (current.etag !== etag) throw new ApiError(412, "etag_mismatch");
+  if (current.doc.status === "retired") throw new ApiError(409, "project_retired");
   const before = stripSystem(current.doc);
   const classifications = before.classifications;
   if (!isObject(classifications) || !isObject(classifications[r.code])) throw new ApiError(404, "classification_not_found");
@@ -138,12 +147,23 @@ async function classificationUpdate(
   if (changed.length === 0) {
     return { response: json(200, { projectId: r.projectId, changed: false, project: before }, { etag: current.etag }), audit: { outcome: "unchanged" } };
   }
-  const written = await store.replace(after, etag);
-  if (written === "precondition_failed") throw new ApiError(412, "etag_mismatch");
+  const pending = await begin(changed, { classification: r.code, etagBefore: etag });
+  const written = await recorded(pending, () => store.replace(after, etag));
+  if (written === "precondition_failed") { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
+  await pending.finish("updated", { etagAfter: written });
   return {
     response: json(200, { projectId: r.projectId, changed: true, project: after }, { etag: written }),
     audit: { outcome: "updated", classification: r.code, etagBefore: etag, etagAfter: written, changes: changed },
   };
+}
+
+// A write that throws (timeout, lost connection, 503) may still have committed in Cosmos, so the record
+// says "unconfirmed", never "failed". Definite refusals (ETag, conflict) are recorded as "refused".
+async function recorded<T>(pending: PendingChange, write: () => Promise<T>): Promise<T> {
+  try { return await write(); } catch (err) {
+    await pending.finish("unconfirmed", { code: err instanceof ApiError ? err.code : "write_failed" });
+    throw err;
+  }
 }
 
 // A registry failure (no network path, missing data role, Cosmos outage) is reported as 503
@@ -173,6 +193,9 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
   let projectId: string | undefined;
   const audit = (fields: Record<string, unknown>) =>
     deps.log(JSON.stringify({ schema: AUDIT_SCHEMA, at: deps.now().toISOString(), requestId, operation, actorOid: actor?.oid ?? null, projectId: projectId ?? null, ...fields }));
+  const begin = (changed: ChangeEntry[], details: Doc = {}) => beginChange(deps.changeLog, {
+    requestId, at: deps.now().toISOString(), actorOid: actor?.oid ?? "", operation, projectId: projectId ?? null, changes: changed, details,
+  }, deps.now, deps.log);
   try {
     if (!deps.authenticate) throw new ApiError(503, "admin_auth_not_configured");
     actor = await deps.authenticate(request.headers("authorization"));
@@ -180,7 +203,7 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
     if (matched === "method_not_allowed") throw new ApiError(405, "method_not_allowed");
     operation = matched.op;
     projectId = "projectId" in matched ? matched.projectId : undefined;
-    const writes = matched.op === "create" || matched.op === "familyPolicy" || matched.op === "limits" || matched.op === "settings";
+    const writes = matched.op === "create" || matched.op === "familyPolicy" || matched.op === "limits" || matched.op === "settings" || matched.op === "retire";
     if (writes && !actor.canWrite) throw new ApiError(403, "write_permission_required");
     if (!deps.store) throw new ApiError(503, "project_store_not_configured");
     const store = guardStore(deps.store);
@@ -199,8 +222,10 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
         const doc = assertValidProject(parseBody(request));
         if (doc.status !== "active") throw new ValidationError(["status:not_active"]);
         projectId = String(doc.projectId);
-        const written = await store.create(doc);
-        if (written === "conflict") throw new ApiError(409, "project_exists");
+        const pending = await begin(changes({}, doc, "", []));
+        const written = await recorded(pending, () => store.create(doc));
+        if (written === "conflict") { await pending.finish("refused", { code: "project_exists" }); throw new ApiError(409, "project_exists"); }
+        await pending.finish("created", { etagAfter: written });
         audit({ outcome: "created", etagAfter: written, classifications: Object.keys(doc.classifications as Doc).sort() });
         return json(201, doc, { etag: written, location: `/api/projects/${encodeURIComponent(projectId)}` });
       }
@@ -212,6 +237,7 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
         const current = await store.read(matched.projectId);
         if (!current) throw new ApiError(404, "project_not_found");
         if (current.etag !== etag) throw new ApiError(412, "etag_mismatch");
+        if (current.doc.status === "retired") throw new ApiError(409, "project_retired");
         const before = stripSystem(current.doc);
         const after = structuredClone(before);
         if (body.backendId !== undefined && body.backendId !== before.backendId && !Object.hasOwn(body, "designatedSubscriptionId")) {
@@ -233,28 +259,52 @@ export async function handleAdminRequest(request: ApiRequest, deps: ApiDependenc
         assertValidProject(after);
         const changed = changes(before, after, "", []);
         if (!changed.length) return json(200, { changed: false, project: before }, { etag });
-        const written = await store.replace(after, etag);
-        if (written === "precondition_failed") throw new ApiError(412, "etag_mismatch");
+        const pending = await begin(changed, { etagBefore: etag });
+        const written = await recorded(pending, () => store.replace(after, etag));
+        if (written === "precondition_failed") { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
+        await pending.finish("updated", { etagAfter: written });
         audit({ outcome: "updated", etagBefore: etag, etagAfter: written, changes: changed });
+        return json(200, { changed: true, project: after }, { etag: written });
+      }
+      case "retire": {
+        // One-way: the sync then removes every membership of the project at its next run. The body must
+        // repeat the project id, so a stale or mistaken click cannot retire another project.
+        const etag = requireIfMatch(request);
+        const body = parseBody(request);
+        if (!isObject(body) || Object.keys(body).length !== 1 || body.confirmProjectId !== matched.projectId) {
+          throw new ValidationError(["confirmProjectId:must_equal_projectId"]);
+        }
+        const current = await store.read(matched.projectId);
+        if (!current) throw new ApiError(404, "project_not_found");
+        if (current.etag !== etag) throw new ApiError(412, "etag_mismatch");
+        if (current.doc.status === "retired") throw new ApiError(409, "project_retired");
+        const before = stripSystem(current.doc);
+        const after = { ...structuredClone(before), status: "retired", retiredAt: deps.now().toISOString() };
+        assertValidProject(after);
+        const pending = await begin(changes(before, after, "", []), { etagBefore: etag });
+        const written = await recorded(pending, () => store.replace(after, etag));
+        if (written === "precondition_failed") { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
+        await pending.finish("retired", { etagAfter: written });
+        audit({ outcome: "retired", etagBefore: etag, etagAfter: written, changes: changes(before, after, "", []) });
         return json(200, { changed: true, project: after }, { etag: written });
       }
       case "familyPolicy": {
         const result = await classificationUpdate(store, request, matched, (_policy, body) => {
           if (!isObject(body)) throw new ValidationError(["familyPolicy:invalid"]);
           return structuredClone(body);
-        });
+        }, begin);
         audit(result.audit);
         return result.response;
       }
       case "limits": {
-        const result = await classificationUpdate(store, request, matched, (policy, body) => applyLimitPatch(policy, body));
+        const result = await classificationUpdate(store, request, matched, (policy, body) => applyLimitPatch(policy, body), begin);
         audit(result.audit);
         return result.response;
       }
     }
   } catch (err) {
     if (err instanceof ApiError) {
-      const isWriteAttempt = operation === "create" || operation === "familyPolicy" || operation === "limits" || operation === "settings";
+      const isWriteAttempt = operation === "create" || operation === "familyPolicy" || operation === "limits" || operation === "settings" || operation === "retire";
       if (isWriteAttempt || err.status === 401 || err.status === 403) audit({ outcome: "refused", status: err.status, code: err.code });
       const body: Record<string, unknown> = { error: err.code, requestId };
       if (err instanceof ValidationError) body.problems = err.problems;

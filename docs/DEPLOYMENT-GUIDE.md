@@ -1,5 +1,7 @@
 # Deploy the claude-code-on-foundry proof of concept
 
+> **Historical.** This is the original proof-of-concept walkthrough; some files it names are not published. The current guide is the [deployment runbook](runbooks/DEPLOYMENT-RUNBOOK.md).
+
 This guide walks through deploying the live proof of concept this repository's `docs/STATUS.md`
 documents: a private-network Azure API Management gateway in front of Claude on Microsoft Foundry,
 a Cosmos DB registry, and a resolver Function App, using the exact resources, commands, and
@@ -190,15 +192,15 @@ az deployment group create `
 **Verify**: the deployment output includes `apimGatewayUrl` (e.g.
 `https://sample-pilot-apim.azure-api.net`) and `apimPrincipalId` (APIM's managed identity, used in Step 4).
 
-![APIM overview blade showing Standard v2 tier, 1 scale unit, and the private (External) virtual network setting](images/01-apim-overview.png)
+*Screenshot not included in the public repository: APIM overview blade showing Standard v2 tier, 1 scale unit, and the private (External) virtual network setting.*
 
-![APIM's Network blade showing the outbound VNet integration subnet](images/02-apim-virtual-network.png)
+*Screenshot not included in the public repository: APIM's Network blade showing the outbound VNet integration subnet.*
 
-![The VNet overview blade with its three subnets](images/04-vnet-overview.png)
+*Screenshot not included in the public repository: The VNet overview blade with its three subnets.*
 
-![The VNet's Subnets blade listing snet-appgw, snet-apim, snet-private-endpoints, snet-functions](images/05-vnet-subnets.png)
+*Screenshot not included in the public repository: The VNet's Subnets blade listing snet-appgw, snet-apim, snet-private-endpoints, snet-functions.*
 
-![The NSG's inbound/outbound security rules, matching Microsoft's documented 9-rule minimum for APIM VNet integration](images/06-nsg-rules.png)
+*Screenshot not included in the public repository: The NSG's inbound/outbound security rules, matching Microsoft's documented 9-rule minimum for APIM VNet integration.*
 
 ## Step 3 — Private endpoint to the Foundry backend
 
@@ -219,7 +221,7 @@ az network private-endpoint-connection approve `
   --description "Approved for claude-code-on-foundry PoC"
 ```
 
-![The approved private endpoint, showing Connection status: Approved against the cross-tenant Foundry backend](images/07-private-endpoint-approved.png)
+*Screenshot not included in the public repository: The approved private endpoint, showing Connection status: Approved against the cross-tenant Foundry backend.*
 
 > [!NOTE]
 > The private link resource name is visible unredacted in this screenshot (the user's own PoC resource
@@ -246,7 +248,7 @@ policy is `infra/poc/claude-messages-policy.xml`, whose header comment documents
 gotcha: never splice a `{{named-value}}` secret directly inside a C# string literal inside an APIM
 `@{ }` expression — it silently corrupts the value (`AADSTS7000215`).
 
-![The claude-messages API's APIs blade in APIM, showing the /anthropic path and the create-message operation](images/03-apim-apis-policy.png)
+*Screenshot not included in the public repository: The claude-messages API's APIs blade in APIM, showing the /anthropic path and the create-message operation.*
 
 ## Step 4a — Entra App Registrations (developer-facing auth)
 
@@ -266,13 +268,13 @@ two developer-facing registrations (`docs/CHECKPOINT-SETUP.md` Stage 0a) — a *
 (its App ID URI is the audience APIM's token validation checks) and a public-client
 **Developer Sign-in** app (what Claude Code CLI/VS Code/Desktop sign a developer into).
 
-![The Gateway API app registration's Overview blade, showing its Application (client) ID and Directory (tenant) ID](images/13-entra-gateway-api-app.png)
+*Screenshot not included in the public repository: The Gateway API app registration's Overview blade, showing its Application (client) ID and Directory (tenant) ID.*
 
-![The Gateway API app's Expose an API blade, showing the access_as_user delegated scope APIM validates against](images/14-entra-gateway-api-expose-scope.png)
+*Screenshot not included in the public repository: The Gateway API app's Expose an API blade, showing the access_as_user delegated scope APIM validates against.*
 
-![The Developer Sign-in app registration's Overview blade — a public client, no secret](images/15-entra-developer-signin-app.png)
+*Screenshot not included in the public repository: The Developer Sign-in app registration's Overview blade — a public client, no secret.*
 
-![The Developer Sign-in app's API permissions blade, showing delegated access to the Gateway API's access_as_user scope](images/16-entra-developer-signin-permissions.png)
+*Screenshot not included in the public repository: The Developer Sign-in app's API permissions blade, showing delegated access to the Gateway API's access_as_user scope.*
 
 ## Step 5 — Cosmos DB registry
 
@@ -284,9 +286,9 @@ two developer-facing registrations (`docs/CHECKPOINT-SETUP.md` Stage 0a) — a *
 Creates the serverless account and all 5 containers from `docs/LLD.md` §1
 (`entitlement`, `projects`, `subscriptionIndex`, `budgetState`, `aggregateBudgetState`).
 
-![The Cosmos DB account overview, showing Capacity mode: Serverless](images/08-cosmos-overview.png)
+*Screenshot not included in the public repository: The Cosmos DB account overview, showing Capacity mode: Serverless.*
 
-![Data Explorer listing all 5 containers: aggregateBudgetState, budgetState, entitlement, projects, subscriptionIndex](images/09-cosmos-containers.png)
+*Screenshot not included in the public repository: Data Explorer listing all 5 containers: aggregateBudgetState, budgetState, entitlement, projects, subscriptionIndex.*
 
 > [!IMPORTANT]
 > This subscription forces `disableLocalAuth: true` on Cosmos automatically (an Azure Policy with a
@@ -338,7 +340,7 @@ az role assignment create --assignee-object-id $principalId --assignee-principal
   --scope "/subscriptions/<sub>/resourceGroups/sample-pilot-rg/providers/Microsoft.Storage/storageAccounts/samplepilotfnstor"
 ```
 
-![Cosmos DB's Access control (IAM) blade confirming the Function App's managed identity holds the Data Contributor data-plane role](images/12-cosmos-iam-data-contributor.png)
+*Screenshot not included in the public repository: Cosmos DB's Access control (IAM) blade confirming the Function App's managed identity holds the Data Contributor data-plane role.*
 
 Package and deploy the code. **Do not upload the zip directly to the deployment container's blob
 storage** — Microsoft's own documentation states this plainly ("Deployment technologies in Azure

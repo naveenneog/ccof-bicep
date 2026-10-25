@@ -9,6 +9,8 @@ import { ccuToUsd } from "../../src/cost/budget-units.ts";
 import { Money } from "../../src/cost/money.ts";
 import type { Capability, Operations } from "./operations.ts";
 import { ADMIN_VERSION } from "./version.ts";
+import { beginChange } from "./change-log.ts";
+import type { ChangeEntry, ChangeLog } from "./change-log.ts";
 export const MAX_CATALOG_BYTES = 1024 * 1024;
 const DECIMAL_TEXT = /^\d{1,30}(\.\d{1,30})?$/;
 
@@ -107,6 +109,7 @@ export interface V2Dependencies {
   authenticate: Authenticator | null;
   projects: ProjectStore | null;
   catalogStore: CatalogStore | null;
+  changeLog?: ChangeLog | null;
   // Null when the packaged rate card could not be read; only cost definitions degrade.
   defaultCatalog: Doc | null;
   operations: Operations;
@@ -172,19 +175,25 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       const match = request.headers("if-match");
       if (current && (!match || match === "*")) throw new ApiError(428, "if_match_required");
       if (current && current.etag !== match || !current && request.headers("if-none-match") !== "*") throw new ApiError(412, "etag_mismatch");
-      const etag = await deps.catalogStore.save(doc, current?.etag ?? null);
-      if (!etag) throw new ApiError(412, "etag_mismatch");
       const before = current?.doc ?? deps.defaultCatalog ?? { models: [] };
       const oldModels = new Map((Array.isArray(before.models) ? before.models : []).filter(isObject).map((m) => [`${m.backendId}/${m.deployment}`, m]));
       const newModels = new Map((doc.models as Doc[]).map((m) => [`${m.backendId}/${m.deployment}`, m]));
-      const mappingChanges = [...new Set([...oldModels.keys(), ...newModels.keys()])].filter((key) => canonical(oldModels.get(key)) !== canonical(newModels.get(key)))
+      const mappingChanges: ChangeEntry[] = [...new Set([...oldModels.keys(), ...newModels.keys()])].filter((key) => canonical(oldModels.get(key)) !== canonical(newModels.get(key)))
         .map((key) => ({ path: `models.${key}`, before: oldModels.get(key) ?? null, after: newModels.get(key) ?? null }));
-      audit("updated", {
-        version: isObject(doc.rateCard) ? doc.rateCard.version : null, modelCount: (doc.models as unknown[]).length,
-        changes: mappingChanges.slice(0, 20), changesTruncated: mappingChanges.length > 20,
+      const rateCardVersion = (d: Doc) => isObject(d.rateCard) ? d.rateCard.version ?? null : null;
+      if (rateCardVersion(before) !== rateCardVersion(doc)) mappingChanges.push({ path: "rateCard.version", before: rateCardVersion(before), after: rateCardVersion(doc) });
+      const summary = {
+        version: rateCardVersion(doc), modelCount: (doc.models as unknown[]).length,
         contentDigestBefore: createHash("sha256").update(canonical(before)).digest("hex"),
         contentDigestAfter: createHash("sha256").update(canonical(doc)).digest("hex"),
-      });
+      };
+      const pending = await beginChange(deps.changeLog, { requestId, at: deps.now().toISOString(), actorOid: actor.oid, operation: "v2/catalog",
+        projectId: null, changes: mappingChanges, details: summary }, deps.now, deps.log);
+      let etag: string | null;
+      try { etag = await deps.catalogStore.save(doc, current?.etag ?? null); } catch (err) { await pending.finish("unconfirmed", { code: "write_failed" }); throw err; }
+      if (!etag) { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
+      await pending.finish("updated", {});
+      audit("updated", { ...summary, changes: mappingChanges.slice(0, 20), changesTruncated: mappingChanges.length > 20 });
       return response(200, { catalog: doc, editable: true, source: "admin_catalog", enforcement: "Export the rate card to update reconciler pricing; catalog edits do not change deployed enforcement." }, { etag });
     }
     if (request.method !== "GET") throw new ApiError(405, "method_not_allowed");

@@ -1,4 +1,4 @@
-// Stage 6: configuration of the deployed services. No role assignment, Entra object, schema, code or
+// Stage 5: configuration of the deployed services. No role assignment, Entra object, schema, code or
 // seed data. Reuses the quickstart's settings and API modules:
 //   - infra/quickstart/modules/app-settings.bicep: resolver/sync/reconciler settings (timers stay off
 //     unless syncTimerEnabled / reconciler.timerEnabled) and the resolver's App Service Authentication
@@ -26,6 +26,8 @@ param apim object
 param backends array
 @minLength(1)
 param policyXml string
+@description('The own-usage API policy (render.ts <apiId>.usage.policy.xml); empty: no usage API.')
+param usagePolicyXml string = ''
 
 param resolver object
 param sync object
@@ -63,7 +65,7 @@ resource reconcilerSite 'Microsoft.Web/sites@2024-04-01' existing = {
 }
 
 module settings '../quickstart/modules/app-settings.bicep' = {
-  name: '${names.deploymentPrefix}-stage6-settings'
+  name: '${names.deploymentPrefix}-stage5-settings'
   params: {
     names: names
     tenantId: tenantId
@@ -77,6 +79,7 @@ module settings '../quickstart/modules/app-settings.bicep' = {
     apimId: apimService.id
     resolver: resolver
     sync: sync
+    syncLimitsContainer: (admin.?enabled ?? false) ? 'adminConfig' : ''
     reconciler: reconciler
     budgetState: budgetState
     syncTimerEnabled: syncTimerEnabled
@@ -87,7 +90,7 @@ module settings '../quickstart/modules/app-settings.bicep' = {
 }
 
 module api '../quickstart/modules/apim-api.bicep' = {
-  name: '${names.deploymentPrefix}-stage6-api'
+  name: '${names.deploymentPrefix}-stage5-api'
   scope: resourceGroup(apim.subscriptionId, apim.resourceGroup)
   params: {
     apimName: apim.name
@@ -96,18 +99,19 @@ module api '../quickstart/modules/apim-api.bicep' = {
     apiDisplayName: apim.apiDisplayName
     backends: [for b in backends: { id: b.id, url: b.url }]
     policyXml: policyXml
+    usagePolicyXml: usagePolicyXml
   }
 }
 
-module apiTelemetry 'stage6-api-telemetry.bicep' = {
-  name: '${names.deploymentPrefix}-stage6-api-telemetry'
+module apiTelemetry 'stage5-api-telemetry.bicep' = {
+  name: '${names.deploymentPrefix}-stage5-api-telemetry'
   scope: resourceGroup(apim.subscriptionId, apim.resourceGroup)
   params: { apimName: apim.name, apiId: apim.apiId }
   dependsOn: [api]
 }
 
 module workbookFull '../workbook/main.bicep' = if (!empty(workbookContent)) {
-  name: '${names.deploymentPrefix}-stage6-workbook'
+  name: '${names.deploymentPrefix}-stage5-workbook'
   params: {
     workbookResourceName: workbook.resourceName
     workbookDisplayName: workbook.displayName

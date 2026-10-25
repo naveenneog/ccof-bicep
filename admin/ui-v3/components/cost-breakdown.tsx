@@ -5,6 +5,7 @@ import { href } from "../lib/router.ts";
 import { Button, CapabilityNotice, ChoiceInput, ErrorNote, Field, Loading } from "./ui.tsx";
 import { Donut, HBars, topWithOther } from "./charts.tsx";
 import type { DonutItem } from "./charts.tsx";
+import { UserIdentity } from "./user-identity.tsx";
 
 // Month-to-date cost breakdown for the Overview: all projects → one project's classifications
 // (STD, PRM, CYB, ...) → one classification, with the users and models split for the current level
@@ -12,7 +13,6 @@ import type { DonutItem } from "./charts.tsx";
 
 const ok = (cap: any) => cap && (cap.state === "available" || cap.state === "partial");
 const money = (n: number | null) => usd(n);
-const short = (id: string) => /^[0-9a-f-]{36}$/i.test(id) ? `${id.slice(0, 8)}…` : id;
 
 function items(rows: any[], key: (r: any) => string, label: (r: any) => string = key): { items: DonutItem[]; unknown: number } {
   const all = rows.map((r) => ({ key: key(r), label: label(r), value: r.knownListUsd === null || r.knownListUsd === undefined ? null : Number(r.knownListUsd) }));
@@ -47,7 +47,7 @@ export function CostBreakdown({ refresh = 0 }: { refresh?: number }) {
   const main = project
     ? items(ok(classes.data) ? classes.data.data.rows : [], (r) => String(r.classification || "unassigned"))
     : items(projectRows, (r) => String(r.projectLabel));
-  const userSplit = items(ok(users.data) ? users.data.data.rows : [], (r) => String(r.person), (r) => short(String(r.person)));
+  const userSplit = items(ok(users.data) ? users.data.data.rows : [], (r) => String(r.person));
   const modelSplit = items(ok(models.data) ? models.data.data.rows : [], (r) => String(r.model));
   const mainQ = project ? classes : projects;
 
@@ -116,8 +116,8 @@ export function CostBreakdown({ refresh = 0 }: { refresh?: number }) {
                 : <>
                   <HBars label={`Cost by user for ${scopeText}`} format={money}
                     items={userSplit.items.slice(0, 8).map((i) => ({ key: i.key, value: i.value,
-                      label: <a href={href(`/chargeback${qs({ developer: i.key, project })}`)} title={i.key}>{i.label}</a> }))} />
-                  <p className="hint">{int(userSplit.items.length)} user{userSplit.items.length === 1 ? "" : "s"}{userSplit.items.length > 8 ? ", top 8 shown" : ""}. IDs are Entra object IDs; no names are stored.</p>
+                      label: <a href={href(`/chargeback${qs({ developer: i.key, project })}`)}><UserIdentity objectId={i.key} showPrincipalName={false} /></a> }))} />
+                  <p className="hint">{int(userSplit.items.length)} user{userSplit.items.length === 1 ? "" : "s"}{userSplit.items.length > 8 ? ", top 8 shown" : ""}. Current Entra names are looked up separately; accounting and filters use object IDs.</p>
                 </>}
         </div>
         <div>

@@ -6,12 +6,15 @@
 .DESCRIPTION
     Stage 0 read-only checks      Reader on the scopes; directory read
     Stage 1 resources only        RG Contributor (infra/staged/main.bicep)
-    Stage 2 network               Network Contributor, private DNS zone write/link, site write (VNet integration)
-    Stage 3 Cosmos schema         Cosmos database/container write (Contributor)
-    Stage 4 runtime grants        Role Based Access Control Administrator (or Owner) + Cosmos SQL role writes
-    Stage 5 Entra                 Application owner/administrator, group owner/Groups Administrator
-    Stage 6 configuration         site config, APIM and workbook write
-    Stage 7 code and data         Function publishing; settings write on the sync app (seed, snapshot)
+    Stage 2 Cosmos schema         Cosmos database/container write (Contributor)
+    Stage 3 runtime grants        Role Based Access Control Administrator (or Owner) + Cosmos SQL role writes
+    Stage 4 Entra                 Application owner/administrator, group owner/Groups Administrator
+    Stage 5 configuration         site config, APIM and workbook write
+    Stage 6 network (last setup)  network.mode verify (default): Reader; the customer builds the network and
+                                  scripts/manual/Test-NetworkConfiguration.ps1 checks it. Modes existing/create
+                                  (opt-in): Network Contributor, private DNS zone write/link, site write
+    Stage 7 code and data         Function publishing; settings write on the sync app (seed, snapshot).
+                                  Needs Stage 6: the apps reach their private storage and Cosmos through the VNet
     Stage 8 acceptance            gateway caller identity; Log Analytics read
 
     Without -Apply a stage previews only: Bicep stages run `what-if`, script stages print their plan.
@@ -55,6 +58,9 @@ New-Item -ItemType Directory -Force -Path $script:StateDir | Out-Null
 $mode = if ($Apply -and $Stage -ne 0) { 'apply' } else { 'preview' }
 Write-Host "== stage $Stage ($mode) subscription $($cfg.subscriptionId) RG $($cfg.resourceGroup); state $script:StateDir"
 $started = [DateTime]::UtcNow
+$stage7Lock = $null
+if ($Apply -and $Stage -eq 7) { $stage7Lock = Enter-StgStage7Lock (Join-Path $script:Repo '.staged-stage7.lock') }
+try {
 $outputs = switch ($Stage) {
     0 { Invoke-Stage0 $cfg }
     1 { Invoke-Stage1 $cfg -Apply:$Apply }
@@ -71,3 +77,4 @@ if ($Stage -eq 0 -or $Apply) {
     Save-StgStage $cfg $Stage $outputs
     Write-Host "stage $Stage completed and verified in $([int]([DateTime]::UtcNow - $started).TotalSeconds) s; outputs in $(Get-StgStatePath $cfg)" -ForegroundColor Green
 } else { Write-Host "stage $Stage preview only: nothing changed. Rerun with -Apply." }
+} finally { if ($stage7Lock) { $stage7Lock.Dispose() } }

@@ -21,6 +21,11 @@ param backends array
 @description('The policy rendered by infra/gateway/render.ts, or empty: then the API answers 503 until it is rendered (Core.D2Apim.psm1 InitialPolicy).')
 param policyXml string
 
+@description('The own-usage policy rendered by infra/gateway/render.ts (<apiId>.usage.policy.xml), or empty: then no usage API is created (docs/USAGE-SELF-SERVICE.md).')
+param usagePolicyXml string = ''
+@description('Path of the separate usage API; GET /<path>/me/usage.')
+param usageApiPath string = 'ccof-usage'
+
 // scripts/Core.D2Apim.psm1 $script:InitialPolicy: the gateway never serves unchecked.
 var initialPolicy = '<policies><inbound><return-response><set-status code="503" reason="Service Unavailable" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"type":"error","error":{"type":"api_error","message":"The gateway is not configured yet."}}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
 
@@ -71,6 +76,42 @@ resource policy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   dependsOn: [operation, apimBackends]
 }
 
+// A separate API, so the Claude Messages policy never runs for usage requests and model requests
+// never reach the usage policy. Same Entra token, same subscriptionRequired: false.
+resource usageApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = if (!empty(usagePolicyXml)) {
+  parent: apim
+  name: '${apiId}-usage'
+  properties: {
+    displayName: '${apiDisplayName} usage'
+    path: usageApiPath
+    protocols: ['https']
+    subscriptionRequired: false
+  }
+}
+
+resource usageOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (!empty(usagePolicyXml)) {
+  parent: usageApi
+  name: 'get-my-usage'
+  properties: {
+    displayName: 'Get my usage'
+    method: 'GET'
+    urlTemplate: '/me/usage'
+    templateParameters: []
+    responses: []
+  }
+}
+
+resource usagePolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = if (!empty(usagePolicyXml)) {
+  parent: usageApi
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: usagePolicyXml
+  }
+  dependsOn: [usageOperation]
+}
+
 output apiResourceId string = api.id
+output usageUrl string = empty(usagePolicyXml) ? '' : '${apim.properties.gatewayUrl}/${usageApiPath}/me/usage'
 output gatewayUrl string = apim.properties.gatewayUrl
 output principalId string = apim.identity.principalId

@@ -9,7 +9,7 @@ import type { RunContext, RunDependencies } from "../src/sync/run.ts";
 import { readGroupMembers } from "../src/sync/graph.ts";
 import type { SyncConfig } from "../src/sync/config.ts";
 import { LEASE_ID } from "../src/sync/lease.ts";
-import { FakeGraph, GROUP_PRM, GROUP_STD, ManualClock, MemoryEntitlements, MemoryLeases, PERSON_A, PERSON_B, member, membersUrl, page, projectDoc } from "./helpers/sync-fakes.ts";
+import { FakeGraph, GROUP_PRM, GROUP_STD, ManualClock, MemoryEntitlements, MemoryLeases, PERSON_A, PERSON_B, PERSON_C, member, membersUrl, page, projectDoc } from "./helpers/sync-fakes.ts";
 
 const CONFIG: SyncConfig = {
   tenantId: "00000000-0000-4000-8000-000000000111",
@@ -294,4 +294,44 @@ test("no project document at all but entitlement documents present: nothing is w
   const summary = await runSync(CONFIG, h.deps, h.context);
   assert.equal(summary.outcome, "failed");
   assert.equal(h.entitlements.writes.length, 0);
+});
+
+test("retiring a project removes its memberships on the next run without reading its groups", async () => {
+  const h = harness();
+  h.graph.on(membersUrl(GROUP_STD), page([member(PERSON_A)])).on(membersUrl(GROUP_PRM), page([]));
+  await runSync(CONFIG, h.deps, h.context);
+  assert.equal((h.entitlements.docs.get(PERSON_A)?.doc.projectMemberships as unknown[]).length, 1);
+  h.projects = [projectDoc("PILOT1", { status: "retired", retiredAt: "2026-10-11T12:00:30.000Z" })];
+  h.clock.advance(60);
+  const summary = await runSync(CONFIG, h.deps, h.context);
+  assert.equal(summary.outcome, "succeeded");
+  assert.deepEqual(h.entitlements.docs.get(PERSON_A)?.doc.projectMemberships, []);
+  const line = runLine(h.lines);
+  assert.deepEqual([line.counts.groupsRead, line.counts.removedMemberships], [0, 1], "no Graph read for a retired project");
+});
+test("an admin removal-limit override lets a large directory removal through; without it the removal is withheld", async () => {
+  const people = [PERSON_A, PERSON_B, PERSON_C];
+  const tight = { ...CONFIG, maxRemovalsPerRun: 1, maxRemovalFraction: 0.1 };
+  const seed = async () => {
+    const h = harness();
+    h.graph.on(membersUrl(GROUP_STD), page(people.map((p) => member(p))), page([])).on(membersUrl(GROUP_PRM), page([]), page([]));
+    await runSync(CONFIG, h.deps, h.context);
+    h.clock.advance(60);
+    return h;
+  };
+  const withheld = await seed();
+  await runSync(tight, withheld.deps, withheld.context);
+  assert.equal(runLine(withheld.lines).counts.withheldRemovals, 3);
+
+  const allowed = await seed();
+  allowed.deps.readRemovalLimits = async () => ({ schemaVersion: 1, enabled: true, maxRemovalsPerRun: 10, maxRemovalFraction: "1", expiresAt: null, reason: "Planned reorganisation" });
+  await runSync(tight, allowed.deps, allowed.context);
+  assert.deepEqual([runLine(allowed.lines).counts.removedMemberships, runLine(allowed.lines).counts.withheldRemovals], [3, 0]);
+  assert.ok(events(allowed.lines).some((e) => e.reason === "removal_limits_from_admin"));
+
+  const unreadable = await seed();
+  unreadable.deps.readRemovalLimits = async () => { throw Object.assign(new Error("forbidden"), { code: 403 }); };
+  await runSync(tight, unreadable.deps, unreadable.context);
+  assert.equal(runLine(unreadable.lines).counts.withheldRemovals, 3, "a failed read never raises the limits");
+  assert.ok(events(unreadable.lines).some((e) => e.reason === "override_unreadable"));
 });

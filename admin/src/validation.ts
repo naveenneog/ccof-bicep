@@ -36,7 +36,8 @@ export function projectProblems(value: unknown): string[] {
     value.adminTags.some((tag) => typeof tag !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,59}$/.test(tag)) ||
     new Set(value.adminTags).size !== value.adminTags.length)) problems.push("adminTags:invalid");
   if (value.supersedes !== null) problems.push("supersedes:invalid");
-  if (value.retiredAt !== null) problems.push("retiredAt:invalid");
+  // A retired project carries its retiredAt timestamp (checked by the sync reader); an active one has null.
+  if (value.status !== "retired" && value.retiredAt !== null) problems.push("retiredAt:invalid");
   if (isObject(value.classifications)) {
     for (const [code, c] of Object.entries(value.classifications)) {
       if (!isIdentifier(code) || !isObject(c)) continue;

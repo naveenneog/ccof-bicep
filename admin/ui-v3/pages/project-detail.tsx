@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { UserIdentity } from "../components/user-identity.tsx";
 import { api, qs, useQuery } from "../lib/api.ts";
 import { ago, human, int, pct, usd, when } from "../lib/format.ts";
 import { href, navigate } from "../lib/router.ts";
@@ -61,12 +62,14 @@ export function ProjectDetail({ id, tab }: { id: string; tab: string }) {
   if (q.error) return <div className="page"><PageHeader title={id} /><ErrorNote error={q.error} retry={q.reload} /><p><a href={href("/projects")}>Back to projects</a></p></div>;
   if (!project) return <div className="page"><PageHeader title={id} /><Loading rows={8} /></div>;
   const codes = Object.keys(project.classifications ?? {}).sort();
-  const readOnly = !session.canWrite;
+  const retired = project.status === "retired";
+  const readOnly = !session.canWrite || retired;
 
   return (
     <div className="page">
       <PageHeader title={project.displayName} subtitle={<><span className="mono">{project.projectId}</span> · backend <code>{project.backendId}</code> · <StatePill state={project.status === "active" ? "available" : project.status} label={project.status} /></>}
         observedAt={q.observedAt} onRefresh={q.reload} busy={q.loading} />
+      {retired && <p className="notice notice-warn" role="status">Retired {project.retiredAt ? when(project.retiredAt) : ""}. The project is read-only. The entitlement sync removes every membership of this project at its next run.</p>}
       <Tabs label="Project sections" tabs={TABS} active={active} onChange={(t) => navigate(`/projects/${encodeURIComponent(id)}/${t}`)} />
       <div role="tabpanel" id={`panel-${active}`} aria-labelledby={`tab-${active}`} className="tab-panel">
         {saver.review ? (
@@ -85,9 +88,12 @@ export function ProjectDetail({ id, tab }: { id: string; tab: string }) {
                 }}
                 onReview={(before, after) => saver.open("Review budgets", before, after,
                   () => api(`/api/projects/${encodeURIComponent(id)}/settings`, { method: "PUT", body: { budgets: after }, ifMatch: etag }))} />
-                : active === "settings" ? <SettingsTab project={project} readOnly={readOnly}
-                  onReview={(before, after) => saver.open("Review settings", before, after,
-                    () => api(`/api/projects/${encodeURIComponent(id)}/settings`, { method: "PUT", body: changedOnly(before, after), ifMatch: etag }))} />
+                : active === "settings" ? <>
+                  <SettingsTab project={project} readOnly={readOnly}
+                    onReview={(before, after) => saver.open("Review settings", before, after,
+                      () => api(`/api/projects/${encodeURIComponent(id)}/settings`, { method: "PUT", body: changedOnly(before, after), ifMatch: etag }))} />
+                  {session.canWrite && !retired && <RetireSection project={project} etag={etag} onRetired={setProject} />}
+                </>
                   : active === "onboarding" ? <OnboardingTab project={project} codes={codes} />
                     : <ActivityTab id={id} />}
       </div>
@@ -291,19 +297,55 @@ function SettingsTab({ project, readOnly, onReview }: { project: any; readOnly: 
   );
 }
 
+// Retiring is one-way: the project becomes read-only and the sync removes all of its memberships.
+function RetireSection({ project, etag, onRetired }: { project: any; etag: string | null; onRetired: (doc: any, etag: string | null) => void }) {
+  const toast = useToast();
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const groups = Object.keys(project.classifications ?? {}).length;
+  const retire = async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await api(`/api/projects/${encodeURIComponent(project.projectId)}/retire`, { method: "POST", body: { confirmProjectId: typed }, ifMatch: etag });
+      onRetired(r.data.project, r.etag);
+      toast("Retired. Access is removed at the next entitlement sync run.");
+    } catch (e) { setError(e); } finally { setBusy(false); }
+  };
+  return (
+    <Section title="Retire project" description="Ends the project. The console has no undo for this.">
+      <ul className="plain-list">
+        <li>The project becomes read-only. Its history, budgets and audit records are kept.</li>
+        <li>At its next run the entitlement sync removes all memberships of the project's {groups} access group{groups === 1 ? "" : "s"}. These removals are not counted against the removal limits.</li>
+        <li>The Entra groups themselves are not changed or deleted.</li>
+      </ul>
+      {error ? <ErrorNote error={error} /> : null}
+      <div className="form-grid">
+        <Field label={<>Type <code>{project.projectId}</code> to confirm</>}>{(id) => <input id={id} className="input mono" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value.trim())} />}</Field>
+      </div>
+      <div className="form-actions"><Button variant="danger" busy={busy} disabled={typed !== project.projectId || busy || !etag} onClick={retire}>Retire project</Button></div>
+    </Section>
+  );
+}
+
 function ActivityTab({ id }: { id: string }) {
   const [offset, setOffset] = useState(0);
-  const audit = useQuery(`/api/v3/audit${qs({ project: id, limit: 25, offset })}`);
+  const params = qs({ project: id, limit: 25, offset });
+  const record = useQuery(`/api/v3/audit/changes${params}`);
+  // Without the permanent record (no ADMIN_CONFIG_CONTAINER), fall back to the telemetry audit lines.
+  const fallback = record.data !== null && !ok(record.data);
+  const telemetry = useQuery(fallback ? `/api/v3/audit${params}` : null);
+  const audit = fallback ? telemetry : record;
   if (audit.loading && !audit.data) return <Loading rows={5} />;
   if (audit.error) return <ErrorNote error={audit.error} retry={audit.reload} />;
   if (!ok(audit.data)) return <Empty title={`Activity is ${human(audit.data?.state)}`}>{audit.data?.permission}</Empty>;
   return (
-    <Section title="Activity" description="Changes and refusals for this project in the last 31 days, newest first.">
+    <Section title="Activity" description={fallback ? "Changes and refusals from the admin telemetry, last 31 days, newest first." : "Changes from the permanent change record, last 31 days, newest first. Refused attempts are on the Audit page (telemetry source)."}>
       <DataTable caption="Project activity" rows={audit.data.data.rows} empty={<Empty title="No activity in the last 31 days" />} columns={[
         { key: "at", label: "When", render: (r: any) => when(r.at) },
         { key: "operation", label: "Change", render: (r: any) => human(r.operation) },
         { key: "outcome", label: "Outcome", render: (r: any) => <StatePill state={r.outcome} /> },
-        { key: "actorOid", label: "Actor", render: (r: any) => <code>{String(r.actorOid ?? "").slice(0, 8)}</code> },
+        { key: "actorOid", label: "Actor", render: (r: any) => <UserIdentity objectId={r.actorOid} /> },
         { key: "changes", label: "Before → after", render: (r: any) => <ChangeList d={r.d} /> },
       ]} />
       {audit.data.data.page && <PagerLite page={audit.data.data.page} onPage={setOffset} />}

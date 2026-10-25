@@ -55,7 +55,7 @@ function Set-StgScope { param($App, [string]$Value, [string]$Type, [string]$Text
     return @{ id = $id; scopes = @($others) + @(@{ id = $id; value = $Value; type = $Type; isEnabled = $true; adminConsentDisplayName = $Text; adminConsentDescription = $Text; userConsentDisplayName = $Text; userConsentDescription = $Text }) }
 }
 
-function Invoke-Stage5 {
+function Invoke-Stage4 {
     param($Cfg, [switch]$Apply)
     $e = $Cfg.entra; $s1 = Get-StgStage $Cfg 1
     $me = Get-StgGraph 'me?$select=id'
@@ -67,7 +67,7 @@ function Invoke-Stage5 {
     if (-not $Apply) {
         Write-Host ('preview: gateway app: api://<appId>, access_as_user, v2 tokens, public client (localhost, WAM), self preauthorized' + $(if ($e.allowAzureCliClient) { ' and Azure CLI' } else { '' }))
         Write-Host 'preview: resolver app: api://<appId>, v2 tokens, no redirects or secrets'
-        if ($Cfg.stage1.includeAdmin) { Write-Host 'preview: admin app: Projects.Manage scope, CCOF.Projects.Read/Write roles, SPA redirects /api/console and /api/console-v3, assignment required' }
+        if ($Cfg.stage1.includeAdmin) { Write-Host ('preview: admin app: Projects.Manage scope, CCOF.Projects.Read/Write roles, SPA redirects /api/console and /api/console-v3, assignment required, self preauthorized' + $(if (@($Cfg.admin.extraAllowedClientIds).Count) { " and $(@($Cfg.admin.extraAllowedClientIds) -join ', ')" } else { '' })) }
         foreach ($g in $Cfg.groups) { Write-Host "preview: group $($g.projectId)/$($g.classification): $(if ($g.groupId) { "use $($g.groupId)" } else { "create or reuse '$($g.groupDisplayName)'" }), members $(@($g.members) -join ',')" }
         Write-Host 'not done here: Microsoft Graph application permission for the sync identity (sync.mode delegated-snapshot needs none); a Privileged Role Administrator runs infra/quickstart/Grant-SyncGraphPermissions.ps1 if approved.'
         return $null
@@ -94,7 +94,10 @@ function Invoke-Stage5 {
         $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ identifierUris = (Join-StgUnique $adm.identifierUris @("api://$($adm.appId)")); appRoles = $roles
             api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = $scope.scopes }
             spa = @{ redirectUris = (Join-StgUnique $adm.spa.redirectUris @("https://$hostName/api/console", "https://$hostName/api/console-v3")) } }
-        $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $adm @($adm.appId) $scope.id) } }
+        # ADMIN_ALLOWED_CLIENT_IDS also lists admin.extraAllowedClientIds (Staged.Application.ps1); without
+        # preauthorization those clients cannot get a token without a consent prompt (AADSTS65001).
+        $adminClients = @($adm.appId) + @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
+        $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $adm $adminClients $scope.id) } }
         $admSp = Get-StgServicePrincipal $adm.appId -Apply
         $null = Send-StgGraph 'patch' "servicePrincipals/$($admSp.id)" @{ appRoleAssignmentRequired = $true }
         $adm = Get-StgAppById $adm.appId
@@ -132,9 +135,16 @@ function Invoke-Stage5 {
     Assert-Stg (@($gwNow.identifierUris) -contains "api://$($gw.appId)") 'gateway identifier URI missing'
     Assert-Stg ($gwNow.api.requestedAccessTokenVersion -eq 2) 'gateway tokens are not v2'
     Assert-Stg (@($gwNow.api.oauth2PermissionScopes | Where-Object { $_.value -ceq 'access_as_user' -and $_.isEnabled }).Count -eq 1) 'access_as_user scope missing'
+    if ($adm) {
+        $admNow = Get-StgAppById $adm.appId
+        $admScopeId = @($admNow.api.oauth2PermissionScopes | Where-Object { $_.value -ceq 'Projects.Manage' })[0].id
+        foreach ($cid in $adminClients) {
+            Assert-Stg (@($admNow.api.preAuthorizedApplications | Where-Object { $_.appId -ieq $cid -and @($_.delegatedPermissionIds) -contains $admScopeId }).Count -eq 1) "admin app does not preauthorize client $cid for Projects.Manage"
+        }
+    }
     $result = @{ registrations = $registrations; gatewayIdentifierUri = "api://$($gw.appId)"; gatewayServicePrincipalId = $gwSp.id
         resolverServicePrincipalId = $resSp.id; admin = $admin; groups = $groups; azureCliClientAllowed = [bool]$e.allowAzureCliClient
         graphApplicationPermission = 'not granted (sync.mode delegated-snapshot)' }
-    $null = Write-StgEvidence 'stage5.verify.json' $result
+    $null = Write-StgEvidence 'stage4.verify.json' $result
     return $result
 }

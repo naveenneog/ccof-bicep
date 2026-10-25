@@ -1,5 +1,5 @@
-// Stage 3: Cosmos database and container structure only. No documents, no data-role definitions or
-// assignments (Stage 4) and no settings. The container list matches the quickstart's
+// Stage 2: Cosmos database and container structure only. No documents, no data-role definitions or
+// assignments (Stage 3) and no settings. The container list matches the quickstart's
 // (infra/quickstart/modules/cosmos-data.bicep, cosmosContainers); tests/Test-StagedStages.ps1 compares
 // them. adminConfig is the admin catalog container (infra/admin/admin-v2-catalog.bicep), only with
 // includeAdmin.

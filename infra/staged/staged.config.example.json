@@ -52,7 +52,13 @@
     }
   },
   "network": {
-    "mode": "create",
+    "mode": "verify",
+    "modeNote": "verify (default): the customer builds the VNet, subnets, private DNS zones, private endpoints and VNet integrations; Stage 6 only checks them. existing: the driver creates private endpoints and integrations in these subnets. create: lab only; the driver also creates the VNet from the create block.",
+    "existing": {
+      "functionsSubnetId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000003/resourceGroups/REPLACE-network-rg/providers/Microsoft.Network/virtualNetworks/REPLACE-vnet/subnets/snet-functions",
+      "privateEndpointSubnetId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000003/resourceGroups/REPLACE-network-rg/providers/Microsoft.Network/virtualNetworks/REPLACE-vnet/subnets/snet-private-endpoints",
+      "apimSubnetId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000003/resourceGroups/REPLACE-network-rg/providers/Microsoft.Network/virtualNetworks/REPLACE-vnet/subnets/snet-apim"
+    },
     "create": {
       "vnetName": "ccofstg-vnet",
       "addressSpace": "10.64.0.0/16",

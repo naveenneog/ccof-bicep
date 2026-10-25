@@ -54,6 +54,27 @@ test("explicit Refresh bypasses the V3 server cache and Overview projects are ra
   assert.equal(queries.length, 2);
 });
 
+test("directory user names require admin authentication and a bounded POST; IDs remain in the response", async () => {
+  const { deps, call } = setup();
+  const objectId = "00000000-0000-4000-8000-000000000001";
+  const requests: string[][] = [];
+  deps.directory = { lookup: async (ids) => {
+    requests.push(ids);
+    return { state: "available", observedAt: NOW.toISOString(), data: { users: ids.map((id) => ({
+      objectId: id, displayName: "Example User", userPrincipalName: "example@example.invalid", state: "resolved" as const,
+    })) } };
+  } };
+  assert.equal((await call("directory/users", "POST", { objectIds: [objectId] })).status, 200);
+  assert.equal((data(await call("directory/users", "POST", { objectIds: [objectId] })).data as Doc).users[0].objectId, objectId);
+  assert.equal((await call("directory/users")).status, 405);
+  assert.equal((await call("directory/users?extra=1", "POST", { objectIds: [objectId] })).status, 400);
+  assert.equal((await call("directory/users", "POST", { objectIds: ["bad"] })).status, 400);
+  assert.equal(requests.length, 2);
+  deps.authenticate = async () => { throw new ApiError(401, "bearer_token_required"); };
+  assert.equal((await call("directory/users", "POST", { objectIds: [objectId] })).status, 401);
+  assert.equal(requests.length, 2);
+});
+
 test("a denied configured rate-card store never silently substitutes packaged prices", async () => {
   const { deps, call } = setup();
   deps.catalogStore = { read: async () => { throw new Error("permission_denied"); }, save: async () => null };
@@ -61,10 +82,10 @@ test("a denied configured rate-card store never silently substitutes packaged pr
   assert.equal((await call("version")).status, 200);
 });
 
-test("v3 fails closed without authentication and reports 3.0.0", async () => {
+test("v3 fails closed without authentication and reports 3.2.0", async () => {
   const { deps, call } = setup();
   const v = await call("version");
-  assert.equal(data(v).version, "3.0.0");
+  assert.equal(data(v).version, "3.2.0");
   deps.authenticate = async () => { throw new ApiError(401, "bearer_token_required"); };
   assert.equal((await call("version")).status, 401);
   deps.authenticate = null;

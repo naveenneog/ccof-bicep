@@ -21,6 +21,7 @@ export const NAV = [
   { id: "foundry", label: "Foundry", icon: "foundry" },
   { id: "health", label: "Health", icon: "health" },
   { id: "audit", label: "Audit", icon: "audit" },
+  { id: "removal-limits", label: "Removal limits", icon: "shield" },
   { id: "cost-definitions", label: "Cost definitions", icon: "cost" },
   { id: "help", label: "Help", icon: "help" },
 ];

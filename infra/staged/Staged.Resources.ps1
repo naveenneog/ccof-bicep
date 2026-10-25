@@ -70,6 +70,63 @@ function Get-Stage1Parameters { param($Cfg)
     return $p
 }
 
+function Get-StgStage1Deployment {
+    param($Cfg)
+    try { return Invoke-StgAzJson @('deployment', 'group', 'show', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', 'stage1-services') }
+    catch { return $null }
+}
+
+function Assert-StgStage1Parameters {
+    param($Deployment, $Cfg)
+    $expected = Get-Stage1Parameters $Cfg
+    foreach ($key in $expected.Keys) {
+        if (-not $Deployment.properties.parameters.ContainsKey($key)) { throw "stage1_parameters_missing: previous deployment does not record parameter '$key'; use a new empty resource group or supply a reviewed migration." }
+        $actualJson = ConvertTo-StgCanonical $Deployment.properties.parameters[$key].value | ConvertTo-Json -Depth 100 -Compress
+        $expectedJson = ConvertTo-StgCanonical $expected[$key] | ConvertTo-Json -Depth 100 -Compress
+        if ($actualJson -cne $expectedJson) { throw "stage1_parameters_changed: '$key' differs from the succeeded Stage 1 deployment; Stage 1 is create-only. Use a new prefix/RG for a new deployment." }
+    }
+}
+
+function Get-StgStage1Outputs {
+    param($Deployment)
+    $out = @{}
+    foreach ($key in $Deployment.properties.outputs.Keys) { $out[$key] = $Deployment.properties.outputs[$key].value }
+    return $out
+}
+
+function Get-StgStage1StableOutput {
+    param($Out)
+    $principals = @{}; $clientIds = @{}
+    foreach ($app in $Out.functionApps) { $principals[$app.key] = $app.service.principalId; $clientIds[$app.key] = $app.service.clientId }
+    return [ordered]@{
+        names = $Out.names
+        principals = $principals
+        clientIds = $clientIds
+        cosmosEndpoint = $Out.cosmosEndpoint
+        cosmosAccountId = $Out.cosmosAccountId
+        workspaceId = $Out.workspaceId
+        workspaceCustomerId = $Out.workspaceCustomerId
+        apimName = $Out.apimName
+        apimId = $Out.apimId
+        apimPrincipalId = $Out.apimPrincipalId
+        apimGatewayUrl = $Out.apimGatewayUrl
+        apimStatus = $Out.apimStatus
+        foundryAccountId = $Out.foundryAccountId
+        foundryAnthropicUrl = $Out.foundryAnthropicUrl
+    }
+}
+
+function New-StgStage1Result {
+    param($Cfg, $Out)
+    $principals = @{}; $clientIds = @{}
+    foreach ($a in $Out.functionApps) { $principals[$a.key] = $a.service.principalId; $clientIds[$a.key] = $a.service.clientId }
+    $verify = Test-Stage1 -Cfg $Cfg -Out $Out
+    return @{ names = $Out.names; principals = $principals; clientIds = $clientIds; cosmosEndpoint = $Out.cosmosEndpoint; cosmosAccountId = $Out.cosmosAccountId
+        workspaceId = $Out.workspaceId; workspaceCustomerId = $Out.workspaceCustomerId; apimName = $Out.apimName; apimId = $Out.apimId
+        apimPrincipalId = $Out.apimPrincipalId; apimGatewayUrl = $Out.apimGatewayUrl; apimStatus = $Out.apimStatus
+        foundryAccountId = $Out.foundryAccountId; foundryAnthropicUrl = $Out.foundryAnthropicUrl; verify = $verify }
+}
+
 function Invoke-Stage1 {
     param($Cfg, [switch]$Apply)
     $exists = (Invoke-QsAz @('group', 'exists', '--subscription', $Cfg.subscriptionId, '--name', $Cfg.resourceGroup)) -eq 'true'
@@ -78,70 +135,138 @@ function Invoke-Stage1 {
         $null = Invoke-QsAz @('group', 'create', '--subscription', $Cfg.subscriptionId, '--name', $Cfg.resourceGroup, '--location', $Cfg.location, '--tags', 'workload=claude-code-on-foundry', 'deployment=staged', '--output', 'none')
     }
     $items = @(Invoke-StgAzJson @('resource', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup))
-    $out = $null
-    $previous = $null
-    if ($items.Count -and -not (Read-StgState $Cfg).stages['1']) { $previous = try { Invoke-StgAzJson @('deployment', 'group', 'show', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', 'stage1-services') } catch { $null } }
-    $guarded = $Cfg.sharedResourceGroup -or ($previous -and $previous.properties.provisioningState -cne 'Succeeded')
-    if ($items.Count -and -not (Read-StgState $Cfg).stages['1'] -and $guarded) {
-        # Shared RG, or a rerun after a failed apply: resources that are not this deployment's (names not
-        # starting with the prefix) must show no Modify or Delete in what-if.
+    $state = Read-StgState $Cfg
+    $saved = $state.stages['1']
+
+    # A verified local Stage 1 is read-only on rerun. Never redeploy an Incremental template
+    # over a shared RG just because this command was invoked with -Apply.
+    if ($saved) {
+        $null = Get-StgStage $Cfg 1
+        $previous = Get-StgStage1Deployment $Cfg
+        if (-not $previous -or $previous.properties.provisioningState -cne 'Succeeded') { throw 'stage1_state_orphaned: local state says Stage 1 completed but its ARM deployment is not Succeeded; inspect the deployment before recovery.' }
+        Assert-StgStage1Parameters $previous $Cfg
+        if (-not $Apply) { Write-Host 'preview: Stage 1 is already verified for this target and config; no resource write will occur.'; return $null }
+        Write-Host 'verify-only: Stage 1 is already verified for this target and config; no resource write will occur.'
+        return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
+    }
+
+    $previous = if ($items.Count) { Get-StgStage1Deployment $Cfg } else { $null }
+    $guarded = [bool]$Cfg.sharedResourceGroup -or ($previous -and $previous.properties.provisioningState -cne 'Succeeded')
+    if ($items.Count -and $guarded) {
+        # Shared RG or a rerun after failed apply: Modify is allowed only for exact resource IDs
+        # recorded by this deployment's prior ARM operations, not any unrelated name that shares prefix.
+        $priorTargets = if ($previous) { Get-StgStage1TargetIds $Cfg } else { @() }
         $preview = Invoke-QsAz @('deployment', 'group', 'what-if', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', 'stage1-services',
             '--template-file', (Join-Path $script:StagedDir 'main.bicep'), '--parameters', "@$(Write-StgParameters $Cfg 'stage1-services' (Get-Stage1Parameters $Cfg))", '--no-pretty-print', '--output', 'json')
-        # Owned: any resource or parent name below the RG starts with the prefix (children such as
-        # blobServices/default or a diagnostic setting belong to their owned parent).
-        $isOwned = { param($id) $tail = ($id -split '/resourceGroups/[^/]+/providers/', 2)[1]; [bool](@(($tail -split '/') | Where-Object { $_.ToLowerInvariant().StartsWith($Cfg.stage1.prefix) }).Count) }
-        $risky = @($preview.changes | Where-Object { $_.changeType -in 'Modify', 'Delete', 'Deploy' -and -not (& $isOwned $_.resourceId) })
+        $risky = Get-StgUnsafeSharedChanges -Changes @($preview.changes) -PriorStage1TargetIds $priorTargets
         $null = Write-StgEvidence 'stage1.shared-rg.what-if.json' @($preview.changes | ForEach-Object { [ordered]@{ change = $_.changeType; id = $_.resourceId } })
-        if ($risky.Count) { throw "shared_rg_changes: what-if would change $($risky.Count) existing resources in $($Cfg.resourceGroup): $(@($risky | ForEach-Object { "$($_.changeType) $($_.resourceId)" }) -join '; ')" }
-        Write-Host "guarded apply: $($items.Count) existing resources; none outside this deployment changes (what-if)." 
+        foreach ($change in $preview.changes) { Write-Host ("  {0,-8} {1}" -f $change.changeType, ($change.resourceId -replace '^/subscriptions/[^/]+/resourceGroups/', '')) }
+        if ($risky.Count) { throw "shared_rg_changes: what-if would change $($risky.Count) resources not recorded by this Stage 1 deployment: $(@($risky | ForEach-Object { "$($_.changeType) $($_.resourceId)" }) -join '; ')" }
+        Write-Host "guarded preview: $($items.Count) existing resources; no unrelated Modify or Delete."
+        if (-not $Apply -and -not ($previous -and $previous.properties.provisioningState -ceq 'Succeeded')) {
+            Write-Host 'Stage 1 what-if is complete; rerun with -Apply to provision the approved resources.'
+            return $null
+        }
     }
-    elseif ($items.Count -and -not (Read-StgState $Cfg).stages['1']) {
-        # Resume: a stage1-services deployment that already succeeded here is verified, not redeployed.
-        $previous = try { Invoke-StgAzJson @('deployment', 'group', 'show', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', 'stage1-services') } catch { $null }
-        if (-not $previous -or $previous.properties.provisioningState -cne 'Succeeded') { throw "rg_not_empty: $($Cfg.resourceGroup) holds $($items.Count) resources and no succeeded stage1-services deployment; Stage 1 deploys only into an empty RG (ARM is upsert), or set sharedResourceGroup: true to deploy beside them after a what-if shows no change to them." }
-        if (-not $Apply) { Write-Host 'preview: stage1-services already succeeded here; -Apply verifies it and records its outputs without redeploying.'; return $null }
-        Write-Host "resume: stage1-services succeeded at $($previous.properties.timestamp); verifying it instead of redeploying."
-        $out = @{}; foreach ($k in $previous.properties.outputs.Keys) { $out[$k] = $previous.properties.outputs[$k].value }
+
+    if ($previous -and $previous.properties.provisioningState -ceq 'Succeeded') {
+        # This deployment already completed, but local state was lost: resume only if every Stage 1
+        # parameter matches the ARM deployment record. A shared RG is still read-only here.
+        Assert-StgStage1Parameters $previous $Cfg
+        if (-not $Apply) { Write-Host 'preview: matching succeeded Stage 1 deployment found; no resource write will occur.'; return $null }
+        Write-Host 'verify-only: matching succeeded Stage 1 deployment found; no resource write will occur.'
+        return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
     }
-    if (-not $out) { $out = Invoke-StgBicep -Cfg $Cfg -Template 'main.bicep' -Name 'stage1-services' -Parameters (Get-Stage1Parameters $Cfg) -Apply:$Apply }
-    if (-not $Apply) { return $null }
-    $principals = @{}; $clientIds = @{}
-    foreach ($a in $out.functionApps) { $principals[$a.key] = $a.service.principalId; $clientIds[$a.key] = $a.service.clientId }
-    $verify = Test-Stage1 -Cfg $Cfg -Out $out
-    return @{ names = $out.names; principals = $principals; clientIds = $clientIds; cosmosEndpoint = $out.cosmosEndpoint; cosmosAccountId = $out.cosmosAccountId
-        workspaceId = $out.workspaceId; workspaceCustomerId = $out.workspaceCustomerId; apimName = $out.apimName; apimId = $out.apimId
-        apimPrincipalId = $out.apimPrincipalId; apimGatewayUrl = $out.apimGatewayUrl; apimStatus = $out.apimStatus
-        foundryAccountId = $out.foundryAccountId; foundryAnthropicUrl = $out.foundryAnthropicUrl; verify = $verify }
+
+    if ($items.Count -and -not $Cfg.sharedResourceGroup -and -not $previous) {
+        throw "rg_not_empty: $($Cfg.resourceGroup) holds $($items.Count) resources and no succeeded stage1-services deployment; Stage 1 targets an empty RG unless sharedResourceGroup is explicitly enabled."
+    }
+    if (-not $Apply) { return Invoke-StgBicep -Cfg $Cfg -Template 'main.bicep' -Name 'stage1-services' -Parameters (Get-Stage1Parameters $Cfg) }
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'main.bicep' -Name 'stage1-services' -Parameters (Get-Stage1Parameters $Cfg) -Apply
+    return New-StgStage1Result -Cfg $Cfg -Out $out
 }
 
 function Test-Stage1 {
     param($Cfg, $Out)
     $sub = $Cfg.subscriptionId; $rg = $Cfg.resourceGroup; $v = [ordered]@{ apps = @() }
+    $state = Read-StgState $Cfg
+    # Stage 1 is also the resource inventory recheck after later stages. Read their saved output only
+    # when that stage's own config still matches; do not require its old prerequisite-output hash here.
+    $schemaRecord = $state.stages['2']; $grantsRecord = $state.stages['3']; $configRecord = $state.stages['5']; $networkRecord = $state.stages['6']; $codeRecord = $state.stages['7']
+    $network = if ($networkRecord -and $networkRecord.configHash -ceq (Get-StgStageInput $Cfg 6)) { $networkRecord.outputs } else { $null }
+    $schema = if ($schemaRecord -and $schemaRecord.configHash -ceq (Get-StgStageInput $Cfg 2)) { $schemaRecord.outputs } else { $null }
+    $grantsStage = if ($grantsRecord -and $grantsRecord.configHash -ceq (Get-StgStageInput $Cfg 3)) { $grantsRecord.outputs } else { $null }
+    $config = if ($configRecord -and $configRecord.configHash -ceq (Get-StgStageInput $Cfg 5)) { $configRecord.outputs } else { $null }
+    $code = if ($codeRecord -and $codeRecord.configHash -ceq (Get-StgStageInput $Cfg 7)) { $codeRecord.outputs } else { $null }
     foreach ($a in $Out.functionApps) {
         $site = Get-StgSite $Cfg $a.service.name
         $settings = @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $sub, '--resource-group', $rg, '--name', $a.service.name))
         Assert-Stg ($site.publicNetworkAccess -ceq $Cfg.stage1.functionsPublicNetworkAccess) "$($a.service.name) PNA $($site.publicNetworkAccess)"
-        Assert-Stg (-not $site.virtualNetworkSubnetId) "$($a.service.name) is already VNet-attached"
-        Assert-Stg ($settings.Count -eq 0) "$($a.service.name) has $($settings.Count) application settings"
+        $expectedSubnet = if ($network) { $network.functionsSubnetId } else { '' }
+        Assert-Stg ($site.virtualNetworkSubnetId -ieq $expectedSubnet) "$($a.service.name) VNet subnet is '$($site.virtualNetworkSubnetId)', expected '$expectedSubnet' for completed stages"
+        Assert-Stg ($site.httpsOnly -eq $true) "$($a.service.name) does not require HTTPS"
+        Assert-Stg ($site.runtimeName -ceq 'node' -and $site.runtimeVersion -ceq '22') "$($a.service.name) runtime is $($site.runtimeName) $($site.runtimeVersion), expected Node 22"
+        Assert-Stg ($site.ftpsState -ceq 'Disabled') "$($a.service.name) FTPS state is $($site.ftpsState)"
+        $settingNames = @($settings | ForEach-Object { $_.name } | Sort-Object)
+        $expectedSettings = if ($config) { @($config.verify.settings[$a.key] | Sort-Object) } else { @() }
+        if ($a.key -ceq 'sync' -and $code) {
+            $snapshotToggle = @($settings | Where-Object { $_.name -ceq 'AzureWebJobs.snapshotApply.Disabled' })
+            Assert-Stg ($snapshotToggle.Count -eq 1 -and $snapshotToggle[0].value -ceq 'true') 'snapshotApply must remain disabled after the delegated snapshot cleanup'
+            $expectedSettings += 'AzureWebJobs.snapshotApply.Disabled'
+            $expectedSettings = @($expectedSettings | Sort-Object)
+        }
+        Assert-Stg (($settingNames -join '|') -ceq ($expectedSettings -join '|')) "$($a.service.name) application setting names differ from completed Stage 5 (actual=$($settingNames -join ', '); expected=$($expectedSettings -join ', '))"
         Assert-Stg ($a.service.principalId -match $script:Guid) "$($a.service.name) has no principal"
-        $v.apps += [ordered]@{ app = $a.key; name = $a.service.name; publicNetworkAccess = $site.publicNetworkAccess; settings = $settings.Count; principalId = $a.service.principalId }
+        $v.apps += [ordered]@{ app = $a.key; name = $a.service.name; publicNetworkAccess = $site.publicNetworkAccess; subnet = $site.virtualNetworkSubnetId; settings = $settings.Count; principalId = $a.service.principalId }
     }
     $ownedStorage = @($Out.names.apps.Values | ForEach-Object { $_.storageAccount })
-    foreach ($s in @(Invoke-StgAzJson @('storage', 'account', 'list', '--subscription', $sub, '--resource-group', $rg) | Where-Object { $ownedStorage -contains $_.name })) {
-        Assert-Stg ($s.allowSharedKeyAccess -eq $false -and $s.networkRuleSet.defaultAction -ceq 'Deny') "$($s.name) storage is not keyless/deny"
+    $storageItems = @(Invoke-StgAzJson @('storage', 'account', 'list', '--subscription', $sub, '--resource-group', $rg) | Where-Object { $ownedStorage -contains $_.name })
+    Assert-Stg ($storageItems.Count -eq $ownedStorage.Count) "found $($storageItems.Count) deployed storage accounts; expected $($ownedStorage.Count)"
+    foreach ($s in $storageItems) {
+        Assert-Stg ($s.publicNetworkAccess -ceq $Cfg.stage1.storagePublicNetworkAccess) "$($s.name) storage PNA is $($s.publicNetworkAccess)"
+        Assert-Stg ($s.allowSharedKeyAccess -eq $false -and $s.allowBlobPublicAccess -eq $false) "$($s.name) storage keys/blob public access are enabled"
+        Assert-Stg ($s.networkRuleSet.defaultAction -ceq 'Deny' -and $s.networkRuleSet.bypass -ceq 'None') "$($s.name) storage firewall is not deny/none"
+        Assert-Stg ($s.minimumTlsVersion -ceq 'TLS1_2' -and $s.enableHttpsTrafficOnly -eq $true) "$($s.name) storage TLS/HTTPS policy is not secure"
     }
     $cosmos = @(Invoke-StgAzJson @('cosmosdb', 'list', '--subscription', $sub, '--resource-group', $rg) | Where-Object { $_.name -ceq $Out.names.cosmosAccount })[0]
+    Assert-Stg ($null -ne $cosmos) 'The Stage 1 Cosmos account is missing'
+    Assert-Stg ($null -ne $cosmos) 'The Stage 1 Cosmos account is missing'
+    Assert-Stg ($cosmos.publicNetworkAccess -ceq $Cfg.stage1.cosmosPublicNetworkAccess) "Cosmos publicNetworkAccess is $($cosmos.publicNetworkAccess)"
     Assert-Stg ($cosmos.disableLocalAuth -eq $true) 'Cosmos local auth is enabled'
-    Assert-Stg (@(Invoke-StgAzJson @('cosmosdb', 'sql', 'database', 'list', '--subscription', $sub, '--resource-group', $rg, '--account-name', $cosmos.name)).Count -eq 0) 'Cosmos already has a database'
+    $databases = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'database', 'list', '--subscription', $sub, '--resource-group', $rg, '--account-name', $cosmos.name))
+    if ($schema) {
+        Assert-Stg (@($databases | Where-Object { $_.name -ceq $schema.databaseName }).Count -eq 1) "Stage 2 database $($schema.databaseName) is missing"
+    } else {
+        Assert-Stg ($databases.Count -eq 0) 'Cosmos database exists before Stage 2'
+    }
     # Only assignments on this deployment's resources count: a shared RG has its own, inherited ones.
-    $owned = @($Out.names.logAnalyticsWorkspace, $Out.names.cosmosAccount) + @($Out.names.identities.Values) + @($Out.names.apps.Values | ForEach-Object { $_.functionApp, $_.plan, $_.storageAccount, $_.appInsights }) + @($Out.apimName, $Cfg.stage1.foundry.accountName) | Where-Object { $_ } | ForEach-Object { "$_".ToLowerInvariant() }
-    $grants = @((Get-StgArm "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { Test-StgOwnedScope $_.properties.scope $owned })
-    Assert-Stg ($grants.Count -eq 0) "$($grants.Count) role assignments on this deployment's resources"
+    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
+    $grants = @((Get-StgArm "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object {
+        (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and (!$grantsStage -or $_.properties.principalId -ine $grantsStage.apimPrincipalId)
+    })
+    $expectedGrantCount = if ($grantsStage) { [int]$grantsStage.verify.rgScopedAssignments } else { 0 }
+    Assert-Stg ($grants.Count -eq $expectedGrantCount) "found $($grants.Count) Azure role assignments on this deployment's resources; completed Stage 3 records $expectedGrantCount"
+    $cosmosRoles = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $sub, '--resource-group', $rg, '--account-name', $cosmos.name))
+    $expectedCosmosRoles = if ($grantsStage) { @($grantsStage.verify.cosmos).Count } else { 0 }
+    Assert-Stg ($cosmosRoles.Count -eq $expectedCosmosRoles) "found $($cosmosRoles.Count) Cosmos data assignments; completed Stage 3 records $expectedCosmosRoles"
     $v.cosmos = @{ name = $cosmos.name; publicNetworkAccess = $cosmos.publicNetworkAccess; localAuthDisabled = $cosmos.disableLocalAuth }
-    $v.roleAssignmentsOnDeployedResources = 0
+    $v.roleAssignmentsOnDeployedResources = $grants.Count
+    $v.cosmosDataAssignments = $cosmosRoles.Count
+    $v.applicationInsights = @()
+    foreach ($app in $Out.functionApps) {
+        if (-not $app.service.appInsightsId) { continue }
+        $insights = Get-StgArm $app.service.appInsightsId '2020-02-02'
+        Assert-Stg ($insights.properties.DisableLocalAuth -eq $true) "$($insights.name) App Insights local authentication is enabled"
+        Assert-Stg ($insights.properties.WorkspaceResourceId -ieq $Out.workspaceId) "$($insights.name) targets workspace $($insights.properties.WorkspaceResourceId), expected $($Out.workspaceId)"
+        $v.applicationInsights += [ordered]@{ name = $insights.name; localAuthDisabled = $insights.properties.DisableLocalAuth; workspaceId = $insights.properties.WorkspaceResourceId }
+        $siteId = $app.service.id
+        $diagnostics = @( (Get-StgArm "$siteId/providers/Microsoft.Insights/diagnosticSettings" '2021-05-01-preview').value | Where-Object { $_.name -ceq 'ccof-function-logs' })
+        Assert-Stg ($diagnostics.Count -eq 1 -and $diagnostics[0].properties.workspaceId -ieq $Out.workspaceId) "$($app.service.name) FunctionAppLogs diagnostic setting is missing or targets another workspace"
+    }
     if ($Cfg.stage1.foundry.create) {
         $fa = Get-StgArm $Out.foundryAccountId '2025-06-01'
         $fdeps = @((Get-StgArm "$($Out.foundryAccountId)/deployments" '2025-06-01').value)
+        Assert-Stg ($fa.properties.publicNetworkAccess -ceq $Cfg.stage1.foundry.publicNetworkAccess) "Foundry publicNetworkAccess is $($fa.properties.publicNetworkAccess)"
         Assert-Stg ($fa.properties.disableLocalAuth -eq $true) 'Foundry local auth is enabled'
         foreach ($d in @($Cfg.stage1.foundry.deployments)) {
             $m = @($fdeps | Where-Object { $_.name -ceq $d.name -and $_.properties.provisioningState -ceq 'Succeeded' })
@@ -149,21 +274,95 @@ function Test-Stage1 {
         }
         $v.foundry = [ordered]@{ name = $fa.name; publicNetworkAccess = $fa.properties.publicNetworkAccess; localAuthDisabled = $fa.properties.disableLocalAuth; deployments = @($fdeps | ForEach-Object { "$($_.name)=$($_.properties.model.name)@$($_.properties.model.version) $($_.sku.name)/$($_.sku.capacity)" }) }
     }
+    if ($Out.apimId) {
+        $apim = Get-StgArm $Out.apimId '2024-05-01'
+        Assert-Stg ($apim.properties.publicNetworkAccess -ceq 'Enabled') "New APIM bootstrap PNA is $($apim.properties.publicNetworkAccess), expected Enabled; Stage 6 verifies outbound VNet integration"
+        Assert-Stg ($apim.identity.principalId -ieq $Out.apimPrincipalId) 'New APIM system-assigned identity differs from the Stage 1 output'
+        Assert-Stg ($apim.sku.name -ceq $Cfg.stage1.apimSku) "APIM SKU is $($apim.sku.name), expected $($Cfg.stage1.apimSku)"
+        $diag = @( (Get-StgArm "$($Out.apimId)/providers/Microsoft.Insights/diagnosticSettings" '2021-05-01-preview').value | Where-Object { $_.name -ceq 'ccof-gateway-logs' })
+        Assert-Stg ($diag.Count -eq 1 -and $diag[0].properties.workspaceId -ieq $Out.workspaceId) 'APIM gateway diagnostics are missing or target another workspace'
+        $v.apim = @{ sku = $apim.sku.name; publicNetworkAccess = $apim.properties.publicNetworkAccess; principalId = $apim.identity.principalId; diagnosticWorkspaceId = $diag[0].properties.workspaceId }
+    }
     $v.apimStatus = $Out.apimStatus
     $null = Write-StgEvidence 'stage1.verify.json' $v
     return $v
 }
 
-# ---------------------------------------------------------------- stage 2: network
+# ---------------------------------------------------------------- stage 6: network (last setup stage)
+# The customer usually builds the network. network.mode verify (the default) changes nothing and runs
+# the read-only check scripts/manual/Test-NetworkConfiguration.ps1. Modes existing and create are
+# opt-in: the driver creates private endpoints (and, for create, the VNet) and the integrations.
 
-function Invoke-Stage2 {
+function Get-StgNetworkVerifyArguments {
+    param($Cfg, $Stage1)
+    $e = $Cfg.network.existing; $sub = $Cfg.subscriptionId; $rg = $Cfg.resourceGroup
+    $apps = @($Stage1.names.apps.Keys | Sort-Object)
+    $arguments = [ordered]@{
+        SubscriptionId = $sub
+        VnetResourceId = ($e.functionsSubnetId -replace '/subnets/[^/]+$', '')
+        FlexSubnet = ($e.functionsSubnetId -split '/')[-1]
+        PeSubnet = ($e.privateEndpointSubnetId -split '/')[-1]
+        CosmosResourceId = $Stage1.cosmosAccountId
+        StorageAccountIds = @($apps | ForEach-Object { "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Storage/storageAccounts/$($Stage1.names.apps[$_].storageAccount)" })
+        FunctionAppIds = @($apps | ForEach-Object { "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$($Stage1.names.apps[$_].functionApp)" })
+    }
+    if ($Stage1.apimName -and $Cfg.stage1.apimSku -in 'StandardV2', 'PremiumV2') {
+        $arguments.ApimSubnet = ($e.apimSubnetId -split '/')[-1]
+        $arguments.ApimResourceId = $Stage1.apimId
+    }
+    $foundry = @($Cfg.backends | Where-Object privateEndpoint | ForEach-Object { "/subscriptions/$($_.subscriptionId)/resourceGroups/$($_.resourceGroup)/providers/Microsoft.CognitiveServices/accounts/$($_.accountName)" } | Select-Object -Unique)
+    if ($foundry.Count) { $arguments.FoundryResourceId = $foundry }
+    return $arguments
+}
+
+function Invoke-StgNetworkVerify {
+    param($Cfg, $Stage1, [switch]$Apply)
+    $arguments = Get-StgNetworkVerifyArguments $Cfg $Stage1
+    $check = Join-Path $script:Repo 'scripts/manual/Test-NetworkConfiguration.ps1'
+    if (-not $Apply) {
+        Write-Host "preview: network.mode verify: no network resource is created or changed."
+        Write-Host "preview: -Apply runs $check (read-only) on VNet $(($arguments.VnetResourceId -split '/')[-1]): subnets $(@($arguments.FlexSubnet, $arguments.PeSubnet, $arguments.ApimSubnet | Where-Object { $_ }) -join ', '); $($arguments.FunctionAppIds.Count) Function Apps, $($arguments.StorageAccountIds.Count) storage accounts, Cosmos$(if ($arguments.ApimResourceId) { ', APIM' })$(if ($arguments.FoundryResourceId) { ", $(@($arguments.FoundryResourceId).Count) Foundry account(s)" })."
+        return $null
+    }
+    $resultPath = Join-Path $script:StateDir 'network-check.json'
+    Remove-Item -LiteralPath $resultPath -ErrorAction SilentlyContinue
+    & $check @arguments -ResultPath $resultPath | Out-Host
+    $exit = $LASTEXITCODE
+    Assert-Stg (Test-Path -LiteralPath $resultPath) "network check wrote no results (exit $exit)"
+    $rows = @(Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json)
+    $fail = @($rows | Where-Object State -ceq 'FAIL')
+    $v = [ordered]@{ mode = 'verify'; check = 'scripts/manual/Test-NetworkConfiguration.ps1'; pass = @($rows | Where-Object State -ceq 'PASS').Count; warn = @($rows | Where-Object State -ceq 'WARN').Count; fail = $fail.Count; rows = $rows }
+    $null = Write-StgEvidence 'stage6.verify.json' $v
+    Assert-Stg ($fail.Count -eq 0 -and $exit -eq 0) "the customer network check reported $($fail.Count) FAIL rows: $(@($fail | ForEach-Object { "$($_.Area) $($_.Item): $($_.Detail)" }) -join '; '). Fix the network and rerun Stage 6; nothing was changed."
+    return [ordered]@{ mode = 'verify'; vnetId = $arguments.VnetResourceId; functionsSubnetId = $Cfg.network.existing.functionsSubnetId
+        privateEndpointSubnetId = $Cfg.network.existing.privateEndpointSubnetId; apimSubnetId = "$($Cfg.network.existing.apimSubnetId)"; verify = $v }
+}
+
+function Invoke-Stage6 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1
-    $foundryPrivate = @($Cfg.backends | Where-Object { $_.privateEndpoint -and $_.subscriptionId -ieq $Cfg.subscriptionId -and $_.resourceGroup -ieq $Cfg.resourceGroup } | ForEach-Object { $_.accountName } | Select-Object -Unique)
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage2-network.bicep' -Name 'stage2-network' -Apply:$Apply -Parameters @{ names = $s1.names; location = $Cfg.location; tags = $Cfg.tags; network = $Cfg.network; foundryAccounts = @($foundryPrivate) }
+    if ($Cfg.network.mode -eq 'verify') { return Invoke-StgNetworkVerify -Cfg $Cfg -Stage1 $s1 -Apply:$Apply }    $foundryPrivate = @($Cfg.backends | Where-Object { $_.privateEndpoint -and $_.subscriptionId -ieq $Cfg.subscriptionId -and $_.resourceGroup -ieq $Cfg.resourceGroup } | ForEach-Object { $_.accountName } | Select-Object -Unique)
+    $parameters = @{ names = $s1.names; location = $Cfg.location; tags = $Cfg.tags; network = $Cfg.network; foundryAccounts = @($foundryPrivate) }
+    $vnetExists = $false
+    if ($Cfg.network.mode -eq 'create') {
+        $vnetId = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Network/virtualNetworks/$($Cfg.network.create.vnetName)"
+        $matches = @(Invoke-StgAzJson @('resource', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $Cfg.network.create.vnetName, '--resource-type', 'Microsoft.Network/virtualNetworks'))
+        $vnetExists = [bool]@($matches | Where-Object { $_.id -ieq $vnetId }).Count
+    }
+    $state = Read-StgState $Cfg
+    $action = Get-StgNetworkAction -Mode $Cfg.network.mode -VnetExists $vnetExists -StageStateExists ([bool]$state.stages['6'])
+    if ($action -eq 'reuse') {
+        $saved = Get-StgStage $Cfg 6
+        $out = [ordered]@{}
+        foreach ($key in $saved.Keys) { if ($key -cne 'verify' -and $key -cne 'durationSeconds') { $out[$key] = $saved[$key] } }
+        Write-Host 'Stage 6 create-mode VNet already exists; skipping the authoritative network deployment.'
+    } else {
+        $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-network.bicep' -Name 'stage6-network' -Apply:$Apply -Parameters $parameters
+    }
     $apps = @($s1.names.apps.Keys | Sort-Object)
     $integrateApim = $s1.apimName -and $Cfg.stage1.apimSku -in 'StandardV2', 'PremiumV2'
     if (-not $Apply) {
+        if ($action -eq 'reuse') { Write-Host 'preview: no network deployment; -Apply verifies and reconciles the remaining Stage 6 integrations.'; return $null }
         Write-Host "then: VNet integration, one app at a time, for $($apps -join ', ') (az functionapp vnet-integration add)."
         if ($integrateApim) { Write-Host "then: APIM $($s1.apimName) outbound VNet integration on the APIM subnet (virtualNetworkType External; ingress stays public)." }
         if ($foundryPrivate.Count) { Write-Host "Foundry private endpoints: $($foundryPrivate -join ', ')" }
@@ -193,8 +392,15 @@ function Invoke-Stage2 {
         Assert-Stg ($now.properties.provisioningState -ceq 'Succeeded' -and $now.properties.virtualNetworkType -ceq 'External' -and $now.properties.virtualNetworkConfiguration.subnetResourceId -ieq $out.apimSubnetId) "APIM integration state $($now.properties.provisioningState) $($now.properties.virtualNetworkType)"
         Assert-Stg ($now.identity.principalId -ieq $s1.apimPrincipalId) 'APIM system-assigned identity changed during VNet integration'
     }
-    $v = [ordered]@{ privateEndpoints = @(); apps = @() }
+    $v = [ordered]@{ privateEndpoints = @(); privateDnsLinks = @(); apps = @() }
     if ($integrateApim) { $v.apim = [ordered]@{ name = $s1.apimName; sku = $now.sku.name; virtualNetworkType = $now.properties.virtualNetworkType; subnet = ($now.properties.virtualNetworkConfiguration.subnetResourceId -split '/')[-1]; publicNetworkAccess = $now.properties.publicNetworkAccess; identityUnchanged = $true } }
+    $dnsTargets = Get-StgNetworkDnsTargets -Cfg $Cfg -Outputs $out -HasFoundry ([bool]$foundryPrivate.Count)
+    foreach ($zoneId in $dnsTargets.zoneIds) {
+        $zone = Get-StgArm "$zoneId/virtualNetworkLinks" '2024-06-01'
+        $linked = @($zone.value | Where-Object { $_.properties.virtualNetwork.id -ieq $dnsTargets.vnetId -and $_.properties.registrationEnabled -eq $false })
+        Assert-Stg ($linked.Count -ge 1) "private DNS zone $(($zoneId -split '/')[-1]) is not linked to VNet $($dnsTargets.vnetId)"
+        $v.privateDnsLinks += [ordered]@{ zoneId = $zoneId; vnetId = $dnsTargets.vnetId; linkCount = $linked.Count }
+    }
     foreach ($id in @($out.storagePrivateEndpointIds) + @($out.cosmosPrivateEndpointId) + @($out.foundryPrivateEndpointIds | Where-Object { $_ })) {
         $pe = Get-StgArm $id '2024-05-01'
         $conn = @($pe.properties.privateLinkServiceConnections)[0].properties.privateLinkServiceConnectionState.status
@@ -209,16 +415,16 @@ function Invoke-Stage2 {
         Assert-Stg ($site.virtualNetworkSubnetId -ieq $out.functionsSubnetId) "$($site.name) is not integrated"
         $v.apps += [ordered]@{ app = $k; subnet = ($site.virtualNetworkSubnetId -split '/')[-1] }
     }
-    $null = Write-StgEvidence 'stage2.verify.json' $v
+    $null = Write-StgEvidence 'stage6.verify.json' $v
     return $out + @{ verify = $v }
 }
 
-# ---------------------------------------------------------------- stage 3: Cosmos schema
+# ---------------------------------------------------------------- stage 2: Cosmos schema
 
-function Invoke-Stage3 {
+function Invoke-Stage2 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-schema.bicep' -Name 'stage3-schema' -Apply:$Apply -Parameters @{
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage2-schema.bicep' -Name 'stage2-schema' -Apply:$Apply -Parameters @{
         names = $s1.names; databaseName = $Cfg.cosmos.databaseName; capacityMode = $Cfg.cosmos.capacityMode
         autoscaleMaxThroughput = $Cfg.cosmos.autoscaleMaxThroughput; includeAdmin = [bool]$Cfg.stage1.includeAdmin }
     if (-not $Apply) { return $null }
@@ -231,35 +437,52 @@ function Invoke-Stage3 {
         $v += [ordered]@{ name = $c.name; partitionKey = $c.partitionKey }
     }
     $docs = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
-    Assert-Stg ($docs.Count -eq 0) 'Stage 3 found data-role assignments already present'
-    $null = Write-StgEvidence 'stage3.verify.json' $v
+    # Before the grants stage this proves Stage 2 granted nothing; a rerun after Stage 3 finds its grants.
+    if (-not (Read-StgState $Cfg).stages['3']) { Assert-Stg ($docs.Count -eq 0) 'Stage 2 found data-role assignments before Stage 3' }
+    $null = Write-StgEvidence 'stage2.verify.json' $v
     return @{ databaseName = $out.databaseName; containers = $v }
 }
 
-# ---------------------------------------------------------------- stage 4: runtime grants
+# ---------------------------------------------------------------- stage 3: runtime grants
 
-function Invoke-Stage4 {
+function Invoke-Stage3 {
     param($Cfg, [switch]$Apply)
-    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 3
+    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 2
     $apim = Get-StgApimIdentity $Cfg
     $params = @{ names = $s1.names; principals = $s1.principals; databaseName = $Cfg.cosmos.databaseName; roleNames = $Cfg.cosmos.roleNames
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage4-grants.bicep' -Name 'stage4-grants' -Apply:$Apply -Parameters $params
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name 'stage3-grants' -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
     $v = [ordered]@{ azure = @(); cosmos = @(); foundry = @() }
     $roleNames = @{ 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' = 'Storage Blob Data Owner'; '3913510d-42f4-4e42-8a64-420c390055eb' = 'Monitoring Metrics Publisher'; '73c42c96-874c-492b-b04d-ab87d138a893' = 'Log Analytics Reader' }
-    $owned = Get-StgOwnedNames $Cfg
-    $rgAssignments = @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { $_.properties.scope -like "*/resourceGroups/$($Cfg.resourceGroup)/*" -and (Test-StgOwnedScope $_.properties.scope $owned) -and $_.properties.principalId -ine $apim.principalId })
+    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
+    $rgAssignments = @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId })
+    $expectedAzure = @($out.storageOwnerDetails) + @($out.metricsPublisherDetails) + @($out.workspaceReaderDetails)
+    foreach ($expected in $expectedAzure) {
+        $matches = @($rgAssignments | Where-Object {
+            $_.properties.principalId -ieq $expected.principalId -and
+            $_.properties.roleDefinitionId -ieq $expected.roleDefinitionId -and
+            $_.properties.scope -ieq $expected.scope
+        })
+        Assert-Stg ($matches.Count -eq 1) "expected exactly one Azure grant $($expected.roleDefinitionId) for $($expected.principalId) on $($expected.scope); found $($matches.Count)"
+    }
+    Assert-Stg ($rgAssignments.Count -eq $expectedAzure.Count) "found $($rgAssignments.Count) Azure role assignments on this deployment's resources; expected $($expectedAzure.Count)"
     foreach ($k in @($s1.principals.Keys | Sort-Object)) {
         $ra = @($rgAssignments | Where-Object { $_.properties.principalId -ieq $s1.principals[$k] })
         $v.azure += [ordered]@{ principal = $k; assignments = @($ra | ForEach-Object { $id = ($_.properties.roleDefinitionId -split '/')[-1]; "$(if ($roleNames[$id]) { $roleNames[$id] } else { $id }) @ $(($_.properties.scope -split '/')[-1])" } | Sort-Object) }
     }
-    $unexpected = @($rgAssignments | Where-Object { $p = $_.properties.principalId; -not @($s1.principals.Values | Where-Object { $_ -ieq $p }).Count })
-    Assert-Stg ($unexpected.Count -eq 0) "$($unexpected.Count) RG-scoped role assignments belong to principals outside Stage 1"
     $v.rgScopedAssignments = $rgAssignments.Count
     $cosmos = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
-    Assert-Stg ($cosmos.Count -eq @($out.cosmosAssignmentIds).Count) "Cosmos has $($cosmos.Count) data-role assignments, expected $(@($out.cosmosAssignmentIds).Count)"
+    Assert-Stg ($cosmos.Count -eq @($out.cosmosAssignmentDetails).Count) "Cosmos has $($cosmos.Count) data-role assignments, expected $(@($out.cosmosAssignmentDetails).Count)"
+    foreach ($expected in $out.cosmosAssignmentDetails) {
+        $matches = @($cosmos | Where-Object {
+            $_.principalId -ieq $expected.principalId -and
+            $_.roleDefinitionId -ieq $expected.roleDefinitionId -and
+            $_.scope -ieq $expected.scope
+        })
+        Assert-Stg ($matches.Count -eq 1) "expected exactly one Cosmos grant $($expected.roleDefinitionId) for $($expected.principalId) at $($expected.scope); found $($matches.Count)"
+    }
     $v.cosmos = @($cosmos | ForEach-Object { $p = $_.principalId; $who = @($s1.principals.Keys | Where-Object { $s1.principals[$_] -ieq $p })[0]; "$who -> $($_.scope -replace '^.*/dbs/', 'dbs/')" } | Sort-Object)
     foreach ($b in $Cfg.backends) {
         $scope = "/subscriptions/$($b.subscriptionId)/resourceGroups/$($b.resourceGroup)/providers/Microsoft.CognitiveServices/accounts/$($b.accountName)"
@@ -267,6 +490,6 @@ function Invoke-Stage4 {
         Assert-Stg ($ra.Count -ge 1) "APIM identity has no Cognitive Services User on $($b.accountName)"
         $v.foundry += "$($b.id): Cognitive Services User"
     }
-    $null = Write-StgEvidence 'stage4.verify.json' $v
+    $null = Write-StgEvidence 'stage3.verify.json' $v
     return @{ cosmosAssignmentIds = $out.cosmosAssignmentIds; apimPrincipalId = $apim.principalId; verify = $v }
 }

@@ -3,8 +3,8 @@
 The sync is the only writer of `entitlement` (`docs/PILOT.md` C-4). For every active `projects`
 document, it reads each classification group's direct members from Microsoft Graph and writes each
 person's `projectMemberships`. Adding a person to a registered group grants a membership on the next
-run; removing them takes it away. Rules and reasons: [ADR-0016](adr/0016-group-sync-projection-rules-and-safety.md).
-Packet evidence: [WP-SYNC](status/WP-SYNC.md).
+run; removing them takes it away. Rules and reasons: ADR-0016.
+Packet evidence: WP-SYNC.
 
 ## How a run works
 
@@ -27,13 +27,14 @@ Packet evidence: [WP-SYNC](status/WP-SYNC.md).
 | Situation | Effect |
 |---|---|
 | A group read fails (403, 404, throttling past the bound, 5xx, network, malformed page) | Its project is frozen: no addition, change or removal; one `refusal` event with the group and reason |
-| A `projects` document is invalid or not active | That project is frozen; the event lists field paths and problem codes |
+| A `projects` document is invalid, or its status is neither `active` nor `retired` | That project is frozen; the event lists field paths and problem codes |
+| A `projects` document has `status: "retired"` with a `retiredAt` UTC timestamp (set by the admin console's Retire action) | Every membership of the project is removed; its groups are not read. One `project_retired` notice with the removal count. These removals are not counted against the removal limits and are never withheld (`src/sync/plan.ts`) |
 | A membership's project has no `projects` document at all | The membership is kept (`project_document_missing`): deleting or recreating a document is not evidence that anyone left |
 | A Graph member arrives without `@odata.type` | The group read fails (`graph_response_invalid`); the page is not read as a group of nobody. On the service-principal read, an item without a type counts only on a page whose `@odata.context` is the `servicePrincipals` collection, as Graph returns it |
 | One id arrives as a service principal and as another type | The group read fails (`graph_response_invalid`) |
 | A record the resolver would refuse (legacy `expiresAt` passed, invalid `generation` or `lastVerifiedAt`, two active memberships of one project) | It grants nothing, so none of its memberships is carried over; only verified memberships are written |
 | A `projects` document has no readable `projectId` | Every removal in the run is withheld |
-| Removals exceed both limits | Removals are withheld; additions and changes apply; `removal_limit_exceeded` event |
+| Removals exceed both limits | Removals are withheld; additions and changes apply; `removal_limit_exceeded` event. The limits are the app settings, or the admin console override (below) |
 | A person is in two classification groups of one project | The incumbent classification stays if it is one of them, otherwise none; `classification_conflict` event |
 | A nested group, a service principal (when not configured) or an unknown member type | Not admitted, not expanded; one `notice` event per member |
 | A document already matches | Not written |
@@ -42,7 +43,7 @@ Packet evidence: [WP-SYNC](status/WP-SYNC.md).
 
 ## Settings
 
-All required, no defaults (`src/sync/config.ts`). The deploy script writes them from the answers
+All required, no defaults, except `SYNC_LIMITS_CONTAINER` (`src/sync/config.ts`). The deploy script writes them from the answers
 file (`infra/sync/sync.answers.pilot.json`) and validates them with the app's own code first.
 
 | Setting | Meaning |
@@ -51,8 +52,9 @@ file (`infra/sync/sync.answers.pilot.json`) and validates them with the app's ow
 | `COSMOS_ENDPOINT`, `COSMOS_DATABASE` | The registry account (`https://<account>.documents.azure.com:443/`) and database |
 | `SYNC_PROJECTS_CONTAINER`, `SYNC_ENTITLEMENT_CONTAINER`, `SYNC_LEASE_CONTAINER` | Three distinct containers |
 | `SYNC_LEASE_SECONDS` | Lease duration; at least 2 × (`SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS` + `SYNC_GRAPH_TIMEOUT_SECONDS`) |
-| `SYNC_MEMBER_TYPES` | `user`, or `user,servicePrincipal` to admit test identities. With `servicePrincipal`, every group read adds the service-principal read (step 3). Pilot: `user,servicePrincipal`, owner approval (c) of 2026-10-11 ([WP-SYNC-SP](status/WP-SYNC-SP.md)) |
+| `SYNC_MEMBER_TYPES` | `user`, or `user,servicePrincipal` to admit test identities. With `servicePrincipal`, every group read adds the service-principal read (step 3). Pilot: `user,servicePrincipal`, owner approval (c) of 2026-10-11 (WP-SYNC-SP) |
 | `SYNC_MAX_REMOVALS_PER_RUN`, `SYNC_MAX_REMOVAL_FRACTION` | Removal limits; a run is refused only when it exceeds both |
+| `SYNC_LIMITS_CONTAINER` (optional) | Container holding the admin console's removal-limit override (`adminConfig`). Unset: the override is not read. Must differ from the entitlement and lease containers |
 | `SYNC_GRAPH_MAX_RETRIES`, `SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS`, `SYNC_GRAPH_TIMEOUT_SECONDS` | Graph retry budget, longest wait honoured, request timeout |
 | `SYNC_WRITE_MODE` | `apply` or `dry-run` |
 | `SYNC_SNAPSHOT_MAX_AGE_SECONDS`, `SYNC_SNAPSHOT_MAX_BYTES`, `SYNC_SNAPSHOT_MAX_GROUPS`, `SYNC_SNAPSHOT_MAX_MEMBERS` (`apply-snapshot` only) | Oldest snapshot accepted, and its size limits |
@@ -60,10 +62,22 @@ file (`infra/sync/sync.answers.pilot.json`) and validates them with the app's ow
 | `SYNC_MANAGED_IDENTITY_CLIENT_ID` (app only) | Client id of the user-assigned identity |
 | `AzureWebJobs.syncEntitlement.Disabled` (app only) | `true` until the Graph permission is granted |
 
+## Removal limits from the admin console
+
+With `SYNC_LIMITS_CONTAINER=adminConfig`, each run point-reads the document `syncRemovalLimits`
+(`src/sync/removal-limits.ts`), saved from the admin console's **Removal limits** page
+([ADMIN-V3.md](ADMIN-V3.md)). The override replaces the two app settings only while it is enabled,
+valid and not expired. A missing, disabled, expired, invalid or unreadable document falls back to the
+app settings; it can never raise the limits. The run emits a `notice` event `removal_limits_from_admin`, or
+the fallback reason `override_unreadable`, `override_invalid` or `override_expired` (`src/sync/run.ts`).
+
+Permission: Cosmos DB Built-in Data Reader on the `adminConfig` container for the sync identity (staged
+Stage 3 assignment `sync-limits-reader`; Stage 5 sets the setting when the admin app is deployed).
+
 ## Deleted and disabled members (P-9)
 
-Rule: [ADR-0016](adr/0016-group-sync-projection-rules-and-safety.md), amendment from P-9. Evidence:
-[WP-SYNC](status/WP-SYNC.md), "P-9: deleted and disabled members".
+Rule: ADR-0016, amendment from P-9. Evidence:
+WP-SYNC, "P-9: deleted and disabled members".
 
 | Member | What Graph returns | Effect |
 |---|---|---|

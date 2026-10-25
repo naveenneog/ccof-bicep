@@ -16,11 +16,14 @@ import { serveUi, serveUiV3, uiConfigurationResponse, v3Enabled } from "./ui.ts"
 import { createOperations } from "./operations.ts";
 import { handleV2Request } from "./v2.ts";
 import { handleV3Request } from "./v3.ts";
+import { createCosmosChangeLog } from "./change-log.ts";
+import { createLimitsStore } from "./sync-limits.ts";
 import { QueryCache } from "./chargeback.ts";
 import type { QuerySources } from "./chargeback.ts";
 import { ADMIN_VERSION } from "./version.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
+import { createUserDirectory } from "./user-directory.ts";
 
 let authenticate: Authenticator | null = null;
 let authProblem = "";
@@ -32,11 +35,15 @@ try {
 
 const cosmos = readCosmosSettings(process.env);
 const credential = new ManagedIdentityCredential(process.env.ADMIN_MANAGED_IDENTITY_CLIENT_ID ? { clientId: process.env.ADMIN_MANAGED_IDENTITY_CLIENT_ID } : {});
+const directory = createUserDirectory(process.env, credential);
 const container = cosmos ? openContainer(cosmos, credential) : null;
 const store = container ? createCosmosProjectStore(container) : null;
 const catalogContainer = cosmos && process.env.ADMIN_CONFIG_CONTAINER
   ? openContainer({ ...cosmos, container: process.env.ADMIN_CONFIG_CONTAINER }, credential) : null;
 const catalogStore = catalogContainer ? createCatalogStore(catalogContainer) : null;
+// The permanent change record and the sync removal limits share the adminConfig container.
+const changeLog = catalogContainer ? createCosmosChangeLog(catalogContainer) : null;
+const limitsStore = catalogContainer ? createLimitsStore(catalogContainer) : null;
 let defaultCatalogPromise: Promise<Doc | null> | null = null;
 // A missing or invalid packaged rate card degrades only the cost-definitions view, and is retried
 // on the next request rather than cached as a permanent failure.
@@ -57,7 +64,7 @@ function defaultCatalog(log: (line: string) => void): Promise<Doc | null> {
 
 async function projectsHandler(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const body = ["POST", "PUT", "PATCH"].includes(request.method.toUpperCase()) ? await request.text() : null;
-  const deps: ApiDependencies = { authenticate, store, log: (line) => context.log(line), now: () => new Date(), newId: () => randomUUID() };
+  const deps: ApiDependencies = { authenticate, store, changeLog, log: (line) => context.log(line), now: () => new Date(), newId: () => randomUUID() };
   const response = await handleAdminRequest(
     { method: request.method, path: new URL(request.url).pathname, headers: (name) => request.headers.get(name), body },
     deps,
@@ -91,6 +98,7 @@ app.http("classificationPolicy", {
   handler: projectsHandler,
 });
 app.http("projectSettings", { methods: ["PUT"], authLevel: "anonymous", route: "api/projects/{projectId}/settings", handler: projectsHandler });
+app.http("projectRetire", { methods: ["POST"], authLevel: "anonymous", route: "api/projects/{projectId}/retire", handler: projectsHandler });
 app.http("adminV2", {
   methods: ["GET", "PUT"], authLevel: "anonymous", route: "api/v2/{feature}",
   handler: async (request, context) => {
@@ -98,7 +106,7 @@ app.http("adminV2", {
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
       headers: (name) => request.headers.get(name), body: request.method === "PUT" ? await request.text() : null,
     }, {
-      authenticate, projects: store, catalogStore, defaultCatalog: await defaultCatalog((line) => context.log(line)),
+      authenticate, projects: store, catalogStore, changeLog, defaultCatalog: await defaultCatalog((line) => context.log(line)),
       operations: createOperations(process.env, credential, (line) => context.log(line)),
       now: () => new Date(), newId: randomUUID, log: (line) => context.log(line),
     });
@@ -151,17 +159,17 @@ function querySources(log: (line: string) => void): Promise<QuerySources | null>
 }
 
 app.http("adminV3", {
-  methods: ["GET", "POST"], authLevel: "anonymous", route: "api/v3/{*rest}",
+  methods: ["GET", "POST", "PUT"], authLevel: "anonymous", route: "api/v3/{*rest}",
   handler: async (request, context) => {
     if (!v3Enabled(process.env)) return { status: 404, headers: { "cache-control": "no-store" }, jsonBody: { error: "route_not_found" } };
     const log = (line: string) => context.log(line);
     const response = await handleV3Request({
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
-      headers: (name) => request.headers.get(name), body: request.method === "POST" ? await request.text() : null,
+      headers: (name) => request.headers.get(name), body: ["POST", "PUT"].includes(request.method.toUpperCase()) ? await request.text() : null,
     }, {
-      authenticate, projects: store, catalogStore, defaultCatalog: await defaultCatalog(log),
+      authenticate, projects: store, catalogStore, changeLog, limitsStore, defaultCatalog: await defaultCatalog(log),
       operations: createOperations(process.env, credential, log), env: process.env,
-      sources: await querySources(log), cache: v3Cache, now: () => new Date(), newId: randomUUID, log,
+      sources: await querySources(log), cache: v3Cache, directory, now: () => new Date(), newId: randomUUID, log,
     });
     return { status: response.status, headers: response.headers, jsonBody: response.jsonBody };
   },

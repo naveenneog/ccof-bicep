@@ -1,4 +1,4 @@
-// Stage 6 helper: the API-level Azure Monitor logger and diagnostic (LLM token logging) of
+// Stage 5 helper: the API-level Azure Monitor logger and diagnostic (LLM token logging) of
 // infra/poc/phase4-apim-telemetry.bicep, without its resource-log diagnostic setting (Stage 1 owns it).
 targetScope = 'resourceGroup'
 

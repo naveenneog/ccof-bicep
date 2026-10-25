@@ -7,6 +7,10 @@
 //   added to it. A failed read is never an empty group.
 // - Removals are withheld (carried over) when they exceed both configured
 //   limits, or when a project document cannot even be attributed to a project.
+// - A retired project (status "retired" with retiredAt) loses every membership.
+//   Its groups are not read, and these removals are not bounded by the limits:
+//   the limits guard against a bad directory read, while retirement is an
+//   explicit, audited registry change.
 // - A person in two classification groups of one project keeps the incumbent
 //   classification if it is one of them, and otherwise gets neither.
 // - A member Graph reports disabled is not admitted (P-9); an account state
@@ -33,11 +37,13 @@ export function removalLimitExceeded(removals: number, existingMemberships: numb
 interface ProjectState {
   registrations: Map<string, ClassificationRegistration[]>;
   frozen: Set<string>;
+  retired: Set<string>;
   unidentified: boolean;
 }
 
 function assessProjects(input: PlanInput, events: SyncEvent[]): ProjectState {
   const frozen = new Set<string>();
+  const retired = new Set<string>();
   let unidentified = false;
   const seen = new Map<string, number>();
   for (const result of input.projects) {
@@ -63,6 +69,11 @@ function assessProjects(input: PlanInput, events: SyncEvent[]): ProjectState {
   const registrations = new Map<string, ClassificationRegistration[]>();
   for (const result of input.projects) {
     if (!result.ok || frozen.has(result.projectId)) continue;
+    if (result.retired) {
+      retired.add(result.projectId);
+      registrations.set(result.projectId, []);
+      continue;
+    }
     let readable = true;
     for (const reg of result.classifications) {
       const read = input.groups.get(reg.groupId);
@@ -80,7 +91,7 @@ function assessProjects(input: PlanInput, events: SyncEvent[]): ProjectState {
     if (readable) registrations.set(result.projectId, result.classifications);
     else frozen.add(result.projectId);
   }
-  return { registrations, frozen, unidentified };
+  return { registrations, frozen, retired, unidentified };
 }
 
 interface Admission {
@@ -148,6 +159,8 @@ interface PersonDraft {
   existing: ParsedExisting | null;
   planned: (ProjectMembership | RawMembership)[];
   removed: string[];
+  // Removals because the project is retired; never withheld.
+  retiredRemoved: string[];
   // Memberships kept without a successful read in this run (frozen or withheld).
   carried: number;
 }
@@ -181,8 +194,10 @@ function draftPerson(
     planned.push(buildMembership(reg, prior, nowIso));
   }
   const kept = new Set(planned.map((m) => m.projectId));
-  const removed = [...new Set(active.map((m) => m.projectId))].filter((p) => !state.frozen.has(p) && !kept.has(p)).sort();
-  return { personId, existing, planned, removed, carried };
+  const dropped = [...new Set(active.map((m) => m.projectId))].filter((p) => !state.frozen.has(p) && !kept.has(p)).sort();
+  const removed = dropped.filter((p) => !state.retired.has(p));
+  const retiredRemoved = dropped.filter((p) => state.retired.has(p));
+  return { personId, existing, planned, removed, retiredRemoved, carried };
 }
 
 function toWrite(draft: PersonDraft, nowIso: string, events: SyncEvent[], counts: PlanCounts): PlannedWrite | null {
@@ -282,7 +297,15 @@ export function planSync(input: PlanInput): Plan {
   reportDisabled(admission, state, drafts, events);
 
   const removals = drafts.reduce((n, d) => n + d.removed.length, 0);
-  const existingMemberships = [...existing.values()].reduce((n, e) => n + new Set(e.effective.filter(isActive).map((m) => m.projectId)).size, 0);
+  const retiredRemovals = drafts.reduce((n, d) => n + d.retiredRemoved.length, 0);
+  for (const projectId of [...state.retired].sort()) {
+    const count = drafts.filter((d) => d.retiredRemoved.includes(projectId)).length;
+    events.push({ event: "notice", reason: "project_retired", projectId, counts: { removals: count } });
+  }
+  // Memberships of retired projects are removed whatever the limits say, so they are not part of the
+  // base the fraction is measured against: they would loosen the check on the other removals.
+  const existingMemberships = [...existing.values()].reduce((n, e) =>
+    n + new Set(e.effective.filter(isActive).map((m) => m.projectId).filter((p) => !state.retired.has(p as string))).size, 0);
   let removalsWithheld: RemovalsWithheld = state.unidentified ? "project_document_unidentified" : null;
   if (!removalsWithheld && removalLimitExceeded(removals, existingMemberships, input.removalLimits)) {
     removalsWithheld = "removal_limit_exceeded";
@@ -303,6 +326,7 @@ export function planSync(input: PlanInput): Plan {
   } else {
     counts.removedMemberships = removals;
   }
+  counts.removedMemberships += retiredRemovals;
 
   const writes = drafts.map((d) => toWrite(d, nowIso, events, counts)).filter((w): w is PlannedWrite => w !== null);
   return { writes, events, frozenProjects: [...state.frozen].sort(), evaluatedProjects: state.registrations.size, removalsWithheld, counts };

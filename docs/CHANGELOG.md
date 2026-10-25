@@ -1,6 +1,142 @@
 # Change log
 
-## 2026-10-20 — Standard v2 and private Foundry, SASET MSFT FDPO and Contoso
+## 2026-10-23 — Developer self-service usage (`/usage`)
+
+- Resolver route `POST /api/me/usage` (`src/resolver/my-usage.ts`), gateway API `ccof-usage`
+  (`GET /me/usage`, policy `infra/gateway/policy/my-usage.template.xml`), client `ccof-usage` and the
+  Claude Code `usage` skill. No new Azure resource, Entra app or permission. Staged Stage 5 deploys the
+  API; Stage 7 the resolver. See [USAGE-SELF-SERVICE.md](USAGE-SELF-SERVICE.md).
+- Tests: resolver 4, gateway render 4, client 3; 7/7 mutants caught.
+- Live on Fabrikam: $10.09 of real calls; `/usage`, the admin reconciler snapshot, admin chargeback and the
+  load script's own total all equal 1,008.7586 CCU. Fabrikam reconciler timer is now enabled
+  (`reconciler.timerEnabled: true`).
+
+## 2026-10-23 — Developers CSV includes user names
+
+- Chargeback > Developers > Export CSV adds `displayName`, `userPrincipalName` and `nameLookup` after
+  the `person` object ID (`admin/ui-v3/lib/user-names.ts` `withUserNames`). The object ID stays the
+  accounting key. Names come from the same in-memory Graph lookup as the tables, so they need
+  `ADMIN_USER_NAMES_ENABLED=true` and `User.Read.All`; otherwise the columns are empty and `nameLookup`
+  states why (`disabled`, `permission_required`, `not_found`, `unavailable`).
+- The UPN is the sign-in name; it can differ from the Entra `mail` attribute, which is not read.
+- Tests: `admin/tests/csv-user-names.test.ts` (2; a mutant dropping the UPN fails); admin 116 pass; demo
+  export checked in Edge (224 rows, all resolved).
+
+## 2026-10-22 — Deployment, admin operations and user onboarding guides
+
+- Added [deployment runbook](runbooks/DEPLOYMENT-RUNBOOK.md): Entra app/group/managed-identity
+  configuration tables, required Graph grants, resource/access-team JSON handoff, network/endpoint/DNS
+  prerequisites, stages 0-8, Portal screenshots, recovery and acceptance.
+- The one-hour execution target explicitly assumes resources, approvals and network readiness;
+  the current templates do not import arbitrary precreated managed identities or provide a
+  read-only Stage 4. No unmeasured greenfield one-hour guarantee is claimed.
+- Added [admin operations](runbooks/ADMIN-OPERATIONS.md): project/group onboarding, token and money
+  budgets, retirement, removal limits, audit, and Portal/APIM/registry steps for another Foundry backend.
+- Added [user onboarding](runbooks/USER-ONBOARDING.md): `onboarding.json` versus `config.json`,
+  self-service sign-in/setup, user-context Intune packaging and detection examples, rollback,
+  and the distinction between file detection, user sign-in and actual gateway acceptance.
+- Reused labeled historical Portal references and added three synthetic 3.2 console screenshots.
+  Intune tenant rollout and universal Desktop packaging remain explicitly unverified.
+- Final Contoso Stage 8 rerun passed its configured negative/authentication matrix; no model call
+  was admitted because the sandbox remains Marketplace-blocked. This is not positive inference proof.
+
+## 2026-10-22 — Admin 3.2.0 bug bash (live in Contoso)
+
+- Sync: memberships of retired projects no longer count in the removal-fraction base, which had made the
+  limit easier to pass for other projects' removals (`src/sync/plan.ts`, regression test in `tests/sync-plan.test.ts`).
+- Change record: a write that raised an error is recorded as `unconfirmed` (it may have been applied),
+  not `failed`.
+- Removal limits: an expired override can be switched off; the console no longer offers to keep an
+  expired expiry.
+- Stage 4 preauthorizes `admin.extraAllowedClientIds` (for example Azure CLI) on the admin app and reads it
+  back; before, those clients hit AADSTS65001 although `ADMIN_ALLOWED_CLIENT_IDS` accepted them.
+- Live (Contoso, Stages 3/4/5/7 reapplied): 26 API and security checks pass (401 for missing, forged,
+  tampered and ARM tokens; no foreign CORS origin; 413/422/412/428 on bad limit writes; 400 on query
+  injection attempts). The sync read the admin override (`removal_limits_from_admin`, 7 / 0.25). Retiring
+  test project CONLAB3 removed its membership at the next run without reading its group. The change
+  record lists each step. Independent security review: no findings.
+
+## 2026-10-22 — Admin 3.2.0: project retirement, removal limits, change record
+
+- **Retire project** (V3 project Settings, `POST /api/projects/{id}/retire`, If-Match and the project ID
+  repeated in the body). Sets `status: "retired"` and `retiredAt`; edits then return 409
+  `project_retired`. The sync removes all memberships of a retired project at its next run without
+  reading its groups, outside the removal limits (`src/sync/plan.ts`, `src/sync/run.ts`). Other
+  non-active statuses still freeze the project.
+- **Removal limits** page and `GET/PUT /api/v3/sync/removal-limits`: an override of
+  `SYNC_MAX_REMOVALS_PER_RUN` / `SYNC_MAX_REMOVAL_FRACTION` with reason and expiry (≤ 90 days), stored
+  in `adminConfig`. The sync reads it when `SYNC_LIMITS_CONTAINER` is set; a missing, invalid, expired
+  or unreadable override falls back to the app settings (`src/sync/removal-limits.ts`).
+- **Change record**: every admin change (projects, catalog, removal limits) is written to `adminConfig`
+  before it is applied and completed with its result; if it cannot be written, the change is refused
+  with 503 `change_log_unavailable` (`admin/src/change-log.ts`). Audit has a Change record / Telemetry
+  source switch; project Activity reads the change record. `GET /api/v3/audit/changes`.
+- Staged deployment: Stage 3 assignment `sync-limits-reader` (Cosmos Built-in Data Reader on
+  `adminConfig`, only with the admin app); Stage 5 sets `SYNC_LIMITS_CONTAINER=adminConfig` with the
+  admin app. `tests/Test-StagedStages.ps1` checks both.
+- [VDI upgrade](ADMIN-V3-VDI-UPGRADE.md) section 9: admin and sync packages, the sync grant and setting.
+- Tests: admin 114, sync 237 (1 skipped), staged 355 checks; 11/11 mutants caught (control load
+  failure reported separately); Edge check of retire, removal limits, audit in both themes and as reader.
+
+## 2026-10-22 — Admin 3.1.0: Entra names and admin-only VDI upgrade
+
+- V3 displays current Entra display names/UPNs beside full object IDs in Overview, Chargeback
+  Developers, Budgets/Reconciler and Audit/Project Activity. Accounting, CSVs and filters keep IDs.
+- Authenticated, bounded Graph lookup using the admin managed identity, enabled with
+  `ADMIN_USER_NAMES_ENABLED=true` and Graph application `User.Read.All` with tenant admin consent.
+  Missing users, denied permissions and provider failures keep IDs and other data available.
+- Names are memory-only. Browser cache uses remaining server freshness, translated for clock
+  skew, instead of restarting a five-minute TTL. Server lookup (including token acquisition) and
+  browser queue have deadlines; failing batches cancel sibling requests.
+- Added [manual VDI upgrade](ADMIN-V3-VDI-UPGRADE.md): existing managed identity consent, SPA
+  redirect, private publishing, settings, verification and rollback. No changes to the gateway,
+  sync, reconciler, APIM policies or deployed permissions.
+- 108 admin tests, build/package, Edge UI/failure checks and the repository packet gate pass.
+
+## 2026-10-21 — Network is the last setup stage
+
+- New stage order: 0 checks, 1 resources, 2 schema, 3 grants, 4 Entra, 5 configuration,
+  **6 network**, 7 code and data, 8 acceptance. As in the manual deployment, the customer usually
+  builds the network; stages 2-5 do not need it, and Stage 7 requires it.
+- `network.mode: verify` is the default: Stage 6 changes nothing and runs
+  `scripts/manual/Test-NetworkConfiguration.ps1` (read-only) against the Stage 1 resources; a FAIL
+  row stops it. `existing` and `create` (lab) remain opt-in.
+- Templates and ARM deployment names follow the numbers: `stage2-schema`, `stage3-grants`,
+  `stage5-config` (+ `stage5-api-telemetry`), `stage6-network`. An existing `state.json` moves to
+  the new keys on first read (backup `state.layout1.json`).
+- Fixes found on the way: the network check never reached Azure (`& az` recursed into its own
+  `Az` function), failed on unrelated same-named DNS zones, and changed the CLI default
+  subscription (`az account set`); the schema stage could not be rerun after grants; Stage 7 could
+  not be rerun after a successful snapshot ([B-16 to B-20](../BUGS-FOUND.md)).
+- Portal walkthrough steps and screenshots renumbered to match.
+
+## 2026-10-21 — Portal walkthrough on both Standard v2 deployments
+
+- Playwright walked the guide's 20 Portal steps on the signed-in Fabrikam/Fabrikam and Contoso Portals:
+  20/20 and 19/20 pass; the remaining Contoso step is the APIs blade staying on "Service is getting
+  ready..." while ARM lists the API ([report](STAGED-STDV2-RUNS-2026-10-20.md#portal-walkthrough-with-playwright)).
+- Walker fixes in `tests/playwright`: blade-menu navigation for sub-blades without a stable deep
+  link, IAM **Role assignments** tab and list filters, reuse of the signed-in tab and its Portal
+  host, one re-read for slow blades, literal-string masking. Two weak expectations were tightened;
+  a negative control shows the resolver Authentication check fails on the wrong blade.
+- The staged guide embeds 13 masked Contoso captures (`docs/runbooks/images/staged-portal`).
+  Pages that list people are not published.
+
+## 2026-10-20 — Staged deployment bug bash and live recheck
+
+- Stage 1 shared-RG ownership now uses exact prior deployment resource IDs; the inventory verifier
+  ignores unrelated and later-stage resources.
+- Stage 2 create-mode retries skip the authoritative network deployment when a VNet already exists
+  with saved state, and refuse to rewrite an existing VNet when that state is missing. DNS-link
+  checks support earlier deployment outputs.
+- Stage 8 acceptance uses the configured project header. Dependency hashes now migrate only when
+  saved outputs match exactly or the relevant ARM outputs confirm the stable projection.
+- Logged findings B-10 through B-15 in [`BUGS-FOUND.md`](../BUGS-FOUND.md). Offline staged,
+  customer-deployment, quickstart and public-manual checks pass. Stage 1, Stage 2 and Stage 8
+  acceptance rechecks and the Stage 4 grant recheck pass in both Fabrikam and Contoso
+  ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
+
+## 2026-10-20 — Standard v2 and private Foundry, Fabrikam AI Platform (Dev) and Contoso
 
 - Stage 1 can create a keyless private Foundry account with Claude deployments
   (`foundry-account.bicep`; `modelProviderData` required, API `2025-10-01-preview`).
@@ -9,7 +145,7 @@
 - `sharedResourceGroup` and the guarded Stage 1 rerun: what-if must not change resources outside
   the deployment's prefix. State is bound to tenant/subscription/RG. Stage 8 correlates telemetry by
   this run's request IDs.
-- Live: SASET MSFT FDPO (shared RG) stages 0-8 with 200 responses; Contoso stages 0-8 with new
+- Live: Fabrikam AI Platform (Dev) (shared RG) stages 0-8 with 200 responses; Contoso stages 0-8 with new
   Entra objects, Claude blocked by the sandbox subscription, Graph consent refused without an active
   admin role ([report](STAGED-STDV2-RUNS-2026-10-20.md)).
 
@@ -18,10 +154,10 @@
 - Added click paths for the staged guide, Foundry setup prerequisites, Standard v2 outbound
   networking, IAM and Entra checks, and the operations that still need Bicep or CLI.
 - Embedded five existing masked Portal screenshots beside the relevant steps. They are
-  labelled historical navigation references, not new FDPO/Contoso deployment evidence.
-- Real Playwright Portal probes for FDPO and Contoso reached the Microsoft sign-in page.
+  labelled historical navigation references, not new Fabrikam/Contoso deployment evidence.
+- Real Playwright Portal probes for Fabrikam and Contoso reached the Microsoft sign-in page.
   Fresh blade captures and the requested Standard v2 runs remain blocked on sign-in and
-  confirmation of the separate SASET/personal FDPO targets.
+  confirmation of the separate Fabrikam/personal Fabrikam targets.
 - Documented unresolved APIM integration, Foundry provisioning, cross-target state reuse
   (reproduced offline) and uncorrelated telemetry acceptance. Bicep compilation and existing
   stage tests pass but do not prove those missing behaviours.

@@ -17,3 +17,6 @@ deploy-package.zip
 infra/quickstart/.generated/
 # Staged deployment state and evidence (Invoke-StagedDeployment.ps1)
 .staged-state/
+
+# Prevent concurrent Stage 7 package builds in one worktree
+.staged-stage7.lock

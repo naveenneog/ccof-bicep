@@ -14,6 +14,7 @@ import { readResolverConfig } from "./config.ts";
 import { createCosmosReads } from "./cosmos-reads.ts";
 import {
   handleHealthRequest,
+  handleMyUsageRequest,
   handleResolveRequest,
   hasPlatformPrincipal,
   isPlatformAuthEnabled,
@@ -57,6 +58,16 @@ async function resolveHandler(request: HttpRequest, context: InvocationContext):
   return handleResolveRequest(requestContext(request, body), runtimeFor(context));
 }
 
+async function myUsageHandler(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    body = undefined; // answered 400 after the authentication guards
+  }
+  return handleMyUsageRequest(requestContext(request, body), runtimeFor(context));
+}
+
 async function healthHandler(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   return handleHealthRequest(requestContext(request), runtimeFor(context));
 }
@@ -65,6 +76,14 @@ app.http("resolve", {
   methods: ["POST"],
   authLevel: "anonymous",
   handler: resolveHandler,
+});
+
+// The developer's own usage (my-usage.ts), called by the gateway's usage API only.
+app.http("myUsage", {
+  methods: ["POST"],
+  authLevel: "anonymous",
+  route: "me/usage",
+  handler: myUsageHandler,
 });
 
 app.http("health", {

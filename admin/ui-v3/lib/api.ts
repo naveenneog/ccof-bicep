@@ -23,7 +23,7 @@ export interface ApiResult<T> { data: T; etag: string | null; status: number }
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<ApiResult<T>> {
   const write = opts.method !== undefined && opts.method.toUpperCase() !== "GET";
   // Planning/review POSTs are read-only, so don't evict the dashboard on every slider movement.
-  const mutation = write && !/^\/api\/v3\/(?:plan|rate-card\/review)$/.test(path);
+  const mutation = write && !/^\/api\/v3\/(?:plan|rate-card\/review|directory\/users)$/.test(path);
   if (mutation) readCache.clear();
   const headers: Record<string, string> = { authorization: `Bearer ${await token()}` };
   if (opts.body !== undefined) headers["content-type"] = "application/json";

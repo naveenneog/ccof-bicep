@@ -13,6 +13,7 @@ const paths: Record<string, string> = {
   foundry: "M10 2l7 4v8l-7 4-7-4V6zM3 6l7 4 7-4M10 10v8",
   health: "M2 10h4l2-5 4 10 2-5h4",
   audit: "M5 2.5h7l3 3V17.5H5zM8 8h5M8 11h5M8 14h3",
+  shield: "M10 2l6 2.5V10c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V4.5zM7.5 10l2 2 3.5-4",
   cost: "M3 4h14v12H3zM3 8h14M7 12h2M11 12h3",
   help: "M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM7.8 7.5a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 2-2.2 3.2M10 14.2v.3",
   collapse: "M12.5 5l-5 5 5 5",

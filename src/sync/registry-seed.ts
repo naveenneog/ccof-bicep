@@ -105,7 +105,8 @@ function checkProject(doc: unknown): string[] {
   if (!read.ok) problems.push(...read.problems);
   if (typeof doc.displayName !== "string" || doc.displayName.length < 1 || doc.displayName.length > 200) problems.push("displayName:invalid");
   if (typeof doc.designatedSubscriptionId !== "string" || !GUID.test(doc.designatedSubscriptionId)) problems.push("designatedSubscriptionId:invalid");
-  // A seed creates new active projects only.
+  // A seed creates new active projects only; a retired document is not seeded.
+  if (doc.status !== "active" && !problems.includes("status:not_active")) problems.push("status:not_active");
   if (doc.supersedes !== null) problems.push("supersedes:invalid");
   if (doc.retiredAt !== null) problems.push("retiredAt:invalid");
   if (isObject(doc.classifications)) {

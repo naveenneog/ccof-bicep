@@ -22,6 +22,8 @@ param workspaceCustomerId string
 param apimId string
 param resolver object
 param sync object
+@description('Cosmos container with the admin console\'s removal-limit override (adminConfig); empty when the admin app is not deployed.')
+param syncLimitsContainer string = ''
 param reconciler object
 param budgetState object
 
@@ -136,7 +138,7 @@ resource resolverAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: syncSite
   name: 'appsettings'
-  properties: syncSettings
+  properties: empty(syncLimitsContainer) ? syncSettings : union(syncSettings, { SYNC_LIMITS_CONTAINER: syncLimitsContainer })
 }
 
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {

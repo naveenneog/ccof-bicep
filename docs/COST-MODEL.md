@@ -7,7 +7,7 @@ actually uses, with the tolerance explicitly allowing for streaming/completion-t
 This is two separate problems that must both be right for the end result to hold:
 
 1. **Rate accuracy** — is $1 of internally tracked spend really $1 of what Azure bills? (Addressed by
-   [ADR-0005](adr/0005-real-cost-from-marketplace-ccu-billing.md) and `docs/MARKETPLACE-COST.md`, which
+   ADR-0005 and `docs/MARKETPLACE-COST.md`, which
    replaced an earlier plan to read a negotiated CCU unit price from Cost Management. That price does not
    exist: the CCU price is fixed at $0.01 and discounts reduce the CCU quantity. The rate is a versioned
    list rate card times the customer's private-offer discount schedule, checked daily against billed CCU.)
@@ -192,5 +192,5 @@ numbers this design does not yet have measured (U-5).
 If the *rate* itself is wrong (Anthropic list price instead of the customer's real negotiated CCU
 rate), no amount of enforcement precision fixes the end result — a perfectly-enforced $250 ceiling
 priced at the wrong rate matches the wrong number of actual dollars. Rate accuracy is
-[ADR-0005](adr/0005-real-cost-from-marketplace-ccu-billing.md) (`docs/MARKETPLACE-COST.md`), not a concern
+ADR-0005 (`docs/MARKETPLACE-COST.md`), not a concern
 of this document.

@@ -115,7 +115,7 @@ This design reuses the gateway, policy-engine and Cosmos-projection patterns alr
 `naveenneog/claude-code-foundry-gateway` (read-only reference; never modified from this project — see
 `docs/CHARTER.md`). It replaces that repository's two-tier, nested-group identity model with an
 open-ended project/classification registry, and adds project-specific backend routing and
-cross-project membership. See [ADR-0002](adr/0002-project-identity-cross-membership-and-routing.md)
+cross-project membership. See ADR-0002
 for the decisions behind every component below, and `docs/NETWORK.md` for the network-accurate view
 (VNets, subnets, private endpoints, the SIPA edge control, and cross-subscription connectivity) of
 the logical diagram below.
@@ -303,7 +303,7 @@ instances and coalescing concurrent misses for the same key are reused as-is fro
 repository's own fix for exactly this failure mode. (Neither is configured on the PoC Function App yet:
 it has no always-ready instance and the resolver does not coalesce; `docs/status/WP-RES.md`.)
 
-**Stale state does not deny everyone** ([ADR-0008](adr/0008-resolver-serves-through-sync-and-reconciler-outages.md)).
+**Stale state does not deny everyone** (ADR-0008).
 Entitlement records persist until a sync changes them, so a stopped sync denies no one; only a
 malformed record answers 503, for that person. Budget state past its `validUntil` is served with the
 last-known ceiling and marked degraded until an administrator-set hard limit, then refused with 503.
@@ -390,7 +390,7 @@ add latency and a single point of failure at 25,000-developer scale. See `docs/C
 full design, including the two-tier (fast counter + slow exact reconciler) refinement that keeps
 enforcement lag from being dominated by Log Analytics' own ~3-10 minute ingestion latency, and how the
 realtime ceiling is kept tight enough to hit the ±2-3% target. `docs/MARKETPLACE-COST.md`
-([ADR-0005](adr/0005-real-cost-from-marketplace-ccu-billing.md)) covers how the customer's contract rate
+(ADR-0005) covers how the customer's contract rate
 is resolved from Marketplace CCU billing, including prompt-cache tokens, and how per-project figures
 are tied to the invoice.
 

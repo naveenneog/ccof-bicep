@@ -14,38 +14,44 @@
     - APIM: SKU and outbound VNet integration subnet.
     - Public network access state of Cosmos, storage and Foundry (reported, not judged).
     - In-app health probe of the admin app (Cosmos reachable from inside the VNet).
-  Each row prints PASS / WARN / FAIL. Exit code 1 if any FAIL.
+  Each row prints PASS / WARN / FAIL. Exit code 1 if any FAIL. -ResultPath also writes the rows as JSON.
+  Every az call names -SubscriptionId (or a full resource ID); the CLI's default subscription is not changed.
+  Infra/staged/Invoke-StagedDeployment.ps1 Stage 6 (network.mode verify) runs this script.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$SubscriptionId,
   [Parameter(Mandatory)][string]$VnetResourceId,
-  [Parameter(Mandatory)][string]$ApimSubnet,
+  [string]$ApimSubnet = '',
   [Parameter(Mandatory)][string]$FlexSubnet,
   [Parameter(Mandatory)][string]$PeSubnet,
   [Parameter(Mandatory)][string]$CosmosResourceId,
   [Parameter(Mandatory)][string[]]$StorageAccountIds,
   [Parameter(Mandatory)][string[]]$FunctionAppIds,
   [string]$ApimResourceId = '',
-  [string]$FoundryResourceId = '',
+  [string[]]$FoundryResourceId = @(),
   [string[]]$InboundSitesAppIds = @(),
   [string]$HubVnetResourceId = '',
-  [string]$AdminAppId = ''
+  [string]$AdminAppId = '',
+  [string]$ResultPath = ''
 )
 $ErrorActionPreference = 'Stop'
 $results = [System.Collections.Generic.List[object]]::new()
 function Add-Result([string]$Area, [string]$Item, [string]$State, [string]$Detail) {
   $results.Add([pscustomobject]@{ Area = $Area; Item = $Item; State = $State; Detail = $Detail })
 }
-function Az { $out = & az @args --only-show-errors -o json 2>$null; if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }; ($out -join "`n") | ConvertFrom-Json -Depth 100 }
+# Call the CLI by path: inside function Az a bare `az` resolves to the function itself (names are
+# case-insensitive) and recursed without ever reaching Azure.
+$script:AzExe = (Get-Command az -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+function Az { $sub = if ($args -contains '--ids') { @() } else { @('--subscription', $SubscriptionId) }; $out = & $script:AzExe @args @sub --only-show-errors -o json 2>$null; if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }; ($out -join "`n") | ConvertFrom-Json -Depth 100 }
 function Short([string]$id) { ($id -split '/')[-1] }
 
-$null = & az account set --subscription $SubscriptionId 2>$null
 $vnetRg = ($VnetResourceId -split '/')[4]; $vnet = Short $VnetResourceId
 
 # ---- Subnets ----
 $expect = [ordered]@{}
-$expect[$ApimSubnet] = 'Microsoft.Web/serverFarms'
+# APIM outbound integration applies to Standard v2 / Premium v2 only; without -ApimSubnet it is not checked.
+if ($ApimSubnet) { $expect[$ApimSubnet] = 'Microsoft.Web/serverFarms' }
 if ($FlexSubnet -ne $ApimSubnet) { $expect[$FlexSubnet] = 'Microsoft.App/environments' } else { Add-Result 'Subnet' $FlexSubnet 'FAIL' 'Flex and APIM must use separate subnets' }
 if ($PeSubnet -in @($ApimSubnet, $FlexSubnet)) { Add-Result 'Subnet' $PeSubnet 'FAIL' 'private endpoints need their own undelegated subnet' } else { $expect[$PeSubnet] = '' }
 foreach ($name in @($expect.Keys)) {
@@ -79,7 +85,7 @@ function Check-Pe([string]$Area, [string]$TargetId, [string]$Group) {
 }
 Check-Pe 'PrivateEndpoint' $CosmosResourceId 'Sql'
 foreach ($sa in $StorageAccountIds) { Check-Pe 'PrivateEndpoint' $sa 'blob' }
-if ($FoundryResourceId) { Check-Pe 'PrivateEndpoint' $FoundryResourceId 'account' }
+foreach ($fid in $FoundryResourceId) { Check-Pe 'PrivateEndpoint' $fid 'account' }
 foreach ($site in $InboundSitesAppIds) { Check-Pe 'PrivateEndpoint' $site 'sites' }
 
 # ---- Private DNS zones and links ----
@@ -90,16 +96,20 @@ $allZones = @(Az network private-dns zone list)
 foreach ($z in $zones) {
   $found = @($allZones | Where-Object name -eq $z)
   if (-not $found) { Add-Result 'PrivateDNS' $z 'FAIL' 'zone not found in subscription'; continue }
+  # The VNet resolves a name through the one zone of that name linked to it (or to its hub). Other
+  # zones of the same name elsewhere in the subscription do not affect this VNet.
+  $linkedZones = @()
   foreach ($zone in $found) {
     $zrg = ($zone.id -split '/')[4]
     $links = @(Az network private-dns link vnet list -g $zrg -z $z)
     $linkedIds = @($links | ForEach-Object { $_.virtualNetwork.id })
     $spoke = $linkedIds -contains $VnetResourceId
     $hub = $HubVnetResourceId -and ($linkedIds -contains $HubVnetResourceId)
-    $state = if ($spoke -or $hub) { 'PASS' } else { 'FAIL' }
-    Add-Result 'PrivateDNS' "$z ($zrg)" $state "linkedToVnet=$spoke; linkedToHub=$hub; records=$($zone.numberOfRecordSets)"
+    if ($spoke -or $hub) { $linkedZones += $zone; Add-Result 'PrivateDNS' "$z ($zrg)" 'PASS' "linkedToVnet=$spoke; linkedToHub=$hub; records=$($zone.numberOfRecordSets)" }
+    elseif ($found.Count -gt 1) { Add-Result 'PrivateDNS' "$z ($zrg)" 'INFO' "another zone of this name; not linked to this VNet (does not affect it); records=$($zone.numberOfRecordSets)" }
   }
-  if ($found.Count -gt 1) { Add-Result 'PrivateDNS' $z 'WARN' "$($found.Count) zones with this name; ensure only one is linked to each VNet" }
+  if (-not $linkedZones.Count) { Add-Result 'PrivateDNS' $z 'FAIL' "no zone of this name is linked to the VNet$(if ($HubVnetResourceId) { ' or the hub VNet' }) ($($found.Count) found)" }
+  elseif ($linkedZones.Count -gt 1) { Add-Result 'PrivateDNS' $z 'WARN' "$($linkedZones.Count) zones with this name are linked; a VNet can resolve through only one" }
 }
 
 # ---- Function Apps ----
@@ -132,16 +142,16 @@ foreach ($sa in $StorageAccountIds) {
   $s = Az resource show --ids $sa --api-version 2024-01-01
   if ($s) { Add-Result 'PublicAccess' (Short $sa) 'INFO' "storage publicNetworkAccess=$($s.properties.publicNetworkAccess); allowSharedKeyAccess=$($s.properties.allowSharedKeyAccess); allowBlobPublicAccess=$($s.properties.allowBlobPublicAccess)" }
 }
-if ($FoundryResourceId) {
-  $f = Az resource show --ids $FoundryResourceId --api-version 2025-06-01
-  if ($f) { Add-Result 'PublicAccess' (Short $FoundryResourceId) 'INFO' "foundry publicNetworkAccess=$($f.properties.publicNetworkAccess)" }
+foreach ($fid in $FoundryResourceId) {
+  $f = Az resource show --ids $fid --api-version 2025-06-01
+  if ($f) { Add-Result 'PublicAccess' (Short $fid) 'INFO' "foundry publicNetworkAccess=$($f.properties.publicNetworkAccess)" }
 }
 
 # ---- Admin app health (in-VNet Cosmos probe) ----
 if ($AdminAppId) {
   $admin = Az resource show --ids $AdminAppId --api-version 2024-04-01
   $hostName = $admin.properties.defaultHostName
-  $keysJson = & az functionapp keys list --ids $AdminAppId --only-show-errors -o json 2>$null
+  $keysJson = & $script:AzExe functionapp keys list --ids $AdminAppId --only-show-errors -o json 2>$null
   $key = if ($keysJson) { (($keysJson -join "`n") | ConvertFrom-Json).functionKeys.default } else { $null }
   try {
     if ($hostName -and $key) {
@@ -154,6 +164,7 @@ if ($AdminAppId) {
 }
 
 $results | Format-Table -AutoSize -Wrap
+if ($ResultPath) { ConvertTo-Json -InputObject @($results) -Depth 5 | Set-Content -LiteralPath $ResultPath -Encoding utf8NoBOM }
 $fail = @($results | Where-Object State -eq 'FAIL').Count
 $warn = @($results | Where-Object State -eq 'WARN').Count
 "`nSummary: $(@($results | Where-Object State -eq 'PASS').Count) PASS, $warn WARN, $fail FAIL. Read-only: nothing was changed."

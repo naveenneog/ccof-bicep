@@ -1,36 +1,39 @@
 # Staged deployment: stages 6-8 (configuration, code and data, acceptance). Dot-sourced by Invoke-StagedDeployment.ps1; not run directly.
 
-# ---------------------------------------------------------------- stage 6: configuration
+# ---------------------------------------------------------------- stage 5: configuration
 
 function New-StgQsContext {
     # Adapter: the quickstart functions read $Ctx.P and the outputs of its steps 1 and 3.
     param($Cfg)
-    $p = Get-StgQuickstartParameters $Cfg; $s1 = Get-StgStage $Cfg 1; $s5 = Get-StgStage $Cfg 5
+    $p = Get-StgQuickstartParameters $Cfg; $s1 = Get-StgStage $Cfg 1; $entra = Get-StgStage $Cfg 4
     $apim = Get-StgApimIdentity $Cfg
     $gen = Join-Path $script:StateDir 'generated'; New-Item -ItemType Directory -Force -Path $gen | Out-Null
-    $displayNames = @{}; foreach ($g in $s5.groups.Values) { $displayNames[$g.id] = $g.displayName }
+    $displayNames = @{}; foreach ($g in $entra.groups.Values) { $displayNames[$g.id] = $g.displayName }
     $gatewayUrl = "$($apim.gatewayUrl)/$($Cfg.apim.apiPath)"
     $state = @{ completed = @{
-        '1' = @{ outputs = @{ apimId = $apim.id; apimPrincipalId = $apim.principalId; gatewayBaseUrl = $apim.gatewayUrl; gatewayIdentifierUri = $s5.gatewayIdentifierUri; classificationGroupDisplayNames = $displayNames } }
+        '1' = @{ outputs = @{ apimId = $apim.id; apimPrincipalId = $apim.principalId; gatewayBaseUrl = $apim.gatewayUrl; gatewayIdentifierUri = $entra.gatewayIdentifierUri; classificationGroupDisplayNames = $displayNames } }
         '3' = @{ outputs = @{ cosmosEndpoint = $s1.cosmosEndpoint; gatewayUrl = $gatewayUrl; syncPrincipalId = $s1.principals.sync } } } }
     return @{ P = $p; GeneratedDir = $gen; State = $state; Apim = $apim; GatewayUrl = $gatewayUrl }
 }
 
-function Invoke-Stage6 {
+function Invoke-Stage5 {
     param($Cfg, [switch]$Apply)
-    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 4; $s5 = Get-StgStage $Cfg 5
+    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 3; $entra = Get-StgStage $Cfg 4
     $ctx = New-StgQsContext $Cfg
     $apimSp = Get-StgGraph "servicePrincipals/$($ctx.Apim.principalId)?`$select=appId"
     # Gateway policy (infra/gateway/render.ts) and workbook (analytics/workbooks/chargeback.ts).
     Push-Location $script:Repo
     try { npx tsc -p tsconfig.json | Out-Host; if ($LASTEXITCODE) { throw 'build_failed: npx tsc -p tsconfig.json' } } finally { Pop-Location }
     $config = New-QsGatewayConfig -P $ctx.P -Checks $ctx.State.completed['1'].outputs
-    if ($s5.azureCliClientAllowed) { $config.entra.delegatedClientAppIds = @($config.entra.delegatedClientAppIds) + @($script:AzureCliClientId) }
+    if ($entra.azureCliClientAllowed) { $config.entra.delegatedClientAppIds = @($config.entra.delegatedClientAppIds) + @($script:AzureCliClientId) }
     $configPath = Join-Path $ctx.GeneratedDir 'gateway-config.json'
     $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath -Encoding utf8NoBOM
     node (Join-Path $script:Repo 'infra/gateway/render.ts') --config $configPath --out (Join-Path $ctx.GeneratedDir 'gateway') | Out-Host
     if ($LASTEXITCODE) { throw 'render_failed: infra/gateway/render.ts refused the gateway configuration.' }
     $policy = Get-Content -LiteralPath (Join-Path $ctx.GeneratedDir "gateway/$($Cfg.apim.apiId).policy.xml") -Raw
+    # The developer's own-usage API (docs/USAGE-SELF-SERVICE.md), rendered beside the main policy.
+    $usagePolicyPath = Join-Path $ctx.GeneratedDir "gateway/$($Cfg.apim.apiId).usage.policy.xml"
+    $usagePolicy = if (Test-Path -LiteralPath $usagePolicyPath) { Get-Content -LiteralPath $usagePolicyPath -Raw } else { '' }
     $answers = New-QsWorkbookAnswers -P $ctx.P -ApimId $ctx.Apim.id -Directory $ctx.GeneratedDir
     $groupsPath = Join-Path $ctx.GeneratedDir 'workbook.groups.json'
     @(Get-QsWorkbookGroups -P $ctx.P) | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath $groupsPath -Encoding utf8NoBOM
@@ -38,19 +41,19 @@ function Invoke-Stage6 {
     $report = (Get-Content -LiteralPath $wb.parametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
     $admin = @{ enabled = [bool]$Cfg.stage1.includeAdmin }
     if ($admin.enabled) {
-        $admin += @{ uiClientId = $s5.admin.appId; editorIds = @(); readerIds = @(); v3Enabled = ($Cfg.admin.v3Enabled -ne $false); extraAllowedClientIds = @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
-            clientId = $s5.registrations.developerSignIn.appId; gatewayUrl = $ctx.GatewayUrl; projectHeader = $Cfg.gateway.projectHeaderName }
+        $admin += @{ uiClientId = $entra.admin.appId; editorIds = @(); readerIds = @(); v3Enabled = ($Cfg.admin.v3Enabled -ne $false); extraAllowedClientIds = @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
+            clientId = $entra.registrations.developerSignIn.appId; gatewayUrl = $ctx.GatewayUrl; projectHeader = $Cfg.gateway.projectHeaderName }
     }
     $params = @{
         tenantId = $Cfg.tenantId; location = $Cfg.location; names = $ctx.P.names; cosmosEndpoint = $s1.cosmosEndpoint
         syncClientId = $s1.clientIds.sync; reconcilerClientId = $s1.clientIds.reconciler
-        apim = (Get-StgApim $Cfg); backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; url = $_.url } }); policyXml = $policy
+        apim = (Get-StgApim $Cfg); backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; url = $_.url } }); policyXml = $policy; usagePolicyXml = $usagePolicy
         resolver = $Cfg.resolver; sync = $Cfg.sync; reconciler = $Cfg.reconciler; budgetState = $Cfg.budgetState
-        syncTimerEnabled = [bool]$Cfg.syncTimerEnabled; resolverApiAppId = $s5.registrations.resolverApi.appId
+        syncTimerEnabled = [bool]$Cfg.syncTimerEnabled; resolverApiAppId = $entra.registrations.resolverApi.appId
         apimIdentityAppId = $apimSp.appId; apimPrincipalId = $ctx.Apim.principalId; admin = $admin
         workbook = $Cfg.workbook; workbookContent = $report.workbookContent.value; workbookContentTags = $report.contentTags.value
     }
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-config.bicep' -Name 'stage6-config' -Apply:$Apply -Parameters $params
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name 'stage5-config' -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
     $v = [ordered]@{ settings = [ordered]@{} }
     foreach ($k in @($s1.names.apps.Keys | Sort-Object)) {
@@ -66,7 +69,7 @@ function Invoke-Stage6 {
     Assert-Stg ($api.properties.path -ceq $a.apiPath) 'APIM API path differs'
     $v.api = @{ id = $a.apiId; path = $api.properties.path; policySha256 = (Get-FileHash -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($policy))) -Algorithm SHA256).Hash }
     $v.timers = @{ sync = [bool]$Cfg.syncTimerEnabled; reconciler = [bool]$Cfg.reconciler.timerEnabled }
-    $null = Write-StgEvidence 'stage6.verify.json' $v
+    $null = Write-StgEvidence 'stage5.verify.json' $v
     return @{ gatewayUrl = $out.gatewayUrl; settingsWritten = $out.settingsWritten; workbookDeployed = $out.workbookDeployed; apimIdentityAppId = $apimSp.appId; verify = $v }
 }
 
@@ -74,14 +77,14 @@ function Invoke-Stage6 {
 
 function Invoke-Stage7 {
     param($Cfg, [switch]$Apply)
-    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 2; $null = Get-StgStage $Cfg 6; $s5 = Get-StgStage $Cfg 5
+    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 6; $null = Get-StgStage $Cfg 5; $entra = Get-StgStage $Cfg 4
     $ctx = New-StgQsContext $Cfg
     $ctx.PollSeconds = 15
     $docs = New-QsSeedDocuments -P $ctx.P -ClassificationGroupDisplayNames $ctx.State.completed['1'].outputs.classificationGroupDisplayNames
     if (-not $Apply) {
         Write-Host "preview: publish resolver, sync, reconciler$(if ($Cfg.stage1.includeAdmin) { ', admin' }) packages (OneDeploy), wait for their functions"
         Write-Host "preview: seed $(@($docs.projects).Count) projects and $(@($docs.backends).Count) backends through the sync app's registrySeed function"
-        Write-Host "preview: delegated snapshot of $(@($s5.groups.Values).Count) groups, applied through the sync app's snapshotApply function"
+        Write-Host "preview: delegated snapshot of $(@($entra.groups.Values).Count) groups, applied through the sync app's snapshotApply function"
         Write-Host 'preview: write the client config.json for client.projectId/classification'
         return $null
     }
@@ -104,10 +107,11 @@ function Invoke-Stage7 {
     # Delegated snapshot (docs/runbooks/CLOUD-SHELL-QUICKSTART.md section 5): the operator's own
     # Graph read through Azure CLI; no application permission.
     $groupsFile = Join-Path $ctx.GeneratedDir 'snapshot-groups.json'
-    @{ groupIds = @($s5.groups.Values | ForEach-Object { $_.id }) } | ConvertTo-Json | Set-Content -LiteralPath $groupsFile -Encoding utf8NoBOM
+    @{ groupIds = @($entra.groups.Values | ForEach-Object { $_.id }) } | ConvertTo-Json | Set-Content -LiteralPath $groupsFile -Encoding utf8NoBOM
     $settingsFile = Join-Path $ctx.GeneratedDir 'snapshot-settings.json'
     @{ SYNC_TENANT_ID = $Cfg.tenantId; SYNC_GRAPH_MAX_RETRIES = '3'; SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS = '30'; SYNC_GRAPH_TIMEOUT_SECONDS = '30' } | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding utf8NoBOM
-    $snapshot = Join-Path $ctx.GeneratedDir '.env.sync-snapshot.json'
+    # The snapshot CLI never overwrites a file, so each run writes its own (Stage 7 can be rerun).
+    $snapshot = Join-Path $ctx.GeneratedDir ".env.sync-snapshot-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
     $lines = @(& node (Join-Path $script:Repo 'dist/sync/cli.js') snapshot --credential azure-cli --groups $groupsFile --settings $settingsFile --out $snapshot 2>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE) { throw "snapshot_failed: $($lines -join ' ')" }
     $sha = @($lines | ForEach-Object { [regex]::Matches($_, '\b[0-9a-f]{64}\b') } | ForEach-Object { $_.Value }) | Select-Object -Last 1
@@ -115,7 +119,7 @@ function Invoke-Stage7 {
     & (Join-Path $script:Repo 'infra/sync/Invoke-SnapshotApplyThroughFunction.ps1') -Subscription $Cfg.subscriptionId -ResourceGroup $Cfg.resourceGroup `
         -FunctionApp $s1.names.apps.sync.functionApp -AppInsights $s1.names.apps.sync.appInsights -SnapshotPath $snapshot -ExpectedSnapshotSha256 $sha | Out-Host
     if ($LASTEXITCODE) { throw 'snapshot_apply_failed: infra/sync/Invoke-SnapshotApplyThroughFunction.ps1' }
-    $result.snapshot = @{ sha256 = $sha; groups = @($s5.groups.Keys) }
+    $result.snapshot = @{ sha256 = $sha; groups = @($entra.groups.Keys) }
     $client = Invoke-QsClient $ctx
     $null = & node (Join-Path $script:Repo 'client/bin/validate-config.mjs') $client.clientConfig
     Assert-Stg ($LASTEXITCODE -eq 0) 'client config failed the client validator'
@@ -126,11 +130,17 @@ function Invoke-Stage7 {
 
 # ---------------------------------------------------------------- stage 8: acceptance
 
-function Invoke-StgGateway {
-    param([string]$Url, [string]$Token, [string]$Project, [string]$Model)
+function New-StgGatewayHeaders {
+    param([string]$Token, [string]$Project, [string]$ProjectHeader = 'x-ccof-project')
     $headers = @{ 'anthropic-version' = '2023-06-01'; 'content-type' = 'application/json' }
     if ($Token) { $headers.Authorization = "Bearer $Token" }
-    if ($Project) { $headers['x-ccof-project'] = $Project }
+    if ($Project) { $headers[$ProjectHeader] = $Project }
+    return $headers
+}
+
+function Invoke-StgGateway {
+    param([string]$Url, [string]$Token, [string]$Project, [string]$Model, [string]$ProjectHeader = 'x-ccof-project')
+    $headers = New-StgGatewayHeaders -Token $Token -Project $Project -ProjectHeader $ProjectHeader
     $body = @{ model = $Model; max_tokens = 24; messages = @(@{ role = 'user'; content = 'Reply with exactly: STAGED OK' }) } | ConvertTo-Json -Depth 5
     $r = Invoke-WebRequest -Uri "$Url/v1/messages" -Method Post -Headers $headers -Body $body -SkipHttpErrorCheck -TimeoutSec 90
     $ccof = [ordered]@{}; foreach ($h in $r.Headers.Keys) { if ($h -like 'x-ccof-*') { $ccof[$h] = "$($r.Headers[$h])" } }
@@ -140,27 +150,27 @@ function Invoke-StgGateway {
 
 function Invoke-Stage8 {
     param($Cfg, [switch]$Apply)
-    $s1 = Get-StgStage $Cfg 1; $s6 = Get-StgStage $Cfg 6; $s5 = Get-StgStage $Cfg 5; $null = Get-StgStage $Cfg 7
+    $s1 = Get-StgStage $Cfg 1; $config = Get-StgStage $Cfg 5; $entra = Get-StgStage $Cfg 4; $null = Get-StgStage $Cfg 7
     $t = $Cfg.acceptance
-    if (-not $Apply) { Write-Host "preview: gateway $($s6.gatewayUrl): anonymous 401, $(@($t.allowed).Count) allowed and $(@($t.denied).Count) denied requests, resolver 401, admin console checks, telemetry query"; return $null }
+    if (-not $Apply) { Write-Host "preview: gateway $($config.gatewayUrl): anonymous 401, $(@($t.allowed).Count) allowed and $(@($t.denied).Count) denied requests, resolver 401, admin console checks, telemetry query"; return $null }
     $checks = [ordered]@{}
     $probe = @(@($t.allowed) + @($t.denied))[0]
-    $checks.anonymous = Invoke-StgGateway -Url $s6.gatewayUrl -Project $probe.project -Model $probe.model
+    $checks.anonymous = Invoke-StgGateway -Url $config.gatewayUrl -Project $probe.project -Model $probe.model -ProjectHeader $Cfg.gateway.projectHeaderName
     Assert-Stg ($checks.anonymous.status -eq 401) "anonymous request answered $($checks.anonymous.status)"
     $resolverUrl = "https://$($s1.names.apps.resolver.functionApp).azurewebsites.net/api/resolve"
     $checks.resolverAnonymous = [int](Invoke-WebRequest -Uri $resolverUrl -Method Post -Body '{}' -ContentType 'application/json' -SkipHttpErrorCheck -TimeoutSec 60).StatusCode
     Assert-Stg ($checks.resolverAnonymous -eq 401) "resolver answered $($checks.resolverAnonymous) without the APIM identity"
-    if (-not $s5.azureCliClientAllowed) { throw 'acceptance_needs_client: set entra.allowAzureCliClient (or run the client helper) to obtain a gateway token.' }
-    $token = (Invoke-QsAz @('account', 'get-access-token', '--scope', "$($s5.gatewayIdentifierUri)/access_as_user", '--query', 'accessToken', '--output', 'tsv')).Trim()
+    if (-not $entra.azureCliClientAllowed) { throw 'acceptance_needs_client: set entra.allowAzureCliClient (or run the client helper) to obtain a gateway token.' }
+    $token = (Invoke-QsAz @('account', 'get-access-token', '--scope', "$($entra.gatewayIdentifierUri)/access_as_user", '--query', 'accessToken', '--output', 'tsv')).Trim()
     $checks.allowed = @(); $checks.denied = @()
     foreach ($c in $t.allowed) {
         $r = $null
-        for ($i = 0; $i -lt 8; $i++) { $r = Invoke-StgGateway -Url $s6.gatewayUrl -Token $token -Project $c.project -Model $c.model; if ($r.status -eq 200) { break }; Start-Sleep 20 }
+        for ($i = 0; $i -lt 8; $i++) { $r = Invoke-StgGateway -Url $config.gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName; if ($r.status -eq 200) { break }; Start-Sleep 20 }
         $checks.allowed += $r
         Assert-Stg ($r.status -eq 200) "allowed request $($c.project)/$($c.model) answered $($r.status) $($r.result)"
     }
     foreach ($c in $t.denied) {
-        $r = Invoke-StgGateway -Url $s6.gatewayUrl -Token $token -Project $c.project -Model $c.model
+        $r = Invoke-StgGateway -Url $config.gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName
         $checks.denied += $r + @{ expected = $c.expectedStatus; reason = $c.reason }
         Assert-Stg ($r.status -eq [int]$c.expectedStatus) "denied request $($c.project)/$($c.model) answered $($r.status), expected $($c.expectedStatus)"
     }

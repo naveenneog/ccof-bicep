@@ -1,10 +1,10 @@
 # Staged customer deployment and private VDI updates
 
-**2026-10-20 update:** the [configurable staged plan](STAGED-DEPLOYMENT-V2.md)
-separates the later steps by permission boundary. Its Stage 1 uses the same
-`infra/staged` templates and has a [live resource-only proof](../STAGE1-LIVE-VERIFICATION.md).
-The four stage numbers in this retained runbook differ from the new plan.
-Later-stage entry points in that plan are not yet implemented.
+**Historical four-stage plan.** The implemented driver now has stages 0-8; the four stage
+numbers below are retained for reference, not as driver arguments.
+The current [deployment runbook](DEPLOYMENT-RUNBOOK.md) includes the identity/network handoffs
+and permission-separated commands. The [driver reference](STAGED-DEPLOYMENT-V2.md) describes
+its implemented preview, apply, verification and recovery behavior.
 
 **Current sequencing correction, 16 October 2026.** Use this runbook for the
 public repository's customer deployment plan. The original

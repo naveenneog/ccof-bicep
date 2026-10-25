@@ -47,7 +47,18 @@ test("a complete configuration is read into typed values", () => {
     graphMaxRetryAfterSeconds: 30,
     graphTimeoutSeconds: 30,
     writeMode: "apply",
+    limitsContainer: null,
   });
+});
+
+test("SYNC_LIMITS_CONTAINER is optional: when set it names the admin override container, and is checked", () => {
+  const set = readSyncConfig({ ...complete, SYNC_LIMITS_CONTAINER: "adminConfig" });
+  assert.equal(set.ok && set.config.limitsContainer, "adminConfig");
+  const bad = readSyncConfig({ ...complete, SYNC_LIMITS_CONTAINER: "has space" });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.deepEqual(bad.problems, [{ setting: "SYNC_LIMITS_CONTAINER", problem: "invalid" }]);
+  const clash = readSyncConfig({ ...complete, SYNC_LIMITS_CONTAINER: complete.SYNC_ENTITLEMENT_CONTAINER });
+  assert.equal(clash.ok, false);
 });
 
 test("no setting has a default: each one missing is named, and an empty settings object names them all", () => {

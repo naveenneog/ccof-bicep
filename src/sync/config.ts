@@ -22,6 +22,8 @@ export interface SyncConfig {
   graphMaxRetryAfterSeconds: number;
   graphTimeoutSeconds: number;
   writeMode: WriteMode;
+  // Optional: the admin console's container (adminConfig) holding a removal-limit override.
+  limitsContainer: string | null;
 }
 
 export interface ConfigProblem {
@@ -124,6 +126,9 @@ export function readSyncConfig(settings: Settings): ConfigResult {
   const graphMaxRetries = r.integer("SYNC_GRAPH_MAX_RETRIES", 0, 10);
   const graphMaxRetryAfterSeconds = r.integer("SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS", 1, 3600);
   const graphTimeoutSeconds = r.integer("SYNC_GRAPH_TIMEOUT_SECONDS", 1, 300);
+  // Optional, unlike every other setting: absent means no admin override is read.
+  const limitsRaw = settings.SYNC_LIMITS_CONTAINER?.trim() || null;
+  const limitsContainer = limitsRaw === null ? null : COSMOS_NAME.test(limitsRaw) ? limitsRaw : r.fail("SYNC_LIMITS_CONTAINER", "invalid") ?? null;
   const modeRaw = r.raw("SYNC_WRITE_MODE");
   const writeMode = modeRaw === undefined ? undefined : modeRaw === "apply" || modeRaw === "dry-run" ? modeRaw : r.fail("SYNC_WRITE_MODE", "invalid");
 
@@ -132,6 +137,7 @@ export function readSyncConfig(settings: Settings): ConfigResult {
   if (projectsContainer && entitlementContainer && projectsContainer === entitlementContainer) {
     r.fail("SYNC_ENTITLEMENT_CONTAINER", "same_as_other_container");
   }
+  if (limitsContainer && [entitlementContainer, leaseContainer].includes(limitsContainer)) r.fail("SYNC_LIMITS_CONTAINER", "same_as_other_container");
   if (leaseContainer && (leaseContainer === entitlementContainer || leaseContainer === projectsContainer)) {
     r.fail("SYNC_LEASE_CONTAINER", "same_as_other_container");
   }
@@ -159,6 +165,7 @@ export function readSyncConfig(settings: Settings): ConfigResult {
       graphMaxRetryAfterSeconds: graphMaxRetryAfterSeconds as number,
       graphTimeoutSeconds: graphTimeoutSeconds as number,
       writeMode: writeMode as WriteMode,
+      limitsContainer,
     },
   };
 }
