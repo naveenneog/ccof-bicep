@@ -59,7 +59,7 @@ Details: [architecture](docs/ARCHITECTURE.md) ·
 | Set up developers' machines | [3. User onboarding](docs/runbooks/USER-ONBOARDING.md) |
 | Understand the 80% budget warning and why spend can pass 100% | [Budgets and spend pacing](docs/BUDGETS.md) |
 | Let developers check their own spend | [Developer self-service usage](docs/USAGE-SELF-SERVICE.md) |
-| Plan disaster recovery across two regions (design, not yet deployable) | [DR design](docs/DR-ACTIVE-PASSIVE.md) and [DR implementation](docs/design/DR-IMPLEMENTATION.md) |
+| Plan disaster recovery across two regions (design, not yet deployable) | [DR design](docs/DR-ACTIVE-PASSIVE.md) and [DR implementation](docs/design/DR-IMPLEMENTATION.md); what a first-time operator can and cannot set up today: [DR walkthrough, 2026-10-25](docs/DR-NOVICE-WALKTHROUGH-2026-10-25.md) |
 
 Other documents describe earlier designs and are marked **Historical** at the top.
 

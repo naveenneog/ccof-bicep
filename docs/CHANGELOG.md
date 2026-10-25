@@ -1,5 +1,9 @@
 # Change log
 
+## 2026-10-25 - DR walkthrough from the documentation
+
+- [DR walkthrough](DR-NOVICE-WALKTHROUGH-2026-10-25.md): a first-time operator followed the README in Azure Cloud Shell and applied every DR step with tooling on `main`. Prerequisites P0-P2, per-project backend failover and workspace replication were set up in the Fabrikam lab; the standby region could not be. 16 issues logged with the fixes they need (4 blockers: P3 grants, serverless Cosmos, D1-D6 tooling).
+
 ## 2026-10-24 - Step-by-step deployment guide
 
 - BSL-06 measured on a temporary lab probe API (deleted afterwards): APIM `limit-concurrency` releases
