@@ -3455,3 +3455,1678 @@ Repository mechanisms used: `scripts/portal/Build-PortalPackage.ps1`,
 `infra/gateway/render.ts`, `src/sync/registry-seed.ts`,
 `analytics/workbooks/chargeback.ts`, `infra/quickstart/modules/app-settings.bicep`
 and `cosmos-data.bicep` as **read-only source references**, not executed templates.
+
+---
+
+<!-- ADMIN-HAND-CONFIG-APPENDIX-START -->
+
+<a id="admin-hand-configuration"></a>
+
+## Appended hand-configuration modules - continue without changing Modules 00-16
+
+**Added after the original workbook. Do not restart or repeat completed modules.**
+The original Step 13 client/helper code and Modules 00-16 above remain unchanged.
+Module 17 consolidates the client completion checks and the native Desktop route.
+Modules 18-24 add the **separate** admin console/API at the end of the same workbook.
+
+**Different scope from the original workbook:** these optional modules create new admin resources
+by hand, one resource at a time. They do not run Bicep/Quickstart, redeploy the three existing
+Functions, change their settings/identities/permissions, or edit the existing APIM APIs/policy.
+They do add a Cosmos native role/assignment and a new private-endpoint connection on the
+existing account after separate approval. Preserve the existing Cosmos public-access setting:
+if already Disabled, it stays Disabled; if the customer is still in the public phase,
+do not disable it as part of this admin installation. Coordinate its cutover through Module 16.
+Do not modify the existing CCOF VNet or DNS zone to follow this route.
+
+**Use Cloud Shell PowerShell 7**, as in Module 00. All blocks below are PowerShell unless
+explicitly labelled otherwise. Run one numbered step, then its **Check**, before continuing.
+**Path A** is Portal; **Path B** is the checked CLI alternative. Choose one path per change.
+Some operations (native Cosmos custom roles and local packaging) have no equivalent Portal
+control; these are explicitly labelled exceptions, not reasons to grant broad access.
+
+**If the admin app/resources already exist:** inspect that numbered step, compare every relevant
+value, then record **already present - verified** and skip its create command. Do not PUT an
+existing app/VNet/storage/registration to force it to match the example. Resume at the first
+missing approved item. A mismatched resource is a stop for review, not permission to overwrite.
+
+| Added module | Finish condition |
+|---|---|
+| 17 | Step 13 client completion, including Desktop, understood and verified independently |
+| 18 | Approved admin inventory; new group/network/storage/plan/Function/log resources read back |
+| 19 | New storage/monitoring grants and private deployment-storage path verified |
+| 20 | Separate admin Entra registration, scope, roles and SPA sign-in configured; no Graph consent |
+| 21 | Admin-only app settings, reviewed ZIP and console routes verified |
+| 22 | Admin identity's Cosmos native role and container-only assignment verified |
+| 23 | Dedicated admin Cosmos private endpoint, private DNS and in-app point-read verified |
+| 24 | STD/PRM/CYB UI, approved data tests, access restrictions and operations handoff verified |
+
+**Optional faster path, only if cloning is approved:** [admin quick modular stages](../ADMIN-QUICK-STAGES.md). Keep the numbered Portal-first steps below when a clone or template is not permitted. The faster path does not bypass private-storage or Cosmos-network requirements.
+
+**Acceptance boundary:** a ready health probe proves a point read from the Function App.
+It does not prove list/create/replace, audit delivery, membership projection or inference.
+The developer UI/API client never connects to Cosmos; all registry writes happen in the
+**admin Function App using its own managed identity**. Entra group lookup is not part of
+this API/UI: paste the group's Object ID from Entra manually.
+
+## 17. Step 13 completion addendum - CLI, VS Code and Claude Desktop
+
+### Step 17.1 - Reuse the existing Step 13 files, not a second installation
+
+**Path A:** continue **13.0-13.7** above with the customer's already reviewed
+`client-config.json`, gateway URL, project ID and deployment aliases.
+The complete CMD/MJS source stays in **13.A-refresh / 13.B-source**; no repository
+clone or downloaded installer is required on a developer machine.
+
+**Path B:** use exactly the chosen commands printed in Step 13, not a new configuration
+script. Route A is interactive Azure CLI; Route B is the original interactive helper.
+Do not silently switch the OAuth client or repeat APIM/consent changes if already approved.
+
+**Check:** same tenant, gateway audience, scope, allowed client and `x-ccof-project`.
+The UI's admin registration in Module 20 is **not** the developer/gateway registration.
+Group codes STD/PRM/CYB are classifications, not the project-header value.
+
+### Step 17.2 - Verify CLI and VS Code separately
+
+**Path A:** in VS Code, inspect the existing user settings from **13.4**; keep the
+approved gateway environment and helper path. Fully reload VS Code after changes.
+In the separate terminal, launch Claude Code using **13.7**.
+
+**Path B:** rerun the single approved short-request check from **13.6** only when
+its token/session is valid. A successful curl request does not prove either client.
+
+**Check:** a real Claude Code reply and a real VS Code extension reply, each on the
+intended model/project with telemetry correlation. Do not paste session tokens into settings.
+
+### Step 17.3 - Desktop: inspect the supported configuration interface
+
+**Path A:** Claude Desktop > Help/About: record the installed version. If permitted,
+Help > Troubleshooting > Enable Developer Mode, then
+**Developer > Configure Third-Party Inference**. A managed/read-only profile must
+be changed through the desktop administrator; do not remove policy to unlock it.
+
+**Path B:** if the interface is missing, use the installed-schema inspection approach
+already described in the local Step 13 Desktop edition, or obtain the approved build
+through IT. Do not write guessed registry/profile keys or install an unrelated build.
+
+**Check:** the actual build supports either legacy `interactive` + `inferenceGatewayOidc`
+or newer `external-idp` + `inferenceIdpOidc`. Do not mix those key sets.
+This is **Claude Desktop**, not VS Code or Claude Code.
+
+### Step 17.4 - Desktop: verify its native sign-in registration
+
+**Path A:** Entra > the **existing gateway/user-sign-in app** > Authentication.
+For browser-based native Desktop OIDC, verify Mobile/Desktop includes
+`http://127.0.0.1/callback`; preserve all existing redirects and broker settings.
+Verify the existing `access_as_user` scope. Native Desktop does not require
+Azure CLI preauthorization merely because CLI uses a different route.
+
+**Path B (read-only):**
+
+```powershell
+az ad app show --id 'REPLACE-existing-gateway-client-guid' --query '{appId:appId,publicClient:publicClient,api:api}' -o json
+if ($LASTEXITCODE -ne 0) { throw 'Gateway registration read failed.' }
+```
+
+**Check:** correct app, platform and actual callback. If the editor refuses the IP-loopback
+URI, have the app owner preserve its manifest and add the URI to `publicClient.redirectUris`
+through the approved manifest editor; never replace the redirect list. If Conditional Access
+requires broker, use the supported broker flow and its approved redirect, not a bypass.
+This is a **separately approved Step 13 registration change**, not part of admin deployment.
+
+### Step 17.5 - Desktop: enter connection, project header and admitted models
+
+**Path A:** in the native third-party inference UI:
+
+| Field | Value |
+|---|---|
+| Provider / URL / scheme | Gateway / exact existing `gatewayUrl`, ending `/anthropic`, not `/v1` / Bearer |
+| Credential kind | Interactive sign-in on a legacy-key build, External identity provider only on a supporting build |
+| Client ID | Existing gateway/user-sign-in app client GUID, not the admin app or resolver MI |
+| Issuer | `https://login.microsoftonline.com/<tenant-guid>/v2.0` |
+| Scope for the combined gateway app | `<gateway-client-guid>/access_as_user` |
+| Bearer token type | **access_token**, not id_token |
+| Custom headers | `{"x-ccof-project":"PROJECT01"}` with the actual project ID |
+| Models | Exact deployments admitted by that person's classification; default first |
+
+**Path B (manual profile alternative):** only if the installed build supports these
+**legacy** keys, enter this complete object in its approved profile editor.
+Do not replace another profile or its `_meta.json` entries:
+
+```json
+{
+  "inferenceProvider": "gateway",
+  "inferenceGatewayBaseUrl": "https://sample-apim.azure-api.net/anthropic",
+  "inferenceGatewayAuthScheme": "bearer",
+  "inferenceCredentialKind": "interactive",
+  "inferenceGatewayOidcAuthFlow": "browser",
+  "inferenceGatewayOidc": {
+    "issuer": "https://login.microsoftonline.com/REPLACE-tenant-guid/v2.0",
+    "clientId": "REPLACE-gateway-client-guid",
+    "scopes": "REPLACE-gateway-client-guid/access_as_user",
+    "bearerTokenType": "access_token"
+  },
+  "inferenceCustomHeaders": { "x-ccof-project": "PROJECT01" },
+  "inferenceModels": [{ "name": "claude-sonnet-4-5" }]
+}
+```
+
+For the **newer** supported schema only, replace `inferenceCredentialKind` with
+`external-idp`, and use `inferenceIdpAuthFlow` / `inferenceIdpOidc` instead of the two
+legacy Gateway keys. Everything else must still match the installed schema.
+`%APPDATA%\Claude\claude_desktop_config.json` is **not** the inference-profile library.
+Native profile types are real JSON objects/arrays, not registry string encodings.
+
+**Check:** the chosen deployment exists and is allowed; no API key or static token.
+The models listed here are examples, not permission to deploy or enable another model.
+
+### Step 17.6 - Desktop: apply, sign in and correlate one real conversation
+
+**Path A:** Apply Changes for the local pilot. Fully quit Desktop through its normal menu,
+reopen, select the profile and sign in with the approved work account/MFA/device policy.
+Send one short approved message, for example `Reply with exactly: gateway OK`.
+
+**Path B:** where native OIDC is unsupported, use the approved helper fallback already
+printed in Step 13; first perform its **interactive login**. Do not substitute a static
+API key or a token copied from the terminal. A helper-backed client still needs its
+own Desktop configuration and a real reply.
+
+**Check:** actual Desktop reply plus APIM/resolver/Foundry correlation for this project.
+The CLI's successful login is not Desktop acceptance. For rollback, select/restore the
+previous profile without deleting other profiles, MDM settings or shared token caches.
+
+**Client gate:** finish **13.8-13.10** for negative tests and cleanup. Nothing in
+Modules 18-24 is required simply to keep those developer clients working.
+References: [Desktop Gateway](https://claude.com/docs/third-party/claude-desktop/gateway),
+[in-app configuration](https://claude.com/docs/third-party/claude-desktop/in-app-configuration).
+
+### Step 17.8a - Choose the automatic Azure CLI sign-in variant
+
+This optional variant **replaces only the four-line CMD file in 13.A-refresh** and
+removes the need for a developer to type `az login`. Keep all existing Step 13
+configuration until this change is approved; do not run both helpers.
+
+**Path A:** approve Azure CLI as the delegated OAuth client, as in **13.2A/13.3A**.
+This is the **existing inference gateway registration and APIM policy**, not the
+new admin-console app from Module 20. No Graph lookup permission is requested.
+**Path B:** record the existing tenant GUID, gateway client GUID/Application ID URI,
+full `access_as_user` scope, gateway URL, project ID and admitted deployment names.
+
+**Check:** the helper tries a cached/refreshed gateway token first. If that fails,
+it attempts **one interactive Azure CLI sign-in**, then requests the token again.
+On current Windows Azure CLI, the interactive UI is normally **WAM/account picker**;
+on an approved browser-login configuration it is the browser. SSO can still require
+account selection, MFA, device compliance or consent. Do not disable broker or CA to
+force a password-free browser flow.
+
+Claude Code's **`/login` is not wired to this CMD file**. Starting Claude Code or a
+request that invokes `apiKeyHelper` triggers it. The CMD file contains the `az login
+--tenant ...` command; no login command is added to the Entra application manifest.
+
+### Step 17.8b - Authorize Azure CLI on the existing gateway API
+
+**Path A:** Entra > App registrations > existing gateway/user-sign-in app >
+**Expose an API > Authorized client applications > Add a client application**.
+Enter **`04b07795-8ddb-461a-bbee-02f9e1bf7b46`**, select the enabled
+**access_as_user** scope and save. Preserve original clients/scopes/redirects.
+**Path B:** run the complete preserve-and-merge CLI block in **13.2A** once under
+an approved application administrator. If already granted, verify and skip.
+
+**Check:** Azure CLI's entry is bound to the gateway's actual scope GUID. Do not
+replace the gateway `clientId`, add a new tenant, create another Azure CLI app, add
+Graph permissions or put Azure CLI into the internal resolver's MI allow-list.
+
+### Step 17.8c - Add Azure CLI to the existing APIM caller allow-list
+
+**Path A:** back up the current API policy; APIM > APIs > Claude Messages >
+**All operations** > inbound policy editor. Add Azure CLI's client ID to the
+existing `delegatedClients` array without removing its current values:
+
+```csharp
+var delegatedClients = new string[] {
+    "REPLACE-actual-existing-gateway-client-guid",
+    "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+};
+```
+
+**Path B:** use the complete checked API-policy edit block in **13.3A**, preserving
+the policy and change/revision process. Don't replace a full policy with this fragment.
+
+**Check:** the token audience still identifies the gateway; only the permitted caller
+client list expands. Preserve issuer/tenant, scope, resolver, entitlement, model and quota
+checks. Record the same approved client in `entra.delegatedClientAppIds` in the private
+gateway-render config so a later regeneration does not remove it.
+Neither this nor Entra preauthorization grants project membership.
+
+### Step 17.8d - Hand-create the auto-sign-in CMD helper
+
+**Path A:** on each approved **Windows developer machine**, confirm Azure CLI is
+installed and on PATH. In Explorer create `C:\ccof-client` if needed. Back up the
+previous `az-gateway-token.cmd`. Open Notepad, paste **all** code below, set the two
+values and save as **All files**, name **az-gateway-token.cmd**, not `.cmd.txt`.
+**Path B (read-only prerequisites, PowerShell 5.1 or 7):**
+
+```powershell
+where.exe az.cmd
+if ($LASTEXITCODE -ne 0) { throw 'Azure CLI is missing from PATH. Obtain it through IT.' }
+az.cmd version
+if ($LASTEXITCODE -ne 0) { throw 'Azure CLI cannot run.' }
+```
+
+Complete file (same as the public example
+[`az-gateway-token-auto-login.cmd`](../examples/az-gateway-token-auto-login.cmd)):
+
+```bat
+@echo off
+setlocal DisableDelayedExpansion
+set "TENANT=REPLACE-tenant-guid"
+set "SCOPE=api://REPLACE-gateway-app-client-guid/access_as_user"
+set "AZURE_CORE_LOGIN_EXPERIENCE_V2=off"
+if "%TENANT:~0,8%"=="REPLACE-" (
+  >&2 echo Configure the customer TENANT and SCOPE in this file first.
+  exit /b 1
+)
+if "%SCOPE:~0,14%"=="api://REPLACE-" (
+  >&2 echo Configure the gateway SCOPE in this file first.
+  exit /b 1
+)
+where az.cmd >nul 2>nul
+if errorlevel 1 (
+  >&2 echo Azure CLI az.cmd is not on PATH. Contact your desktop administrator.
+  exit /b 1
+)
+call az.cmd account get-access-token --tenant "%TENANT%" --scope "%SCOPE%" --query accessToken --output tsv --only-show-errors 2>nul
+if not errorlevel 1 exit /b 0
+>&2 echo Gateway token unavailable. Starting Microsoft interactive sign-in.
+call az.cmd login --tenant "%TENANT%" --scope "%SCOPE%" --allow-no-subscriptions --output none --only-show-errors <nul 1>&2
+if errorlevel 1 exit /b 1
+call az.cmd account get-access-token --tenant "%TENANT%" --scope "%SCOPE%" --query accessToken --output tsv --only-show-errors
+exit /b %errorlevel%
+```
+
+**Check:** `TENANT` is the customer's tenant; `SCOPE` is the **existing full gateway
+scope**, not Azure CLI's client ID or the admin console's Projects.Manage scope.
+If the exposed Application ID URI differs from `api://<guid>`, use that exact URI.
+`setlocal` keeps the subscription-selector override local to this helper. It does
+not change broker configuration, log out the user or clear the shared Azure cache.
+Interactive login can update the user's existing Azure CLI context; coordinate if
+they use the same profile for Azure administration.
+
+Only the token goes to stdout. The initial cache-probe error is suppressed;
+interactive/final errors go to stderr and return nonzero. This fallback attempts
+sign-in on any failed initial acquisition, so a network/service/permission problem
+can also produce one unnecessary prompt. It is not a sign-in-error classifier.
+No infinite retries; token values are never written to a helper-owned file.
+
+### Step 17.8e - Merge the Claude Code user settings
+
+**Path A:** back up and edit **`%USERPROFILE%\.claude\settings.json`** in Notepad or
+VS Code. Merge these fields, preserving unrelated keys and environment entries.
+`apiKeyHelper` belongs at the top level of this file, not in VS Code User settings.
+**Path B:** no installer is needed; the complete JSON fragment is:
+
+```json
+{
+  "apiKeyHelper": "\"C:\\ccof-client\\az-gateway-token.cmd\"",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://sample-apim.azure-api.net/anthropic",
+    "ANTHROPIC_CUSTOM_HEADERS": "x-ccof-project: PROJECT01",
+    "ANTHROPIC_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_USE_FOUNDRY": "0",
+    "CLAUDE_CODE_USE_BEDROCK": "0",
+    "CLAUDE_CODE_USE_VERTEX": "0",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS": "0",
+    "CLAUDE_CODE_USE_MANTLE": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "60000"
+  }
+}
+```
+
+**Check:** substitute the actual existing gateway URL/project/deployments. Do not
+copy sample aliases to enable a model the project does not admit. Preserve other
+required custom headers using newline-separated headers. Keep one `apiKeyHelper`.
+The TTL is helper-output cache time, not token lifetime or a guarantee of silent refresh.
+
+### Step 17.8f - Remove only old credential overrides and retain VS Code routing
+
+**Path A:** after backup, remove this gateway route's stale `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` values from the Claude/VS Code settings
+and any customer-owned persistent environment overrides. Do not inspect or share
+their values or change IT-managed settings. Keep the noncredential routing settings
+in **13.4**. Leave `claudeCode.disableLoginPrompt=true`; it suppresses the irrelevant
+Anthropic account prompt, not Microsoft authentication.
+
+**Path B (current PowerShell process only):**
+
+```powershell
+Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
+```
+
+**Check:** no static credential still takes precedence over the helper. A process-only
+removal doesn't clear user/machine environment or a managed profile; review the correct
+source with the desktop administrator. Do not run `az logout` or `az account clear`.
+
+### Step 17.8g - Launch, allow interactive SSO, then verify each client
+
+**Path A:** start Claude Code or send its first request. When the helper needs a token,
+it starts Microsoft WAM/browser sign-in itself; the user completes the required
+account/MFA/device interaction. They **do not type az login** and **do not use /login**
+to invoke this helper. A valid existing CLI session can avoid showing any sign-in UI.
+
+**Path B (actual short request; no token printed):**
+
+```powershell
+claude -p "Reply with exactly: gateway OK"
+```
+
+Fully quit/reopen VS Code through its normal menus and test a real extension
+conversation separately. Native Claude Desktop remains on **17.3-17.6**, not this CLI setting.
+
+**Check:** actual admitted-model reply, gateway route/credential source and APIM
+correlation. Group membership and a successful Module 12 entitlement projection remain
+mandatory. Never treat a Microsoft account picker or successful CLI login as inference acceptance.
+
+### Step 17.8h - Handle slow SSO or failures without exposing tokens
+
+**Path A:** if the client terminates the helper during a slow interactive sign-in,
+run **the same CMD helper itself** once with stdout discarded, outside the client's
+helper timeout. This still requires no user-written `az login` command. Don't assume
+a failed request left a completed sign-in behind.
+**Path B (PowerShell 5.1/7):**
+
+```powershell
+& 'C:\ccof-client\az-gateway-token.cmd' > $null
+if ($LASTEXITCODE -ne 0) { throw 'Gateway sign-in failed. Review the Microsoft/Azure CLI error; do not bypass policy.' }
+```
+
+**Check:** login completes, helper exits 0 without displaying a token, then retry Claude.
+For a managed environment, distribute an approved sign-in shortcut that calls the same
+helper with stdout redirected, rather than putting an access token in a file.
+The interactive UI remains subject to the installed CLI/OS/session; a headless or
+blocked broker/browser environment is not verified by the mocked helper tests.
+
+| Symptom | Step to revisit |
+|---|---|
+| Consent/preauthorization refusal | 17.8b / 13.2A; exact client, scope and tenant approval |
+| Token obtained, gateway 401/403 | 17.8c plus JWT audience/scope/client, then entitlement/model checks |
+| Repeated sign-in prompts | Exact CLI error, profile/session access, CA and failed silent refresh; don't weaken CA |
+| No helper invocation | Conflicting credential source, managed settings, helper path and VS Code restart |
+| Helper timeout | Complete 17.8h outside the client timeout, then retry; no guarantee of auto-retry |
+| User runs /login | Explain that this is Anthropic login, not this gateway's SSO entry point |
+
+**Rollback:** restore the previous helper/settings bytes. Restore Entra/APIM client
+trust only through the separate approved **13.2A/13.3A** rollback, preserving concurrent
+administrator edits. Nothing here changes a Function App or requests Graph permissions.
+Sources: [Azure CLI interactive sign-in/WAM](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively),
+[Claude Code gateway helper contract](https://code.claude.com/docs/en/llm-gateway-connect#rotate-credentials-with-apikeyhelper).
+The helper's control flow is tested with mock Azure CLI; real managed-device SSO and
+gateway inference require the acceptance above.
+
+## 18. Separate admin resources - inventory and one resource per step
+
+### Step 18.1 - Record authority and approved new names
+
+**Path A:** change owner approves this resource list. Existing CCOF apps stay untouched.
+In a fresh Cloud Shell PowerShell session, reload **only** the checked helpers and private
+`$C`, `$out`, `$repo` from Modules 00-01; this is not a rerun of those modules.
+
+**Path B (local state only):**
+
+```powershell
+$ErrorActionPreference = 'Stop'
+. (Join-Path $repo 'scripts/manual/Session-Helpers.ps1')
+Assert-CcofSession -C $C
+$Admin = @{
+  subscriptionId = $C.subscriptionId
+  tenantId = $C.tenantId
+  resourceGroup = 'REPLACE-new-admin-resource-group'
+  networkResourceGroup = 'REPLACE-new-admin-network-resource-group'
+  location = 'REPLACE-approved-region-name'
+  name = 'REPLACE-globally-unique-admin-function-name'
+  planName = 'REPLACE-new-admin-flex-plan'
+  storageName = 'REPLACE-new-lowercase-admin-storage'
+  workspaceName = 'REPLACE-new-admin-log-workspace'
+  insightsName = 'REPLACE-new-admin-insights'
+  vnetName = 'REPLACE-new-admin-vnet'
+  addressPrefix = 'REPLACE-approved-unused-vnet-cidr'
+  integrationPrefix = 'REPLACE-approved-functions-subnet-cidr'
+  endpointPrefix = 'REPLACE-approved-private-endpoints-subnet-cidr'
+  integrationSubnetName = 'snet-admin-functions'
+  endpointSubnetName = 'snet-admin-private-endpoints'
+  cosmosAccount = $C.cosmosAccount
+  cosmosResourceGroup = ($C.cosmosResourceId -split '/')[4]
+  cosmosResourceId = $C.cosmosResourceId
+  cosmosEndpoint = $C.cosmosEndpoint
+  database = $C.database
+  container = 'projects'
+}
+if (($Admin | ConvertTo-Json) -match 'REPLACE-') { throw 'Fill the approved admin names and CIDRs first.' }
+$adminOut = Join-Path $out 'admin-hand-config'
+New-Item -ItemType Directory -Path $adminOut -Force | Out-Null
+$Admin.rgId = "/subscriptions/$($Admin.subscriptionId)/resourceGroups/$($Admin.resourceGroup)"
+$Admin.networkRgId = "/subscriptions/$($Admin.subscriptionId)/resourceGroups/$($Admin.networkResourceGroup)"
+$Admin.appId = "$($Admin.rgId)/providers/Microsoft.Web/sites/$($Admin.name)"
+$Admin.planId = "$($Admin.rgId)/providers/Microsoft.Web/serverfarms/$($Admin.planName)"
+$Admin.storageId = "$($Admin.rgId)/providers/Microsoft.Storage/storageAccounts/$($Admin.storageName)"
+$Admin.workspaceId = "$($Admin.rgId)/providers/Microsoft.OperationalInsights/workspaces/$($Admin.workspaceName)"
+$Admin.insightsId = "$($Admin.rgId)/providers/Microsoft.Insights/components/$($Admin.insightsName)"
+$Admin.vnetId = "$($Admin.networkRgId)/providers/Microsoft.Network/virtualNetworks/$($Admin.vnetName)"
+$Admin.integrationSubnetId = "$($Admin.vnetId)/subnets/$($Admin.integrationSubnetName)"
+$Admin.endpointSubnetId = "$($Admin.vnetId)/subnets/$($Admin.endpointSubnetName)"
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** database is the customer's exact existing ID, not a hardcoded `ccof`.
+For the customer's earlier workbook it may be `registry`; never copy lab names.
+No overlapping CIDRs; region supports Flex Consumption; both subnets sized for the
+approved capacity (at least /27 for Flex; use larger if required).
+
+| Operator permission | Why needed |
+|---|---|
+| Resource-group create/write and resource-provider access | New plan, app, storage, logs and network resources |
+| `Microsoft.Authorization/roleAssignments/write` on **new** storage/Insights | Storage Blob Data Owner and Monitoring Metrics Publisher grants |
+| Approved Entra app ownership/application admin and role-assignment authority | New admin registration, enterprise app and admin-user role |
+| Cosmos `sqlRoleDefinitions/write`, `sqlRoleAssignments/write` | Native data role; ordinary Azure IAM is not item access |
+| Network/Private DNS write and Cosmos PE approval authority | New endpoint, link, DNS records and account connection |
+
+PIM/privileged administrators perform only their numbered grants; don't elevate the
+Function identity to Owner/Contributor or give developers these administrator permissions.
+
+### Step 18.2 - Create the admin resource group
+
+**Path A:** Resource groups > Create > approved subscription/name/region.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('group','create','--subscription',$Admin.subscriptionId,'-n',$Admin.resourceGroup,'-l',$Admin.location)
+```
+
+**Check:** Resource groups > open exactly this group, or
+`az group show -n <approved-admin-rg>`. Existing group: verify and skip create.
+
+### Step 18.3 - Create the admin network resource group
+
+**Path A:** repeat Resource groups > Create for the approved **network** group only.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('group','create','--subscription',$Admin.subscriptionId,'-n',$Admin.networkResourceGroup,'-l',$Admin.location)
+```
+
+**Check:** exact separate group; no move/delete of existing CCOF resources.
+
+### Step 18.4 - Create the admin VNet
+
+**Path A:** Virtual networks > Create > network resource group and region > approved
+address space. Use only approved new subnets; do not select or edit the CCOF VNet.
+If the wizard creates the two subnets too, verify each in 18.5/18.6 and skip their writes.
+**Path B (one new VNet, no subnets yet):**
+
+```powershell
+$file = Join-Path $adminOut 'vnet.json'
+Save-CcofJson @{location=$Admin.location;properties=@{addressSpace=@{addressPrefixes=@($Admin.addressPrefix)};subnets=@()}} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.vnetId)?api-version=2024-05-01",'--body',"@$file")
+```
+
+**Check:** VNet > Address space contains only the approved CIDR. Wait for Succeeded
+before adding a subnet. Never run this empty-subnets PUT on an existing VNet.
+
+### Step 18.5 - Create the Functions integration subnet
+
+**Path A:** new admin VNet > Subnets > Add > approved Functions CIDR >
+delegate to **Microsoft.App/environments**.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','vnet','subnet','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--vnet-name',$Admin.vnetName,'-n',$Admin.integrationSubnetName,'--address-prefixes',$Admin.integrationPrefix,'--delegations','Microsoft.App/environments')
+```
+
+**Check:** correct prefix and delegation. No private endpoints belong in this subnet.
+Do not use the App Service `Microsoft.Web/serverFarms` delegation for Flex.
+
+### Step 18.6 - Create the private-endpoint subnet
+
+**Path A:** same admin VNet > Subnets > Add > approved PE CIDR > no delegation.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','vnet','subnet','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--vnet-name',$Admin.vnetName,'-n',$Admin.endpointSubnetName,'--address-prefixes',$Admin.endpointPrefix)
+```
+
+**Check:** separate from integration; enough addresses for storage and Cosmos regional IPs.
+The approved NSG/route policies, if present, must allow the required private connections.
+
+### Step 18.7 - Create the admin storage account
+
+**Path A:** Storage accounts > Create > admin resource group > approved name/region >
+Standard LRS (or approved alternative). Advanced: minimum TLS 1.2, secure transfer,
+anonymous blob access off, shared-key access off. Networking: public access Disabled.
+Do not use or reconfigure the existing sync/resolver/reconciler storage.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('storage','account','create','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.storageName,'-l',$Admin.location,'--sku','Standard_LRS','--kind','StorageV2','--https-only','true','--min-tls-version','TLS1_2','--allow-blob-public-access','false','--allow-shared-key-access','false','--public-network-access','Disabled')
+```
+
+**Check:** read the actual values; tenant policy may modify them.
+Private storage cannot serve a deployment package until Module 19's path and grants exist.
+
+### Step 18.8 - Create the deployment container
+
+**Path A:** storage > Containers > create **app-package**, private, if the operator has
+data-plane access through the private network. Ordinary Cloud Shell may not.
+**Path B (ARM control plane, no keys/data access needed):**
+
+```powershell
+$file = Join-Path $adminOut 'container.json'
+Save-CcofJson @{properties=@{publicAccess='None'}} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.storageId)/blobServices/default/containers/app-package?api-version=2024-01-01",'--body',"@$file")
+```
+
+**Check:** container exists and is not public. ARM creation does not prove the host can read it.
+
+### Step 18.9 - Create the new Log Analytics workspace
+
+**Path A:** Log Analytics workspaces > Create > admin group/region > approved name >
+approved retention (example 30 days; change if policy requires).
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'workspace.json'
+Save-CcofJson @{location=$Admin.location;properties=@{sku=@{name='PerGB2018'};retentionInDays=30}} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.workspaceId)?api-version=2023-09-01",'--body',"@$file")
+```
+
+**Check:** correct retention and new workspace ID. Do not change the existing reporting workspace.
+
+### Step 18.10 - Create workspace-based Application Insights
+
+**Path A:** Application Insights > Create > admin group/name/region >
+workspace from **18.9**. Require Entra-authenticated ingestion; do not leave local
+authentication enabled just to avoid the monitoring role.
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'insights.json'
+Save-CcofJson @{location=$Admin.location;kind='web';properties=@{Application_Type='web';WorkspaceResourceId=$Admin.workspaceId;DisableLocalAuth=$true}} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.insightsId)?api-version=2020-02-02",'--body',"@$file")
+```
+
+**Check:** new workspace linkage and `DisableLocalAuth=true`.
+Record the connection string privately for 21.2; it is not a developer token.
+
+### Step 18.11 - Create the Flex plan
+
+**Path A:** Function App creation may create its plan. Name it explicitly and record
+the ID; do not create a second plan if that wizard already created this one.
+**Path B (one plan):**
+
+```powershell
+$file = Join-Path $adminOut 'plan.json'
+Save-CcofJson @{location=$Admin.location;sku=@{name='FC1';tier='FlexConsumption'};properties=@{reserved=$true}} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.planId)?api-version=2024-04-01",'--body',"@$file")
+```
+
+**Check:** Linux Flex Consumption FC1; not the existing apps' plans.
+
+### Step 18.12 - Create the separate admin Function App
+
+**Path A:** Function App > Create > **Flex Consumption**, Linux, Node 22 > approved
+new app/plan/storage. Enable its **system-assigned** identity, integrate only with
+18.5's subnet and choose identity-based deployment storage **app-package**.
+If the wizard cannot set these exact identity-based options, stop and use Path B.
+Do not accept replacement storage, shared keys or changes to an existing Function.
+**Path B (one new app):**
+
+```powershell
+$file = Join-Path $adminOut 'function.json'
+$storage = Invoke-CcofAzJson @('storage','account','show','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.storageName)
+$deploymentUrl = "$($storage.primaryEndpoints.blob)app-package"
+if (-not $storage.primaryEndpoints.blob) { throw 'Storage blob endpoint missing.' }
+Save-CcofJson @{
+  location=$Admin.location;kind='functionapp,linux';identity=@{type='SystemAssigned'}
+  properties=@{
+    serverFarmId=$Admin.planId;httpsOnly=$true;virtualNetworkSubnetId=$Admin.integrationSubnetId
+    functionAppConfig=@{
+      deployment=@{storage=@{type='blobContainer';value=$deploymentUrl;authentication=@{type='SystemAssignedIdentity'}}}
+      runtime=@{name='node';version='22'}
+      scaleAndConcurrency=@{maximumInstanceCount=40;instanceMemoryMB=2048}
+    }
+    siteConfig=@{minTlsVersion='1.2';ftpsState='Disabled'}
+  }
+} $file
+Invoke-CcofAzWrite @('rest','--method','put','--url',"https://management.azure.com$($Admin.appId)?api-version=2024-04-01",'--body',"@$file")
+```
+
+**Check:** new app, HTTPS, system identity, Node 22, exact Flex storage URL/auth and admin
+integration subnet. Maximum 40/memory 2048 are example capacity values requiring approval.
+Do not infer host readiness from successful provisioning; identity grants follow.
+
+### Step 18.13 - Read back the admin identity and hostname
+
+**Path A:** admin app > Identity > System assigned: copy Object/principal ID.
+Overview: record hostname. These differ from the UI app registration's client ID.
+**Path B (read-only):**
+
+```powershell
+$site = Invoke-CcofAzJson @('resource','show','--ids',$Admin.appId,'--api-version','2024-04-01')
+$Admin.principalId = [string]$site.identity.principalId
+$Admin.hostName = [string]$site.properties.defaultHostName
+if (-not $Admin.principalId -or -not $Admin.hostName) { throw 'Admin identity or hostname missing.' }
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** deployed admin identity, not any existing app's principal.
+
+## 19. Admin storage/monitoring grants and private deployment path
+
+### Step 19.1 - Grant Storage Blob Data Owner on the new storage only
+
+**Path A:** new storage > Access control (IAM) > Add role assignment >
+**Storage Blob Data Owner** > Managed identity > Function App > **admin app**.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('role','assignment','create','--subscription',$Admin.subscriptionId,'--assignee-object-id',$Admin.principalId,'--assignee-principal-type','ServicePrincipal','--role','b7e6dc6d-f1e8-4753-8033-0f276bb0955b','--scope',$Admin.storageId)
+```
+
+**Check:** principal/scope exact. Do not grant subscription Owner, Storage Account Contributor,
+or roles on the old storage accounts. Allow role propagation before publishing.
+
+### Step 19.2 - Grant Monitoring Metrics Publisher on the new Insights only
+
+**Path A:** new Application Insights > IAM > Add >
+**Monitoring Metrics Publisher** > admin Function identity.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('role','assignment','create','--subscription',$Admin.subscriptionId,'--assignee-object-id',$Admin.principalId,'--assignee-principal-type','ServicePrincipal','--role','3913510d-42f4-4e42-8a64-420c390055eb','--scope',$Admin.insightsId)
+```
+
+**Check:** correct new component. This permits authenticated telemetry ingestion,
+not human access to read logs.
+
+### Step 19.2a - Grant an approved human log reader on the new workspace
+
+**Path A:** new Log Analytics workspace > IAM > Add role assignment >
+**Log Analytics Reader** > approved operator/group, not the Function identity.
+**Path B (one separately approved assignment):**
+
+```powershell
+$Admin.logReaderId = 'REPLACE-approved-human-or-group-object-guid'
+$Admin.logReaderType = 'User'
+# For an approved group, use Group, not User.
+Invoke-CcofAzWrite @('role','assignment','create','--subscription',$Admin.subscriptionId,'--assignee-object-id',$Admin.logReaderId,'--assignee-principal-type',$Admin.logReaderType,'--role','Log Analytics Reader','--scope',$Admin.workspaceId)
+```
+
+**Check:** human/group reader on the new workspace only. If existing approved permissions
+already supply this access, record the evidence and skip the grant.
+
+### Step 19.2b - Grant that log reader on the new Insights component
+
+**Path A:** new Application Insights > IAM > Add > **Monitoring Reader** >
+same approved operator/group.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('role','assignment','create','--subscription',$Admin.subscriptionId,'--assignee-object-id',$Admin.logReaderId,'--assignee-principal-type',$Admin.logReaderType,'--role','Monitoring Reader','--scope',$Admin.insightsId)
+```
+
+**Check:** only the new component. This is human query access, not an additional runtime grant.
+
+### Step 19.3 - Create the admin blob private DNS zone
+
+**Path A:** Private DNS zones > Create > **admin network group** >
+`privatelink.blob.core.windows.net`. Keep the existing CCOF zone separate.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','zone','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.blob.core.windows.net')
+```
+
+**Check:** correct group and zone. If already present, compare and skip.
+
+### Step 19.4 - Link blob DNS to the admin VNet
+
+**Path A:** zone > Virtual network links > Add > admin VNet > auto registration Off.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','link','vnet','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--zone-name','privatelink.blob.core.windows.net','-n','admin-blob-link','--virtual-network',$Admin.vnetId,'--registration-enabled','false')
+```
+
+**Check:** exact VNet link; no duplicate blob zone linked to the same VNet.
+If custom DNS is configured, the DNS owner must forward private-zone queries correctly.
+
+### Step 19.5 - Create the blob private endpoint
+
+**Path A:** Private endpoints > Create > admin network group/region >
+Storage account from 18.7 > target **blob** > admin VNet > **PE subnet**.
+If the wizard creates the DNS group, record it and verify/skip 19.7.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-endpoint','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n',"$($Admin.name)-blob-pe",'-l',$Admin.location,'--subnet',$Admin.endpointSubnetId,'--private-connection-resource-id',$Admin.storageId,'--group-id','blob','--connection-name',"$($Admin.name)-blob-connection")
+```
+
+**Check:** storage target and blob group, Approved connection, assigned private IPs.
+Never place this endpoint in the delegated Functions subnet.
+
+### Step 19.6 - Approve only this connection if Pending
+
+**Path A:** **new storage** > Networking > Private endpoint connections >
+select this blob connection > Approve with the change reference.
+**Path B:** use the ID of this exact connection, read from its target resource:
+
+```powershell
+$blobPe = Invoke-CcofAzJson @('network','private-endpoint','show','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n',"$($Admin.name)-blob-pe")
+$connections = @(Invoke-CcofAzJson @('network','private-endpoint-connection','list','--id',$Admin.storageId))
+$match = @($connections | Where-Object { $_.properties.privateEndpoint.id -ieq $blobPe.id })
+if ($match.Count -ne 1) { throw 'Expected exactly this storage PE connection; inspect before approving.' }
+$blobStatus = $match[0].properties.privateLinkServiceConnectionState.status
+if ($blobStatus -ceq 'Pending') {
+  Invoke-CcofAzWrite @('network','private-endpoint-connection','approve','--id',$match[0].id,'--description','Approved separate admin storage endpoint')
+} elseif ($blobStatus -cne 'Approved') { throw "Storage connection is $blobStatus; stop for review." }
+```
+
+**Check:** reread this one connection and require Approved, not just successful endpoint
+creation. Do not approve all pending connections in a loop.
+
+### Step 19.7 - Attach the blob DNS zone group
+
+**Path A:** new PE > DNS configuration > Add configuration > select the **admin**
+blob zone, not the old CCOF group.
+**Path B:**
+
+```powershell
+$blobZone = Invoke-CcofAzJson @('network','private-dns','zone','show','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.blob.core.windows.net')
+Invoke-CcofAzWrite @('network','private-endpoint','dns-zone-group','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--endpoint-name',"$($Admin.name)-blob-pe",'-n','blob','--private-dns-zone',$blobZone.id,'--zone-name','blob')
+```
+
+**Check:** DNS zone group, storage A record and link. Do not enable public storage or shared
+keys to work around a package upload 403. No queue/table endpoints are assumed by this
+HTTP-only package; add only dependencies actually required by an approved future trigger.
+
+## 20. New admin Entra app - no Graph lookup/consent
+
+### Step 20.1 - Register the separate single-tenant admin app
+
+**Path A:** Entra > App registrations > New registration > **CCOF Admin** >
+Accounts in this organizational directory only. No client secret.
+**Path B:**
+
+```powershell
+$registration = Invoke-CcofAzJson @('ad','app','create','--display-name','CCOF Admin','--sign-in-audience','AzureADMyOrg')
+$Admin.clientId = $registration.appId
+$Admin.applicationObjectId = $registration.id
+if (-not $Admin.clientId -or -not $Admin.applicationObjectId) { throw 'Admin registration IDs missing.' }
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** new client ID and application Object ID. Never edit the developer, gateway or resolver
+registration. If the new registration already exists, open its Overview or `az ad app show`
+using its **exact** ID and record these fields instead of creating a duplicate by display name.
+
+### Step 20.2 - Set the Application ID URI
+
+**Path A:** new app > Expose an API > Application ID URI >
+`api://<new-admin-client-id>`.
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'admin-uri.json'
+Save-CcofJson @{identifierUris=@("api://$($Admin.clientId)")} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** exact URI. These are administrator Graph management calls, not Graph
+permissions granted to the deployed app.
+
+### Step 20.3 - Require v2 access tokens
+
+**Path A:** app > Manifest (Microsoft Graph format) > set only
+`api.requestedAccessTokenVersion=2`, preserving other API properties.
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'admin-token-version.json'
+Save-CcofJson @{api=@{requestedAccessTokenVersion=2}} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** manifest value 2. `ADMIN_AUDIENCE` later uses this app's client GUID.
+
+### Step 20.4 - Add the Projects.Manage delegated scope
+
+**Path A:** Expose an API > Add a scope > name **Projects.Manage** >
+approved consent wording and consent policy > Enabled. Record its scope ID.
+**Path B (new app only; stop if scopes already exist):**
+
+```powershell
+$Admin.scopeId = [guid]::NewGuid().ToString()
+$file = Join-Path $adminOut 'admin-scope.json'
+Save-CcofJson @{api=@{oauth2PermissionScopes=@(@{
+  id=$Admin.scopeId;value='Projects.Manage';type='Admin';isEnabled=$true
+  adminConsentDisplayName='Manage CCOF projects'
+  adminConsentDescription='Read and change CCOF project models and token limits as the signed-in administrator.'
+})}} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** enabled custom scope; not `GroupMember.Read.All`. The authorized app administrator
+controls consent/preauthorization for this **own API**, not tenant-wide Graph access.
+On an existing app preserve its scope list and reuse this scope's exact ID.
+
+### Step 20.5 - Add the Reader app role
+
+**Path A:** App roles > Create app role > `CCOF.Projects.Read` >
+Users/Groups > Enabled. Record role ID.
+**Path B (preserves the role list; refuses an unexpected duplicate):**
+
+```powershell
+$reg = Invoke-CcofAzJson @('ad','app','show','--id',$Admin.clientId)
+if (@($reg.appRoles | Where-Object value -CEQ 'CCOF.Projects.Read').Count) { throw 'Reader role exists; inspect and reuse it, do not create another.' }
+$Admin.readerRoleId = [guid]::NewGuid().ToString()
+$file = Join-Path $adminOut 'reader-role.json'
+$readerRole = @{id=$Admin.readerRoleId;value='CCOF.Projects.Read';displayName='CCOF project reader';description='View CCOF projects, models and token limits.';allowedMemberTypes=@('User');isEnabled=$true}
+Save-CcofJson @{appRoles=@($reg.appRoles)+@($readerRole)} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** Users/Groups role, not an application permission.
+
+### Step 20.6 - Add the Editor app role
+
+**Path A:** App roles > Create > `CCOF.Projects.Write` > Users/Groups > Enabled.
+**Path B:**
+
+```powershell
+$reg = Invoke-CcofAzJson @('ad','app','show','--id',$Admin.clientId)
+if (@($reg.appRoles | Where-Object value -CEQ 'CCOF.Projects.Write').Count) { throw 'Editor role exists; inspect and reuse it.' }
+$Admin.editorRoleId = [guid]::NewGuid().ToString()
+$file = Join-Path $adminOut 'editor-role.json'
+$editorRole = @{id=$Admin.editorRoleId;value='CCOF.Projects.Write';displayName='CCOF project editor';description='Create CCOF projects and change model and token policies.';allowedMemberTypes=@('User');isEnabled=$true}
+Save-CcofJson @{appRoles=@($reg.appRoles)+@($editorRole)} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** two roles; no change to old Entra registrations.
+
+### Step 20.7 - Register the SPA redirect
+
+**Path A:** Authentication > Add platform > **Single-page application** >
+`https://<actual-admin-hostname>/api/console`. Do not use Mobile/Desktop or `/api/admin`.
+**Path B (new app; preserve redirects when any already exist):**
+
+```powershell
+$reg = Invoke-CcofAzJson @('ad','app','show','--id',$Admin.clientId)
+$redirects = @(@($reg.spa.redirectUris) + @("https://$($Admin.hostName)/api/console") | Sort-Object -Unique)
+$file = Join-Path $adminOut 'spa-redirect.json'
+Save-CcofJson @{spa=@{redirectUris=$redirects}} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** exact hostname/path/case. No wildcard, query string, secret or implicit-flow enablement.
+The console uses MSAL authorization code + PKCE.
+
+### Step 20.8 - Authorize the console client for its own scope
+
+**Path A:** Expose an API > Authorized client applications > Add >
+new **admin client ID itself**, select **Projects.Manage**.
+**Path B (preserves unrelated entries; inspect existing self-entry before a rerun):**
+
+```powershell
+$reg = Invoke-CcofAzJson @('ad','app','show','--id',$Admin.clientId)
+$scope = @($reg.api.oauth2PermissionScopes | Where-Object value -CEQ 'Projects.Manage')
+if ($scope.Count -ne 1) { throw 'Expected one Projects.Manage scope.' }
+if (@($reg.api.preAuthorizedApplications | Where-Object appId -EQ $Admin.clientId).Count) { throw 'Console preauthorization exists; compare its scope, then skip this write.' }
+$file = Join-Path $adminOut 'console-preauthorization.json'
+Save-CcofJson @{api=@{preAuthorizedApplications=@($reg.api.preAuthorizedApplications)+@(@{appId=$Admin.clientId;delegatedPermissionIds=@($scope[0].id)})}} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/applications/$($Admin.applicationObjectId)",'--body',"@$file")
+```
+
+**Check:** own API scope only. No Graph permission request. Do not add Azure CLI to this
+registration by default; that is a separate optional scripting-client decision.
+
+### Step 20.9 - Create or verify the enterprise application
+
+**Path A:** Enterprise applications > filter by exact Application ID. Portal app registration
+may already have created it. Record its **service principal Object ID**.
+**Path B:** only if it is absent:
+
+```powershell
+$sp = Invoke-CcofAzJson @('ad','sp','create','--id',$Admin.clientId)
+$Admin.servicePrincipalId = $sp.id
+if (-not $Admin.servicePrincipalId) { throw 'New enterprise app ID missing.' }
+```
+
+**Check:** this ID is different from application Object ID and Function managed identity.
+If already present, use `az ad sp show --id <admin-client-id>` instead and record its `id`.
+
+### Step 20.10 - Assign one approved editor
+
+**Path A:** this enterprise app > Users and groups > Add user/group >
+approved administrator > role **CCOF project editor**. Group-based assignment
+depends on tenant licensing/policy; use approved individual assignments when necessary.
+**Path B (one user, not a loop):**
+
+```powershell
+$Admin.editorUserId = 'REPLACE-approved-editor-user-object-guid'
+$file = Join-Path $adminOut 'editor-assignment.json'
+Save-CcofJson @{principalId=$Admin.editorUserId;resourceId=$Admin.servicePrincipalId;appRoleId=$Admin.editorRoleId} $file
+Invoke-CcofAzWrite @('rest','--method','post','--url',"https://graph.microsoft.com/v1.0/servicePrincipals/$($Admin.servicePrincipalId)/appRoleAssignedTo",'--body',"@$file")
+```
+
+**Check:** explicit editor identity and correct app role. Assign a reader with the same
+single-user procedure using `readerRoleId` as a separately recorded grant.
+Do not grant directory roles to the Function App.
+
+### Step 20.11 - Require assignment
+
+**Path A:** enterprise app > Properties > **Assignment required? Yes**.
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'require-assignment.json'
+Save-CcofJson @{appRoleAssignmentRequired=$true} $file
+Invoke-CcofAzWrite @('rest','--method','patch','--url',"https://graph.microsoft.com/v1.0/servicePrincipals/$($Admin.servicePrincipalId)",'--body',"@$file")
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** only assigned users can sign in. Assignment and permitted client/scope/token
+validation are still checked by the API. The deployment script's broad ID allow-lists
+are not needed when using roles; leave those settings empty.
+
+## 21. Admin settings and package - only the new app
+
+### Step 21.1 - Back up the admin app's current settings
+
+**Path A:** admin Function > Environment variables > Advanced edit > save privately.
+Do not open/copy settings from the existing three apps for this task.
+**Path B (read/private backup):**
+
+```powershell
+$before = Invoke-CcofAzJson @('functionapp','config','appsettings','list','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name)
+Save-CcofJson @($before) (Join-Path $adminOut 'admin-settings-before.private.json')
+```
+
+**Check:** backup belongs to the new admin app; don't print or publish settings.
+
+### Step 21.2 - Prepare the admin app's settings privately
+
+**Path A:** create these entries in a private review sheet before applying.
+**Path B (reads and local file only):**
+
+```powershell
+$ai = Invoke-CcofAzJson @('resource','show','--ids',$Admin.insightsId,'--api-version','2020-02-02')
+if (-not $ai.properties.ConnectionString) { throw 'New Insights connection string missing.' }
+$settings = @{
+  AzureWebJobsStorage__accountName=$Admin.storageName
+  AzureWebJobsStorage__credential='managedidentity'
+  APPLICATIONINSIGHTS_CONNECTION_STRING=$ai.properties.ConnectionString
+  APPLICATIONINSIGHTS_AUTHENTICATION_STRING='Authorization=AAD'
+  COSMOS_ENDPOINT=$Admin.cosmosEndpoint
+  COSMOS_DATABASE=$Admin.database
+  ADMIN_PROJECTS_CONTAINER=$Admin.container
+  ADMIN_TENANT_ID=$Admin.tenantId
+  ADMIN_AUDIENCE=$Admin.clientId
+  ADMIN_SCOPE='Projects.Manage'
+  ADMIN_ALLOWED_CLIENT_IDS=$Admin.clientId
+  ADMIN_UI_CLIENT_ID=$Admin.clientId
+  ADMIN_UI_SCOPE="api://$($Admin.clientId)/Projects.Manage"
+  ADMIN_READER_IDS=''
+  ADMIN_EDITOR_IDS=''
+}
+Save-CcofJson $settings (Join-Path $adminOut 'admin-settings.private.json')
+```
+
+**Check:** no shared storage key, no client secret, no Graph endpoint/permission,
+no sync/reconciler settings. Admin uses its own system identity; no UAMI client ID.
+Cosmos is the **normal account hostname**, not the `privatelink` hostname or a private IP.
+
+### Step 21.3 - Merge settings on the new admin app
+
+**Path A:** admin app > Environment variables > merge reviewed name/value pairs,
+preserving unrelated settings > Apply.
+**Path B (single app-settings merge):**
+
+```powershell
+$file = Join-Path $adminOut 'admin-settings.private.json'
+Invoke-CcofAzWrite @('functionapp','config','appsettings','set','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name,'--settings',"@$file")
+```
+
+**Check:** read back privately; compare values, not just names. App restarts are expected.
+Don't set or change `CCOF_APP_ROLE` on existing apps.
+
+### Step 21.4 - Build the reviewed admin ZIP offline
+
+**Path A (local build; no Portal equivalent):** approved operator builds the separate
+`admin` package from the reviewed feature/release source. Customer developers need
+neither repository access nor npm for using the browser console.
+**Path B (build workstation, not ordinary Cloud Shell):**
+
+```powershell
+pwsh -NoProfile -File (Join-Path $repo 'admin/Build-AdminPackage.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Admin package build/tests failed; do not publish.' }
+Get-FileHash (Join-Path $repo 'admin/admin.zip') -Algorithm SHA256
+```
+
+**Check:** reviewed hash and approved delivery to the deployment operator. ZIP root:
+`host.json`, `package.json`, `package-lock.json`, `dist`, `ui-dist`, production `node_modules`.
+No `dev/serve.ts`, demo authenticator/data, secrets or parent wrapper directory.
+Package delivery via the approved software channel is unavoidable for deploying code;
+it is not an instruction to clone on locked-down developer machines.
+
+### Step 21.5 - Publish only the admin ZIP
+
+**Path A:** use an approved Flex-compatible deployment action if the Portal exposes one;
+otherwise use the checked CLI publishing exception below. Upload the approved ZIP to
+Cloud Shell using **Manage files > Upload**; no repo clone is required for this manual path.
+Do not use Kudu Advanced Tools, `/api/zipdeploy` directly, or set
+`WEBSITE_RUN_FROM_PACKAGE` on a Flex app.
+**Path B (Flex-aware Azure CLI publishing):**
+
+```powershell
+$adminZip = 'REPLACE-absolute-path-to-approved-admin.zip'
+if (-not (Test-Path -LiteralPath $adminZip -PathType Leaf)) { throw 'Approved admin ZIP missing.' }
+Get-FileHash -LiteralPath $adminZip -Algorithm SHA256
+# Compare the hash with 21.4 before executing the next statement.
+Invoke-CcofAzWrite @('functionapp','deployment','source','config-zip','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name,'--src',$adminZip)
+```
+
+Despite its name, `az functionapp deployment source config-zip` detects Flex Consumption
+and uses its managed package publishing path (`/api/publish`), not the legacy Kudu ZIP
+API. This is the command Microsoft documents for Flex. The generic preview command
+`az functionapp deploy --type zip` returned **415** in the Azure CLI 2.91.0 lab test;
+do not use it for this workbook's Flex deployment.
+
+The deployment service stores the package in the `app-package` container configured in
+18.12 using its configured identity, then refreshes the app. Do not add
+`WEBSITE_RUN_FROM_PACKAGE`, `SCM_DO_BUILD_DURING_DEPLOYMENT` or request remote build:
+the approved ZIP already contains compiled code and production `node_modules`.
+
+**Check:** CLI exits 0. Read back the expected deployment target/state (this check
+alone does **not** prove the new ZIP is running):
+
+```powershell
+$site = Invoke-CcofAzJson @('resource','show','--ids',$Admin.appId,'--api-version','2024-04-01')
+$site.properties.functionAppConfig.deployment.storage | ConvertTo-Json -Depth 5
+if ($site.properties.state -cne 'Running') { throw 'Admin app is not Running after deployment.' }
+```
+
+Deployment storage must still show the `app-package` URL with `SystemAssignedIdentity`.
+Then perform 21.6's handler/console checks and confirm the served UI matches the approved
+release; an older package can keep working after a failed upload. Storage 403 means check
+19.1-19.7 (role, propagation, private endpoint/DNS), not public storage or shared keys.
+An SCM hostname in an error does not itself mean Kudu was used: Flex also has a publishing
+endpoint on that hostname.
+Reference: [Microsoft's Flex package deployment command](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-by-using-azure-cli).
+
+### Step 21.6 - Verify handlers and the console assets
+
+**Path A:** new app > Functions: `projects`, `project`, `classificationPolicy`, `adminUi`,
+`adminHealth`. Browse `https://<actual-host>/api/console`.
+**Path B (read-only):**
+
+```powershell
+$names = @()
+foreach ($attempt in 1..6) {
+  $names = @(az functionapp function list --subscription $Admin.subscriptionId -g $Admin.resourceGroup -n $Admin.name --query '[].name' -o tsv)
+  if ($LASTEXITCODE -ne 0) { throw 'Admin handler listing failed.' }
+  if ($names.Count -ge 5) { break }
+  Start-Sleep -Seconds 20
+}
+$names
+foreach ($handler in 'projects','project','classificationPolicy','adminUi','adminHealth') {
+  if (-not ($names -match "/$handler$|^$handler$")) { throw "Handler $handler not registered; check the ZIP root and app logs." }
+}
+$page = Invoke-WebRequest "https://$($Admin.hostName)/api/console"
+if ($page.StatusCode -ne 200) { throw 'Console page did not load.' }
+```
+
+**Check:** all five handlers registered (Flex can take a minute to sync triggers after
+One Deploy), correct routes and strict CSP; `/api/admin` is reserved by Functions,
+so use `/api/console`. Static HTML success does not prove Cosmos access; 23.8 does.
+If inbound rules already block Cloud Shell, test from the approved network instead.
+
+## 22. Native Cosmos grants - admin identity on projects only
+
+### Step 22.1 - Inspect the exact account, database and container
+
+**Path A:** Cosmos > Overview/Settings > Data Explorer tree: record the existing database
+ID and `projects` container. Viewing the tree may itself be limited by private access.
+Identity review: admin app > Identity > Object ID.
+**Path B (ARM metadata, no data-plane access):**
+
+```powershell
+$cosmos = Invoke-CcofAzJson @('cosmosdb','show','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-n',$Admin.cosmosAccount)
+$container = Invoke-CcofAzJson @('cosmosdb','sql','container','show','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-a',$Admin.cosmosAccount,'-d',$Admin.database,'-n',$Admin.container)
+if ($cosmos.id -ine $Admin.cosmosResourceId) { throw 'Wrong Cosmos account.' }
+if ($cosmos.publicNetworkAccess -cnotin @('Enabled','Disabled')) { throw 'Unexpected Cosmos public-access state; stop for review.' }
+$Admin.cosmosOriginalPublicNetworkAccess = $cosmos.publicNetworkAccess
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+if (@($container.resource.partitionKey.paths).Count -ne 1 -or $container.resource.partitionKey.paths[0] -cne '/projectId') { throw 'Unexpected project partition key.' }
+```
+
+**Check:** exact existing account/database/container and recorded public-access state.
+Do not create another database, change keys, enable public access or disable a live public path.
+The new private endpoint can be added while the existing public phase continues; Module 16 owns
+the separately approved public-access cutover. Health success alone does not prove the private
+route: also verify the admin VNet integration, DNS zone group/link and approved PE.
+
+### Step 22.2 - Prepare the native role definition
+
+**Path A:** Cosmos native data RBAC is **not** the ordinary Azure IAM blade. This custom
+role needs the CLI/ARM route; do not substitute Cosmos DB Built-in Data Contributor.
+The security owner reviews the following six actions before the next write.
+**Path B (local JSON only):**
+
+```powershell
+$Admin.cosmosRoleId = [guid]::NewGuid().ToString()
+$Admin.cosmosRoleName = "ccof-admin-project-editor-$($Admin.name)"
+$file = Join-Path $adminOut 'admin-cosmos-role.json'
+Save-CcofJson @{
+  Id=$Admin.cosmosRoleId;RoleName=$Admin.cosmosRoleName;Type='CustomRole'
+  AssignableScopes=@($Admin.cosmosResourceId)
+  Permissions=@(@{DataActions=@(
+    'Microsoft.DocumentDB/databaseAccounts/readMetadata'
+    'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery'
+    'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed'
+    'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read'
+    'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create'
+    'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace'
+  )})
+} $file
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** no delete, upsert or wildcard. SDK queries require **both executeQuery and
+readChangeFeed**; otherwise health can pass while the project list fails.
+On a retry reuse the saved role ID/file, not another new GUID.
+
+### Step 22.3 - Create the one native role definition
+
+**Path A:** CLI-only native custom-role exception; privileged owner executes this step.
+**Path B:**
+
+```powershell
+$file = Join-Path $adminOut 'admin-cosmos-role.json'
+Invoke-CcofAzWrite @('cosmosdb','sql','role','definition','create','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-a',$Admin.cosmosAccount,'--body',"@$file")
+```
+
+**Check:** native role definition's name/ID and exact six actions. This alone grants no identity access.
+
+### Step 22.4 - Assign it only to the admin identity on projects
+
+**Path A:** native Cosmos role-assignment CLI/ARM exception. Grant to **admin Function MI**,
+not the UI client, user, APIM, sync MI or entire subscription.
+**Path B (one assignment):**
+
+```powershell
+$Admin.cosmosAssignmentId = [guid]::NewGuid().ToString()
+$Admin.cosmosScope = "/dbs/$($Admin.database)/colls/$($Admin.container)"
+Invoke-CcofAzWrite @('cosmosdb','sql','role','assignment','create','--subscription',$Admin.subscriptionId,'-g',$Admin.cosmosResourceGroup,'-a',$Admin.cosmosAccount,'--role-definition-id',$Admin.cosmosRoleId,'--role-assignment-id',$Admin.cosmosAssignmentId,'--principal-id',$Admin.principalId,'--scope',$Admin.cosmosScope)
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** scope ends in `/dbs/<actual-database>/colls/projects`, never account/database scope.
+No grant on `entitlement`, `backends`, budget or lease containers.
+
+### Step 22.5 - Read back the new assignment
+
+**Path A:** use the native read-back exception; ordinary IAM listings do not show this grant.
+**Path B (read-only):**
+
+```powershell
+az cosmosdb sql role assignment list --subscription $Admin.subscriptionId -g $Admin.cosmosResourceGroup -a $Admin.cosmosAccount --query '[].{id:id,principal:principalId,role:roleDefinitionId,scope:scope}' -o table
+if ($LASTEXITCODE -ne 0) { throw 'Native role read-back failed.' }
+```
+
+**Check:** exact new principal/role/scope; all previous assignments remain. Wait for propagation.
+`forbidden_data_role` can be returned during metadata initialization before the network path
+has been fully exercised; do not diagnose networking solely from that earlier 403.
+
+## 23. Private Cosmos access from the admin app - dedicated endpoint, no peering
+
+### Step 23.1 - Verify the admin integration and PE subnet
+
+**Path A:** admin app > Networking > VNet integration: **admin VNet / Functions subnet**.
+Admin VNet > Subnets: separate PE subnet, no delegation. No edits to the original CCOF VNet.
+**Path B (read-only):**
+
+```powershell
+$site = Invoke-CcofAzJson @('resource','show','--ids',$Admin.appId,'--api-version','2024-04-01')
+if ($site.properties.virtualNetworkSubnetId -ine $Admin.integrationSubnetId) { throw 'Admin app integration subnet differs.' }
+az network vnet subnet show --subscription $Admin.subscriptionId -g $Admin.networkResourceGroup --vnet-name $Admin.vnetName -n $Admin.endpointSubnetName --query '{id:id,prefix:addressPrefix,delegations:delegations}' -o json
+if ($LASTEXITCODE -ne 0) { throw 'PE subnet read failed.' }
+```
+
+**Check:** VNet integration is outbound; it is not an inbound private endpoint for the UI.
+
+### Step 23.2 - Create the admin documents private DNS zone
+
+**Path A:** Private DNS zones > Create > admin network group >
+`privatelink.documents.azure.com`. Don't reuse/edit the old CCOF zone.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','zone','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.documents.azure.com')
+```
+
+**Check:** new zone in the correct resource group. Same DNS zone name can exist in a
+different resource group; only the admin copy is linked here.
+
+### Step 23.3 - Link documents DNS to the admin VNet
+
+**Path A:** this new zone > Virtual network links > Add > admin VNet >
+auto registration **Off**.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','link','vnet','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--zone-name','privatelink.documents.azure.com','-n','admin-cosmos-link','--virtual-network',$Admin.vnetId,'--registration-enabled','false')
+```
+
+**Check:** link succeeded. With custom DNS, arrange forwarding through the customer's
+approved Azure/private resolver; don't point an on-premises server directly at Azure's VNet DNS IP.
+
+### Step 23.4 - Create the dedicated Cosmos private endpoint
+
+**Path A:** Private endpoints > Create > admin network group and VNet region >
+resource **Microsoft.DocumentDB/databaseAccounts**, exact existing Cosmos account >
+target sub-resource **Sql** > admin VNet / **PE subnet**.
+If the wizard adds DNS integration, select the **admin group's** documents zone and
+record its DNS group; verify/skip 23.6 rather than adding a second DNS group.
+**Path B:**
+
+```powershell
+$Admin.cosmosPeName = "$($Admin.name)-cosmos-pe"
+Invoke-CcofAzWrite @('network','private-endpoint','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n',$Admin.cosmosPeName,'-l',$Admin.location,'--subnet',$Admin.endpointSubnetId,'--private-connection-resource-id',$Admin.cosmosResourceId,'--group-id','Sql','--connection-name',"$($Admin.name)-cosmos-connection")
+```
+
+**Check:** one new PE with account global/regional private IPs, no peering. This adds a
+private-endpoint connection to the existing Cosmos account; it does not replace the old connection.
+
+### Step 23.5 - Approve the new Cosmos connection if required
+
+**Path A:** Cosmos > Networking > Private access > select **only this admin endpoint**
+connection > Approve with change reference. Already Approved: record and skip.
+**Path B (find the exact connection, then one approval):**
+
+```powershell
+$pe = Invoke-CcofAzJson @('network','private-endpoint','show','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n',$Admin.cosmosPeName)
+$connections = @(Invoke-CcofAzJson @('network','private-endpoint-connection','list','--id',$Admin.cosmosResourceId))
+$match = @($connections | Where-Object { $_.properties.privateEndpoint.id -ieq $pe.id })
+if ($match.Count -ne 1) { throw 'Expected exactly one connection for this new PE; inspect Portal, do not bulk-approve.' }
+$Admin.cosmosConnectionId = $match[0].id
+# Run the following write only if that exact connection is Pending and approved by the owner.
+Invoke-CcofAzWrite @('network','private-endpoint-connection','approve','--id',$Admin.cosmosConnectionId,'--description','Approved separate CCOF admin endpoint')
+```
+
+**Check:** Approved on both PE/account; do not approve unrelated pending requests.
+
+### Step 23.6 - Attach the documents DNS zone group
+
+**Path A:** new PE > DNS configuration > Add configuration >
+admin documents zone. Skip create if already attached by the wizard.
+**Path B:**
+
+```powershell
+$zone = Invoke-CcofAzJson @('network','private-dns','zone','show','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.documents.azure.com')
+Invoke-CcofAzWrite @('network','private-endpoint','dns-zone-group','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--endpoint-name',$Admin.cosmosPeName,'-n','cosmos','--private-dns-zone',$zone.id,'--zone-name','cosmos')
+```
+
+**Check:** the zone group populates **all** account/regional A records. Don't hand-create
+only one A record. Keep the normal `COSMOS_ENDPOINT` and preserve the account's recorded
+public-access setting. If already Disabled, it stays Disabled.
+
+### Step 23.7 - Refresh only the admin Function
+
+**Path A:** admin app > Overview > Restart after role/DNS propagation.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('functionapp','restart','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name)
+```
+
+**Check:** no existing Function restarted. If NSGs/UDRs/firewalls exist, allow required
+host/auth/storage/monitoring and Cosmos traffic; consult SDK/Private Link port requirements,
+not just a 443-only assumption. An endpoint, private IP or restart alone is not acceptance.
+
+### Step 23.8 - Probe Cosmos from inside the Function App
+
+**Path A:** get the **adminHealth** function's key via its Function keys UI, store it only
+in the private session, then call from an approved network. Do not share a key-bearing URL.
+**Path B (reads only; never prints key):**
+
+```powershell
+$keys = Invoke-CcofAzJson @('functionapp','keys','list','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name)
+$healthKey = [string]$keys.functionKeys.default
+if (-not $healthKey) { throw 'Health key missing.' }
+try {
+  $response = Invoke-WebRequest "https://$($Admin.hostName)/api/health" -Headers @{'x-functions-key'=$healthKey} -SkipHttpErrorCheck -TimeoutSec 90
+  $result = $response.Content | ConvertFrom-Json -AsHashtable
+  $result | ConvertTo-Json -Depth 5
+  if ($response.StatusCode -ne 200 -or $result.status -cne 'ready' -or $result.checks.cosmos -cne 'ok') { throw 'Admin app is not ready. Resolve this exact failure before continuing.' }
+} finally {
+  $healthKey = $null
+  $keys = $null
+}
+```
+
+**Check:** HTTP 200, `status=ready`, `auth=configured`, `cosmos=ok`.
+This endpoint uses a Function key and performs a **point read inside the Function**;
+ordinary Cloud Shell need not be on the Cosmos VNet. If UI inbound restrictions block
+Cloud Shell, run from an allowed admin machine instead of relaxing the restrictions.
+
+| Probe result | Next check |
+|---|---|
+| `forbidden_data_role` | Admin MI Object ID, six role actions, exact container/database scope, propagation |
+| `blocked_by_network` / `unreachable` | Approval, DNS zone group/link, app integration, custom DNS/NSG/UDR |
+| Auth not configured | New app's ADMIN_* values and client registration |
+| 403 before JSON | App inbound policy; test from the approved network |
+| Ready, but project list fails | SDK query grants, especially `readChangeFeed`, and actual database |
+
+## 24. Admin UI, access restrictions and handoff - final module
+
+### Step 24.1 - Open the deployed console and sign in
+
+**Path A:** approved browser/network > `https://<admin-host>/api/console` >
+Sign in with Microsoft. Use the assigned editor, not an ordinary developer.
+**Path B:** browser is required for the interactive UI test; no CLI token is pasted into it.
+
+**Check:** Reader/Editor label reflects the API's authenticated `/api/console/me`.
+If sign-in succeeds but registry is unavailable, this is not an empty project list.
+The local demo's fictional projects are never deployed or copied into Cosmos.
+
+### Step 24.2 - List and open an existing project - read only
+
+**Path A:** use Find a project > open the customer's real project.
+**Path B:** customer-written tools may call `GET /api/projects` and
+`GET /api/projects/{id}` with a valid delegated access token from an explicitly
+approved OAuth client. A browser-console preauthorization does not authorize Azure CLI.
+
+**Check:** actual stored groups/model families/limits/budgets. No create/edit required.
+`GET /api/projects/{id}` returns an ETag; listing is distinct from the point-read health check.
+
+### Step 24.3 - Inspect STD, PRM and CYB entry controls without saving
+
+**Path A:** New project > Classification groups. STD is selected initially.
+Tick PRM and CYB only if required; expand their independent settings.
+**Path B:** review the POST schema in `admin/openapi.yaml`; no write in this step.
+
+**Check:** one, two or three groups may be included. Each selected classification
+needs its **own Entra group Object ID**, label, model family/deployments, token limits
+and budgets. Unchecked classifications are omitted; at least one is required.
+Display names cannot resolve/validate identity without Graph.
+Never reuse one Object ID across classifications of the same project.
+The UI's initial numbers are **examples**, not approved budgets/quotas.
+
+### Step 24.4 - Create one approved test project
+
+**Path A:** change owner approves a dedicated test project, correct existing backend,
+actual Foundry subscription and actual assigned security groups. Choose safe membership
+(for example an approved empty/test group), models and finite test limits.
+Preview the registry document, then **Create project** once.
+**Path B:** one approved `POST /api/projects` with that same reviewed document.
+Do not use a display name as `groupId`; the API validates its GUID format but does not
+query Graph. It does not provision Entra groups, Foundry deployments or APIM backends.
+
+**Check:** 201, exact saved document and ETag; no duplicate ID and no automatic inference
+acceptance. The existing sync may discover the record on its next run, so treat this
+as a real access/configuration change, not harmless demo data. There is no DELETE API;
+agree the retained test record/cleanup procedure **before** creating it.
+
+### Step 24.5 - Review and save one test-classification limit change
+
+**Path A:** open that test project > select PRM (or the approved test classification) >
+Edit limits and models > alter one approved value > **Review changes** >
+verify before/after diff > Save. Record the request correlation privately.
+**Path B:** `PATCH /api/projects/{id}/classifications/{code}/limits`, supplying the exact
+current ETag as `If-Match`; never `*`. Or PUT that classification's full `family-policy`.
+
+**Check:** 200 and new ETag; STD/CYB/other classifications unchanged. Check by rereading.
+Zero/negative/fractional/string limits are invalid; periodic quota and period must
+both be null or both set. Aggregate and model-family ceilings both apply.
+Editing limits does not reset usage counters or grant Foundry capacity.
+
+### Step 24.6 - Verify stale edit and read-only access
+
+**Path A:** with approval, use two tabs on the **test** project. Save one reviewed
+change in tab A. Tab B's stale save must show **Someone else changed this project**,
+with Load latest version, and must not overwrite A. Separately sign in as the
+assigned reader; no edit/create controls should appear.
+**Path B:** test API 412 for stale If-Match, 428 without it, 403 for a reader write,
+and 401 without a valid token. Don't change a production record for negative tests.
+
+**Check:** persisted record contains only the accepted update; hiding a button is
+not authorization proof. DELETE, project rename, group/backend changes, status and
+budgets are not implemented by this phase; don't claim full CRUD.
+
+### Step 24.7 - Verify audit and entitlement propagation separately
+
+**Path A:** **new admin Insights** > Logs:
+
+```kusto
+traces
+| where timestamp > ago(1h)
+| where message contains "ccof.admin.audit.v1"
+| project timestamp, message
+| order by timestamp desc
+```
+
+**Path B:** approved log reader can reuse the ARM Insights query method in **11.1**,
+changing only the target to the **admin** component. Do not grant the app log-reader
+permissions merely so humans can inspect it.
+
+**Check:** who/operation/project/classification/ETags and before/after changed values,
+no tokens, prompts or secret values. Ingestion may take minutes.
+Then verify the existing sync's successful apply (Module 12) and the member's actual
+entitlement. Snapshot mode needs a **new** approved snapshot containing all required
+groups; the admin API does not enable timers or apply snapshots. Allow gateway cache TTL.
+No live developer limit claim until these checks pass.
+
+### Step 24.8 - Choose and record the inbound access model before restricting it
+
+**Path A:** networking/security owner records one of:
+
+| Model | Required reachability |
+|---|---|
+| Public hostname with IP allow-list | Only approved corporate egress CIDRs; default Deny, authentication still required |
+| Private-only console/API | A **sites** private endpoint for the admin app, private DNS, corporate VPN/ExpressRoute/approved private reach, public app access Disabled |
+
+**Path B:** prepare the next steps with the approved CIDRs or private endpoint inputs.
+Do not copy example CIDRs or assume the administrator's home address is approved.
+**Check:** know how to reach the page **and deploy packages afterwards** before applying.
+An outbound Cosmos endpoint or VNet integration does not make the UI private.
+
+### Step 24.9 - Add one approved admin-network Allow rule
+
+**Path A:** **admin app only** > Networking > Access restrictions >
+Main site > Add > IP Address > actual approved corporate CIDR > Allow > priority 100.
+**Path B:**
+
+```powershell
+$approvedAdminCidr = 'REPLACE-approved-corporate-egress-cidr'
+if ($approvedAdminCidr -match 'REPLACE' -or $approvedAdminCidr -in @('0.0.0.0/0','::/0')) { throw 'Approved narrow admin CIDR required.' }
+Invoke-CcofAzWrite @('functionapp','config','access-restriction','add','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name,'--rule-name','corporate-admin-egress','--action','Allow','--ip-address',$approvedAdminCidr,'--priority','100')
+```
+
+**Check:** actual allowed route works; first explicit rule may implicitly deny unmatched
+traffic. Confirm this before applying and keep an approved management-plane recovery path.
+Add any second corporate range as a separately approved, separately checked rule.
+Never allow `AzureCloud`, `0.0.0.0/0` or guest/home networks merely to make Cloud Shell pass.
+
+### Step 24.10 - Set unmatched traffic to Deny
+
+**Path A:** Main site > unmatched rule/default action **Deny**.
+**Path B (only this new app's web configuration property):**
+
+```powershell
+Invoke-CcofAzWrite @('resource','update','--ids',"$($Admin.appId)/config/web",'--api-version','2024-04-01','--set','properties.ipSecurityRestrictionsDefaultAction=Deny')
+```
+
+**Check:** from corporate egress, console 200; outside, 403 before app code.
+Keep Entra sign-in/roles active; network rules are additional protection, not a replacement.
+
+### Step 24.11 - Restrict deployment/SCM access separately
+
+**Path A:** admin app > Access restrictions > SCM/Advanced tools >
+use the same restrictions, or a reviewed stricter deployment policy.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('functionapp','config','access-restriction','set','--subscription',$Admin.subscriptionId,'-g',$Admin.resourceGroup,'-n',$Admin.name,'--use-same-restrictions-for-scm-site','true')
+```
+
+**Check:** approved package publishing still works from the approved deployment network.
+Ordinary public Cloud Shell may now be blocked. Do not remove restrictions automatically.
+
+### Step 24.12a - Private-only alternative: create the sites DNS zone
+
+**Path A:** only for an approved private-only console, Private DNS zones > Create >
+admin network group > `privatelink.azurewebsites.net`.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','zone','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.azurewebsites.net')
+```
+
+**Check:** admin-owned zone; do not alter an existing zone linked to CCOF production apps.
+
+### Step 24.12b - Private-only alternative: link sites DNS to the admin VNet
+
+**Path A:** that zone > Virtual network links > Add > admin VNet > auto registration Off.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-dns','link','vnet','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--zone-name','privatelink.azurewebsites.net','-n','admin-sites-link','--virtual-network',$Admin.vnetId,'--registration-enabled','false')
+```
+
+**Check:** arrange approved corporate DNS forwarding/routing before making the UI private.
+Any other client VNet link is another separately recorded step, not a write loop.
+
+### Step 24.12c - Private-only alternative: create the admin sites endpoint
+
+**Path A:** if **private-only** was approved instead of the allow-list route:
+Private endpoint > new endpoint in approved admin PE subnet > target this **admin
+Function App**, sub-resource **sites** > integrate private DNS
+`privatelink.azurewebsites.net`. Link the zone to every approved client-resolution
+VNet and arrange corporate DNS forwarding. Provision **that zone/link** as separate
+resources first if absent.
+**Path B (one endpoint after the approved zone/link exist):**
+
+```powershell
+Invoke-CcofAzWrite @('network','private-endpoint','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n',"$($Admin.name)-sites-pe",'-l',$Admin.location,'--subnet',$Admin.endpointSubnetId,'--private-connection-resource-id',$Admin.appId,'--group-id','sites','--connection-name',"$($Admin.name)-sites-connection")
+```
+
+**Check:** Approved. The storage/Cosmos zones do not resolve the console hostname.
+This branch requires corporate/private reachability **before** the next step.
+
+### Step 24.12d - Private-only alternative: attach the sites DNS group
+
+**Path A:** sites PE > DNS configuration > Add > the admin sites zone.
+**Path B:**
+
+```powershell
+$sitesZone = Invoke-CcofAzJson @('network','private-dns','zone','show','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'-n','privatelink.azurewebsites.net')
+Invoke-CcofAzWrite @('network','private-endpoint','dns-zone-group','create','--subscription',$Admin.subscriptionId,'-g',$Admin.networkResourceGroup,'--endpoint-name',"$($Admin.name)-sites-pe",'-n','sites','--private-dns-zone',$sitesZone.id,'--zone-name','sites')
+```
+
+**Check:** app and SCM DNS records resolve privately from the approved admin/deployment
+network. Before disabling public access, prove a real authenticated console/API request
+travels through the private path; a DNS record alone is not acceptance.
+
+### Step 24.13 - Private-only alternative: disable the admin app's public endpoint
+
+**Path A:** after an actual console request succeeds over the sites private endpoint,
+admin app > Networking > Public network access **Disabled**.
+**Path B:**
+
+```powershell
+Invoke-CcofAzWrite @('resource','update','--ids',$Admin.appId,'--api-version','2024-04-01','--set','properties.publicNetworkAccess=Disabled')
+```
+
+**Check:** private authorized user still reaches console and API; public requests are
+blocked. A private endpoint alone does not disable the public address. Ordinary Cloud
+Shell/developer home internet won't reach this private-only console by design.
+If no private client connectivity exists, use the approved IP allow-list instead.
+
+### Step 24.14 - Close the append-only handoff
+
+**Path A:** record the new resource IDs, admin principal, role-definition/assignment IDs,
+scope, PE approvals/DNS links, Entra registration/scope/role/user assignments, package
+hash, version/commit, access restrictions and actual UI/data/audit/sync evidence.
+**Path B (private local save only):**
+
+```powershell
+Save-CcofJson $Admin (Join-Path $adminOut 'admin-values.private.json')
+```
+
+**Check:** prior CCOF app code/settings/identities, API policies and old role assignments
+are unchanged. No Graph grant was added. Failed steps remain failed/pending, not
+success-shaped defaults. Roll back only the new admin settings/package or separately
+approved new grant/endpoint by its recorded ID; never bulk-delete grants or account data.
+
+**References:** [Cosmos native actions and SDK query requirements](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security),
+[Cosmos Private Link](https://learn.microsoft.com/azure/cosmos-db/how-to-configure-private-endpoints),
+[Function App networking](https://learn.microsoft.com/azure/azure-functions/functions-networking-options),
+[`docs/ADMIN-API.md`](../ADMIN-API.md), [`admin/openapi.yaml`](../../admin/openapi.yaml).
+The condensed Bash procedure is an optional reference, **not** a replacement for
+these individually approved Portal/CLI steps.
+
+<!-- ADMIN-HAND-CONFIG-APPENDIX-END -->
+
+---
+
+## Current staged-deployment correction — 16 October 2026
+
+Modules **00–16 above remain unchanged** as the historical completion workbook.
+For new customer deployments and the private v1→v2 VDI update path, start with
+[STAGED-CUSTOMER-DEPLOYMENT.md](STAGED-CUSTOMER-DEPLOYMENT.md).
+It provides the actual new `infra\staged` resource-only Bicep entry point:
+
+1. Create **new service resources only**; no network components/integration,
+   no IAM/native data grants or Entra operations. APIM's provider constraint
+   requires an explicit approved **new public shell** bootstrap or a recorded
+   deferral; existing production public access is never loosened.
+2. Receive the **separate identity/access team's** registrations/roles/consent
+   handoff before dependent application operations. This team owns the original
+   workbook's permission steps, including reporting readers when their scopes exist.
+3. Build/configure/publish code, initialize only missing schema and use **create-only**
+   initial seed. Never reset/upsert existing project data; a v2 code update is not
+   an infrastructure redeployment or initial-seed rerun.
+4. Customer hand-configures network/private endpoints/central DNS; run scoped
+   diagnostics and authenticated read-only health. If private storage/SCM blocks
+   stage 3, prepare that network path first and resume stage 3 from approved VDI.
+
+**Module 14 corrections are in the staged runbook:** serialize groups with
+`ConvertTo-Json -InputObject @($groups)` even for one group; use a real
+`Authorization="Bearer $armToken"` / `"Bearer $token"` header, not the masked
+header shown in the preserved blocks; request `canFetchContent=true` on workbook
+content GET. Preserve unknown/unpriced/unattributed usage as unknown, not `$0`.
+
+**Network interpretation:** a dynamic APIM `set-backend-service` policy need not
+have a fixed operation backend URL. A private-only Foundry network 403 can be
+wrapped as a 502 credential message. Central DNS often resides in another
+subscription/RG and needs scoped Reader; links do not propagate through peering.
+Compare DNS with actual PE NIC IPs, including approved `100.104.x.x` addresses,
+from the relevant host—not ordinary public Cloud Shell. Missing CNAME or absent
+route-table attachment alone does not establish DNS failure or “no firewall”.
+
+**Existing private app publishing:** use Flex-aware
+`az functionapp deployment source config-zip` from the approved VDI/private path,
+retain the previous ZIP for rollback, keep PNA/SCM restrictions intact and use
+the staged runbook's protected `GET /api/health` with `x-functions-key`. Static
+checker success is not live-path or production acceptance. V1 remains
+`feat/project-admin-api`; v2 source is `feat/admin-console-v2` with its own
+reviewed commit/package contract.
+
+For v2's optional integration settings, the `adminConfig` schema (`/scopeId`),
+private-VDI publishing and **tag-compatible** v1 rollback, follow
+[ADMIN-V2.md](../ADMIN-V2.md) alongside the staged runbook. Optional capability
+permissions are separate access-team work, not automatic grants from stage 1.

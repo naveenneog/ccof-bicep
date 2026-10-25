@@ -22,6 +22,8 @@ param workspaceCustomerId string
 param apimId string
 param resolver object
 param sync object
+@description('Cosmos container with the admin console\'s removal-limit override (adminConfig); empty when the admin app is not deployed.')
+param syncLimitsContainer string = ''
 param reconciler object
 param budgetState object
 
@@ -115,6 +117,12 @@ var reconcilerSettings = {
   'AzureWebJobs.reconcileBudgets.Disabled': reconciler.timerEnabled ? 'false' : 'true'
 }
 
+// ADR 0035: the optional pacing pair, written only when the answers set both.
+var reconcilerPacing = contains(reconciler, 'softLimitPercent') && contains(reconciler, 'pacingWindowMinutes') ? {
+  RECONCILER_SOFT_LIMIT_PERCENT: string(reconciler.softLimitPercent)
+  RECONCILER_PACING_WINDOW_MINUTES: string(reconciler.pacingWindowMinutes)
+} : {}
+
 resource resolverSite 'Microsoft.Web/sites@2024-04-01' existing = {
   name: names.apps.resolver.functionApp
 }
@@ -136,13 +144,13 @@ resource resolverAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: syncSite
   name: 'appsettings'
-  properties: syncSettings
+  properties: empty(syncLimitsContainer) ? syncSettings : union(syncSettings, { SYNC_LIMITS_CONTAINER: syncLimitsContainer })
 }
 
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: reconcilerSite
   name: 'appsettings'
-  properties: reconcilerSettings
+  properties: union(reconcilerSettings, reconcilerPacing)
 }
 
 // infra/poc/resolver-auth.ps1, New-ResolverAuthSettingsBody: v2 issuer, the resolver API audience,

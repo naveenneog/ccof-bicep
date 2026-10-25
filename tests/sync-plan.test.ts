@@ -264,3 +264,110 @@ test("CYB-only projects and three classifications plan independently per project
     ],
   );
 });
+
+const RETIRED_AT = "2026-10-22T10:00:00.000Z";
+
+test("a retired project loses every membership, even when its groups still hold the members or cannot be read", () => {
+  const retired = readProjectDocument(projectDoc("PILOT1", { status: "retired", retiredAt: RETIRED_AT }));
+  const plan = planSync(input({
+    projects: [retired],
+    // The groups are not consulted: one still lists the member, the other failed to read.
+    groups: new Map<string, GroupReadResult>([
+      [GROUP_STD, { ok: true, groupId: GROUP_STD, members: users(PERSON_A), pages: 1, retries: 0 }],
+      [GROUP_PRM, { ok: false, groupId: GROUP_PRM, reason: "graph_request_failed", httpStatus: 503, graphErrorCode: null, retries: 0 }],
+    ]),
+    existing: [existingDoc(PERSON_A, [stdMembership()])],
+  }));
+  assert.equal(plan.writes.length, 1);
+  assert.deepEqual(plan.writes[0].document.projectMemberships, []);
+  assert.deepEqual(plan.frozenProjects, []);
+  assert.equal(plan.removalsWithheld, null);
+  assert.equal(plan.counts.removedMemberships, 1);
+  assert.ok(plan.events.some((e) => e.reason === "project_retired" && e.projectId === "PILOT1" && e.counts?.removals === 1));
+});
+
+test("retirement removals are not withheld by the removal limits, while directory removals still are", () => {
+  const retired = readProjectDocument(projectDoc("RETIRED1", { status: "retired", retiredAt: RETIRED_AT }));
+  const live = readProjectDocument(projectDoc("PILOT1"));
+  const retiredMembership = () => stdMembership({ projectId: "RETIRED1" });
+  const people = [PERSON_A, PERSON_B, PERSON_C];
+  const plan = planSync(input({
+    projects: [retired, live],
+    // PILOT1's groups are now empty: three directory removals.
+    groups: groupsOf({ [GROUP_STD]: [], [GROUP_PRM]: [] }),
+    existing: people.map((p) => existingDoc(p, [stdMembership(), retiredMembership()])),
+    removalLimits: { maxRemovalsPerRun: 1, maxRemovalFraction: 0.1 },
+  }));
+  assert.equal(plan.removalsWithheld, "removal_limit_exceeded");
+  assert.equal(plan.counts.withheldRemovals, 3);
+  assert.equal(plan.counts.removedMemberships, 3);
+  for (const write of plan.writes) {
+    assert.deepEqual(write.document.projectMemberships.map((m) => m.projectId), ["PILOT1"], "the withheld PILOT1 membership stays; RETIRED1 is gone");
+  }
+  assert.equal(plan.writes.length, 3);
+});
+
+test("a retired project's memberships do not loosen the removal fraction for other projects", () => {
+  const retired = readProjectDocument(projectDoc("RETIRED1", { status: "retired", retiredAt: RETIRED_AT }));
+  const live = readProjectDocument(projectDoc("PILOT1"));
+  const retiredMembership = () => stdMembership({ projectId: "RETIRED1" });
+  const plan = planSync(input({
+    projects: [retired, live],
+    // One of PILOT1's two members dropped (1/2 = 0.5 > 0.4). Counting RETIRED1's three memberships
+    // in the base would make it 1/5 = 0.2 and let the removal through.
+    groups: groupsOf({ [GROUP_STD]: users(PERSON_B), [GROUP_PRM]: [] }),
+    existing: [
+      existingDoc(PERSON_A, [stdMembership(), retiredMembership()]),
+      existingDoc(PERSON_B, [stdMembership(), retiredMembership()]),
+      existingDoc(PERSON_C, [retiredMembership()]),
+    ],
+    removalLimits: { maxRemovalsPerRun: 0, maxRemovalFraction: 0.4 },
+  }));
+  assert.equal(plan.removalsWithheld, "removal_limit_exceeded");
+  assert.equal(plan.counts.withheldRemovals, 1);
+  assert.equal(plan.counts.removedMemberships, 3, "the retirement removals still apply");
+});
+
+test("a project with an unknown status is still frozen: memberships are carried, nobody is added or removed", () => {
+  const plan = planSync(input({
+    projects: [readProjectDocument(projectDoc("PILOT1", { status: "suspended" }))],
+    groups: groupsOf({ [GROUP_STD]: users(PERSON_B), [GROUP_PRM]: [] }),
+    existing: [existingDoc(PERSON_A, [stdMembership()])],
+  }));
+  assert.deepEqual(plan.frozenProjects, ["PILOT1"]);
+  assert.deepEqual(plan.writes, []);
+});
+// ---- ADR 0034: per-project failover route ----
+
+const POOL = "ccof-pool-pilot1-0d8b2c4e-r1";
+const routed = (failover: Record<string, unknown>) => [readProjectDocument(projectDoc("PILOT1", { failover }))];
+const verified = { revision: 1, poolBackendId: POOL, verifiedAt: "2026-10-11T11:00:00Z" };
+
+test("enabled failover with a verified pool copies routeBackendId into the membership", () => {
+  const plan = planSync(input({ projects: routed({ enabled: true, fallbackBackendIds: ["foundry-b"], revision: 1, active: verified }), groups: groupsOf({ [GROUP_STD]: users(PERSON_A), [GROUP_PRM]: [] }) }));
+  assert.deepEqual(plan.writes[0].document.projectMemberships, [stdMembership({ routeBackendId: POOL, denormalizedAt: NOW.toISOString(), joinedAt: NOW.toISOString() })]);
+});
+
+test("failover not yet verified writes no routeBackendId", () => {
+  const plan = planSync(input({ projects: routed({ enabled: true, fallbackBackendIds: ["foundry-b"], revision: 1, active: null }), groups: groupsOf({ [GROUP_STD]: users(PERSON_A), [GROUP_PRM]: [] }) }));
+  assert.equal(Object.hasOwn(plan.writes[0].document.projectMemberships[0], "routeBackendId"), false);
+});
+
+test("disabling failover removes routeBackendId from an existing membership", () => {
+  const plan = planSync(input({
+    projects: routed({ enabled: false, fallbackBackendIds: ["foundry-b"], revision: 1, active: verified }),
+    groups: groupsOf({ [GROUP_STD]: users(PERSON_A), [GROUP_PRM]: [] }),
+    existing: [existingDoc(PERSON_A, [stdMembership({ routeBackendId: POOL })])],
+  }));
+  assert.equal(plan.writes.length, 1);
+  assert.deepEqual(plan.writes[0].document.projectMemberships, [stdMembership({ denormalizedAt: NOW.toISOString() })]);
+});
+
+test("a membership already on the verified pool is not rewritten", () => {
+  const plan = planSync(input({
+    projects: routed({ enabled: true, fallbackBackendIds: ["foundry-b"], revision: 2, active: verified }),
+    groups: groupsOf({ [GROUP_STD]: users(PERSON_A), [GROUP_PRM]: [] }),
+    existing: [existingDoc(PERSON_A, [stdMembership({ routeBackendId: POOL })])],
+  }));
+  assert.deepEqual(plan.writes, []);
+});

@@ -41,6 +41,7 @@ test("aggregate limits run unchanged before admitted family group/person ceiling
   assert.deepEqual(limits.map((e) => attr(e, "id")), [
     "ccof-limit-group-rate-quota", "ccof-limit-group-rate", "ccof-limit-group-quota",
     "ccof-limit-person-rate-quota", "ccof-limit-person-rate", "ccof-limit-person-quota",
+    "ccof-limit-person-budget-pace",
     "ccof-limit-family-group-rate-quota", "ccof-limit-family-group-rate", "ccof-limit-family-group-quota",
     "ccof-limit-family-person-rate-quota", "ccof-limit-family-person-rate", "ccof-limit-family-person-quota",
   ]);
@@ -200,10 +201,15 @@ test("actual C# rejects invalid v3 policies, admits only exact IDs, scopes keys 
     GroupKey: attr(limit("ccof-limit-family-group-rate"), "counter-key")!,
     PersonKey: attr(limit("ccof-limit-family-person-rate"), "counter-key")!,
     PersonTpm: expression("ccofPersonTpm"), GroupTpm: expression("ccofGroupTpm"),
+    BudgetPaceTpm: expression("ccofBudgetPaceTpm"),
+    BudgetPaceKey: attr(limit("ccof-limit-person-budget-pace"), "counter-key")!,
+    BudgetPaceOn: attr(all.find((e) => e.children.includes(limit("ccof-limit-person-budget-pace")))!, "condition")!,
     FamilyPersonTpm: expression("ccofFamilyPersonTpm"), FamilyGroupTpm: expression("ccofFamilyGroupTpm"),
     FamilyPersonQuota: expression("ccofFamilyPersonQuota"), FamilyGroupQuota: expression("ccofFamilyGroupQuota"),
     FamilyPersonPeriod: expression("ccofFamilyPersonPeriod"), FamilyGroupPeriod: expression("ccofFamilyGroupPeriod"),
     Usage: expression("ccofUsageTrace"),
+    Route: expression("ccofRouteBackendId"),
+    Forward: attr(all.find((e) => e.name === "set-backend-service" && /ccofRouteBackendId/.test(attr(e, "backend-id") ?? ""))!, "backend-id")!,
   };
   for (const scope of ["Group", "Person"]) {
     for (const mode of ["rate-quota", "rate", "quota"]) {
@@ -352,6 +358,31 @@ test("actual C# rejects invalid v3 policies, admits only exact IDs, scopes keys 
     vectors.push({ label: `person scope ${field}`, method: "PersonKey", vars: { ...base, [field]: value }, expected: personKey });
   }
   const vars = { ccofDecision: decision(), ccofFamilyPolicy: decision().familyPolicy, ccofModelFamily: "haiku" };
+  // Budget pacing (ADR 0035): the resolver's ceiling survives the policy's rebuilt decision and its
+  // cache, and only a whole number from 1 to int.MaxValue turns the pace limit on.
+  for (const [label, ceiling, copied] of [
+    ["ceiling", 5000, 5000], ["zero", 0, 0], ["max", 2147483647, 2147483647], ["too large", 2147483648, null],
+    ["negative", -1, null], ["string", "5000", null], ["fraction", 50.5, null], ["null", null, null],
+  ] as Array<[string, unknown, number | null]>) {
+    const d = decision(); d.personCeilingTokensPerMinute = ceiling;
+    vectors.push({ label: `ceiling copied ${label}`, method: "Resolve", vars: { ccofResolverResponse: { status: 200, body: d } }, json: true,
+      expected: copied ?? undefined, property: "d.personCeilingTokensPerMinute" });
+    vectors.push({ label: `ceiling never refuses ${label}`, method: "Resolve", vars: { ccofResolverResponse: { status: 200, body: d } }, json: true,
+      expected: "allow" });
+    const paced = { ...decision(), personCeilingTokensPerMinute: ceiling };
+    const tpm = typeof copied === "number" && copied > 0 ? copied : 0;
+    vectors.push({ label: `pace tpm ${label}`, method: "BudgetPaceTpm", vars: { ccofDecision: paced }, expected: tpm });
+    vectors.push({ label: `pace on ${label}`, method: "BudgetPaceOn", vars: { ccofBudgetPaceTpm: tpm, ccofRefusal: "" }, expected: tpm > 0 });
+  }
+  vectors.push({ label: "pace tpm absent", method: "BudgetPaceTpm", vars: { ccofDecision: decision() }, expected: 0 });
+  for (const [project, oid, tpm, key] of [
+    ["PROJECT1", "person1", 5000, "pb:PROJECT1:person1:5000"],
+    ["PROJECT1", "person1", 4999, "pb:PROJECT1:person1:4999"],
+    ["PROJECT2", "person1", 5000, "pb:PROJECT2:person1:5000"],
+    ["PROJECT1", "person2", 5000, "pb:PROJECT1:person2:5000"],
+  ] as Array<[string, string, number, string]>) {
+    vectors.push({ label: `pace key ${key}`, method: "BudgetPaceKey", vars: { ccofProjectId: project, ccofOid: oid, ccofBudgetPaceTpm: tpm }, expected: key });
+  }
   for (const [method, expected] of [
     ["PersonTpm", 1000000], ["GroupTpm", 0], ["FamilyPersonTpm", 0], ["FamilyGroupTpm", 0],
     ["FamilyPersonQuota", 0], ["FamilyGroupQuota", 0], ["FamilyPersonPeriod", ""], ["FamilyGroupPeriod", ""],
@@ -419,6 +450,18 @@ test("actual C# rejects invalid v3 policies, admits only exact IDs, scopes keys 
       }
     }
   }
+  // ADR 0034: an optional project pool; a present but malformed route fails closed, cached and live alike.
+  const pool = "ccof-pool-pilot1-0d8b2c4e-r2";
+  { const d = decision(); d.routeBackendId = pool; resolver("project pool route", d, true);
+    vectors.push({ label: "route copied into the decision", method: "Resolve", vars: { ccofResolverResponse: { status: 200, body: d } }, json: true, property: "d.routeBackendId", expected: pool });
+    vectors.push({ label: "route extracted", method: "Route", vars: { ccofDecision: d }, expected: pool }); }
+  vectors.push({ label: "no route extracts empty", method: "Route", vars: { ccofDecision: decision() }, expected: "" });
+  vectors.push({ label: "no route decision has none", method: "Resolve", vars: { ccofResolverResponse: { status: 200, body: decision() } }, json: true, property: "d.routeBackendId", expected: undefined });
+  for (const bad of ["foundry-other", "ccof-pool-PILOT1-r2", "ccof-pool-a-r2\n", "ccof-pool-a-r", 7, null, ["ccof-pool-a-r1"]]) {
+    const d = decision(); d.routeBackendId = bad; resolver(`malformed route ${JSON.stringify(bad)}`, d, false);
+  }
+  vectors.push({ label: "forward to the pool", method: "Forward", vars: { ccofRouteBackendId: pool, ccofBackendId: "backend-a" }, expected: pool });
+  vectors.push({ label: "forward direct without a pool", method: "Forward", vars: { ccofRouteBackendId: "", ccofBackendId: "backend-a" }, expected: "backend-a" });
   const results = runExpressions(methods, vectors);
   assert.equal(results.length, vectors.length);
   for (let i = 0; i < vectors.length; i++) {

@@ -1,0 +1,116 @@
+%% Proposed architecture, not deployed. Backend counts are illustrative.
+flowchart LR
+  classDef edge fill:#fff4e5,stroke:#d97706,color:#1f2937
+  classDef active fill:#e8f1fd,stroke:#2563eb,color:#1f2937
+  classDef passive fill:#f3f4f6,stroke:#6b7280,color:#374151,stroke-dasharray:5 3
+  classDef data fill:#ecfdf5,stroke:#059669,color:#1f2937
+  classDef idp fill:#f5f3ff,stroke:#7c3aed,color:#1f2937
+  classDef pool fill:#fff7ed,stroke:#c2410c,color:#1f2937
+  classDef network fill:#ffffff,stroke:#0078d4,color:#1f2937,stroke-dasharray:6 4
+
+  subgraph USERS["Customer users - corporate network / VDI"]
+    DEV["Developers<br/>Claude Code / VS Code / Desktop"]
+    ADM["Project administrators<br/>browser on VDI"]
+    RPT["Chargeback report readers"]
+  end
+
+  subgraph ENTRA["Microsoft Entra ID - customer tenant"]
+    GWAPP["Gateway app<br/>access_as_user"]:::idp
+    ADAPP["Admin app<br/>Projects.Read / Projects.Write"]:::idp
+    GRP["Entitlement groups<br/>STD / PRM / CYB"]:::idp
+  end
+
+  DEV -- "sign-in" --> GWAPP
+  ADM -- "admin sign-in" --> ADAPP
+  DEV -- "HTTPS + delegated token" --> AFD
+  ADM -- "HTTPS admin console" --> AFD
+
+  AFD["Azure Front Door Premium<br/>(WAF + built-in DDoS protection)<br/>APIM origin A priority 1 / B priority 2<br/>Private Link origins; caching off"]:::edge
+
+  subgraph RA["Region A - East US 2 - ACTIVE - managed services and customer network"]
+    APIMA["APIM Standard v2<br/>private inbound gateway<br/>outbound VNet integration<br/>Messages + own-usage APIs"]:::active
+    RESA["Resolver A<br/>entitlements + personal usage"]:::active
+    ADMA["Admin A<br/>active writer"]:::active
+    JOBSA["Sync + Reconciler A<br/>timers ON"]:::active
+    POOLA["APIM model-specific backend pool A<br/>local priority 1 / remote priority 2<br/>per-member circuit breakers"]:::pool
+    APIMA -- "private resolver call" --> RESA
+    APIMA -- "approved logical backend" --> POOLA
+    subgraph VNTA["Customer VNet A - integration subnets and private endpoint NICs only"]
+      ASUBA["APIM integration subnet<br/>Microsoft.Web/serverFarms"]:::network
+      FSUBA["Functions integration subnet<br/>Microsoft.App/environments"]:::network
+      CPA["Private endpoint subnet<br/>Cosmos SQL PE C-A<br/>Foundry / Function sites / app blob PEs"]:::network
+      MPA["Monitor private endpoint M-A<br/>shared AMPLS"]:::network
+    end
+    APIMA -. "outbound integration, not injection" .-> ASUBA
+    RESA -. "outbound integration" .-> FSUBA
+  end
+
+  subgraph RB["Region B - Central US - PASSIVE - managed services and customer network"]
+    APIMB["APIM Standard v2<br/>private inbound gateway<br/>outbound VNet integration<br/>same policies; separate counters"]:::passive
+    RESB["Resolver B<br/>local replica reads"]:::passive
+    ADMB["Admin B<br/>read-only until promotion"]:::passive
+    JOBSB["Sync + Reconciler B<br/>timers OFF until fenced promotion"]:::passive
+    POOLB["APIM model-specific backend pool B<br/>local priority 1 / remote priority 2<br/>independent circuit-breaker state"]:::pool
+    APIMB -. "private resolver call" .-> RESB
+    APIMB -. "approved logical backend" .-> POOLB
+    subgraph VNTB["Customer VNet B - integration subnets and private endpoint NICs only"]
+      ASUBB["APIM integration subnet<br/>Microsoft.Web/serverFarms"]:::network
+      FSUBB["Functions integration subnet<br/>Microsoft.App/environments"]:::network
+      CPB["Private endpoint subnet<br/>Cosmos SQL PE C-B<br/>Foundry / Function sites / app blob PEs"]:::network
+      MPB["Monitor private endpoint M-B<br/>shared AMPLS"]:::network
+    end
+    APIMB -. "outbound integration, not injection" .-> ASUBB
+    RESB -. "outbound integration" .-> FSUBB
+  end
+
+  AFD == "managed Private Link / primary" ==> APIMA
+  AFD -. "managed Private Link / DR" .-> APIMB
+  AFD -- "separate private admin origin" --> ADMA
+  AFD -. "separate private admin origin / DR" .-> ADMB
+
+  subgraph FOUND["Multiple Foundry backends - private endpoints - illustrative members"]
+    FA["Foundry A1 + A2 / East US 2<br/>equivalent approved deployments<br/>private DNS + HTTPS 443"]:::active
+    FB["Foundry B1 + B2 / Central US<br/>equivalent approved deployments<br/>private DNS + HTTPS 443"]:::data
+    CB["Breaker per backend in each APIM:<br/>closed: send / open: skip member<br/>cooldown: permit traffic again<br/>all unavailable: 503; no stream replay"]:::pool
+  end
+  POOLA -- "priority 1 / private network" --> FA
+  POOLA -. "priority 2 / cross-region private path" .-> FB
+  POOLB -. "priority 1 / private network" .-> FB
+  POOLB -. "priority 2 / cross-region private path" .-> FA
+
+  subgraph COSMOS["Cosmos managed service boundary - outside customer VNets - provisioned / Session"]
+    CW["East US 2: write region<br/>projects / entitlement / budgetState<br/>adminConfig + leases"]:::data
+    CR["Central US: read region<br/>promoted on service-managed failover"]:::data
+    CW == "async replication / RPO under 15 min" ==> CR
+  end
+  FSUBA -- "private SQL path" --> CPA
+  CPA -- "Private Link" --> CW
+  ADMA -- "audited changes" --> CW
+  JOBSA -- "writes + leases" --> CW
+  JOBSA -. "membership reads" .-> GRP
+  FSUBB -. "private SQL path" .-> CPB
+  CPB -. "Private Link" .-> CR
+  ADMB -. "writes only after promotion" .-> CR
+  JOBSB -. "after fencing + ledger continuity gate" .-> CR
+
+  subgraph LAW["Azure Monitor managed service boundary - outside customer VNets"]
+    AMPLS["Azure Monitor Private Link Scope<br/>same scope for both regional Monitor PEs"]:::data
+    LQ["Same workspace ID for both regions<br/>ledger includes both APIM resource IDs"]:::data
+    LP["Primary: East US 2<br/>APIM gateway + LLM resource logs"]:::data
+    LS["Replica: Central US<br/>managed passive shadow"]:::data
+    LQ --> LP
+    LP == "async replication / typically 2 min, not guaranteed" ==> LS
+    LQ -. "customer-triggered switchover" .-> LS
+    AMPLS -- "private queries to logical workspace" --> LQ
+  end
+  MPA -. "Private Link" .-> AMPLS
+  MPB -. "Private Link" .-> AMPLS
+  APIMA -- "diagnostic ingestion / managed Microsoft channel" --> LQ
+  APIMB -. "diagnostic ingestion / managed Microsoft channel" .-> LQ
+  JOBSA -- "KQL ledger" --> LQ
+  JOBSB -. "KQL after continuity gate" .-> LQ
+  RPT --> WB["Chargeback workbook<br/>both APIM IDs + actual backend attribution"]:::data
+  WB -- "KQL" --> LQ
+
+  DNS["Central private DNS + regional network paths<br/>Foundry / Cosmos / Functions / storage zones<br/>VNet links, peering or hub routing"]:::data
+  DNS -. "private backend reachability" .-> FOUND

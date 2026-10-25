@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.zip
+.env*
+.package-stage/
+ui-dist/
+test-results/
+playwright-report/
+ui-dist-v3/
+kql/

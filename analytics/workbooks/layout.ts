@@ -85,6 +85,7 @@ Narrow the project or period before exporting a truncated table.`),
 These are the latest **monthly budget snapshots overlapping the selected range**, not custom-range spend.
 The snapshot's own period, rate-card version, completeness, \`computedAt\` and \`validUntil\` are retained.
 \`no_cap\` means no group cap; blank or invalid values are not zero. \`expired\` is not current budget evidence.
+\`warning\` is a person past the reconciler's soft limit: spend is paced, not blocked (ADR 0035).
 \`exhausted\` + \`strict\` is enforcement; \`notify\` is an exhausted-but-not-blocking group.
 Event lookback: **${answers.budgetLookbackDays} days**. Reconciler and ingestion lag allow overshoot.`),
       query("budgets", "Budget versus spend · per person and per classification group"),

@@ -15,15 +15,23 @@ export interface ClassificationRegistration {
   classificationGroupDisplayName?: string;
   familyPolicy: FamilyPolicy;
   backendId: string;
+  // ADR 0034: the verified project-scoped APIM pool, only while failover is enabled.
+  routeBackendId?: string;
   aggregateMode: AggregateMode;
 }
 
+// retired: the project document says status "retired" with a retiredAt timestamp. The sync removes
+// every membership of a retired project (an explicit, audited registry change), instead of freezing it.
 export type ProjectReadResult =
-  | { ok: true; projectId: string; classifications: ClassificationRegistration[] }
+  | { ok: true; projectId: string; classifications: ClassificationRegistration[]; retired: boolean }
   | { ok: false; projectId: string | null; problems: string[] };
 
 // The same patterns WP-ONB's Stage 3 schema enforces (scripts/Onboarding.Schemas.psm1 on wp/onb).
+import { failoverProblems, routeBackendIdOf } from "../contracts/project-routing.ts";
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
+
+const isTimestamp = (value: unknown): boolean =>
+  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(value) && Number.isFinite(Date.parse(value));
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -66,9 +74,14 @@ export function readProjectDocument(doc: unknown): ProjectReadResult {
   const projectId = typeof doc.projectId === "string" && ID.test(doc.projectId) ? doc.projectId : null;
   if (!projectId) problems.push("projectId:invalid");
   if (projectId && doc.id !== projectId) problems.push("id:not_equal_to_projectId");
-  if (doc.status !== "active") problems.push("status:not_active");
+  const retired = doc.status === "retired";
+  if (doc.status !== "active" && !retired) problems.push("status:not_active");
+  if (retired && !isTimestamp(doc.retiredAt)) problems.push("retiredAt:invalid");
   const backendId = typeof doc.backendId === "string" && ID.test(doc.backendId) ? doc.backendId : null;
   if (!backendId) problems.push("backendId:invalid");
+
+  problems.push(...failoverProblems(doc.failover, backendId));
+  const routeBackendId = routeBackendIdOf(doc.failover, backendId);
 
   const registrations: ClassificationRegistration[] = [];
   if (!isObject(doc.classifications)) {
@@ -79,12 +92,12 @@ export function readProjectDocument(doc: unknown): ProjectReadResult {
     if (codes.some((code) => !ID.test(code))) problems.push("classifications:invalid_code");
     for (const code of codes.filter((c) => ID.test(c))) {
       const registration = readClassification(projectId ?? "", backendId ?? "", code, doc.classifications[code], problems);
-      if (registration) registrations.push(registration);
+      if (registration) registrations.push(routeBackendId ? { ...registration, routeBackendId } : registration);
     }
     const groups = registrations.map((r) => r.groupId);
     if (new Set(groups).size !== groups.length) problems.push("classifications:group_reused");
   }
 
   if (problems.length > 0 || !projectId) return { ok: false, projectId, problems };
-  return { ok: true, projectId, classifications: registrations };
+  return { ok: true, projectId, classifications: registrations, retired };
 }

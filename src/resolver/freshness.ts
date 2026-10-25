@@ -2,6 +2,7 @@
 // of a record and the resolver's clock, so decide.ts can compose them and the
 // tests can drive every boundary without a real clock.
 
+import { POOL_ID } from "../contracts/project-routing.ts";
 import { parseFamilyPolicy } from "../contracts/model-families.ts";
 import type { FamilyPolicy } from "../contracts/model-families.ts";
 
@@ -91,6 +92,7 @@ export interface ValidMembership {
   classificationGroupId: string;
   classificationGroupDisplayName?: string;
   backendId: string;
+  routeBackendId?: string;
   aggregateMode: "strict" | "notify";
   familyPolicy: FamilyPolicy;
 }
@@ -122,6 +124,8 @@ export function validateMembership(
       classificationGroupId: classificationGroupId.toLowerCase(),
       ...(typeof classificationGroupDisplayName === "string" ? { classificationGroupDisplayName } : {}),
       backendId,
+      // A malformed route is dropped (direct routing), never forwarded to the gateway.
+      ...(typeof membership.routeBackendId === "string" && POOL_ID.test(membership.routeBackendId) ? { routeBackendId: membership.routeBackendId } : {}),
       aggregateMode,
       familyPolicy: structuredClone(familyPolicy.value),
     },

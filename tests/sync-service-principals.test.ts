@@ -182,6 +182,7 @@ const CONFIG: SyncConfig = {
   projectsContainer: "projects",
   entitlementContainer: "entitlement",
   leaseContainer: "syncLease",
+  limitsContainer: null,
   leaseSeconds: 300,
   memberTypes: ["servicePrincipal", "user"],
   maxRemovalsPerRun: 5,

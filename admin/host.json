@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "extensions": { "http": { "routePrefix": "", "maxOutstandingRequests": 50, "maxConcurrentRequests": 10 } },
+  "logging": {
+    "applicationInsights": { "samplingSettings": { "isEnabled": false } },
+    "logLevel": { "default": "Warning", "Function": "Information" }
+  }
+}

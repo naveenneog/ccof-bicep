@@ -295,6 +295,7 @@ const CONFIG: SyncConfig = {
   projectsContainer: "projects",
   entitlementContainer: "entitlement",
   leaseContainer: "syncLease",
+  limitsContainer: null,
   leaseSeconds: 300,
   memberTypes: ["user"],
   maxRemovalsPerRun: 5,

@@ -1,5 +1,7 @@
 # D1 prerequisite resources workbook
 
+> **Historical.** This describes the earlier D1-D3 deployment flow. The current prerequisites are in the [deployment runbook](runbooks/DEPLOYMENT-RUNBOOK.md#1-entra-administrator-handoff).
+
 Stage D1 of the deployment (`docs/PILOT.md` C-9, `docs/DEPLOYMENT-STAGES.md`). The customer's
 infrastructure teams create the resources below, in the Azure portal or with the optional Bicep of
 `infra/prereqs`. Then `scripts/Record-Prerequisites.ps1` reads each resource, checks it against the

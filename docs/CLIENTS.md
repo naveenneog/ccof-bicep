@@ -1,5 +1,9 @@
 # Claude clients through the enterprise gateway
 
+The [user onboarding guide](runbooks/USER-ONBOARDING.md) provides the exported-file field tables,
+self-service sequence and Intune packaging procedure. This page contains the underlying client
+behavior and compatibility details.
+
 The default setup uses **Entra single sign-on**, not an Anthropic subscription or an API key.
 An ordinary Azure CLI login is not automatically accepted: the separately approved
 [manual Azure CLI route](runbooks/PUBLIC-ACCESS-WORKBOOK.md#13-hand-configurable-developer-sign-in-and-gateway-testing)
@@ -292,7 +296,7 @@ persistence. Output contains stage/reason/status fields, never tokens or respons
 the coordinator verified silent child acquisition (exit 0, correct C-6 claims),
 Messages **200 / OK**, and Claude Code **2.1.272 / OK**. U-39 is resolved by that
 real check, not the fake tests. Desktop's conversation check remains pending.
-Evidence attribution, claims, backup IDs and CI: [`status/WP-CLIENT.md`](status/WP-CLIENT.md).
+Evidence attribution, claims, backup IDs and CI: `status/WP-CLIENT.md` (internal record, not published).
 
 ### Owner smoke through the gateway
 

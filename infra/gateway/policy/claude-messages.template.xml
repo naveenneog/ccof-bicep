@@ -126,6 +126,8 @@
                 }
                 var groupId = body["classificationGroupId"];
                 if (groupId == null || groupId.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)groupId, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\z")) { return false; }
+                var route = body["routeBackendId"];
+                if (route != null && (route.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)route, "^ccof-pool-[a-z0-9-]{1,50}-r[0-9]{1,9}\\z"))) { return false; }
                 var familyPolicy = body["familyPolicy"] as JObject;
                 if (familyPolicy == null || familyPolicy.Count != 2) { return false; }
                 var aggregate = familyPolicy["aggregateLimits"] as JObject;
@@ -295,6 +297,8 @@
                 }
                 var groupId = body["classificationGroupId"];
                 if (groupId == null || groupId.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)groupId, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\z")) { return unavailable; }
+                var route = body["routeBackendId"];
+                if (route != null && (route.Type != JTokenType.String || !System.Text.RegularExpressions.Regex.IsMatch((string)route, "^ccof-pool-[a-z0-9-]{1,50}-r[0-9]{1,9}\\z"))) { return unavailable; }
                 var familyPolicy = body["familyPolicy"] as JObject;
                 if (familyPolicy == null || familyPolicy.Count != 2) { return unavailable; }
                 var aggregate = familyPolicy["aggregateLimits"] as JObject;
@@ -340,6 +344,14 @@
                 var displayName = body["classificationGroupDisplayName"];
                 if (displayName != null && displayName.Type == JTokenType.String && ((string)displayName).Length >= 1 && ((string)displayName).Length <= 256) {
                     decision["classificationGroupDisplayName"] = (string)displayName;
+                }
+                // ADR 0034: an optional project-scoped APIM pool, validated above like the cached copy.
+                if (route != null) { decision["routeBackendId"] = (string)route; }
+                // ADR 0035: the per-minute ceiling of the reconciler, kept with the cached decision. Anything but a
+                // whole number in int range is dropped, which leaves the family limits as the only token limits.
+                var ceiling = body["personCeilingTokensPerMinute"];
+                if (ceiling != null && ceiling.Type == JTokenType.Integer && (long)ceiling >= 0 && (long)ceiling <= 2147483647) {
+                    decision["personCeilingTokensPerMinute"] = (long)ceiling;
                 }
                 var descriptor = body["backend"];
                 if (descriptor != null && descriptor.Type != JTokenType.Null) {
@@ -438,8 +450,13 @@
             return name != null && name.Type == JTokenType.String && ((string)name).Length >= 1 && ((string)name).Length <= 256 ? (string)name : "";
         }" />
         <set-variable name="ccofBackendId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["backendId"])" />
+        <set-variable name="ccofRouteBackendId" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["routeBackendId"] ?? "")" />
         <set-variable name="ccofFamilyPolicy" value="@(JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"].ToString(Newtonsoft.Json.Formatting.None))" />
         <set-variable name="ccofPersonTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokensPerMinute"] ?? 0)" />
+        <set-variable name="ccofBudgetPaceTpm" value="@{
+            var ceiling = JObject.Parse((string)context.Variables["ccofDecision"])["personCeilingTokensPerMinute"];
+            return ceiling != null && ceiling.Type == JTokenType.Integer && (long)ceiling > 0 && (long)ceiling <= 2147483647 ? (int)(long)ceiling : 0;
+        }" />
         <set-variable name="ccofPersonQuota" value="@((long?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokenQuota"] ?? 0L)" />
         <set-variable name="ccofPersonPeriod" value="@((string)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["person"]["tokenQuotaPeriod"] ?? "")" />
         <set-variable name="ccofGroupTpm" value="@((int?)JObject.Parse((string)context.Variables["ccofDecision"])["familyPolicy"]["aggregateLimits"]["group"]["tokensPerMinute"] ?? 0)" />
@@ -528,6 +545,13 @@
             <llm-token-limit id="ccof-limit-person-quota" counter-key="@("p:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"])" token-quota="@((long)context.Variables["ccofPersonQuota"])" token-quota-period="@((string)context.Variables["ccofPersonPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" remaining-quota-tokens-header-name="%%H_PERSON_QUOTA%%" tokens-consumed-header-name="%%H_TOKENS_CONSUMED%%" />
           </when>
         </choose>
+        <!-- ADR 0035: the budget pace from the reconciler. Its own key carries the ceiling, because on v2 tiers one
+             counter key must always have one tokens-per-minute value; no quota and no headers of its own. -->
+        <choose>
+          <when condition="@((int)context.Variables["ccofBudgetPaceTpm"] > 0)">
+            <llm-token-limit id="ccof-limit-person-budget-pace" counter-key="@("pb:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"] + ":" + ((int)context.Variables["ccofBudgetPaceTpm"]).ToString())" tokens-per-minute="@((int)context.Variables["ccofBudgetPaceTpm"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
+          </when>
+        </choose>
         <choose>
           <when condition="@((int)context.Variables["ccofFamilyGroupTpm"] > 0 && (long)context.Variables["ccofFamilyGroupQuota"] > 0)">
             <llm-token-limit id="ccof-limit-family-group-rate-quota" counter-key="@("gf:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofClassificationGroupId"] + ":" + (string)context.Variables["ccofModelFamily"])" tokens-per-minute="@((int)context.Variables["ccofFamilyGroupTpm"])" token-quota="@((long)context.Variables["ccofFamilyGroupQuota"])" token-quota-period="@((string)context.Variables["ccofFamilyGroupPeriod"])" estimate-prompt-tokens="%%ESTIMATE_PROMPT_TOKENS%%" retry-after-variable-name="ccofRetryAfter" />
@@ -565,7 +589,9 @@
           %%BACKEND_BRANCHES%%
           <when condition="@((string)context.Variables["ccofBackendAuthMode"] == "managed-identity")">
             <authentication-managed-identity id="ccof-backend-credential-managed-identity" resource="@((string)context.Variables["ccofBackendAuthResource"])" />
-            <set-backend-service backend-id="@((string)context.Variables["ccofBackendId"])" />
+            <!-- ADR 0034: a verified project pool when the project has failover on; its members share
+                 this managed-identity token, so only this branch routes to a pool. -->
+            <set-backend-service backend-id="@((string)context.Variables["ccofRouteBackendId"] != "" ? (string)context.Variables["ccofRouteBackendId"] : (string)context.Variables["ccofBackendId"])" />
           </when>
           <when condition="@((string)context.Variables["ccofBackendAuthMode"] == "credential-manager")">
             <get-authorization-context id="ccof-backend-credential-credential-manager" provider-id="@((string)context.Variables["ccofBackendAuthProvider"])" authorization-id="@((string)context.Variables["ccofBackendAuthConnection"])" context-variable-name="ccofBackendAuthContext" identity-type="managed" ignore-error="true" />

@@ -116,6 +116,7 @@ export function budgetData(): string {
   const third = "66666666-6666-4666-8666-666666666666";
   const zero = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const missing = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const softLimit = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const events: Array<[string, string, Record<string, unknown>]> = [
     ["2026-10-11T10:08:00Z", answers.reconcilerResourceId, event({})],
     ["2026-10-11T10:06:00Z", answers.reconcilerResourceId, event({ spentCcu: "20.1234567890123456789", computedAt: "2026-10-11T10:05:00Z" })],
@@ -144,6 +145,10 @@ export function budgetData(): string {
     // A line without its request counts must stay invalid, not fall through as current.
     ["2026-10-11T10:03:00Z", answers.reconcilerResourceId, event({
       scopeId: `${missing}:fixture-project`, personId: missing, pricedRequests: undefined,
+    })],
+    // Past the reconciler's soft limit (ADR 0035): a warning, still not exhausted.
+    ["2026-10-11T10:03:00Z", answers.reconcilerResourceId, event({
+      scopeId: `${softLimit}:fixture-project`, personId: softLimit, spentCcu: "85", softLimitReached: true,
     })],
   ];
   // ccof.reconciler.run.v1 lines (WP-REC src/reconciler/telemetry.ts): codes, counts and times only.

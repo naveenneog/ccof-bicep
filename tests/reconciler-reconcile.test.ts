@@ -8,6 +8,7 @@ import type { LedgerRow } from "../src/reconciler/ledger.ts";
 import { budgetPeriodAt } from "../src/reconciler/period.ts";
 import { classifyRow } from "../src/reconciler/price-rows.ts";
 import { reconcile } from "../src/reconciler/reconcile.ts";
+import type { SpendPacing } from "../src/reconciler/compute-ceiling.ts";
 import { readRegistry } from "../src/reconciler/registry.ts";
 import {
   PERSON_A,
@@ -30,7 +31,7 @@ const period = budgetPeriodAt(computedAt);
 // A fully captured Haiku 4.5 row: 1,000 input + 100 output tokens = 0.15 CCU.
 const FULL: LedgerRowSpec = { input: 1000, output: 100, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, inferenceGeo: "global" };
 
-function run(options: { projects?: unknown[]; entitlements?: unknown[]; rows?: LedgerRowSpec[] } = {}) {
+function run(options: { projects?: unknown[]; entitlements?: unknown[]; rows?: LedgerRowSpec[]; pacing?: SpendPacing } = {}) {
   const registry = readRegistry(
     options.projects ?? [pilotProject()],
     options.entitlements ?? [
@@ -39,7 +40,7 @@ function run(options: { projects?: unknown[]; entitlements?: unknown[]; rows?: L
     ],
   );
   const rows = (options.rows ?? []).map((spec) => classifyRow(ledgerRow(spec) as LedgerRow, period, card, schedule));
-  return reconcile({ registry, rows, rateCard: card, contractScheduleVersion: schedule.version, period, computedAt, validUntil });
+  return reconcile({ registry, rows, rateCard: card, contractScheduleVersion: schedule.version, period, computedAt, validUntil, pacing: options.pacing });
 }
 
 const personDoc = (result: ReturnType<typeof run>, personId: string) => result.persons.find((p) => p.doc.personId === personId);
@@ -89,6 +90,67 @@ test("exhausted is spent >= budget: true at equality, false one smallest unit be
   assert.equal(below?.exhausted, false);
   const zeroBudget = personDoc(run({ projects: [project("0")], rows: [] }), PERSON_A)?.doc;
   assert.equal(zeroBudget?.exhausted, true, "a budget of zero allows no spend");
+});
+
+// Spend pacing (docs/adr/0035-budget-soft-limit-and-spend-pacing.md): the ceiling lets no more than
+// the remaining budget be spent within one pacing window, and half that from the soft limit on.
+// 0.0011 CCU per token is the STD worst case (Sonnet 5 output at 1.1x).
+const PACING: SpendPacing = { softLimitPercent: 80, windowMinutes: 10 };
+const budgetOf = (amount: string) => {
+  const p = pilotProject();
+  (p.classifications as Record<string, Record<string, unknown>>).STD.personBudget = { amount, currency: "CCU", period: "monthly" };
+  return p;
+};
+const paced = (amount: string, rows: number) =>
+  personDoc(run({ projects: [budgetOf(amount)], rows: Array(rows).fill(FULL), pacing: PACING }), PERSON_A)?.doc;
+
+test("below the soft limit the ceiling spreads the remaining budget over one pacing window", () => {
+  const doc = paced("1", 5); // 0.75 of 1 CCU: 75%
+  assert.equal(doc?.softLimitReached, false);
+  assert.equal(doc?.softLimitPercent, 80);
+  // 0.25 CCU / 10 minutes / 0.0011 CCU per token = 22.7, rounded down to a power of two: 16.
+  assert.equal(doc?.realtimeCeilingTokensPerMinute, 16);
+});
+
+// The gateway keys its pace counter by the ceiling (ADR 0035), so a ceiling that moves with every
+// reconciler run opens a fresh counter each run; lab run 2026-10-24 admitted 4-6 streams a minute
+// against a pace of one. Powers of two keep the key until the remaining budget halves.
+test("the paced ceiling is a power of two at or below the exact value, unchanged by small spend changes", () => {
+  const a = paced("1", 5)?.realtimeCeilingTokensPerMinute; // 22.7 exact
+  const b = paced("0.99", 5)?.realtimeCeilingTokensPerMinute; // 0.24 CCU left: 21.8 exact
+  assert.deepEqual([a, b], [16, 16]);
+  const larger = paced("1.5", 5)?.realtimeCeilingTokensPerMinute; // 0.75 CCU left: 68.2 exact
+  assert.equal(larger, 64);
+});
+
+test("at the soft limit, inclusive, the warning is set and the ceiling spreads the rest over two windows", () => {
+  const atLimit = paced("0.75", 4); // 0.6 of 0.75 CCU: exactly 80%
+  assert.equal(atLimit?.softLimitReached, true);
+  // 0.15 CCU / 20 minutes / 0.0011 = 6.8 -> 4.
+  assert.equal(atLimit?.realtimeCeilingTokensPerMinute, 4);
+  const justBelow = paced("0.7500000000001", 4);
+  assert.equal(justBelow?.softLimitReached, false, "one smallest unit below 80% is not a warning");
+  const past = paced("1", 6); // 90%
+  assert.equal(past?.softLimitReached, true);
+  assert.equal(past?.exhausted, false);
+  assert.equal(past?.realtimeCeilingTokensPerMinute, 4); // 0.1 / 20 / 0.0011 = 4.5 -> 4
+});
+
+test("a paced ceiling never rounds to 0 while budget remains, and is 0 once exhausted", () => {
+  const nearlyGone = paced("0.1500001", 1);
+  assert.equal(nearlyGone?.exhausted, false);
+  assert.equal(nearlyGone?.realtimeCeilingTokensPerMinute, 1, "0 would read as 'no pace' at the gateway");
+  const gone = paced("0.15", 1);
+  assert.equal(gone?.exhausted, true);
+  assert.equal(gone?.softLimitReached, true);
+  assert.equal(gone?.realtimeCeilingTokensPerMinute, 0);
+});
+
+test("without pacing the document has no soft-limit fields and the ceiling is the whole remaining budget", () => {
+  const doc = personDoc(run({ projects: [budgetOf("1")], rows: Array(6).fill(FULL) }), PERSON_A)?.doc;
+  assert.equal("softLimitReached" in (doc ?? {}), false);
+  assert.equal("softLimitPercent" in (doc ?? {}), false);
+  assert.equal(doc?.realtimeCeilingTokensPerMinute, 90); // 0.1 / 0.0011 = 90.9 -> 90
 });
 
 test("unpriced usage is reported and makes the state partial, without an amount and without exhausting (C-7)", () => {

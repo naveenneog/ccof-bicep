@@ -96,6 +96,21 @@
       "file": "cloud-shell.svg",
       "source": "other/00559-icon-service-Azure-Cloud-Shell.svg",
       "sha256": "88fab60bd377a95e184c6b60766c6754bb6824029a778e9c536ddc245fcd567e"
+    },
+    {
+      "file": "front-door.svg",
+      "source": "networking/10073-icon-service-Front-Door-and-CDN-Profiles.svg",
+      "sha256": "b2e9c9a8b091a0694532257354dea94bb8c65b33876826e44dbc9b2aae01cf17"
+    },
+    {
+      "file": "waf.svg",
+      "source": "networking/10362-icon-service-Web-Application-Firewall-Policies(WAF).svg",
+      "sha256": "b790e4e7b7617c8155025ab238cfab39a303df74dc030dbe9943a6eef2732255"
+    },
+    {
+      "file": "subnet.svg",
+      "source": "networking/02742-icon-service-Subnet.svg",
+      "sha256": "f36f20495639268f84b6ab101949b630fc89923ed7e1b4c6242dbcca933e0e15"
     }
   ]
 }

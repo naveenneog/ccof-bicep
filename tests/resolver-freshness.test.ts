@@ -267,3 +267,28 @@ test("notify scopes are served whatever their aggregate state: stale, invalid, m
     assert.equal(result.aggregateState, null, label);
   }
 });
+
+// ---- ADR 0034: per-project failover route ----
+
+test("a membership routeBackendId in the pool pattern is passed to the decision", async () => {
+  const membership = { ...entitlementWithMembership.projectMemberships[0], routeBackendId: "ccof-pool-sampleorgaiaz103-1a2b3c4d-r2" };
+  const result = await resolveWithEntitlement({ ...entitlementWithMembership, projectMemberships: [membership] });
+  if (result.refused) assert.fail(result.reason);
+  assert.equal(result.backendId, "foundry-sample-hub");
+  assert.equal(result.routeBackendId, "ccof-pool-sampleorgaiaz103-1a2b3c4d-r2");
+});
+
+test("without a routeBackendId the decision has none (direct routing)", async () => {
+  const result = await resolveWithEntitlement(entitlementWithMembership);
+  if (result.refused) assert.fail(result.reason);
+  assert.equal(Object.hasOwn(result, "routeBackendId"), false);
+});
+
+for (const bad of ["foundry-other", "ccof-pool-X-r1", "ccof-pool-a-r1\n", 7]) {
+  test(`a membership routeBackendId ${JSON.stringify(bad)} outside the pool pattern is dropped, never forwarded`, async () => {
+    const membership = { ...entitlementWithMembership.projectMemberships[0], routeBackendId: bad };
+    const result = await resolveWithEntitlement({ ...entitlementWithMembership, projectMemberships: [membership] });
+    if (result.refused) assert.fail(result.reason);
+    assert.equal(Object.hasOwn(result, "routeBackendId"), false);
+  });
+}

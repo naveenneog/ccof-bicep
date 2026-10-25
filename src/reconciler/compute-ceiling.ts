@@ -114,6 +114,32 @@ export function computeCeilingTokensFromCcu(remainingCcu: Decimal, worstCaseCcuP
   return tokens.greaterThan(MAX_CEILING_TOKENS) ? MAX_CEILING_TOKENS : tokens.toNumber();
 }
 
+// ADR 0035: the reconciler's two optional pacing settings, read as a pair.
+export interface SpendPacing {
+  softLimitPercent: number;
+  windowMinutes: number;
+}
+
+export interface PacedCeiling {
+  ceilingTokensPerMinute: number;
+  softLimitReached: boolean;
+}
+
+// The remaining budget spread over one pacing window, two from the soft limit on, so that spend
+// within the reconciler's delay cannot pass the budget. Rounded down to a power of two: the gateway
+// keys its pace counter by this value, so it must not move with every small spend change. At least
+// 1 while budget remains: the gateway reads 0 as "no pace". 0 once exhausted.
+export function pacedCeilingTokens(budgetCcu: Decimal, spentCcu: Decimal, worstCaseCcuPerToken: Decimal, pacing: SpendPacing): PacedCeiling {
+  const softLimitReached = new Money(spentCcu).greaterThanOrEqualTo(new Money(budgetCcu).times(pacing.softLimitPercent).dividedBy(100));
+  const remaining = new Money(budgetCcu).minus(spentCcu);
+  if (!remaining.greaterThan(0)) {
+    return { ceilingTokensPerMinute: computeCeilingTokensFromCcu(remaining, worstCaseCcuPerToken), softLimitReached };
+  }
+  const windows = softLimitReached ? pacing.windowMinutes * 2 : pacing.windowMinutes;
+  const ceiling = computeCeilingTokensFromCcu(remaining.dividedBy(windows), worstCaseCcuPerToken);
+  return { ceilingTokensPerMinute: ceiling < 1 ? 1 : 2 ** Math.floor(Math.log2(ceiling)), softLimitReached };
+}
+
 export interface AggregateCapacityInput {
   activeMemberCount: number;
   personBudgetUsd: number;

@@ -15,6 +15,7 @@ import { BACKENDS_CONTAINER } from "./registry-seed.ts";
 import type { SeedContainer, SeedStore } from "./registry-seed.ts";
 import type { RunDependencies } from "./run.ts";
 import type { EntitlementRecord } from "./types.ts";
+import { REMOVAL_LIMITS_DOCUMENT_ID } from "./removal-limits.ts";
 
 function statusOf(err: unknown): number | undefined {
   if (typeof err !== "object" || err === null) return undefined;
@@ -138,6 +139,16 @@ export function createAzureDependencies(config: SyncConfig, credential: TokenCre
       const { resources } = await entitlement.items.query<Record<string, unknown>>("SELECT * FROM c").fetchAll();
       return resources.map((doc) => ({ doc, etag: typeof doc._etag === "string" ? doc._etag : "" }));
     },
+    // Point read of the admin override; 404 is no override, any other failure is the caller's (settings apply).
+    ...(config.limitsContainer ? { readRemovalLimits: async () => {
+      try {
+        const response = await database.container(config.limitsContainer as string).item(REMOVAL_LIMITS_DOCUMENT_ID, REMOVAL_LIMITS_DOCUMENT_ID).read<Record<string, unknown>>();
+        return response.resource ?? null;
+      } catch (err) {
+        if (statusOf(err) === 404) return null;
+        throw err;
+      }
+    } } : {}),
     entitlements: createEntitlementWriter(entitlement),
     leases: createLeaseStore(database.container(config.leaseContainer)),
     readGroup: (groupId, beforeRequest) =>

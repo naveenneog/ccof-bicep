@@ -93,11 +93,12 @@ function copiedFields(reg: ClassificationRegistration) {
     familyPolicy: structuredClone(reg.familyPolicy),
     ...(reg.classificationGroupDisplayName !== undefined ? { classificationGroupDisplayName: reg.classificationGroupDisplayName } : {}),
     backendId: reg.backendId,
+    ...(reg.routeBackendId !== undefined ? { routeBackendId: reg.routeBackendId } : {}),
     aggregateMode: reg.aggregateMode,
   };
 }
 
-const COPIED_KEYS = ["projectId", "classification", "classificationGroupId", "classificationGroupDisplayName", "familyPolicy", "backendId", "aggregateMode", "status"];
+const COPIED_KEYS = ["projectId", "classification", "classificationGroupId", "classificationGroupDisplayName", "familyPolicy", "backendId", "routeBackendId", "aggregateMode", "status"];
 
 function sameCopiedFields(prior: RawMembership, reg: ClassificationRegistration): boolean {
   const stored = Object.fromEntries(COPIED_KEYS.map((k) => [k, prior[k]]));

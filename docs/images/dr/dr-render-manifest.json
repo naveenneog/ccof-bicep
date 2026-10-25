@@ -1,0 +1,30 @@
+{
+  "source": "docs/diagrams/dr-network-architecture.py",
+  "sourceSha256": "38a57988bc6fd4198bea64a84c4d92e89c9c246ed84fa1f71eb5016d3930af6b",
+  "svgSha256": "bd2a9b652c8d21d85c897267fa74c7426a4061a70a81fb2f7756a53d45605265",
+  "excalidrawSha256": "6e4d3c9e90c47cb5adc52ba5bcfcfdc50b25c13d8baa25a09ab63e6ffe0a673b",
+  "dimensions": [
+    3600,
+    2320
+  ],
+  "icons": {
+    "api-management": "cf794288575f2f7b080c50aa8319d42b02a2f2ae5351e4712c574353fc801f9a",
+    "app-registration": "bad6673e76100221dfeb7adaebb4a6778c255c07afbdef742bf18527fe5115ab",
+    "cosmos-db": "b6f1f2afac15762d1de44366d34984c5a3e6e58f94d9e81407ac01565212e8e3",
+    "dns": "e6aaa1380e974af7d0aba1bb8380ecfab3f95182a595a28692aa3f963bcf9fac",
+    "foundry": "fab039a771f72780ae34e59065d61c66a02d3c347d50923ef2956f34912ea02c",
+    "front-door": "b2e9c9a8b091a0694532257354dea94bb8c65b33876826e44dbc9b2aae01cf17",
+    "functions": "1a6c9c108d5f63f7b78bc6fbc464059acd2eaa8c1d111e9bcd28a8b2cdf470b9",
+    "groups": "e9a41be8418dd01a39a810f2a1f7afec638171cc35f51dbeeeefa96d5e876564",
+    "log-analytics": "7a244a8d7260e84be5c904185db7b04994fe6ed345e2b224163bc5f7e3d97ce0",
+    "monitor": "1396f59a7d8fd7505a423842b987c9b343a092263d1ab5c7b0d94d58d8b17448",
+    "private-endpoints": "96de0bb7f0aeb1220d0fd6d337578d5e93dca017d6ea7d42d887aa329b2fd90d",
+    "subnet": "f36f20495639268f84b6ab101949b630fc89923ed7e1b4c6242dbcca933e0e15",
+    "tenant": "2ed1a99b5c3025bf4865c77fcc6b3edd1dfe9e1b068be2b8e0d8a0f8fb1133e2",
+    "users": "7c08aa6365b41e7f0b74833bfd420f174081f6e90ba278e0c01cd988027eb3ca",
+    "vnet": "64a5e75ecef2f9f69067faa2eb131266cb8f2858706f8ab74bfea5ad0d98b14d",
+    "waf": "b790e4e7b7617c8155025ab238cfab39a303df74dc030dbe9943a6eef2732255",
+    "workbooks": "20b3064d62ff3c7944d71f852d34f0ecba8b3bcd2f3ff3e8d14634a116e57da4"
+  },
+  "pngSha256": "20984c9506d0da8b374fc30ed0ad91249b671727167525dfa49824e532a416bb"
+}

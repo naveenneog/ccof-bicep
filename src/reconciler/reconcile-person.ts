@@ -7,15 +7,16 @@
 // src/resolver/decide.ts vs src/resolver/cosmos-reads.ts.
 
 import { Decimal } from "decimal.js";
-import { computeCeilingTokensFromCcu, computeSpend, computeNextCeilingTokens } from "./compute-ceiling.ts";
-import type { RateTable, UsageEvent } from "./compute-ceiling.ts";
+import { computeCeilingTokensFromCcu, computeSpend, computeNextCeilingTokens, pacedCeilingTokens } from "./compute-ceiling.ts";
+import type { RateTable, SpendPacing, UsageEvent } from "./compute-ceiling.ts";
 import { completenessOf } from "./documents.ts";
 import type { BudgetStateDocument, ScopeTally, StateStamp } from "./documents.ts";
 import type { Membership, ScopeRegistration } from "./registry.ts";
 
 // The C-7 person state (docs/PILOT.md): the budget is the member's current
 // classification's personBudget; `exhausted` is spent >= budget; the ceiling
-// is COST-MODEL's (ADR-0018 D-3), 0 once exhausted. The CCU path that the
+// is COST-MODEL's (ADR-0018 D-3), 0 once exhausted, and paced when the
+// reconciler is configured to (ADR 0035). The CCU path that the
 // timer-run reconciler uses; reconcilePerson below is the earlier USD form.
 export function buildPersonState(
   member: Membership,
@@ -23,8 +24,10 @@ export function buildPersonState(
   tally: ScopeTally,
   worstCaseCcuPerToken: Decimal,
   stamp: StateStamp,
+  pacing: SpendPacing | null = null,
 ): BudgetStateDocument {
   const exhausted = tally.spentCcu.greaterThanOrEqualTo(scope.personBudgetCcu);
+  const paced = pacing === null ? null : pacedCeilingTokens(scope.personBudgetCcu, tally.spentCcu, worstCaseCcuPerToken, pacing);
   return {
     id: `${member.personId}:${member.projectId}`,
     personId: member.personId,
@@ -39,9 +42,12 @@ export function buildPersonState(
     computedAt: stamp.computedAt,
     validUntil: stamp.validUntil,
     completeness: completenessOf(tally),
-    realtimeCeilingTokensPerMinute: exhausted
-      ? 0
-      : computeCeilingTokensFromCcu(scope.personBudgetCcu.minus(tally.spentCcu), worstCaseCcuPerToken),
+    realtimeCeilingTokensPerMinute: paced
+      ? paced.ceilingTokensPerMinute
+      : exhausted
+        ? 0
+        : computeCeilingTokensFromCcu(scope.personBudgetCcu.minus(tally.spentCcu), worstCaseCcuPerToken),
+    ...(paced && pacing ? { softLimitPercent: pacing.softLimitPercent, softLimitReached: paced.softLimitReached } : {}),
   };
 }
 

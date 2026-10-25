@@ -28,6 +28,8 @@ export const DEFAULT_OUT_DIR = path.join(HERE, "out");
 export interface Templates {
   main: string;
   fragments: Record<string, string>;
+  // The developer's own-usage API policy (policy/my-usage.template.xml); absent: not rendered.
+  usage?: string;
 }
 
 export interface RenderResult {
@@ -37,6 +39,9 @@ export interface RenderResult {
   policySha256: string;
   configSha256: string;
   templateSha256: string;
+  usagePolicyXml?: string;
+  usagePolicySha256?: string;
+  usageTemplateSha256?: string;
 }
 
 // Static backends need a secret named value in the policy; every other
@@ -49,6 +54,7 @@ export function loadTemplates(): Templates {
   const read = (name: string) => readFileSync(path.join(POLICY_DIR, name), "utf8");
   return {
     main: read("claude-messages.template.xml"),
+    usage: read("my-usage.template.xml"),
     fragments: Object.fromEntries(Object.values(FRAGMENT_FOR).map((name) => [name, read(`${name}.xml`)])),
   };
 }
@@ -130,6 +136,40 @@ function mainValues(config: GatewayConfig, backendBranches: string, digests: { c
   };
 }
 
+// The resolver's own-usage route sits beside /resolve on the same Function App (src/resolver/function-app.ts).
+export function usageUrlFor(resolverUrl: string): string {
+  const url = new URL(resolverUrl);
+  const path = url.pathname.replace(/\/resolve\/?$/, "/me/usage");
+  if (path === url.pathname) throw new Error("resolver.url must end with /resolve to derive the own-usage route");
+  url.pathname = path;
+  return url.toString();
+}
+
+function usageValues(config: GatewayConfig, templateSha: string): Record<string, TemplateValue> {
+  const { entra, admission, resolver, entitlementCache: cache } = config;
+  const tenant = entra.tenantId;
+  return {
+    CONFIGURATION_ID: config.configurationId,
+    TEMPLATE_SHA256: templateSha,
+    TENANT_ID: tenant,
+    OPENID_CONFIG_URL: `${entra.authorityHost}/${tenant}/v2.0/.well-known/openid-configuration`,
+    ISSUER_V1: `${entra.v1IssuerHost}/${tenant}/`,
+    ISSUER_V2: `${entra.authorityHost}/${tenant}/v2.0`,
+    AUDIENCE_ELEMENTS: { xml: entra.audiences.map((a) => `<audience>${a}</audience>`).join("\n        ") },
+    DELEGATED_SCOPE: entra.delegatedScope,
+    DELEGATED_CLIENT_IDS: csharpStrings(entra.delegatedClientAppIds),
+    ALLOW_APP_ONLY: String(entra.testIdentities.allowAppOnlyTokens),
+    APP_ONLY_CLIENT_IDS: csharpStrings(entra.testIdentities.clientAppIds),
+    APP_ONLY_ROLE: entra.testIdentities.appRole ?? "",
+    PERSON_CALLS: String(admission.perPerson.calls),
+    PERSON_PERIOD: String(admission.perPerson.renewalPeriodSeconds),
+    RESOLVER_AUDIENCE: resolver.tokenAudience,
+    RESOLVER_TIMEOUT: String(resolver.timeoutSeconds),
+    USAGE_URL: usageUrlFor(resolver.url),
+    RETRY_AFTER: String(cache.unavailableRetryAfterSeconds),
+  };
+}
+
 // Every value offered to a template must be used by it: a renamed or deleted
 // placeholder must not silently drop a configured setting.
 function fill(text: string, values: Record<string, TemplateValue>, name: string): string {
@@ -149,9 +189,10 @@ export function renderPolicy(input: GatewayConfig, options: { templates?: Templa
   const templates: Templates = {
     main: lf(given.main),
     fragments: Object.fromEntries(Object.entries(given.fragments).map(([name, text]) => [name, lf(text)])),
+    ...(given.usage === undefined ? {} : { usage: lf(given.usage) }),
   };
 
-  const literals = [["main", templates.main], ...Object.entries(templates.fragments)].flatMap(([name, text]) => findTemplateLiterals(text, name));
+  const literals = [["main", templates.main], ...(templates.usage === undefined ? [] : [["my-usage", templates.usage]]), ...Object.entries(templates.fragments)].flatMap(([name, text]) => findTemplateLiterals(text, name));
   if (literals.length > 0) throw new Error(`the template carries a literal environment value:\n - ${literals.join("\n - ")}`);
 
   const digests = {
@@ -166,6 +207,12 @@ export function renderPolicy(input: GatewayConfig, options: { templates?: Templa
     .join("\n");
   const policyXml = fill(templates.main, mainValues(config, branches, digests), "main");
   checkRendered(policyXml, config);
+  const usage = templates.usage === undefined ? null : (() => {
+    const templateSha = sha256(templates.usage);
+    const xml = fill(templates.usage, usageValues(config, templateSha), "my-usage");
+    checkRendered(xml, config);
+    return { xml, templateSha };
+  })();
   return {
     configurationId: config.configurationId,
     apiId: config.apim.apiId,
@@ -173,6 +220,7 @@ export function renderPolicy(input: GatewayConfig, options: { templates?: Templa
     policySha256: sha256(policyXml),
     configSha256: digests.config,
     templateSha256: digests.template,
+    ...(usage ? { usagePolicyXml: usage.xml, usagePolicySha256: sha256(usage.xml), usageTemplateSha256: usage.templateSha } : {}),
   };
 }
 
@@ -194,8 +242,10 @@ export function renderFromFile(configPath: string, outDir: string): { result: Re
   const policyPath = path.join(outDir, `${result.apiId}.policy.xml`);
   const manifestPath = path.join(outDir, "render.json");
   writeFileSync(policyPath, result.policyXml, "utf8");
-  const { policyXml: _omitted, ...manifest } = result;
-  writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, policyFile: path.basename(policyPath) }, null, 2)}\n`, "utf8");
+  const usagePath = path.join(outDir, `${result.apiId}.usage.policy.xml`);
+  if (result.usagePolicyXml) writeFileSync(usagePath, result.usagePolicyXml, "utf8");
+  const { policyXml: _omitted, usagePolicyXml: _usage, ...manifest } = result;
+  writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, policyFile: path.basename(policyPath), ...(result.usagePolicyXml ? { usagePolicyFile: path.basename(usagePath) } : {}) }, null, 2)}\n`, "utf8");
   return { result, policyPath, manifestPath };
 }
 
@@ -217,7 +267,7 @@ function main(argv: string[]): number {
     const loaded = loadGatewayConfig(configPath);
     const outDir = args.get("out") ?? path.join(DEFAULT_OUT_DIR, loaded.ok ? loaded.config.configurationId : "invalid");
     const { result, policyPath, manifestPath } = renderFromFile(configPath, outDir);
-    const { policyXml: _omitted, ...summary } = result;
+    const { policyXml: _omitted, usagePolicyXml: _usage, ...summary } = result;
     process.stdout.write(`${JSON.stringify({ ...summary, policyPath, manifestPath })}\n`);
     return 0;
   } catch (err: unknown) {

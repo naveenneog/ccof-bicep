@@ -7,6 +7,7 @@ import type { Decimal } from "decimal.js";
 import { Money } from "../cost/money.ts";
 import type { RateCard } from "../cost/rate-card.ts";
 import { worstCaseCcuPerOutputToken } from "./compute-ceiling.ts";
+import type { SpendPacing } from "./compute-ceiling.ts";
 import type { AggregateBudgetStateDocument, BudgetStateDocument, ScopeTally, StateStamp } from "./documents.ts";
 import type { BudgetPeriod } from "./period.ts";
 import type { ClassifiedRow } from "./price-rows.ts";
@@ -22,6 +23,8 @@ export interface ReconcileInput {
   period: BudgetPeriod;
   computedAt: Date;
   validUntil: Date;
+  // ADR 0035; absent or null keeps the unpaced ceiling and adds no soft-limit fields.
+  pacing?: SpendPacing | null;
 }
 
 export interface ScopeProblem {
@@ -135,7 +138,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     .map((member) => {
       const tally = personTallies.get(personKeyOf(member.personId, member.projectId)) ?? emptyTally();
       const scope = registry.scopes.get(member.scopeId) as (typeof scopes)[number];
-      return { doc: buildPersonState(member, scope, tally, worstCase.get(member.scopeId) as Decimal, stamp), tally };
+      return { doc: buildPersonState(member, scope, tally, worstCase.get(member.scopeId) as Decimal, stamp, input.pacing ?? null), tally };
     })
     .sort(byKey((p) => p.doc.id));
 

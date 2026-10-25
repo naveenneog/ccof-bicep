@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { XmlElement } from "../infra/gateway/apim-xml.ts";
 import { attr, descendants, parseApimXml, textOf } from "../infra/gateway/apim-xml.ts";
 import type { GatewayConfig } from "../infra/gateway/config.ts";
-import { renderFromFile, renderPolicy } from "../infra/gateway/render.ts";
+import { loadTemplates, renderFromFile, renderPolicy, usageUrlFor } from "../infra/gateway/render.ts";
 import { sampleConfig } from "./helpers/gateway-fixtures.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -249,7 +249,7 @@ describe("rendered policy structure", () => {
   });
 
   test("person and group token limits use the contract's counter keys and the resolver's values", () => {
-    const limits = descendants(inbound).filter((e) => e.name === "llm-token-limit" && !attr(e, "id")!.startsWith("ccof-limit-family-"));
+    const limits = descendants(inbound).filter((e) => e.name === "llm-token-limit" && !attr(e, "id")!.startsWith("ccof-limit-family-") && attr(e, "id") !== "ccof-limit-person-budget-pace");
     assert.deepEqual(limits.map((e) => attr(e, "id")), [
       "ccof-limit-group-rate-quota", "ccof-limit-group-rate", "ccof-limit-group-quota",
       "ccof-limit-person-rate-quota", "ccof-limit-person-rate", "ccof-limit-person-quota",
@@ -274,10 +274,26 @@ describe("rendered policy structure", () => {
     assert.ok(limits.filter((e) => attr(e, "id")!.startsWith("ccof-limit-person")).every((e) => attr(e, "tokens-consumed-header-name") === "x-test-tokens-consumed"));
   });
 
+  test("the budget pace is a rate-only person limit on its own key, with no quota and no header of its own (ADR 0035)", () => {
+    const pace = descendants(inbound).filter((e) => e.name === "llm-token-limit" && attr(e, "id") === "ccof-limit-person-budget-pace");
+    assert.equal(pace.length, 1);
+    const [limit] = pace;
+    // The ceiling is part of the key: on v2 tiers one counter key must always carry one tokens-per-minute value.
+    assert.equal(attr(limit, "counter-key"), '@("pb:" + (string)context.Variables["ccofProjectId"] + ":" + (string)context.Variables["ccofOid"] + ":" + ((int)context.Variables["ccofBudgetPaceTpm"]).ToString())');
+    assert.equal(attr(limit, "tokens-per-minute"), '@((int)context.Variables["ccofBudgetPaceTpm"])');
+    assert.equal(attr(limit, "estimate-prompt-tokens"), "false");
+    assert.equal(attr(limit, "retry-after-variable-name"), "ccofRetryAfter");
+    for (const name of ["token-quota", "token-quota-period", "remaining-tokens-header-name", "remaining-quota-tokens-header-name", "tokens-consumed-header-name"]) {
+      assert.equal(attr(limit, name), undefined, name);
+    }
+  });
+
   test("backends: static named-value branches by id, every other backend by the descriptor's mode (C-8)", () => {
     const routes = descendants(inbound).filter((e) => e.name === "set-backend-service").map((e) => attr(e, "backend-id"));
     const dynamic = '@((string)context.Variables["ccofBackendId"])';
-    assert.deepEqual(routes, ["backend-cross-tenant", dynamic, dynamic, dynamic]);
+    // ADR 0034: only the managed-identity branch may forward to a project pool (its members share that token).
+    const routed = '@((string)context.Variables["ccofRouteBackendId"] != "" ? (string)context.Variables["ccofRouteBackendId"] : (string)context.Variables["ccofBackendId"])';
+    assert.deepEqual(routes, ["backend-cross-tenant", routed, dynamic, dynamic]);
     const mi = byId("ccof-backend-credential-managed-identity");
     assert.equal(mi.name, "authentication-managed-identity");
     assert.equal(attr(mi, "resource"), '@((string)context.Variables["ccofBackendAuthResource"])');
@@ -537,10 +553,74 @@ describe("rendering from files", () => {
     rmSync(scratch, { recursive: true, force: true });
     mkdirSync(scratch, { recursive: true });
     const out = renderFromFile(path.join(repoRoot, "tests", "fixtures", "gateway-public.json"), scratch);
-    assert.deepEqual(readdirSync(scratch).sort(), ["claude-messages.policy.xml", "render.json"]);
+    assert.deepEqual(readdirSync(scratch).sort(), ["claude-messages.policy.xml", "claude-messages.usage.policy.xml", "render.json"]);
     assert.match(out.result.policyXml, /\{\{foundry-crosstenant-client-secret\}\}/);
     const ignored = spawnSync("git", ["check-ignore", "-q", path.relative(repoRoot, out.policyPath)], { cwd: repoRoot });
     assert.equal(ignored.status, 0, "rendered output is not git-ignored");
     rmSync(scratch, { recursive: true, force: true });
   });
+});
+
+describe("own-usage API policy (docs/USAGE-SELF-SERVICE.md)", () => {
+  const usage = parseApimXml(rendered.usagePolicyXml ?? "");
+  const usageInbound = usage.children.find((c): c is XmlElement => c.kind === "element" && c.name === "inbound")!;
+  const block = (xml: string, from: string, to: string) => { const s = xml.indexOf(from); return xml.slice(s, xml.indexOf(to, s)).replace(/\s+/g, " "); };
+  test("is rendered with the main policy and checks the token exactly as Claude Messages does", () => {
+    assert.ok(rendered.usagePolicyXml && rendered.usagePolicySha256 && rendered.usageTemplateSha256);
+    assert.equal(rendered.usagePolicyXml.includes("%%"), false);
+    assert.equal(block(rendered.usagePolicyXml, "<validate-jwt", "</validate-jwt>"), block(rendered.policyXml, "<validate-jwt", "</validate-jwt>"), "same validate-jwt");
+    for (const name of ["ccofOid", "ccofClientAppId", "ccofRefusal"]) {
+      assert.equal(textOf(setVariable(name, usageInbound)[0]) + attr(setVariable(name, usageInbound)[0], "value"),
+        textOf(setVariable(name)[0]) + attr(setVariable(name)[0], "value"), name);
+    }
+  });
+  test("refuses before any resolver call, rate-limits per person and sends only the token's oid", () => {
+    const kids = usageInbound.children.filter((c): c is XmlElement => c.kind === "element").map((c) => attr(c, "id") || c.name);
+    assert.ok(kids.indexOf("choose") < kids.indexOf("ccof-usage-person"), "refusal before admission");
+    const refusal = usageInbound.children.find((c): c is XmlElement => c.kind === "element" && c.name === "choose")!;
+    const when = descendants(refusal).find((e) => e.name === "when")!;
+    assert.match(attr(when, "condition") ?? "", /ccofRefusal"\] != ""/, "a refused token (wrong scope, client or identity) is blocked");
+    assert.ok(descendants(when).some((e) => e.name === "set-status" && attr(e, "code") === "403"), "blocked with 403");
+    assert.ok(kids.indexOf("ccof-usage-person") < kids.indexOf("ccof-usage-resolver-credential"), "admission before the resolver");
+    assert.match(attr(byId("ccof-usage-person", usage), "counter-key") ?? "", /ccof-usage:.*ccofOid/);
+    const send = descendants(usage).find((e) => e.name === "send-request")!;
+    assert.equal(textOf(descendants(send).find((e) => e.name === "set-url")!), usageUrlFor(config.resolver.url));
+    const body = textOf(descendants(send).find((e) => e.name === "set-body")!);
+    assert.match(body, /JProperty\("personId", \(string\)context\.Variables\["ccofOid"\]\)/);
+    assert.doesNotMatch(body, /Request\.(Headers|Url|Body)/, "nothing from the request reaches the resolver");
+    assert.doesNotMatch(rendered.usagePolicyXml ?? "", /forward-request/, "the usage API never forwards to a model backend");
+  });
+  test("the main policy and its digest are unchanged by the usage template", () => {
+    const { usage: _u, ...withoutUsage } = loadTemplates();
+    const mainOnly = renderPolicy(config, { templates: withoutUsage });
+    assert.equal(mainOnly.policySha256, rendered.policySha256);
+    assert.equal(mainOnly.templateSha256, rendered.templateSha256);
+    assert.equal(mainOnly.usagePolicyXml, undefined);
+  });
+  test("the usage route is derived from the resolver URL", () => {
+    assert.equal(usageUrlFor("https://r.example.net/api/resolve"), "https://r.example.net/api/me/usage");
+    assert.throws(() => usageUrlFor("https://r.example.net/api/other"), /must end with \/resolve/);
+  });
+});
+
+// infra/quickstart/modules/apim-api.bicep deploys each section of this policy as a policy fragment
+// (Standard v2 refused API policy documents over 16 KiB on 2026-10-23). Its string slicing needs:
+// every section tag exactly once and <base />, when present, as the section's first statement.
+test("rendered policy sections can be split into fragments without reordering <base />", () => {
+  for (const xml of [renderPolicy(sampleConfig() as GatewayConfig).policyXml, renderPolicy(sampleConfig() as GatewayConfig).usagePolicyXml ?? ""].filter(Boolean)) {
+    const root = parseApimXml(xml);
+    assert.equal(root.name, "policies");
+    for (const s of ["inbound", "backend", "outbound", "on-error"]) {
+      assert.equal(xml.split(`<${s}>`).length - 1, 1, `<${s}> must occur once`);
+      assert.equal(xml.split(`</${s}>`).length - 1, 1, `</${s}> must occur once`);
+      const section = root.children.find((c): c is XmlElement => c.kind === "element" && c.name === s)!;
+      const statements = section.children.filter((c): c is XmlElement => c.kind === "element");
+      const bases = descendants(section).filter((e) => e.name === "base");
+      assert.ok(bases.length <= 1, `${s}: at most one <base />`);
+      if (bases.length) assert.equal(statements[0], bases[0], `${s}: <base /> must be the first statement`);
+      const a = xml.indexOf(`<${s}>`), b = xml.indexOf(`</${s}>`);
+      assert.equal(xml.slice(a, b).split("<base />").length - 1, bases.length, `${s}: <base /> written as "<base />"`);
+    }
+    assert.ok(!xml.includes("<fragment>") && !xml.includes("include-fragment"), "the template itself never uses fragments");
+  }
 });

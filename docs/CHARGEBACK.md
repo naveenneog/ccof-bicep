@@ -1,5 +1,10 @@
 # Chargeback workbook
 
+> **Admin console V3.** The workbook's chargeback queries are built by one module,
+> `analytics/workbooks/chargeback-queries.ts`, which the admin console's
+> `GET /api/v3/chargeback/{view}` also uses, so the console and the workbook cannot drift. The workbook
+> output is unchanged (`tests/chargeback-shared-queries.test.ts`). See [ADMIN-V3.md](ADMIN-V3.md).
+
 ## Fixed-price quickstart report — WP-CHARGEBACK-OCT13
 
 Quickstart step 2 now uses `analytics/workbooks/chargeback.ts`. This is a

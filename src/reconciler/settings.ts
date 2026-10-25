@@ -1,7 +1,10 @@
 // Reconciler settings (ADR-0018 decision 9). Every value is an administrator's
 // decision, written as an app setting by infra/reconciler: there are no
 // defaults, and a missing or invalid value refuses the run before any Azure
-// call. Problems name the setting and a code, never the value.
+// call. Problems name the setting and a code, never the value. The pacing
+// pair (ADR 0035) is the one optional group: neither set means no pacing.
+
+import type { SpendPacing } from "./compute-ceiling.ts";
 
 export interface ReconcilerContainers {
   projects: string;
@@ -27,6 +30,8 @@ export interface ReconcilerSettings {
   writeConcurrency: number;
   cosmosEndpoint: string;
   cosmosDatabase: string;
+  // ADR 0035: null unless both pacing settings are set.
+  pacing: SpendPacing | null;
   containers: ReconcilerContainers;
 }
 
@@ -58,6 +63,8 @@ export const SETTING_NAMES = [
   "RECONCILER_LEASE_CONTAINER",
 ] as const;
 
+export const PACING_SETTING_NAMES = ["RECONCILER_SOFT_LIMIT_PERCENT", "RECONCILER_PACING_WINDOW_MINUTES"] as const;
+
 type Settings = Readonly<Record<string, string | undefined>>;
 
 export const GUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -81,6 +88,8 @@ const RANGES = {
   RECONCILER_LEDGER_MAX_ROWS: [1, 500_000],
   RECONCILER_MAX_STATES: [1, 10_000_000],
   RECONCILER_WRITE_CONCURRENCY: [1, 32],
+  RECONCILER_SOFT_LIMIT_PERCENT: [1, 99],
+  RECONCILER_PACING_WINDOW_MINUTES: [1, 120],
 } as const;
 
 class Reader {
@@ -158,6 +167,19 @@ function readContainers(r: Reader): Partial<ReconcilerContainers> {
   return containers;
 }
 
+// Both pacing settings or neither: one alone names the other as missing. A
+// window shorter than the timer interval cannot bound spend between runs.
+function readPacing(r: Reader, settings: Settings, intervalMinutes: number | undefined): SpendPacing | undefined {
+  if (!PACING_SETTING_NAMES.some((name) => settings[name]?.trim())) return undefined;
+  const softLimitPercent = r.integer("RECONCILER_SOFT_LIMIT_PERCENT");
+  const windowMinutes = r.integer("RECONCILER_PACING_WINDOW_MINUTES");
+  if (softLimitPercent === undefined || windowMinutes === undefined) return undefined;
+  if (intervalMinutes !== undefined && windowMinutes < intervalMinutes) {
+    return r.fail("RECONCILER_PACING_WINDOW_MINUTES", "shorter_than_interval");
+  }
+  return { softLimitPercent, windowMinutes };
+}
+
 export function readReconcilerSettings(settings: Settings): SettingsResult {
   const r = new Reader(settings);
   const managedIdentityClientId = r.matching("RECONCILER_MANAGED_IDENTITY_CLIENT_ID", GUID)?.toLowerCase();
@@ -178,6 +200,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
   const cosmosEndpoint = endpointRaw === undefined ? undefined : isCosmosEndpoint(endpointRaw) ? endpointRaw : r.fail("COSMOS_ENDPOINT", "invalid");
   const cosmosDatabase = r.matching("COSMOS_DATABASE", COSMOS_NAME);
   const containers = readContainers(r);
+  const pacing = readPacing(r, settings, intervalMinutes);
 
   // A healthy run renews state before the previous run's state lapses only if
   // the validity outlasts the interval plus the longest ledger read.
@@ -208,6 +231,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
       writeConcurrency: writeConcurrency as number,
       cosmosEndpoint: cosmosEndpoint as string,
       cosmosDatabase: cosmosDatabase as string,
+      pacing: pacing ?? null,
       containers: containers as ReconcilerContainers,
     },
   };
