@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-10-25 - DR standby region guide for Azure Cloud Shell
+
+- New runbook [DR standby region in Cloud Shell](runbooks/DR-STANDBY-CLOUD-SHELL.md): prerequisites, durable (`clouddrive`) state, a field-by-field `dr.config.json` reference with a complete valid example, P0-P2 and the region B driver phases (`Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify`) as preview then `-Apply`, resuming after the 20-minute timeout, and post-checks.
+- Scope stated in the guide: the region B driver has only offline tests and no recorded live run; Front Door Premium, end-to-end failover and failback, and the production continuity gate are not done. The serverless-to-provisioned Cosmos change is one-way. Documentation only; no code changed.
+
 ## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
 
 - Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated, 1-4 distinct APIM resource IDs). `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid; with both set the single ID must be in the list, otherwise the run logs `settings_invalid` with `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS:single_not_in_list`.
