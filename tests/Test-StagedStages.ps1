@@ -138,6 +138,13 @@ $dnsConfig = @{ subscriptionId = '00000000-0000-4000-8000-000000000001'; resourc
 $dnsOutputs = @{ functionsSubnetId = '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/functions'; privateDnsZoneIds = @{ cosmos = 'cosmos-zone'; blob = 'blob-zone' } }
 $dnsTargets = Get-StgNetworkDnsTargets -Cfg $dnsConfig -Outputs $dnsOutputs -HasFoundry $true
 Assert-Contract ($dnsTargets.vnetId -ceq '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet' -and $dnsTargets.zoneIds.Count -eq 5) 'Stage 6 must derive DNS targets when earlier deployment outputs lack VNet and Foundry zone IDs.'
+# Flex Consumption apps without VNet integration return virtualNetworkSubnetId null (seen live 2026-10-25);
+# the read-back compares it with '' for Stage 1, so Get-StgSite returns a string.
+function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true } } } }
+$nullSubnetSite = Get-StgSite -Cfg @{ subscriptionId = 's'; resourceGroup = 'g' } -Name 'app'
+Assert-Contract ($nullSubnetSite.virtualNetworkSubnetId -ieq '') 'Get-StgSite must return an empty string, not null, for an app without VNet integration (Stage 1 read-back).'
+Remove-Item Function:\Invoke-StgAzJson
+. $driverPath -DotSourceOnly
 $headers = New-StgGatewayHeaders -Token 'token-placeholder' -Project 'PROJECT01' -ProjectHeader 'x-customer-project'
 Assert-Contract ($headers['x-customer-project'] -ceq 'PROJECT01' -and -not $headers.ContainsKey('x-ccof-project')) 'Stage 8 must use the configured project selector header.'
 $priorResourceId = '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/shared/providers/Microsoft.Storage/storageAccounts/prefix-owned/blobServices/default'

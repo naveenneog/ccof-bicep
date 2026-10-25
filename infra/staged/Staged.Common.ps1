@@ -375,7 +375,8 @@ function Get-StgSite {
     return @{
         name = $site.name
         publicNetworkAccess = (& $pick 'publicNetworkAccess')
-        virtualNetworkSubnetId = (& $pick 'virtualNetworkSubnetId')
+        # A Flex app without VNet integration returns null; '' keeps the read-back's string comparisons valid.
+        virtualNetworkSubnetId = "$(& $pick 'virtualNetworkSubnetId')"
         httpsOnly = (& $pick 'httpsOnly')
         runtimeName = (& $pick 'functionAppConfig').runtime.name
         runtimeVersion = (& $pick 'functionAppConfig').runtime.version
