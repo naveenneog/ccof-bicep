@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $script:fail = 0; $script:pass = 0
 function Check([string]$Name, [bool]$Ok) { if ($Ok) { $script:pass++ } else { $script:fail++; Write-Host "FAIL $Name" -ForegroundColor Red } }
 $repo = Split-Path $PSScriptRoot -Parent
+Import-Module (Join-Path $repo 'infra/dr/DrStandby.psm1') -Force
 function Build([string]$Relative) { (& az bicep build --file (Join-Path $repo $Relative) --stdout --only-show-errors 2>$null) -join "`n" | ConvertFrom-Json -Depth 100 }
 
 # Stage 3 grants on resources shared by both regions (workspace, Cosmos account). Their names hash
@@ -36,6 +37,42 @@ $cosmos = @($byType['Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments'])
 Check 'Cosmos assignment name: unsalted form kept, salted form added' ($cosmos.name -match "if\(empty\(parameters\('assignmentNameSalt'\)\), guid\(.*'ccof-staged', variables\('activeAssignments'\)\[copyIndex\(\)\].id\), guid\(.*parameters\('assignmentNameSalt'\)\)\)")
 $defs = @($byType['Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions'])[0]
 Check 'Cosmos role definitions are not salted (shared by both regions)' ($defs.name -notmatch 'assignmentNameSalt')
+
+# ---- infra/dr/frontdoor.bicep: Front Door Premium in front of both APIM gateways over Private Link
+$fd = Build 'infra/dr/frontdoor.bicep'
+$fdAll = if ($fd.resources -is [array]) { @($fd.resources) } else { @($fd.resources.PSObject.Properties.Value) }
+$fdType = { param($t) @($fdAll | Where-Object { $_.type -ceq $t }) }
+Check 'Front Door profile is Premium (Private Link origins need it)' ("$((& $fdType 'Microsoft.Cdn/profiles')[0].sku.name)" -ceq 'Premium_AzureFrontDoor')
+$origins = & $fdType 'Microsoft.Cdn/profiles/originGroups/origins'
+$originText = $origins | ConvertTo-Json -Depth 20
+Check 'origins reach APIM through Private Link, sub-resource Gateway' ($originText -match '"groupId":\s*"Gateway"' -and $originText -match 'sharedPrivateLinkResource')
+Check 'APIM origin priority comes from apimOrigins (active/passive)' ($originText -match "\[parameters\('apimOrigins'\)\[copyIndex\(\)\].priority\]")
+$og = "$((& $fdType 'Microsoft.Cdn/profiles/originGroups') | ConvertTo-Json -Depth 20)"
+Check 'health probe: GET on the APIM status endpoint (HEAD answers 404)' ($og -match 'status-0123456789abcdef' -and $og -match '"probeRequestType":\s*"GET"')
+$adminOg = "$((& $fdType 'Microsoft.Cdn/profiles/originGroups' | Where-Object { $_.name -match "'admin'" }) | ConvertTo-Json -Depth 20)"
+Check 'admin health probe: GET anonymous console path' ($adminOg -match 'probePath.*api/console' -and $adminOg -match '"probeRequestType":\s*"GET"')
+$adminOrigin = "$((& $fdType 'Microsoft.Cdn/profiles/originGroups/origins' | Where-Object { $_.name -match 'admin' }) | ConvertTo-Json -Depth 20)"
+Check 'admin origins use App Service private links (group sites)' ($adminOrigin -match '"groupId":\s*"sites"' -and $adminOrigin -match 'sharedPrivateLinkResource')
+Check 'admin origin priority comes from adminOrigins' ($adminOrigin -match "\[parameters\('adminOrigins'\)\[copyIndex\(\)\].priority\]")
+$routes = & $fdType 'Microsoft.Cdn/profiles/afdEndpoints/routes'
+$route = "$($routes | ConvertTo-Json -Depth 20)"
+Check 'gateway route: HTTPS only, no caching' ($route -match '"forwardingProtocol":\s*"HttpsOnly"' -and $route -match '"httpsRedirect":\s*"Enabled"' -and $route -notmatch 'cacheConfiguration"\s*:\s*\{')
+Check 'admin route sends /api to its own origin group' ($route -match '"patternsToMatch":\s*\[\s*"/api/\*"' -and $route -match "originGroups'.*'admin")
+Check 'WAF policy attached through a security policy' (@(& $fdType 'Microsoft.Cdn/profiles/securityPolicies').Count -eq 1 -and @(& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies').Count -eq 1)
+Check 'WAF mode is a parameter defaulting to Detection' ($fd.parameters.wafMode.defaultValue -ceq 'Detection' -and (@($fd.parameters.wafMode.allowedValues) -join ',') -ceq 'Detection,Prevention')
+$front = New-DrFrontDoorParameters -Stem 'contoso-dr' `
+    -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' `
+    -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' `
+    -StandbyApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b' `
+    -StandbyApimHost 'apim-b.azure-api.net' -StandbyApimLocation 'centralus' `
+    -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' `
+    -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' `
+    -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' `
+    -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus'
+Check 'Front Door parameters preserve gateway and admin origins, primary first' ($front.apimOrigins.Count -eq 2 -and $front.apimOrigins[0].priority -eq 1 -and $front.apimOrigins[1].priority -eq 2 -and $front.adminOrigins.Count -eq 2 -and $front.adminOrigins[0].siteId -match '/Microsoft.Web/sites/admin-a')
+$threw = $false; try { $null = New-DrFrontDoorParameters -Stem 'Bad_Name' -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' -StandbyApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b' -StandbyApimHost 'apim-b.azure-api.net' -StandbyApimLocation 'centralus' -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' } catch { $threw = "$_" -match 'frontdoor_stem_invalid' }
+Check 'Front Door stem rejects uppercase and underscores before az' $threw
+Check 'Front Door parameters default to WAF detection' ($front.wafMode -ceq 'Detection' -and $front.probeIntervalSeconds -eq 30)
 
 # Region A's Stage 3 read-back counts only its own principals, so region B's grants on the shared
 # workspace and Cosmos account do not fail it.
@@ -72,7 +109,8 @@ Check 'stage deployment names: primary unchanged, standby prefixed' ((Get-StgDep
 Import-Module (Join-Path $repo 'infra/dr/DrStandby.psm1') -Force
 function New-DrCfg { $c = Get-Content (Join-Path $repo 'infra/dr/dr.config.example.json') -Raw | ConvertFrom-Json
     $c.standby.stagedConfigPath = 'staged.config.json'; $c.standby.stagedStateDirectory = '.staged-state'; $c.standby.stateDirectory = '.dr-standby-state'
-    $c.standby.apim.publisherEmail = 'platform@contoso.example'; $c.standby.apim.publisherName = 'Contoso'; $c }
+    $c.standby.apim.publisherEmail = 'platform@contoso.example'; $c.standby.apim.publisherName = 'Contoso'
+    $c.frontDoor.stem = 'contoso-dr'; $c }
 Check 'complete standby section has no problems' (@(Get-DrStandbyProblems (New-DrCfg)).Count -eq 0)
 $x = Get-DrStandbyProblems (Get-Content (Join-Path $repo 'infra/dr/dr.config.example.json') -Raw | ConvertFrom-Json)
 Check 'example placeholders are refused by name' ($x -contains 'standby.stagedConfigPath:placeholder' -and $x -contains 'standby.apim.publisherEmail:placeholder')
@@ -82,6 +120,8 @@ $c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no priv
 $c = New-DrCfg; $c.cosmos.autoscaleMaxThroughput = 1500; Check 'autoscale max must be a multiple of 1000' (@(Get-DrStandbyProblems $c) -contains 'cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000')
 $c = New-DrCfg; $c.cosmos.convertServerless = 'yes'; Check 'convertServerless must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'cosmos.convertServerless:true_or_false')
 $c = New-DrCfg; $c.standby.functionsPublicNetworkAccess = 'Open'; Check 'public access must be Enabled or Disabled' (@(Get-DrStandbyProblems $c) -contains 'standby.functionsPublicNetworkAccess:Enabled_or_Disabled')
+$c = New-DrCfg; $c.frontDoor.stem = 'Invalid_Stem'; Check 'Front Door name is validated before Azure API calls' (@(Get-DrStandbyProblems $c) -contains 'frontDoor.stem:lowercase_letters_digits_hyphens_3_to_40')
+$c = New-DrCfg; $c.frontDoor.wafMode = 'BlockEverything'; Check 'Front Door WAF mode must be Detection or Prevention' (@(Get-DrStandbyProblems $c) -contains 'frontDoor.wafMode:Detection_or_Prevention')
 
 $pn = @{ deploymentPrefix = 'lab1'; cosmosAccount = 'lab1-abc-cosmos'; logAnalyticsWorkspace = 'lab1-abc-law'
     apps = @{ resolver = @{ functionApp = 'lab1-abc-resolver'; storageAccount = 'lab1abcres' } } }
@@ -132,4 +172,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 46) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 62) { exit 1 }

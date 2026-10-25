@@ -38,6 +38,12 @@ function Get-DrStandbyProblems {
     if ($null -ne $max -and (-not ("$max" -match '^\d+$') -or [int]$max -lt 1000 -or [int]$max % 1000)) { $p.Add('cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000') }
     $conv = Get-DrValue $Config 'cosmos.convertServerless'
     if ($null -ne $conv -and $conv -isnot [bool]) { $p.Add('cosmos.convertServerless:true_or_false') }
+    $fdStem = [string](Get-DrValue $Config 'frontDoor.stem')
+    if ($fdStem -and $fdStem -cnotmatch '^[a-z][a-z0-9-]{2,39}$') { $p.Add('frontDoor.stem:lowercase_letters_digits_hyphens_3_to_40') }
+    $fdMode = [string](Get-DrValue $Config 'frontDoor.wafMode')
+    if ($fdMode -and $fdMode -cnotin 'Detection', 'Prevention') { $p.Add('frontDoor.wafMode:Detection_or_Prevention') }
+    $probe = Get-DrValue $Config 'frontDoor.probeIntervalSeconds'
+    if ($null -ne $probe -and (-not ("$probe" -match '^\d+$') -or [int]$probe -lt 5 -or [int]$probe -gt 255)) { $p.Add('frontDoor.probeIntervalSeconds:5_to_255') }
     $p.ToArray()
 }
 
@@ -120,6 +126,53 @@ function Get-DrGatewayResourceIds {
     return $ids
 }
 
+function New-DrFrontDoorParameters {
+    param(
+        [Parameter(Mandatory)] [string]$Stem,
+        [Parameter(Mandatory)] [string]$PrimaryApimId,
+        [Parameter(Mandatory)] [string]$PrimaryApimHost,
+        [Parameter(Mandatory)] [string]$PrimaryApimLocation,
+        [Parameter(Mandatory)] [string]$StandbyApimId,
+        [Parameter(Mandatory)] [string]$StandbyApimHost,
+        [Parameter(Mandatory)] [string]$StandbyApimLocation,
+        [Parameter(Mandatory)] [string]$PrimaryAdminSiteId,
+        [Parameter(Mandatory)] [string]$PrimaryAdminHost,
+        [Parameter(Mandatory)] [string]$PrimaryAdminLocation,
+        [Parameter(Mandatory)] [string]$StandbyAdminSiteId,
+        [Parameter(Mandatory)] [string]$StandbyAdminHost,
+        [Parameter(Mandatory)] [string]$StandbyAdminLocation,
+        [string]$WafMode = 'Detection',
+        [int]$ProbeIntervalSeconds = 30,
+        [hashtable]$Tags = @{}
+    )
+    if ($Stem -cnotmatch '^[a-z][a-z0-9-]{2,39}$') { throw 'frontdoor_stem_invalid: lowercase letters, digits and hyphens, 3-40 chars; endpoint name must be globally unique.' }
+    if ($WafMode -cnotin 'Detection', 'Prevention') { throw 'frontdoor_waf_mode_invalid: use Detection or Prevention.' }
+    if ($ProbeIntervalSeconds -lt 5 -or $ProbeIntervalSeconds -gt 255) { throw 'frontdoor_probe_interval_invalid: use 5-255 seconds.' }
+    $specs = @(
+        @{ id = $PrimaryApimId; host = $PrimaryApimHost; loc = $PrimaryApimLocation; group = 'apim' },
+        @{ id = $StandbyApimId; host = $StandbyApimHost; loc = $StandbyApimLocation; group = 'apim' },
+        @{ id = $PrimaryAdminSiteId; host = $PrimaryAdminHost; loc = $PrimaryAdminLocation; group = 'admin' },
+        @{ id = $StandbyAdminSiteId; host = $StandbyAdminHost; loc = $StandbyAdminLocation; group = 'admin' }
+    )
+    foreach ($s in $specs) {
+        if ($s.id -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.(ApiManagement/service|Web/sites)/[A-Za-z0-9-]{1,60}$') { throw "frontdoor_origin_id_invalid: $($s.id)" }
+        if ($s.host -notmatch '^[A-Za-z0-9.-]{1,253}$' -or $s.host -notmatch '\.') { throw "frontdoor_origin_host_invalid: $($s.host)" }
+        if ($s.loc -notmatch '^[a-z][a-z0-9]{2,30}$') { throw "frontdoor_origin_location_invalid: $($s.loc)" }
+    }
+    $apim = @(
+        @{ name = 'primary-gateway'; apimId = $PrimaryApimId; hostName = $PrimaryApimHost; location = $PrimaryApimLocation; priority = 1 }
+        @{ name = 'standby-gateway'; apimId = $StandbyApimId; hostName = $StandbyApimHost; location = $StandbyApimLocation; priority = 2 }
+    )
+    $admin = @(
+        @{ name = 'primary-admin'; siteId = $PrimaryAdminSiteId; hostName = $PrimaryAdminHost; location = $PrimaryAdminLocation; priority = 1 }
+        @{ name = 'standby-admin'; siteId = $StandbyAdminSiteId; hostName = $StandbyAdminHost; location = $StandbyAdminLocation; priority = 2 }
+    )
+    return @{
+        stem = $Stem; tags = $Tags; apimOrigins = $apim; adminOrigins = $admin
+        wafMode = $WafMode; probeIntervalSeconds = $ProbeIntervalSeconds
+    }
+}
+
 # What the Data phase still has to do to a Cosmos account (ARM GET, API 2024-05-15-preview).
 function Get-DrCosmosSteps {
     param([Parameter(Mandatory)] $Account, [Parameter(Mandatory)] [string]$SecondaryLocation)
@@ -137,4 +190,4 @@ function Get-DrCosmosSteps {
     $steps.ToArray()
 }
 
-Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, Get-DrCosmosSteps
+Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps

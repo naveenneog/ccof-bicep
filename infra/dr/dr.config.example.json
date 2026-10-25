@@ -53,5 +53,10 @@
   "cosmos": {
     "convertServerless": false,
     "autoscaleMaxThroughput": 1000
+  },
+  "frontDoor": {
+    "stem": "REPLACE-globally-unique-lowercase-frontdoor-name",
+    "wafMode": "Detection",
+    "probeIntervalSeconds": 30
   }
 }
