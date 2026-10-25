@@ -1,5 +1,9 @@
 # Change log
 
+## 2026-10-26 - Region B 504 evidence in the DR standby guide
+
+- [Section 11.2](runbooks/DR-STANDBY-CLOUD-SHELL.md#112-primary-origin-fault-traffic-reached-region-b) records the gateway-log result: 16 HTTP 504s on region B (2026-10-25T19:21:04Z-19:48:42Z), all on the priority-1 backend member, `request-forwarder` / `backend` / `Timeout`, empty `BackendResponseCode`; other requests reached the Central US fallback and returned 200. This narrows the symptom only; root cause and why the fallback was not selected on each 504 are unknown, and region B remains not qualified. Documentation only; no identifiers added.
+
 ## 2026-10-25 - DR standby region guide for Azure Cloud Shell
 
 - New runbook [DR standby region in Cloud Shell](runbooks/DR-STANDBY-CLOUD-SHELL.md): prerequisites, durable (`clouddrive`) state, a field-by-field `dr.config.json` reference with a complete valid example, P0-P2 and the region B driver phases (`Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify`) as preview then `-Apply`, resuming after the 20-minute timeout, and post-checks.

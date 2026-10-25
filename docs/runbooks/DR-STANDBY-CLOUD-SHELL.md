@@ -562,6 +562,21 @@ Cognitive Services User role on the fallback account.
 **Open issue:** later keepalive calls through B returned **intermittent model-service 504s** with
 successful 200s between failures. Region B is routing, but it is **not qualified**: the cause is not yet known.
 
+Gateway-log evidence for B (`ApiManagementGatewayLogs`, last-two-hours query, workspace query output):
+
+| Fact | Value |
+| --- | --- |
+| HTTP 504 responses | 16, between 2026-10-25T19:21:04Z and 19:48:42Z |
+| Backend member on every 504 row | the priority-1 member |
+| `LastErrorSource` / `LastErrorSection` / `LastErrorReason` | `request-forwarder` / `backend` / `Timeout` |
+| `BackendResponseCode` | empty |
+| Other requests | reached the Central US fallback and returned 200 |
+
+This narrows the symptom to an APIM request-forwarder timeout to the priority-1 member: the gateway
+got no backend response. It does **not** establish the root cause, and it does not explain why the
+fallback was not selected on each of those 504s. The 504s were not served by the fallback. Region B stays
+**not qualified**.
+
 ### 11.3 Continuity gate refused promotion (correctly)
 
 Before enabling a writer, the reconciler's Application Insights connection was found missing from the
