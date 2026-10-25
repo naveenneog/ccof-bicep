@@ -7,18 +7,23 @@ and wants to build the second-region ("region B") copy of the CCOF services with
 region, region B grants, settings and private networking, the same code as region A, and a read-only
 check that both writers are off. **Region B does not serve traffic and no writer is promoted.**
 
-State of the work on **2026-10-25** (read this first):
+> **Partial, unqualified drill.** A live drill was run on **2026-10-25/26** (section 11). It is **not**
+> an end-to-end successful failover: traffic moved to region B, but the standby writers were never
+> promoted, no standby write happened, the workspace switchover had not happened, and failback was not
+> done. Do not describe the DR design as qualified or production-ready.
+
+State of the work on **2026-10-26** (read this first):
 
 | Part | State | Source |
 | --- | --- | --- |
 | P0-P2: standby network, DNS links, identity shells | Implemented; proven live in two lab environments by 2026-10-23 | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md), [ROADMAP](../ROADMAP.md) (DR-06) |
-| Region B driver, phases `Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify` | Code and offline tests only (`tests/Test-DrStandby.ps1`). No live run is recorded in this repository | [`infra/dr/Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1), [ROADMAP](../ROADMAP.md) (DR-07 "Pending") |
-| Workspace replication, per-project backend failover | Separate steps, deployable today | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace) |
-| Front Door Premium with private origins | **Not deployed**: no template or acceptance exists | [DR implementation, D4](../design/DR-IMPLEMENTATION.md#prerequisite-first-dr-stages) |
-| Failover and failback of the whole stack (promotion, drills) | **Not built or qualified** (DR-08 pending) | [ROADMAP](../ROADMAP.md), [DR implementation, D5-D6](../design/DR-IMPLEMENTATION.md#prerequisite-first-dr-stages) |
-| Production operator continuity gate | Reconciler code exists, **off by default** (`RECONCILER_CONTINUITY_GATE`); not enabled or exercised in a live two-gateway run | [CHANGELOG, DR-05](../CHANGELOG.md), [ROADMAP](../ROADMAP.md) (DR-05) |
+| Region B driver, phases `Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify` | Run live in the lab on 2026-10-25 (all phases recorded; the `Code` phase on commit `c8475f0`). Offline tests in `tests/Test-DrStandby.ps1` | [`infra/dr/Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1), section 11 |
+| Workspace replication, per-project backend failover | Replication enabled 2026-10-25T07:09Z; **switchover not done** (time-gated, section 11.5). Per-project backend failover: region B reached the Central US fallback (section 11.2) | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace) |
+| Front Door Premium with private origins | Deployed in the lab on branch `feat/dr-standby` (commit `786352e`); gateway and admin routes returned HTTP 200 | Section 11.1 |
+| Failover and failback of the whole stack (promotion, drills) | **Partial.** Traffic failover to region B observed; writer promotion refused by the continuity gate; failback not done (DR-08 not complete) | [ROADMAP](../ROADMAP.md), section 11 |
+| Production operator continuity gate | Enabled on region B for one run; it **refused before any write** (`ledger_continuity_gap` / `early_history_missing`). It was not bypassed | Section 11.3 |
 
-So after this guide the standby stack **exists and is fenced**, but the DR design as a whole is not
+So after sections 1-10 the standby stack **exists and is fenced**, but the DR design as a whole is not
 finished. The standby Foundry fallback is a different mechanism (backends and project pools in
 [DR-CLOUD-SHELL.md Step 6](DR-CLOUD-SHELL.md#step-6-per-project-backend-failover-admin-console-33)); it is
 not part of a region B app deployment. The design is in [DR design](../DR-ACTIVE-PASSIVE.md); the
@@ -491,12 +496,13 @@ Function Apps show the timer functions disabled and APIM B shows the API.
 
 Remaining responsibilities after a green `Verify` (not done by this guide):
 
-- Send one test call through APIM B on a private path and compare it with region A. No acceptance
-  test for region B exists in the repository.
-- Keep both writers off. Nothing automatic promotes them; promotion, failback and the failure drills are
-  DR-08 and are not built ([ROADMAP](../ROADMAP.md)).
-- Decide on the continuity gate (`RECONCILER_CONTINUITY_GATE`) and the Front Door design before any
-  claim of production DR ([DR required changes](../DR-ACTIVE-PASSIVE.md#required-changes)).
+- Send one test call through APIM B on a private path and compare it with region A. The lab drill in
+  section 11 did this through Front Door and saw intermittent model-service 504s; investigate before
+  relying on region B.
+- Keep both writers off. Nothing automatic promotes them; promotion and failback are DR-08 and are
+  not complete ([ROADMAP](../ROADMAP.md), section 11).
+- Do not claim production DR until the open items in section 11.6 are closed. The continuity gate
+  (`RECONCILER_CONTINUITY_GATE`) must stay on for any promotion; never weaken it.
 
 ## 10. When a phase refuses or fails
 
@@ -518,3 +524,91 @@ Remaining responsibilities after a green `Verify` (not done by this guide):
 
 No undo script exists for region B. The `Data` phase cannot be reversed for a converted account. Remove
 the other resources one by one in the Portal or with `az` only after reviewing what depends on them.
+
+## 11. Live drill record, 2026-10-25/26: partial and unqualified
+
+**This is not an end-to-end successful failover.** It records what was actually checked in the lab
+(region A in East US 2, region B in Central US, fallback Foundry in Central US). No real resource names,
+IDs or screenshots are included. Build commits are on branch `feat/dr-standby`, not on this docs branch.
+
+| Outcome | Result |
+| --- | --- |
+| Traffic moved to region B | Yes (11.2) |
+| Fallback Foundry in Central US reached from B | Yes, with intermittent 504s (11.2) |
+| Standby writer promoted / standby wrote anything | **No**: refused by the continuity gate (11.3) |
+| Workspace switchover | **No**: time-gated, not yet eligible (11.5) |
+| Failback to region A | **No** (11.6) |
+
+### 11.1 Front Door baseline
+
+Front Door Premium with private-link origins to both APIM gateways and both admin apps was deployed
+(`786352e`). Public network access on both gateways and both admin apps reads back `Disabled`. Through
+the Front Door hostname, the gateway status route and the admin console route both returned **HTTP 200**.
+Right after the first deployment both routes returned the generic Front Door 404 for the first two
+tries and 200 on the third: wait for global propagation and retry before concluding a route is broken.
+The origin group's `deploymentStatus` stayed `NotStarted`; the lab treated the live 200s and the approved
+private-link connections as the proof, not that field.
+
+### 11.2 Primary-origin fault: traffic reached region B
+
+A reversible fault was applied (phase `DrainPrimary`, commit `3765507`; `RestorePrimary` reverses it;
+the fault used an origin host-header, commit `95ada31`). The first two requests still reached region A,
+then gateway traffic moved to APIM B. Query the gateway log table to confirm which gateway served a call.
+
+On region B, the first pool member (member 0) was unreachable: two timeouts returned 504,
+then the second member, the Central US fallback, served HTTP 200. B's managed identity holds the
+Cognitive Services User role on the fallback account.
+
+**Open issue:** later keepalive calls through B returned **intermittent model-service 504s** with
+successful 200s between failures. Region B is routing, but it is **not qualified**: the cause is not yet known.
+
+### 11.3 Continuity gate refused promotion (correctly)
+
+Before enabling a writer, the reconciler's Application Insights connection was found missing from the
+staged, manual and quick-start app settings, so gate outcomes were not observable. The fix is commit
+`95ada31`; the setting was applied live to A and B (values not printed).
+
+With `RECONCILER_CONTINUITY_GATE=on` on B, one run was logged and **refused before any write**:
+`ledger_continuity_gap` / `early_history_missing`. The rule
+([`src/reconciler/continuity.ts`](../../src/reconciler/continuity.ts) on `feat/dr-standby`): persisted spend for
+the period is non-zero, but the period's earliest gateway record is later than the period start plus the
+maximum gap. Evidence:
+
+| Fact | Value |
+| --- | --- |
+| Persisted October spend | non-zero |
+| Earliest ledger record, region A | 2026-10-20T17:19:00.684Z |
+| Earliest ledger record, region B | 2026-10-25T19:17:43.493Z |
+| Maximum continuity gap | 900 seconds |
+
+October history before 2026-10-20 is not in the gateway log of either region, so the gate cannot prove
+that a writer would see all spend. **The gate was not bypassed, disabled or loosened.** Both reconciler timers
+are now disabled; B's gate setting is `on`. Cosmos was writing in Central US and Front Door was serving B at the last checkpoint.
+
+### 11.4 Safe resume
+
+1. Keep both reconciler timers disabled. Do not set the gate to `off`, raise the maximum gap, or edit
+   persisted budget state to make the run pass.
+2. Find where the missing October history is (older records in the workspace, a prior workspace, or an
+   export) and whether it can be made part of the ledger source. Re-run the ledger-extent query; the
+   gate must pass on its own evidence.
+3. Investigate the 504s (11.2) with region B's gateway logs and the fallback account's metrics.
+4. Only then decide on promotion. Promotion requires Cosmos writes in the intended region, B's gate
+   `on`, and one logged run that writes. This guide does not describe those steps as done.
+
+### 11.5 Time-gated workspace switchover
+
+Workspace replication to Central US was enabled **2026-10-25T07:09Z**. The earliest permitted switchover
+is **2026-10-26T07:09Z** (24 hours later). It had not occurred when this was written. After that time, run
+the switchover from [DR-CLOUD-SHELL.md Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace),
+then repeat the ledger-extent query and gate check from 11.4 step 2. Do not treat the switchover as
+a fix for missing history without that re-check.
+
+### 11.6 Not done
+
+- Writer promotion and any standby write.
+- Workspace switchover.
+- Failback: restore the primary origins (`RestorePrimary`), return Cosmos write priority to region A, and
+  re-enable only A's writers, then verify. Until this is done, treat the lab as running in a failed-over
+  state and record who owns restoring it.
+- Root cause of the 504s, and the missing October ledger history.
