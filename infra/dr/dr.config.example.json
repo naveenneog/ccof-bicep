@@ -1,0 +1,44 @@
+{
+  "tenantId": "REPLACE-00000000-0000-4000-8000-000000000001",
+  "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+  "tags": { "workload": "ccof", "stage": "dr-prerequisites" },
+  "primary": {
+    "location": "eastus2",
+    "vnetId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-network-rg/providers/Microsoft.Network/virtualNetworks/REPLACE-primary-vnet",
+    "addressSpaces": [ "10.64.0.0/16" ],
+    "peer": true
+  },
+  "secondary": {
+    "location": "centralus",
+    "resourceGroup": "REPLACE-dr-resource-group",
+    "allowResourceGroupInOtherRegion": false,
+    "vnetName": "REPLACE-dr-vnet",
+    "apimNsgName": "REPLACE-dr-nsg-apim",
+    "addressSpace": "10.80.0.0/22",
+    "subnets": {
+      "apim": { "name": "snet-apim", "prefix": "10.80.0.0/27" },
+      "functions": { "name": "snet-functions", "prefix": "10.80.0.32/27" },
+      "privateEndpoints": { "name": "snet-private-endpoints", "prefix": "10.80.1.0/26" }
+    }
+  },
+  "dnsZones": {
+    "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+    "resourceGroup": "REPLACE-network-rg",
+    "zoneNames": [
+      "privatelink.documents.azure.com",
+      "privatelink.blob.core.windows.net",
+      "privatelink.services.ai.azure.com",
+      "privatelink.cognitiveservices.azure.com",
+      "privatelink.openai.azure.com"
+    ]
+  },
+  "identityNames": [ "REPLACE-prefix-sync-b", "REPLACE-prefix-reconciler-b" ],
+  "foundryAccounts": [
+    { "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002", "resourceGroup": "REPLACE-foundry-rg", "name": "REPLACE-foundry-account" }
+  ],
+  "entra": {
+    "gatewayAppId": "REPLACE-00000000-0000-4000-8000-000000000003",
+    "resolverAppId": "REPLACE-00000000-0000-4000-8000-000000000004",
+    "adminAppId": "REPLACE-00000000-0000-4000-8000-000000000005"
+  }
+}
