@@ -106,7 +106,7 @@ export function buildWorkbook(rawAnswers: unknown, rawCard: unknown, rawLedger: 
     workbookContent: { value: workbook },
     contentTags: { value: contentTags },
   };
-  return { workbook, parameters, queries, usageBase, rateCardKql: card.kql, rateCardSha256, ledgerSha256, contentSha256: contentTags["ccof-content"] };
+  return { workbook, parameters, queries, preamble, usageBase, rateCardKql: card.kql, rateCardSha256, ledgerSha256, contentSha256: contentTags["ccof-content"] };
 }
 
 export function generateFiles(answersPath: string): { workbookResourceName: string; rateCardSha256: string; ledgerSha256: string; contentSha256: string } {
