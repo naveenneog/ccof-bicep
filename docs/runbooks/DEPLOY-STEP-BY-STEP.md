@@ -175,7 +175,7 @@ The template's subnet list is authoritative: it is run once, at creation, and no
 that already has other subnets.
 
 ```powershell
-$netRg = 'REPLACE-network-resource-group'      # can be the same group as $rg
+$netRg = 'REPLACE-network-resource-group'      # a group other than $rg: Step 1 refuses a non-empty group
 $vnet  = 'REPLACE-vnet-name'
 az group create -n $netRg -l $location
 @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'
