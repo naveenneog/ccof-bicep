@@ -334,7 +334,11 @@ function Select-StgOwnAssignments {
     $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($p in @($Principals.Values)) { if ($p) { [void]$ids.Add([string]$p) } }
     return @($Assignments | Where-Object {
-        $_ -and $ids.Contains([string]$(if ($_.PSObject.Properties['properties']) { $_.properties.principalId } else { $_.principalId }))
+        if (-not $_) { return $false }
+        $holder = if ($_ -is [Collections.IDictionary]) { if ($_.Contains('properties')) { $_['properties'] } else { $_ } }
+                  elseif ($_.PSObject.Properties['properties']) { $_.properties } else { $_ }
+        $id = if ($holder -is [Collections.IDictionary]) { $holder['principalId'] } elseif ($holder.PSObject.Properties['principalId']) { $holder.principalId } else { $null }
+        $ids.Contains([string]$id)
     })
 }
 

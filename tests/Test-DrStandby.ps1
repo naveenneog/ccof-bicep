@@ -42,6 +42,8 @@ Check 'own principals kept (case-insensitive), other region dropped' ($kept.Coun
 $armList = @([pscustomobject]@{ properties = [pscustomobject]@{ principalId = 'aaaaaaaa-0000-4000-8000-000000000002' } },
     [pscustomobject]@{ properties = [pscustomobject]@{ principalId = 'bbbbbbbb-0000-4000-8000-000000000009' } })
 Check 'ARM role assignments filtered on properties.principalId' (@(Select-StgOwnAssignments -Assignments $armList -Principals $own).Count -eq 1)
+$armHash = @(@{ properties = @{ principalId = 'aaaaaaaa-0000-4000-8000-000000000002' } }, @{ properties = @{ principalId = 'bbbbbbbb-0000-4000-8000-000000000009' } }, @{ principalId = 'AAAAAAAA-0000-4000-8000-000000000001' })
+Check 'hashtables (az JSON as parsed by Invoke-QsAz) filtered the same way' (@(Select-StgOwnAssignments -Assignments $armHash -Principals $own).Count -eq 2)
 Check 'no assignments gives an empty list' (@(Select-StgOwnAssignments -Assignments @() -Principals $own).Count -eq 0)
 
 # The standby region runs the primary's stage functions with a `standby` section in its derived
@@ -110,4 +112,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 39) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 40) { exit 1 }

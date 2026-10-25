@@ -240,7 +240,8 @@ function Test-Stage1 {
         Assert-Stg ($databases.Count -eq 0) 'Cosmos database exists before Stage 2'
     }
     # Only assignments on this deployment's resources count: a shared RG has its own, inherited ones.
-    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
+    # The workspace is in the list for the primary; a standby region (infra/dr) shares the primary's.
+    $ownedResourceIds = @(Get-StgStage1TargetIds $Cfg) + @($s1.workspaceId | Where-Object { $_ })
     $grants = @((Get-StgArm "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object {
         (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and (!$grantsStage -or $_.properties.principalId -ine $grantsStage.apimPrincipalId)
     })
@@ -457,7 +458,8 @@ function Invoke-Stage3 {
     if (-not $Apply) { return $null }
     $v = [ordered]@{ azure = @(); cosmos = @(); foundry = @() }
     $roleNames = @{ 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' = 'Storage Blob Data Owner'; '3913510d-42f4-4e42-8a64-420c390055eb' = 'Monitoring Metrics Publisher'; '73c42c96-874c-492b-b04d-ab87d138a893' = 'Log Analytics Reader' }
-    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
+    # The workspace is in the list for the primary; a standby region (infra/dr) shares the primary's.
+    $ownedResourceIds = @(Get-StgStage1TargetIds $Cfg) + @($s1.workspaceId | Where-Object { $_ })
     $rgAssignments = Select-StgOwnAssignments -Principals $s1.principals -Assignments @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId })
     $expectedAzure = @($out.storageOwnerDetails) + @($out.metricsPublisherDetails) + @($out.workspaceReaderDetails)
     foreach ($expected in $expectedAzure) {
