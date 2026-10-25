@@ -60,6 +60,15 @@ Check 'gateway route: HTTPS only, no caching' ($route -match '"forwardingProtoco
 Check 'admin route sends /api to its own origin group' ($route -match '"patternsToMatch":\s*\[\s*"/api/\*"' -and $route -match "originGroups'.*'admin")
 Check 'WAF policy attached through a security policy' (@(& $fdType 'Microsoft.Cdn/profiles/securityPolicies').Count -eq 1 -and @(& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies').Count -eq 1)
 Check 'WAF mode is a parameter defaulting to Detection' ($fd.parameters.wafMode.defaultValue -ceq 'Detection' -and (@($fd.parameters.wafMode.allowedValues) -join ',') -ceq 'Detection,Prevention')
+$wafPolicy = "$((& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies') | ConvertTo-Json -Depth 20)"
+Check 'WAF preserves the managed JavaScript challenge expiration' ($wafPolicy -match 'javascriptChallengeExpirationInMinutes.*30')
+Check 'primary gateway drain control defaults off' ($fd.parameters.disablePrimaryOrigins.defaultValue -eq $false)
+Check 'primary admin drain control defaults off' ($fd.parameters.disablePrimaryAdminOrigins.defaultValue -eq $false)
+$fdOriginEnabled = $origins | ConvertTo-Json -Depth 20
+Check 'primary gateway can be drained independently by priority' ($fdOriginEnabled -match "if\(and\(equals\(parameters\('apimOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('disablePrimaryOrigins'\)\), 'Disabled', 'Enabled'\)")
+$allFdOrigins = & $fdType 'Microsoft.Cdn/profiles/originGroups/origins'
+$fdAdminOriginEnabled = $allFdOrigins | Where-Object { $_.name -match 'adminOrigins' } | ConvertTo-Json -Depth 20
+Check 'primary admin can be drained independently by priority' ($fdAdminOriginEnabled -match "if\(and\(equals\(parameters\('adminOrigins'\)\[copyIndex\(\)\]\.priority, 1\), parameters\('disablePrimaryAdminOrigins'\)\), 'Disabled', 'Enabled'\)")
 $front = New-DrFrontDoorParameters -Stem 'contoso-dr' `
     -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' `
     -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' `
@@ -70,6 +79,17 @@ $front = New-DrFrontDoorParameters -Stem 'contoso-dr' `
     -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' `
     -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus'
 Check 'Front Door parameters preserve gateway and admin origins, primary first' ($front.apimOrigins.Count -eq 2 -and $front.apimOrigins[0].priority -eq 1 -and $front.apimOrigins[1].priority -eq 2 -and $front.adminOrigins.Count -eq 2 -and $front.adminOrigins[0].siteId -match '/Microsoft.Web/sites/admin-a')
+Check 'normal Front Door deployment leaves both primary origins enabled' (-not $front.disablePrimaryOrigins -and -not $front.disablePrimaryAdminOrigins)
+$drained = New-DrFrontDoorParameters -Stem 'contoso-dr' `
+    -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' `
+    -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' `
+    -StandbyApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b' `
+    -StandbyApimHost 'apim-b.azure-api.net' -StandbyApimLocation 'centralus' `
+    -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' `
+    -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' `
+    -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' `
+    -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' -DisablePrimaryOrigins -DisablePrimaryAdminOrigins
+Check 'drain settings disable only the primary origins' ($drained.disablePrimaryOrigins -and $drained.disablePrimaryAdminOrigins -and $drained.apimOrigins[0].priority -eq 1 -and $drained.apimOrigins[1].priority -eq 2)
 $threw = $false; try { $null = New-DrFrontDoorParameters -Stem 'Bad_Name' -PrimaryApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a' -PrimaryApimHost 'apim-a.azure-api.net' -PrimaryApimLocation 'eastus2' -StandbyApimId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-b' -StandbyApimHost 'apim-b.azure-api.net' -StandbyApimLocation 'centralus' -PrimaryAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a' -PrimaryAdminHost 'admin-a.azurewebsites.net' -PrimaryAdminLocation 'eastus2' -StandbyAdminSiteId '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-b' -StandbyAdminHost 'admin-b.azurewebsites.net' -StandbyAdminLocation 'centralus' } catch { $threw = "$_" -match 'frontdoor_stem_invalid' }
 Check 'Front Door stem rejects uppercase and underscores before az' $threw
 Check 'Front Door parameters default to WAF detection' ($front.wafMode -ceq 'Detection' -and $front.probeIntervalSeconds -eq 30)
@@ -172,4 +192,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 62) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 69) { exit 1 }

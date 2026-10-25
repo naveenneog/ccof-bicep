@@ -23,6 +23,12 @@ param apimOrigins array
 @maxLength(2)
 param adminOrigins array
 
+@description('For the DR drill, disable the priority-1 APIM origin while leaving the standby origin enabled.')
+param disablePrimaryOrigins bool = false
+
+@description('For the DR drill, disable the priority-1 admin origin while leaving the standby origin enabled.')
+param disablePrimaryAdminOrigins bool = false
+
 @description('Detection logs WAF matches without blocking. Model prompts and code can match managed rules, so tune exclusions in Detection before Prevention.')
 @allowed(['Detection', 'Prevention'])
 param wafMode string = 'Detection'
@@ -77,7 +83,7 @@ resource origins 'Microsoft.Cdn/profiles/originGroups/origins@2024-02-01' = [for
     httpPort: 80
     priority: o.priority
     weight: 1000
-    enabledState: 'Enabled'
+    enabledState: (o.priority == 1 && disablePrimaryOrigins) ? 'Disabled' : 'Enabled'
     enforceCertificateNameCheck: true
     sharedPrivateLinkResource: {
       privateLink: { id: o.apimId }
@@ -115,7 +121,7 @@ resource adminOriginResources 'Microsoft.Cdn/profiles/originGroups/origins@2024-
     httpPort: 80
     priority: o.priority
     weight: 1000
-    enabledState: 'Enabled'
+    enabledState: (o.priority == 1 && disablePrimaryAdminOrigins) ? 'Disabled' : 'Enabled'
     enforceCertificateNameCheck: true
     sharedPrivateLinkResource: {
       privateLink: { id: o.siteId }
@@ -162,7 +168,7 @@ resource waf 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@2024-02-
   tags: tags
   sku: { name: 'Premium_AzureFrontDoor' }
   properties: {
-    policySettings: { enabledState: 'Enabled', mode: wafMode, requestBodyCheck: 'Enabled' }
+    policySettings: { enabledState: 'Enabled', mode: wafMode, requestBodyCheck: 'Enabled', javascriptChallengeExpirationInMinutes: 30 }
     managedRules: {
       managedRuleSets: [
         { ruleSetType: 'Microsoft_DefaultRuleSet', ruleSetVersion: '2.1', ruleSetAction: 'Block' }

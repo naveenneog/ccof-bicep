@@ -12,7 +12,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [ValidateSet('Deploy', 'Approve', 'Verify', 'Lockdown')] [string]$Phase,
+    [Parameter(Mandatory)] [ValidateSet('Deploy', 'Approve', 'Verify', 'Lockdown', 'DrainPrimary', 'RestorePrimary')] [string]$Phase,
     [Parameter(Mandatory)] [string]$ConfigPath,
     [switch]$Apply
 )
@@ -93,13 +93,18 @@ $parameters = New-DrFrontDoorParameters -Stem $profileStem `
     -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location) `
     -StandbyAdminSiteId $bAdminSite.id -StandbyAdminHost $bAdminSite.properties.defaultHostName -StandbyAdminLocation ([string]$dr.secondary.location) `
     -WafMode $(if ($dr.frontDoor.wafMode) { [string]$dr.frontDoor.wafMode } else { 'Detection' }) `
-    -ProbeIntervalSeconds $(if ($dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 }) -Tags $fdTags
+    -ProbeIntervalSeconds $(if ($dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 }) `
+    -DisablePrimaryOrigins:($Phase -eq 'DrainPrimary') -DisablePrimaryAdminOrigins:($Phase -eq 'DrainPrimary') -Tags $fdTags
 
 $mode = if ($Apply) { 'apply' } else { 'preview' }
 Write-Host "== Front Door $Phase ($mode), profile $profileStem, resource group $rg"
 
 switch ($Phase) {
-    'Deploy' {
+        { $_ -in 'Deploy', 'DrainPrimary', 'RestorePrimary' } {
+            if ($Phase -eq 'DrainPrimary') {
+                $state = Get-FdState
+                if (-not $state -or -not $state.verifiedAt) { Stop-Dr 'frontdoor_verify_required: verify both Front Door routes before draining the primary.' 3 }
+            }
         $parameterFile = Join-Path $standbyStateDir 'frontdoor.parameters.json'
         $doc = [ordered]@{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = [ordered]@{} }
         foreach ($k in $parameters.Keys) { $doc.parameters[$k] = @{ value = $parameters[$k] } }
@@ -116,10 +121,19 @@ switch ($Phase) {
         $deployment = Invoke-DrAz (@('deployment', 'group', 'create', '--mode', 'Incremental') + $args)
         if ($deployment.properties.provisioningState -cne 'Succeeded') { throw "frontdoor_deploy_failed: $($deployment.properties.provisioningState)" }
         $out = @{}; foreach ($k in $deployment.properties.outputs.Keys) { $out[$k] = $deployment.properties.outputs[$k].value }
-        $state = @{ stem = $profileStem; subscriptionId = $sub; resourceGroup = $rg; profileName = $out.profileName; profileId = $out.profileId; endpointHostName = $out.endpointHostName; apimIds = $apimIds; adminSiteIds = @($aAdminSite.id, $bAdminSite.id); deployedAt = [DateTime]::UtcNow.ToString('o'); outputs = $out }
+        $state = Get-FdState
+        if (-not $state) { $state = @{} }
+        $state.stem = $profileStem; $state.subscriptionId = $sub; $state.resourceGroup = $rg
+        $state.profileName = $out.profileName; $state.profileId = $out.profileId; $state.endpointHostName = $out.endpointHostName
+        $state.apimIds = $apimIds; $state.adminSiteIds = @($aAdminSite.id, $bAdminSite.id)
+        $state.deployedAt = [DateTime]::UtcNow.ToString('o'); $state.outputs = $out
+        if ($Phase -eq 'DrainPrimary') { $state.primaryDrainedAt = [DateTime]::UtcNow.ToString('o') }
+        if ($Phase -eq 'RestorePrimary') { $state.primaryRestoredAt = [DateTime]::UtcNow.ToString('o') }
         Save-FdState $state
         Write-Host "Front Door deployed: https://$($out.endpointHostName)"
-        Write-Host 'Private Link requests are not yet approved. Run -Phase Approve after reviewing the pending origins.'
+        if ($Phase -eq 'Deploy') { Write-Host 'Private Link requests are not yet approved. Run -Phase Approve after reviewing the pending origins.' }
+        elseif ($Phase -eq 'DrainPrimary') { Write-Host 'Primary APIM and admin origins are disabled; verify requests through region B.' }
+        elseif ($Phase -eq 'RestorePrimary') { Write-Host 'Primary APIM and admin origins are enabled; verify traffic returns to region A.' }
     }
     'Approve' {
         $state = Get-FdState
@@ -183,7 +197,8 @@ switch ($Phase) {
         foreach ($origin in $origins) {
             $resource = Invoke-DrAz @('rest', '--method', 'get', '--url', "https://management.azure.com$($origin.id)`?api-version=$($origin.apiVersion)")
             if ($resource.properties.publicNetworkAccess -ceq 'Disabled') { Write-Host "$($resource.name): already private"; continue }
-            if ($resource.properties.provisioningState -cne 'Updating') {
+            $provisioningState = Get-DrValue $resource.properties 'provisioningState'
+            if ($provisioningState -cne 'Updating') {
                 $body = Join-Path $standbyStateDir 'frontdoor-origin-private.json'
                 @{ properties = @{ publicNetworkAccess = 'Disabled' } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $body -Encoding utf8NoBOM
                 $null = Invoke-DrAz @('rest', '--method', 'patch', '--url', "https://management.azure.com$($origin.id)`?api-version=$($origin.apiVersion)", '--headers', 'Content-Type=application/json', '--body', "@$body")
@@ -193,9 +208,10 @@ switch ($Phase) {
             for ($attempt = 1; $attempt -le 90; $attempt++) {
                 Start-Sleep -Seconds 30
                 $resource = Invoke-DrAz @('rest', '--method', 'get', '--url', "https://management.azure.com$($origin.id)`?api-version=$($origin.apiVersion)")
-                if ($resource.properties.publicNetworkAccess -ceq 'Disabled' -and $resource.properties.provisioningState -ceq 'Succeeded') { $private = $true; break }
-                if ($resource.properties.provisioningState -ceq 'Failed') { throw "frontdoor_lockdown_failed: $($resource.name) provisioningState Failed" }
-                if ($attempt % 4 -eq 0) { Write-Host "$($resource.name): waiting for publicNetworkAccess Disabled ($($resource.properties.provisioningState))" }
+                $provisioningState = Get-DrValue $resource.properties 'provisioningState'
+                if ($resource.properties.publicNetworkAccess -ceq 'Disabled' -and ($null -eq $provisioningState -or $provisioningState -ceq 'Succeeded')) { $private = $true; break }
+                if ($provisioningState -ceq 'Failed') { throw "frontdoor_lockdown_failed: $($resource.name) provisioningState Failed" }
+                if ($attempt % 4 -eq 0) { Write-Host "$($resource.name): waiting for publicNetworkAccess Disabled ($provisioningState)" }
             }
             if (-not $private) { throw "frontdoor_lockdown_timeout: $($resource.name) did not read back publicNetworkAccess Disabled after 45 minutes; rerun -Phase Lockdown." }
             Write-Host "$($resource.name): publicNetworkAccess Disabled verified"
