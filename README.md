@@ -9,9 +9,29 @@ Microsoft Foundry deployment. Usage is recorded per person and project for repor
 This repository contains the source, templates and guides. It is not a running service; deploying
 it creates billable Azure resources. Unfamiliar terms are explained in the [glossary](docs/GLOSSARY.md).
 
+## Branches
+
+| Branch | Contains |
+| --- | --- |
+| `main` | Admin 3.3, budget soft limit and spend pacing, the step-by-step deployment guide, per-project Foundry backend pools with circuit breakers, and the proposed two-region disaster recovery design |
+| [`feat/admin-console-v2`](https://github.com/naveenneog/ccof-bicep/tree/feat/admin-console-v2) | The single-region deployment with Admin 3.2.0, without the disaster recovery design |
+
+Earlier working branches are kept as `archive/*` tags.
+
+## Architecture
+
+[![CCOF active/passive disaster recovery architecture with Azure service icons](docs/images/dr/dr-active-passive.png)](docs/images/dr/dr-active-passive.svg)
+
+The diagram shows the proposed active/passive design across East US 2 and Central US: private
+Standard v2 gateways behind Azure Front Door Premium, a Foundry backend pool with circuit breakers
+per project, Cosmos DB in two regions, and Log Analytics behind Azure Monitor Private Link Scope.
+The staged templates deploy one region today; the second region and failover are not yet deployed
+or tested ([DR design](docs/DR-ACTIVE-PASSIVE.md), [implementation status](docs/design/DR-IMPLEMENTATION.md)).
+The single-region deployment that the guides cover is the diagram below.
+
 ## How it works
 
-[![Azure architecture: Entra trust, APIM, Functions, private registry, Foundry and network boundaries](docs/diagrams/ccof-architecture-overview.svg)](docs/diagrams/ccof-architecture-overview.svg)
+[![Single-region Azure architecture: Entra trust, APIM, Functions, private registry, Foundry and network boundaries](docs/diagrams/ccof-architecture-overview.svg)](docs/diagrams/ccof-architecture-overview.svg)
 
 1. A developer's tool sends a request with an Entra ID token and a project name.
 2. APIM checks the token, asks the **resolver** app what the person may use, applies token limits,
@@ -47,7 +67,7 @@ Other documents describe earlier designs and are marked **Historical** at the to
 
 | Part | Version | Source |
 | --- | --- | --- |
-| Gateway, resolver, sync, reconciler, templates | 0.2.0 plus the changes in [CHANGELOG](docs/CHANGELOG.md) | Branch `feat/budget-soft-limit` (not yet merged to `main`) |
+| Gateway, resolver, sync, reconciler, templates | 0.2.0 plus the changes in [CHANGELOG](docs/CHANGELOG.md) | `main` |
 | Admin console | 3.3.0 (`admin/package.json`) | Same branch |
 | Developer client (`ccof-token`, `ccof-usage`) | 0.1.0 (`client/package.json`) | Same branch |
 

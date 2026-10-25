@@ -78,7 +78,7 @@
 
 ## 2026-10-23 - DR implementation branch and prerequisite contract
 
-- Created `feat/CCOF-DISASTER-RECOVERY` from `63ca876`. DR-01 defines prerequisite-first
+- Started the DR work from the single-region Admin 3.2.0 state (now `feat/admin-console-v2`). DR-01 defines prerequisite-first
   identity/network preparation and a staged rollout in [DR implementation](design/DR-IMPLEMENTATION.md).
 - [ADR 0034](adr/0034-dr-project-routing-and-prerequisites.md) replaces unconditional pools with
   project-specific optional failover, off by default. Backend registration does not authorize project

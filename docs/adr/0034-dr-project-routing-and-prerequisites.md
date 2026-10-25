@@ -1,7 +1,7 @@
 # ADR 0034: Prerequisite-first DR and project-authorized backend failover
 
 Status: accepted for the implementation contract, 2026-10-23.
-Branch: `feat/CCOF-DISASTER-RECOVERY`.
+Branch: `main` (merged 2026-10-25).
 Supersedes the unconditional backend-pool part of [ADR 0033](0033-dr-active-passive.md).
 Deployment remains unimplemented.
 

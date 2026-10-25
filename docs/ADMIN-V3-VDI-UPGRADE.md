@@ -122,8 +122,7 @@ Use an approved release archive or commit that includes **admin version 3.1.0**.
 or a previously downloaded 3.0.0 archive does not include name lookup. A source commit must be
 published/shared before a customer can fetch it.
 
-The implementation is commit `41c2c2e` on `feat/admin-console-v2`. It is a local commit until
-published. The tested local `ccof-admin-v3.1.0.zip` has SHA-256
+The implementation is on branch `feat/admin-console-v2` and in `main`. The tested local `ccof-admin-v3.1.0.zip` has SHA-256
 `f25438c857b7058ec9bdc8b55c48491dc9d33b2e7f27fa1e0ce472a90e857554`; rebuilding produces a
 different archive hash, so a shared ZIP is checked against its own recorded release hash.
 

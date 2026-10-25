@@ -58,7 +58,6 @@ endpoints inside your network ([Cloud Shell quickstart](CLOUD-SHELL-QUICKSTART.m
 ```powershell
 git clone https://github.com/naveenneog/ccof-bicep.git
 cd ccof-bicep
-git checkout feat/budget-soft-limit        # the branch named in README "Current release"
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 ```

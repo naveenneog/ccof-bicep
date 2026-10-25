@@ -1,7 +1,7 @@
 # ADR 0035: Budget soft limit and spend pacing
 
 Status: accepted, 2026-10-24.
-Branch: `feat/budget-soft-limit`.
+Branch: `main` (merged 2026-10-25).
 
 ## Context
 

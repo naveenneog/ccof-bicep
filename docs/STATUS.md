@@ -2,7 +2,7 @@
 
 ## Documentation for new readers
 
-Done 2026-10-24 on `feat/budget-soft-limit`: README entry points, glossary, budgets page, historical
+Done 2026-10-24 and merged to `main`: README entry points, glossary, budgets page, historical
 banners, link test, pseudonymous screenshots and the
 [step-by-step deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) (see [CHANGELOG](CHANGELOG.md)).
 Not done: the 85 older middle-masked Portal images under `runbooks/images/portal/` and splitting the
@@ -10,7 +10,7 @@ two long workbooks.
 
 ## Budget soft limit and spend pacing
 
-**Packet:** BSL-1 on `feat/budget-soft-limit` (pushed to `origin/feat/budget-soft-limit`; no PR yet).
+**Packet:** BSL-1, merged to `main` on 2026-10-25.
 Decision: [ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md). Unknowns: BSL-01 to BSL-04.
 
 Acceptance:
@@ -32,7 +32,7 @@ Open: BSL-05 (overshoot of about one burst of parallel streams). The per-request
 ## Disaster recovery implementation
 
 **Active packet:** DR-07 - standby regional shells and data. DR-02 to DR-04 and DR-06 (P0-P2)
-are implemented and proven live on `feat/CCOF-DISASTER-RECOVERY` (local, not pushed); results in
+are implemented and proven live, and merged to `main` on 2026-10-25; results in
 [DR implementation](design/DR-IMPLEMENTATION.md#implemented-and-proven-2026-10-23).
 
 - Admin 3.3.0: backend registry with optional circuit breaker, per-project failover, routing
@@ -43,7 +43,7 @@ are implemented and proven live on `feat/CCOF-DISASTER-RECOVERY` (local, not pus
   per-section policy fragments.
 
 DR-01 completed scope:
-- Contract commit: `b40d99a` (local, not pushed).
+- Contract: [DR implementation](design/DR-IMPLEMENTATION.md), merged to `main`.
 - Project-specific failover is optional, off by default, and uses explicitly approved compatible
   backends. A circuit breaker detects failure; it is not itself a fallback endpoint.
 - Identity, network, ownership and permission handoffs precede runtime deployment. Existing
@@ -96,7 +96,7 @@ Evidence:
   tests reproduced them before the fixes.
 - Repository packet gate passes; existing file-size warnings remain.
 
-Implementation commit: `41c2c2e`. The local ZIP is `ccof-admin-v3.1.0.zip` in this session's files
+The local ZIP is `ccof-admin-v3.1.0.zip` in this session's files
 (SHA-256 `f25438c857b7058ec9bdc8b55c48491dc9d33b2e7f27fa1e0ce472a90e857554`).
 No live directory lookup, customer deployment or Graph permission change was performed.
 

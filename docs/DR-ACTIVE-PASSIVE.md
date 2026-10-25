@@ -10,7 +10,7 @@ in each region, private behind Front Door Premium, and multiple Foundry backend 
 priority pools and per-member circuit breakers. The staged templates deploy one region today; the
 changes this design needs are listed under [Required changes](#required-changes).
 
-Implementation branch: `feat/CCOF-DISASTER-RECOVERY`.
+Implementation branch: `main` (merged 2026-10-25). The single-region design without DR is on `feat/admin-console-v2`.
 [The implementation contract](design/DR-IMPLEMENTATION.md) prepares identity and network handoffs
 before runtime deployment. Backend pools are **optional per project**, off by default; admins select
 the primary and permitted compatible fallback backends. The diagram depicts the enabled case,

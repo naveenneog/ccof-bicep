@@ -1,6 +1,6 @@
 # DR implementation: prerequisites, project routing and staged proof
 
-Branch: `feat/CCOF-DISASTER-RECOVERY`. Baseline: `63ca876`.
+Branch: `main` (merged 2026-10-25). Baseline: the single-region Admin 3.2.0 state, published as `feat/admin-console-v2`.
 Contract: [ADR 0034](../adr/0034-dr-project-routing-and-prerequisites.md).
 The [architecture diagram](../DR-ACTIVE-PASSIVE.md) is a proposed target, not deployed DR.
 

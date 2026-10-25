@@ -2,7 +2,7 @@
 
 ## Disaster recovery feature branch
 
-Branch: `feat/CCOF-DISASTER-RECOVERY`. Each packet has a separate RED/GREEN cycle, review,
+Branch: `main` (merged 2026-10-25). Each packet has a separate RED/GREEN cycle, review,
 gate and commit. No packet implicitly authorizes a later Azure deployment.
 
 | Packet | Status | Observable acceptance |
