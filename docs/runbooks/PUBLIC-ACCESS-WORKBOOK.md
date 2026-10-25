@@ -727,9 +727,7 @@ code (Join-Path $out 'reconciler-settings.portal.json')
 
 **Check:** `RECONCILER_LOG_ANALYTICS_WORKSPACE_ID` is the Workspace ID **GUID**,
 not the ARM resource ID. `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` is the APIM
-**ARM ID**. Reconciler UAMI client ID is correct. Timer is disabled. With a standby APIM (DR), set
-`$C.ledgerGatewayResourceIds = @('REPLACE-PRIMARY-APIM-ARM-ID', 'REPLACE-STANDBY-APIM-ARM-ID')` before
-`New-CcofAppSettings`; it adds `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` ([budget settings](../BUDGETS.md#disaster-recovery-settings-dr-05)).
+**ARM ID**. Reconciler UAMI client ID is correct. Timer is disabled.
 
 ### Step 05.11 - Merge reconciler settings
 
