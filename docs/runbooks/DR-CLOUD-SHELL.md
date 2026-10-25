@@ -35,12 +35,14 @@ shape as the real values.
 | A single-region deployment that passed Step 8 | [Deploy CCOF step by step](DEPLOY-STEP-BY-STEP.md#step-8-test-end-to-end) |
 | A standby region where APIM, Function Apps, Container Apps environments, Cosmos DB and Log Analytics are offered; Step 3 checks this | [Region pair evaluation](../DR-ACTIVE-PASSIVE.md#region-pair-evaluation) |
 | A standby address space that does not overlap the primary VNet or any network peered with it | Your network team |
-| For backend failover (Step 6): a workstation or managed device that Conditional Access allows to sign in to the Azure CLI, and the deployment settings `entra.allowAzureCliClient: true` and `admin.extraAllowedClientIds: ["04b07795-8ddb-461a-bbee-02f9e1bf7b46"]` (Azure CLI) | [Deployment runbook, Entra handoff](DEPLOYMENT-RUNBOOK.md#1-entra-administrator-handoff) |
+| The deployment settings `admin.extraAllowedClientIds: ["04b07795-8ddb-461a-bbee-02f9e1bf7b46"]` (Microsoft Azure CLI) and `entra.allowAzureCliClient: true`, applied by Stages 4, 5 and 7. Step 3 stops with `entra.admin:azure_cli_not_preauthorized` without the first (N-17); [Step 2.0](#20-azure-cli-as-an-admin-client-workstation-n-17) sets both | [Stage 4](STAGED-DEPLOYMENT-V2.md#stage-4-entra), [DR implementation, Entra app registrations](../design/DR-IMPLEMENTATION.md#entra-app-registrations) |
+| For backend failover (Step 6): a workstation or managed device that Conditional Access allows to sign in to the Azure CLI | [Deployment runbook, Entra handoff](DEPLOYMENT-RUNBOOK.md#1-entra-administrator-handoff) |
 
 Permissions per step:
 
 | Step | Runs in | Permission |
 | --- | --- | --- |
+| 2.0 Azure CLI as an admin client | Workstation | The deployment guide's permissions for Stages 4, 5 and 7 ([Deploy CCOF step by step](DEPLOY-STEP-BY-STEP.md#step-4-register-the-apps-and-groups-in-entra-id)) |
 | 1, 2 Prepare and fill the configuration | Cloud Shell | Reader on the subscription, the primary VNet, the private DNS zones and each Foundry account; read access to app registrations in Entra ID |
 | 3 Discover (P0) | Cloud Shell | Same as Step 2 |
 | 4 Bootstrap (P1/P2) | Cloud Shell | Contributor on the standby resource group; for a new group, `Microsoft.Resources/subscriptions/resourceGroups/write` on the subscription; Network Contributor on the primary VNet (peering); Private DNS Zone Contributor on the DNS zones' resource group (links) |
@@ -119,9 +121,70 @@ git log -1 --oneline
 
 **What it does.** Reads the values the DR script needs and writes them to `dr.config.json` in `$work`,
 starting from [`infra/dr/dr.config.example.json`](../../infra/dr/dr.config.example.json). All commands in this
-step are read-only.
+step are read-only, except 2.0, which updates the single-region deployment's admin app when it does
+not yet accept the Azure CLI.
 
 **Who runs it.** Reader on the subscription, the primary VNet, the DNS zones and the Foundry accounts.
+
+### 2.0 Azure CLI as an admin client (workstation, N-17)
+
+The routing publisher (Step 6.3) requests a token for the admin app's `Projects.Manage` scope with the
+Azure CLI. That needs two settings on the admin app, which are distinct checks
+([DR implementation, Entra app registrations](../design/DR-IMPLEMENTATION.md#entra-app-registrations);
+[ADR 0034](../adr/0034-dr-project-routing-and-prerequisites.md)):
+
+| Setting | Written by | Without it |
+| --- | --- | --- |
+| Azure CLI (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) preauthorized for `Projects.Manage` | Stage 4, from `admin.extraAllowedClientIds` ([Stage 4](STAGED-DEPLOYMENT-V2.md#stage-4-entra)) | Step 3: `entra.admin:azure_cli_not_preauthorized`. Step 6.3: `AADSTS65001` `consent_required` for Microsoft Azure CLI |
+| Azure CLI in the admin app setting `ADMIN_ALLOWED_CLIENT_IDS` | Stage 5, from the same list ([Stage 5](STAGED-DEPLOYMENT-V2.md#stage-5-configuration)) | Step 6.3: HTTP 403 `oauth_client_denied` from the admin API |
+
+The staged example leaves `admin.extraAllowedClientIds` empty, so a deployment made with the default
+has neither setting (N-17 in the [DR walkthrough](../DR-NOVICE-WALKTHROUGH-2026-10-25.md)). A gateway
+token works without them; the gateway's own setting is `entra.allowAzureCliClient`. A new deployment
+sets both values in its configuration file before Stage 4. For a deployment that is already done, the
+block below adds them and reruns Stages 4, 5 and 7: Stage 5 reads `admin` in its inputs, and Stage 7
+depends on Stage 5 ([driver reference](STAGED-DEPLOYMENT-V2.md#how-a-stage-runs)).
+
+On the workstation, in the repository folder and the Azure CLI profile of the
+[deployment guide](DEPLOY-STEP-BY-STEP.md#a-separate-azure-cli-sign-in):
+
+```powershell
+$stagedCfg = 'C:\private\ccof\staged.config.json'        # the deployment's configuration file
+$azureCli  = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'      # Microsoft Azure CLI (public client)
+$s = Get-Content $stagedCfg -Raw | ConvertFrom-Json
+if ($null -eq $s.admin) { $s | Add-Member admin ([pscustomobject]@{ v3Enabled = $true; extraAllowedClientIds = @() }) }
+$ids = @(@($s.admin.extraAllowedClientIds) + $azureCli | Where-Object { $_ } | Select-Object -Unique)
+$s.admin | Add-Member extraAllowedClientIds $ids -Force
+$s.entra | Add-Member allowAzureCliClient $true -Force
+$s | ConvertTo-Json -Depth 100 | Set-Content -Path $stagedCfg -Encoding utf8NoBOM
+(Get-Content $stagedCfg -Raw | ConvertFrom-Json) | ForEach-Object { "admin.extraAllowedClientIds=$($_.admin.extraAllowedClientIds -join ',') entra.allowAzureCliClient=$($_.entra.allowAzureCliClient)" }
+```
+
+**Expect:** `admin.extraAllowedClientIds=04b07795-8ddb-461a-bbee-02f9e1bf7b46 entra.allowAzureCliClient=True`
+(other client IDs already in the list are kept).
+
+```powershell
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 4 -ConfigPath $stagedCfg
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 4 -ConfigPath $stagedCfg -Apply
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 5 -ConfigPath $stagedCfg -Apply
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 7 -ConfigPath $stagedCfg -Apply
+```
+
+**Expect:** the Stage 4 preview line `preview: admin app: ... self preauthorized and 04b07795-8ddb-461a-bbee-02f9e1bf7b46`,
+then each apply ending with `stage N completed and verified`. Stage 7 republishes the packages and
+applies a membership snapshot; the lab Stage 7 took about 23 minutes. Stage 8 is not required for DR;
+a later Stage 8 run uses the new inputs.
+
+```powershell
+$adminAppId = 'REPLACE-admin-app-id'
+$rg         = 'REPLACE-ccof-resource-group'
+az ad app show --id $adminAppId --query "api.preAuthorizedApplications[].appId" -o tsv
+$adminApp = az functionapp list -g $rg --query "[].name" -o tsv | Where-Object { $_ -match '-admin(-func)?$' }
+az functionapp config appsettings list -g $rg -n $adminApp -o json | ConvertFrom-Json |
+    Where-Object { $_.name -eq 'ADMIN_ALLOWED_CLIENT_IDS' } | ForEach-Object value
+```
+
+**Expect:** `04b07795-8ddb-461a-bbee-02f9e1bf7b46` in both outputs, next to the admin app's own ID.
 
 The fields:
 
@@ -693,7 +756,7 @@ pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Verify -ConfigP
 | `network:secondary_overlaps_primary_CIDR` | 3 | The standby range overlaps the primary VNet | Another `secondary.addressSpace` |
 | `dns:ZONE:missing` | 3 | The zone is not in `dnsZones.resourceGroup` | Step 2.2 |
 | `foundry:NAME:no_claude_deployment` | 3 | The account has no Claude deployment | The account's name and resource group in `foundryAccounts` |
-| `entra.admin:azure_cli_not_preauthorized` | 3 | Azure CLI is not a preauthorized client of the admin app; Step 6.3 needs it | Deployment setting `admin.extraAllowedClientIds` ([Before you start](#before-you-start)) |
+| `entra.admin:azure_cli_not_preauthorized` | 3 | Azure CLI is not a preauthorized client of the admin app; Step 6.3 needs it (N-17) | [Step 2.0](#20-azure-cli-as-an-admin-client-workstation-n-17), then Step 3 again |
 | `...:read_denied` | 3, 4 | The account lacks read access to that scope | Reader on the scope named in the blocker |
 | `AuthorizationFailed` on `resourceGroups/write` | 4.1 | No permission to create resource groups (N-07) | Option B |
 | `resourceGroup:location_is_REGION` | 4 | Existing group in another region without the override (N-08) | `$otherRegionRg = $true` in Step 2.4 |
@@ -702,6 +765,8 @@ pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Verify -ConfigP
 | `dns:ZONE:link_missing` | 4.3 | A DNS link failed or is still provisioning | 4.3 again after a minute |
 | `unrecognized arguments: --replication-location` | 5 | The CLI has no such argument (N-09) | The Step 5 REST block |
 | `Audience api://... is not a supported MSI token audience` | 6.3, 6.5 | Cloud Shell cannot get tokens for custom audiences (N-13) | Run the step on the workstation |
+| `AADSTS65001` `consent_required` for Microsoft Azure CLI | 6.3 | The admin app does not preauthorize Azure CLI for `Projects.Manage` (N-17) | [Step 2.0](#20-azure-cli-as-an-admin-client-workstation-n-17) |
+| HTTP 403 `oauth_client_denied` from `/api/v3/routing/pending` | 6.3 | Azure CLI is missing from the admin app setting `ADMIN_ALLOWED_CLIENT_IDS` | Step 2.0 (its Stage 5 rerun) |
 | `pending plans: 0` | 6.3 | No project waits for publication | Project state `verified` (N-12): continue with 6.4; otherwise save the failover change in 6.2 first |
 | State stays `pending publication` | 6.2 | The pool is not published | 6.3 |
 | `snapshot_group_missing` or a project frozen after 6.4 | 6.4 | A registered group was left out of `$groupIds` | Every active project's groups in `$groupIds`, then 6.4 again |
