@@ -52,6 +52,20 @@ function Read-ReconcilerAnswers {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
 }
 
+# Optional gatewayResourceIds (active/passive DR, docs/DR-ACTIVE-PASSIVE.md): 1-4 distinct APIM ids, in any
+# subscription, that include gatewayResourceId; the same rules as src/contracts/gateway-resource-ids.ts.
+$script:ApimId = '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]+/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]+\z'
+function Get-GatewayListProblem {
+    param([AllowNull()] $Ids, [string] $Single)
+    if ($Ids -is [string] -or $Ids -isnot [System.Collections.IEnumerable]) { return 'invalid' }
+    $list = @($Ids)
+    if ($list.Count -eq 0 -or @($list | Where-Object { $_ -isnot [string] -or $_ -cnotmatch $script:ApimId }).Count) { return 'invalid' }
+    if ($list.Count -gt 4) { return 'too_many' }
+    if (@($list | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique).Count -ne $list.Count) { return 'duplicate' }
+    if (@($list | Where-Object { $_ -eq $Single }).Count -eq 0) { return 'single_not_in_list' }
+    return $null
+}
+
 # Returns the problems as "<key>:<code>" strings; empty when the answers are complete and valid.
 function Test-ReconcilerAnswers {
     param([Parameter(Mandatory)] [AllowNull()] $Answers)
@@ -85,6 +99,10 @@ function Test-ReconcilerAnswers {
         elseif ($Answers[$key] -isnot [bool]) { $problems.Add("${key}:invalid") }
     }
     $settings = $Answers['reconcilerSettings']
+    if ($Answers.Contains('gatewayResourceIds')) {
+        $problem = Get-GatewayListProblem -Ids $Answers['gatewayResourceIds'] -Single ([string]$Answers['gatewayResourceId'])
+        if ($problem) { $problems.Add("gatewayResourceIds:$problem") }
+    }
     if ($settings -isnot [System.Collections.IDictionary]) { $problems.Add('reconcilerSettings:missing') }
     else {
         foreach ($name in $script:ReconcilerSettingNames) {
@@ -124,6 +142,7 @@ function Get-ReconcilerAppSettings {
         RECONCILER_LEASE_CONTAINER              = $Answers.leaseContainerName
     }
     foreach ($name in $script:ReconcilerSettingNames) { $settings[$name] = $Answers.reconcilerSettings[$name] }
+    if ($Answers.Contains('gatewayResourceIds')) { $settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS = @($Answers.gatewayResourceIds) -join ',' }
     return $settings
 }
 

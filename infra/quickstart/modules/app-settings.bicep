@@ -123,6 +123,12 @@ var reconcilerPacing = contains(reconciler, 'softLimitPercent') && contains(reco
   RECONCILER_PACING_WINDOW_MINUTES: string(reconciler.pacingWindowMinutes)
 } : {}
 
+// DR-05: the optional list of APIM ids whose logs hold this deployment's usage (active/passive DR);
+// the reconciler validates it at start-up. Absent, no setting is added.
+var reconcilerLedgerGateways = contains(reconciler, 'ledgerGatewayResourceIds') ? {
+  RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS: join(reconciler.ledgerGatewayResourceIds, ',')
+} : {}
+
 resource resolverSite 'Microsoft.Web/sites@2024-04-01' existing = {
   name: names.apps.resolver.functionApp
 }
@@ -150,7 +156,7 @@ resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: reconcilerSite
   name: 'appsettings'
-  properties: union(reconcilerSettings, reconcilerPacing)
+  properties: union(reconcilerSettings, reconcilerPacing, reconcilerLedgerGateways)
 }
 
 // infra/poc/resolver-auth.ps1, New-ResolverAuthSettingsBody: v2 issuer, the resolver API audience,
