@@ -104,6 +104,7 @@ The driver refuses it until the placeholders are replaced. Sections:
 | `stage1` | 1 | Exactly the `main.bicep` parameters. Defaults: every public network access `Disabled`, APIM deferred, `StandardV2` |
 | `cosmos` | 2, 3 | Database name, capacity mode, custom role names |
 | `apim` | 3, 5 | `existing` APIM, or the Stage 1 one; API id, path and display name |
+| `stage1.apimZoneRedundant` | 1 | Optional, default `false`. `true` creates the new APIM as zone redundant (`StandardV2`/`PremiumV2` only; set at creation, not changeable later). Fewer than two `apimUnits` prints a warning. See [Stage 1](#stage-1-resources-only) |
 | `stage1.foundry` | 0, 1, 6 | Optional new Foundry account: `create`, `accountName`, `publicNetworkAccess` (default `Disabled`), `deployments` [{ name, model, version, sku, capacity }], `modelProviderData` { organizationName, countryCode, industry } (required with deployments), or `modelDeploymentsBlocked` with the reason |
 | `sharedResourceGroup` | 1 | `true` to deploy beside existing resources: apply only when what-if shows no Modify or Delete outside the exact resource IDs recorded by the prior Stage 1 deployment |
 | `backends` | 0, 3, 5, 6 | Foundry accounts, deployment names and inference geography; `privateEndpoint: true` makes Stage 6 check (or, in modes `existing`/`create`, create) its private endpoint and DNS |
@@ -131,6 +132,13 @@ created with public access disabled before a private endpoint exists). `BasicV2`
 integration; use `StandardV2` when any backend is private. Application Insights adds one
 "Failure Anomalies" smart-detector rule per component a few minutes after creation
 ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/proactive-failure-diagnostics)).
+`stage1.apimZoneRedundant: true` creates that APIM with `properties.zoneRedundant: true` (API
+version `2025-03-01-preview`, the first version with the property; the default path keeps
+`2024-05-01`). For Standard v2 and Premium v2 the setting exists only at creation; one unit is
+allowed and its compute is spread over two zones, and Microsoft recommends at least two units
+([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support),
+[reliability in API Management](https://learn.microsoft.com/azure/reliability/reliability-api-management)).
+Stage 1 verify reads the property back. Not yet deployed live ([UNKNOWNS](../UNKNOWNS.md) APIM-ZR-01, APIM-ZR-02).
 
 ### Stage 1: Foundry (optional)
 `stage1.foundry.create` adds a keyless AIServices account and its Claude deployments

@@ -24,6 +24,7 @@
     "apimPublisherName": "",
     "apimSku": "StandardV2",
     "apimUnits": 1,
+    "apimZoneRedundant": false,
     "foundry": {
       "create": false,
       "accountName": "REPLACE-unique-foundry-name",

@@ -16,8 +16,10 @@ param publisherEmail string
 @minLength(1)
 param publisherName string
 param workspaceId string
+@description('Zone redundancy for a NEW Standard v2 or Premium v2 instance; it can be chosen only at creation. properties.zoneRedundant exists from API 2025-03-01-preview (docs/UNKNOWNS.md APIM-ZR-01), so only that path uses the preview API.')
+param zoneRedundant bool = false
 
-resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
+resource apimStandard 'Microsoft.ApiManagement/service@2024-05-01' = if (!zoneRedundant) {
   name: name
   location: location
   tags: tags
@@ -30,9 +32,29 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
   }
 }
 
+resource apimZoneRedundant 'Microsoft.ApiManagement/service@2025-03-01-preview' = if (zoneRedundant) {
+  name: name
+  location: location
+  tags: tags
+  sku: { name: sku, capacity: units }
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    publisherEmail: publisherEmail
+    publisherName: publisherName
+    publicNetworkAccess: 'Enabled'
+    zoneRedundant: true
+  }
+}
+
+// Unconditional reference for the diagnostic setting's scope (see the header note on what-if).
+resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
+  name: name
+}
+
 resource apimDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'ccof-gateway-logs'
   scope: apim
+  dependsOn: [apimStandard, apimZoneRedundant]
   properties: {
     workspaceId: workspaceId
     logAnalyticsDestinationType: 'Dedicated'
@@ -45,5 +67,5 @@ resource apimDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
 
 output id string = apim.id
 output name string = apim.name
-output principalId string = apim.identity.principalId
-output gatewayUrl string = apim.properties.gatewayUrl
+output principalId string = zoneRedundant ? apimZoneRedundant!.identity.principalId : apimStandard!.identity.principalId
+output gatewayUrl string = zoneRedundant ? apimZoneRedundant!.properties.gatewayUrl : apimStandard!.properties.gatewayUrl

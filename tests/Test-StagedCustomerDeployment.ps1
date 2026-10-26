@@ -78,7 +78,9 @@ Assert-Contract ($foundryAccount.properties.disableLocalAuth -eq $true) 'Foundry
 Assert-Contract ($foundryModule[0].properties.template.parameters.publicNetworkAccess.defaultValue -ceq 'Disabled') 'Foundry must default to private.'
 $apim = @($resources | Where-Object type -EQ 'Microsoft.ApiManagement/service')
 $apimModules = @($arm.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and @($_.properties.template.resources | Where-Object type -EQ 'Microsoft.ApiManagement/service').Count })
-Assert-Contract ($apim.Count -eq 1 -and $apimModules.Count -eq 1 -and $apimModules[0].condition -match "parameters\('approveNewPublicApimBootstrap'\)") 'APIM must be conditional on approval of NEW public bootstrap.'
+Assert-Contract ($apim.Count -eq 2 -and $apimModules.Count -eq 1 -and $apimModules[0].condition -match "parameters\('approveNewPublicApimBootstrap'\)") 'APIM must be conditional on approval of NEW public bootstrap.'
+# Two declarations, one deployed: the GA API by default, the preview API only for zone redundancy (UNKNOWNS APIM-ZR-01).
+Assert-Contract ((@($apim | ForEach-Object { $_.condition } | Sort-Object) -join ',') -ceq "[not(parameters('zoneRedundant'))],[parameters('zoneRedundant')]") 'The APIM declarations must be mutually exclusive on zoneRedundant.'
 Assert-Contract ($arm.outputs.apimId.value -match "if\(parameters\('approveNewPublicApimBootstrap'\).*, ''\)") 'Deferred APIM must have an empty ID, not a pretend deployed resource.'
 $cosmos = @($resources | Where-Object type -EQ 'Microsoft.DocumentDB/databaseAccounts')[0]
 Assert-Contract ($cosmos.properties.disableLocalAuth -eq $true) 'Cosmos local auth must remain disabled.'

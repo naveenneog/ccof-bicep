@@ -283,10 +283,22 @@ function Test-Stage1 {
         $diag = @( (Get-StgArm "$($Out.apimId)/providers/Microsoft.Insights/diagnosticSettings" '2021-05-01-preview').value | Where-Object { $_.name -ceq 'ccof-gateway-logs' })
         Assert-Stg ($diag.Count -eq 1 -and $diag[0].properties.workspaceId -ieq $Out.workspaceId) 'APIM gateway diagnostics are missing or target another workspace'
         $v.apim = @{ sku = $apim.sku.name; publicNetworkAccess = $apim.properties.publicNetworkAccess; principalId = $apim.identity.principalId; diagnosticWorkspaceId = $diag[0].properties.workspaceId }
+        $zoneRedundant = Assert-StgApimZoneRedundancy -Cfg $Cfg -ApimId $Out.apimId
+        if ($null -ne $zoneRedundant) { $v.apim.zoneRedundant = $zoneRedundant }
     }
     $v.apimStatus = $Out.apimStatus
     $null = Write-StgEvidence 'stage1.verify.json' $v
     return $v
+}
+
+# Reads zone redundancy back only when the configuration asks for it. properties.zoneRedundant exists
+# from API 2025-03-01-preview; that a GET returns it is not yet observed live (docs/UNKNOWNS.md APIM-ZR-02).
+function Assert-StgApimZoneRedundancy {
+    param($Cfg, [string]$ApimId)
+    if ($Cfg.stage1['apimZoneRedundant'] -ne $true) { return $null }
+    $apim = Get-StgArm $ApimId '2025-03-01-preview'
+    Assert-Stg ($apim.properties.zoneRedundant -eq $true) "APIM zoneRedundant is '$($apim.properties.zoneRedundant)', expected true; zone redundancy is set only at creation, so a new instance is required"
+    return $true
 }
 
 # ---------------------------------------------------------------- stage 6: network (last setup stage)

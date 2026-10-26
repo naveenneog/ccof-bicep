@@ -178,6 +178,17 @@ function Read-StgConfig {
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
     foreach ($p in @(Get-StgClientAliasProblems $c)) { $problems.Add($p) }
+    if ($c.stage1 -is [Collections.IDictionary] -and $c.stage1.Contains('apimZoneRedundant')) {
+        # Standard v2 / Premium v2 only, chosen at creation; one unit is allowed but two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
+        $zoneRedundant = $c.stage1.apimZoneRedundant
+        $apimSku = $c.stage1.apimSku ?? 'StandardV2'
+        $apimUnits = $c.stage1.apimUnits ?? 1
+        if ($zoneRedundant -isnot [bool]) { $problems.Add('stage1.apimZoneRedundant must be true or false') }
+        elseif ($zoneRedundant -and $apimSku -cnotin 'StandardV2', 'PremiumV2') { $problems.Add("stage1.apimZoneRedundant requires stage1.apimSku StandardV2 or PremiumV2 (got $apimSku)") }
+        elseif ($zoneRedundant -and [int]$apimUnits -lt 2) {
+            Write-Warning "stage1.apimZoneRedundant with stage1.apimUnits $apimUnits is allowed; Microsoft recommends at least two units so a zone outage does not reduce gateway capacity (https://learn.microsoft.com/azure/reliability/reliability-api-management)."
+        }
+    }
     if ($problems.Count) { throw "invalid staged configuration:`n  - $($problems -join "`n  - ")" }
     $c.__path = $full
     return $c
