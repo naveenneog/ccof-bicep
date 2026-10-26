@@ -96,6 +96,18 @@ Assert-Contract (($settingsArm.parameters.syncLimitsContainer.defaultValue -ceq 
 $s1 = Build-Arm 'infra\staged\main.bicep'
 Assert-Contract ($s1.outputs.ContainsKey('names') -and $s1.outputs.ContainsKey('apimName')) 'Stage 1 must output names and apimName.'
 Assert-Contract (($s1.parameters.apimSku.allowedValues -join ',') -ceq 'BasicV2,StandardV2' -and $s1.parameters.apimSku.defaultValue -ceq 'StandardV2') 'APIM SKU choice changed.'
+# APIM zone redundancy (UNKNOWNS APIM-ZR-01): off by default; when on, only the preview API resource carries properties.zoneRedundant.
+Assert-Contract ($s1.parameters.ContainsKey('apimZoneRedundant') -and $s1.parameters.apimZoneRedundant.type -ceq 'bool' -and $s1.parameters.apimZoneRedundant.defaultValue -eq $false) 'main.bicep must declare apimZoneRedundant bool defaulting to false.'
+$apimModule = @(Get-Resources $s1 | Where-Object { $_.type -ceq 'Microsoft.Resources/deployments' -and $_.name -ceq 'stage1-apim' })[0]
+Assert-Contract ($apimModule -and $apimModule.properties.parameters.zoneRedundant.value -ceq "[parameters('apimZoneRedundant')]") 'main.bicep must pass apimZoneRedundant to apim-service.bicep.'
+$apimArm = Build-Arm 'infra\staged\apim-service.bicep'
+Assert-Contract ($apimArm.parameters.zoneRedundant.defaultValue -eq $false) 'apim-service.bicep zoneRedundant must default to false.'
+$apimResources = if ($apimArm.resources -is [Collections.IDictionary]) { $apimArm.resources.Values } else { $apimArm.resources }
+$apimServices = @($apimResources | Where-Object { $_.type -ceq 'Microsoft.ApiManagement/service' -and -not $_.existing })
+$apimGa = @($apimServices | Where-Object { $_.apiVersion -ceq '2024-05-01' })
+$apimZr = @($apimServices | Where-Object { $_.apiVersion -ceq '2025-03-01-preview' })
+Assert-Contract ($apimServices.Count -eq 2 -and $apimGa.Count -eq 1 -and $apimGa[0].condition -ceq "[not(parameters('zoneRedundant'))]" -and -not $apimGa[0].properties.ContainsKey('zoneRedundant')) 'Default (zone redundancy off) APIM must use the GA API with no zoneRedundant property.'
+Assert-Contract ($apimZr.Count -eq 1 -and $apimZr[0].condition -ceq "[parameters('zoneRedundant')]" -and $apimZr[0].properties.zoneRedundant -eq $true) 'Zone-redundant APIM must set properties.zoneRedundant true on the preview API resource.'
 
 # Driver: parses, every stage has an entry function, no az argument holds a cmd.exe metacharacter,
 # preview is the default, and later stages read earlier stage state.
@@ -143,6 +155,19 @@ Assert-Contract ($dnsTargets.vnetId -ceq '/subscriptions/00000000-0000-4000-8000
 function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true } } } }
 $nullSubnetSite = Get-StgSite -Cfg @{ subscriptionId = 's'; resourceGroup = 'g' } -Name 'app'
 Assert-Contract ($nullSubnetSite.virtualNetworkSubnetId -ieq '') 'Get-StgSite must return an empty string, not null, for an app without VNet integration (Stage 1 read-back).'
+# Stage 1 verify reads zone redundancy back with the preview API only when the configuration asks for it (UNKNOWNS APIM-ZR-02).
+$script:zrArmCalls = @()
+function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:zrArmCalls += "$ApiVersion"; @{ properties = @{ zoneRedundant = $script:zrArmValue } } }
+$script:zrArmValue = $true
+$zrRead = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $true } } -ApimId '/apim'
+Assert-Contract ($zrRead -eq $true -and ($script:zrArmCalls -join ',') -ceq '2025-03-01-preview') 'Stage 1 verify must read zoneRedundant back with API 2025-03-01-preview when configured.'
+$script:zrArmValue = $false
+$bad = $false; try { $null = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $true } } -ApimId '/apim' } catch { $bad = $_.Exception.Message -match 'verify_failed: APIM zoneRedundant' }
+Assert-Contract $bad 'Stage 1 verify must fail when a configured zone-redundant APIM reads back as not zone redundant.'
+$script:zrArmCalls = @(); $script:zrArmValue = $true
+$zrRead = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $false } } -ApimId '/apim'
+Assert-Contract ($null -eq $zrRead -and $script:zrArmCalls.Count -eq 0) 'Stage 1 verify must not read zone redundancy when the setting is off.'
+Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly
 $headers = New-StgGatewayHeaders -Token 'token-placeholder' -Project 'PROJECT01' -ProjectHeader 'x-customer-project'
@@ -176,6 +201,26 @@ try {
     $read = Read-StgConfig $tmp
     Assert-Contract ($read.network.mode -ceq 'verify') 'The example network mode must be verify: the customer builds the network.'
     Assert-Contract ($read.stage1.prefix -ceq 'ccofstg' -and $read.stage1.functionsPublicNetworkAccess -ceq 'Disabled' -and $read.stage1.approveNewPublicApimBootstrap -eq $false) 'Example defaults must stay private and defer APIM.'
+    Assert-Contract ($read.stage1.Contains('apimZoneRedundant') -and $read.stage1.apimZoneRedundant -is [bool] -and $read.stage1.apimZoneRedundant -eq $false -and (Get-Stage1Parameters $read).apimZoneRedundant -eq $false) 'Example stage1.apimZoneRedundant must be false and reach the Stage 1 parameters.'
+    $c.stage1.apimZoneRedundant = 'yes'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'stage1\.apimZoneRedundant must be true or false' }
+    Assert-Contract $bad 'A non-boolean stage1.apimZoneRedundant must be refused.'
+    $c.stage1.apimZoneRedundant = $true; $c.stage1.apimSku = 'BasicV2'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'stage1\.apimZoneRedundant requires stage1\.apimSku StandardV2 or PremiumV2' }
+    Assert-Contract $bad 'Zone redundancy with BasicV2 must be refused.'
+    $c.stage1.apimSku = 'StandardV2'; $c.stage1.apimUnits = 1
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $zrWarnings = $null; $read = Read-StgConfig $tmp -WarningVariable zrWarnings -WarningAction SilentlyContinue
+    Assert-Contract ($read.stage1.apimZoneRedundant -eq $true -and @($zrWarnings | Where-Object { "$_" -match 'stage1\.apimZoneRedundant with stage1\.apimUnits 1.*at least two units' }).Count -eq 1) 'Zone redundancy with one unit must be accepted with a warning (Learn: at least two units recommended).'
+    $c.stage1.apimUnits = 2
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $zrWarnings = $null; $read = Read-StgConfig $tmp -WarningVariable zrWarnings -WarningAction SilentlyContinue
+    Assert-Contract ($read.stage1.apimZoneRedundant -eq $true -and -not @($zrWarnings | Where-Object { "$_" -match 'apimZoneRedundant' }).Count) 'Zone redundancy with two units must be accepted without a warning.'
+    $c.stage1.apimZoneRedundant = $false; $c.stage1.apimUnits = 1
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
     $c.reconciler.continuityGate = 'on'
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'ledgerCoverageStartAt is required' }

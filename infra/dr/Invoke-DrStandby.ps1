@@ -163,9 +163,10 @@ switch ($Phase) {
     $params = @{ location = $dr.secondary.location; tags = $primaryCfg.tags; stem = $names.stem; storageStem = $names.storageStem; workspaceId = $pS1.workspaceId
         identities = $ids; includeAdmin = [bool]$primaryCfg.stage1.includeAdmin; functionsPublicNetworkAccess = [string]$dr.standby.functionsPublicNetworkAccess
         storagePublicNetworkAccess = [string]$dr.standby.storagePublicNetworkAccess
-        apim = @{ sku = $bCfg.stage1.apimSku; units = $(if ($dr.standby.apim.PSObject.Properties['units']) { [int]$dr.standby.apim.units } else { 1 }); publisherEmail = $dr.standby.apim.publisherEmail; publisherName = $dr.standby.apim.publisherName } }
+        apim = @{ sku = $bCfg.stage1.apimSku; zoneRedundant = [bool]$bCfg.stage1.apimZoneRedundant; units = $(if ($dr.standby.apim.PSObject.Properties['units']) { [int]$dr.standby.apim.units } else { 1 }); publisherEmail = $dr.standby.apim.publisherEmail; publisherName = $dr.standby.apim.publisherName } }
     $out = Invoke-StgBicep -Cfg $bCfg -Template '../dr/standby.bicep' -Name 'dr-standby-shells' -Apply:$Apply -Parameters $params
     if (-not $Apply) { return }
+    $null = Assert-StgApimZoneRedundancy -Cfg $bCfg -ApimId $out.apimId
     $s1 = New-DrStandbyStage1Outputs -Primary $pS1 -Shells $out -Identities $ids -StandbyNames $names
     # Region B's stage state: its own Stage 1, and the primary's Stage 2 (schema) and Stage 4 (Entra),
     # which both regions share.

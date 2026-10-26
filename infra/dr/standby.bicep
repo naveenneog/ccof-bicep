@@ -45,7 +45,7 @@ param maximumInstanceCount int = 40
 @allowed([512, 2048, 4096])
 param instanceMemoryMB int = 2048
 
-@description('Standby API Management: { sku: StandardV2, units, publisherEmail, publisherName }.')
+@description('Standby API Management: { sku: StandardV2, units, zoneRedundant (default false), publisherEmail, publisherName }.')
 param apim object
 
 var coreApps = [
@@ -82,6 +82,7 @@ module apimService '../staged/apim-service.bicep' = {
     tags: tags
     sku: apim.?sku ?? 'StandardV2'
     units: apim.?units ?? 1
+    zoneRedundant: apim.?zoneRedundant ?? false
     publisherEmail: apim.publisherEmail
     publisherName: apim.publisherName
     workspaceId: workspaceId

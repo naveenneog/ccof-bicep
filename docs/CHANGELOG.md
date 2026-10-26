@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-10-26 - Optional APIM zone redundancy
+
+- New optional `stage1.apimZoneRedundant` (staged) and `standby.apim.zoneRedundant` (DR standby),
+  default `false`. `true` creates a new Standard v2 or Premium v2 APIM with `properties.zoneRedundant`
+  (API `2025-03-01-preview`); the default path is unchanged and keeps API `2024-05-01`. The staged
+  reader refuses a non-boolean value or a SKU other than `StandardV2`/`PremiumV2`; both readers print a
+  warning for fewer than two units. Stage 1 verify and the DR Shells phase read the setting back.
+  Zone redundancy is set only at creation ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support)).
+  Not deployed live; see UNKNOWNS APIM-ZR-01 to APIM-ZR-03.
+
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.

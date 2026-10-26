@@ -34,6 +34,16 @@ function Get-DrStandbyProblems {
     }
     $sku = [string](Get-DrValue $Config 'standby.apim.sku')
     if ($sku -and $sku -cnotin 'StandardV2', 'PremiumV2') { $p.Add('standby.apim.sku:StandardV2_or_PremiumV2') }
+    # Zone redundancy is chosen only at creation; one unit is allowed, two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
+    $zoneRedundant = Get-DrValue $Config 'standby.apim.zoneRedundant'
+    if ($null -ne $zoneRedundant -and $zoneRedundant -isnot [bool]) { $p.Add('standby.apim.zoneRedundant:true_or_false') }
+    elseif ($zoneRedundant -eq $true) {
+        $units = Get-DrValue $Config 'standby.apim.units'
+        if ($null -eq $units) { $units = 1 }
+        if ("$units" -match '^\d+$' -and [int]$units -lt 2) {
+            Write-Warning "standby.apim.zoneRedundant with standby.apim.units $units is allowed; Microsoft recommends at least two units so a zone outage does not reduce gateway capacity (https://learn.microsoft.com/azure/reliability/reliability-api-management)."
+        }
+    }
     $max = Get-DrValue $Config 'cosmos.autoscaleMaxThroughput'
     if ($null -ne $max -and (-not ("$max" -match '^\d+$') -or [int]$max -lt 1000 -or [int]$max % 1000)) { $p.Add('cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000') }
     $conv = Get-DrValue $Config 'cosmos.convertServerless'
@@ -88,6 +98,7 @@ function New-DrStandbyStagedConfig {
     foreach ($be in @($b.backends)) { $be.privateEndpoint = $false }
     if (-not $b.stage1) { $b.stage1 = @{} }
     $b.stage1.apimSku = [string]$(if ($Dr.standby.apim.PSObject.Properties['sku'] -and $Dr.standby.apim.sku) { $Dr.standby.apim.sku } else { 'StandardV2' })
+    $b.stage1.apimZoneRedundant = [bool]$(if ($Dr.standby.apim.PSObject.Properties['zoneRedundant']) { $Dr.standby.apim.zoneRedundant } else { $false })
     # DR-05: one month can hold usage from both gateways, so both regions read both (app-settings.bicep).
     if ($GatewayResourceIds.Count) { $b.reconciler.ledgerGatewayResourceIds = @($GatewayResourceIds); if (-not $b.Contains('admin') -or -not $b.admin) { $b.admin = @{} }; $b.admin.gatewayResourceIds = @($GatewayResourceIds) }
     if ($null -ne $coverageStartAt) { $b.reconciler.ledgerCoverageStartAt = $coverageStartAt }
