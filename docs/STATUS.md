@@ -43,6 +43,20 @@ and no October history is missing. Promotion uses the one-time baseline adoption
 Observed on 2026-10-26: with both reconcilers fenced since 2026-10-25, 50 of 50 calls through Front
 Door returned HTTP 503 `budget_state_stale` (fail-closed, ADR 0008).
 
+Full-cycle drill, Fabrikam lab, 2026-10-26 (UTC; evidence in session files, not in git):
+
+| Step | Result |
+| --- | --- |
+| Region B promotion | B reconciler on `d5e0108`, gate `on`: first write 06:46:02Z, 4 unmarked states adopted, 36 token-less failed calls reported, then gated writes every 2 minutes |
+| Traffic on B | 50 burst calls: 19 × 200, 29 × 429 (Central US fallback rate limit, DR-16), 2 × 502 (member 0 resets, DR-15). 20 paced calls: 16 × 200, 4 × 502 (DR-15) |
+| Workspace switchover | Operation 08:07:16-08:07:20Z, state `Active`; 6 of 6 new calls ingested (≤ 136 s). Ledger earliest row became 2026-10-25T07:23Z; B refused `spend_would_decrease` until failback (DR-17) |
+| Workspace failback | 08:16:47Z; history from 2026-10-20 queryable again |
+| Writer failback | B fenced, Cosmos write region East US 2 (74 s), A reconciler gate `on`; A writes from 08:22:44Z with markers matching (0 adopted) |
+| Front Door failback | `RestorePrimary` deployed 08:25Z; A origin health 0 % until about 08:50Z, 100 % at 09:13Z (about 45 minutes; the drain took about 15) |
+| Traffic on A | 50 paced calls: 47 × 200 (45 logged on A's local Foundry), 3 × 503 from Front Door during the origin change |
+
+Not qualified for production while DR-15, DR-16 and DR-17 are open (UNKNOWNS).
+
 DR-05R acceptance, complete:
 - Given a request-free period or a first request later in a month, the gate does not refuse solely because no earlier model request exists.
 - Given a model backend request without a matching LLM usage row, an LLM row without its gateway request, a request before the verified coverage start, or a state without the expected coverage marker, the gate refuses before writing.

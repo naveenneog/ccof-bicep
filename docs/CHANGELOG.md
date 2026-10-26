@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-10-26 - DR-08 full-cycle lab drill
+
+- Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
+  Results are in [STATUS](STATUS.md#disaster-recovery-implementation). New open items: DR-15 (Region B to
+  East US 2 Foundry connection resets), DR-16 (fallback capacity), DR-17 (a mid-month workspace
+  switchover leaves the ledger incomplete). DR-04 resolved.
+- Failover runbook step 4: the switchover REST call needs a JSON content type and body `{}`.
+
 ## 2026-10-26 - Continuity gate: one-time baseline adoption
 
 - Continuity gate: an unattributed ledger row for a failed request with no token count of any kind

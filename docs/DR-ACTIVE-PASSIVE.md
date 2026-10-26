@@ -193,8 +193,13 @@ Recovery figures documented by Microsoft:
    ([how-to](https://learn.microsoft.com/azure/cosmos-db/how-to-manage-database-account#perform-forced-failover-for-your-azure-cosmos-db-account)).
 4. **Log Analytics.** Trigger the workspace switchover
    ([switch over](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#switch-over-to-your-secondary-workspace)).
-   Expect a few minutes for DNS-based rerouting.
-5. **Ledger continuity gate.** Before enabling the Region B reconciler:
+   Expect a few minutes for DNS-based rerouting. The REST call is
+   `POST .../providers/Microsoft.OperationalInsights/locations/<standby region>/workspaces/<name>/failover?api-version=2025-02-01`
+   with `Content-Type: application/json` and body `{}`: without a body the service returns HTTP 415, and
+   `az rest` without `--body` waited 55 minutes in the lab without starting the operation. Failback is
+   `POST .../workspaces/<name>/failback` with the same body. The replica holds only data ingested after
+   replication was enabled: in a month where replication started after the month began, the ledger is
+   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).5. **Ledger continuity gate.** Before enabling the Region B reconciler:
    - the workspace answers the ledger query for the current month;
    - the newest APIM A record in the replica is within the replication lag of the outage start;
    - APIM B records are arriving.
