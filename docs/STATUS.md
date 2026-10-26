@@ -85,7 +85,8 @@ Implementation checkpoint (2026-10-26):
   or change any live APIM setting.
 - Final packet gate after this change passed (`npm test`, typecheck and build); the existing file-size
   and open-unknown warnings remain. The timeout investigation and metadata-only republish path are
-  still open under DR-13.
+  still open under DR-13. Update 2026-10-26: a breaker edit now queues a new revision for verified
+  projects using the backend (UNKNOWNS DR-13); the `disabled with pool` and URL-only cases remain open.
 - The latest read-only `Invoke-DrStandby.ps1 -Phase Verify` succeeded at 2026-10-26T04:59:27Z:
   four apps were listed, both Region B writers were off, and the APIM API path was present. The retry
   first exposed a legacy-config bug when the optional coverage property was absent; the local fix

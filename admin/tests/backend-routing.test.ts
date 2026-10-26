@@ -50,15 +50,16 @@ function setup() {
   const changeLog = createMemoryChangeLog();
   const registry = createMemoryRegistryStore();
   let id = 0;
+  const logs: Doc[] = [];
   const base = { authenticate: async (h: string | null) => ({ oid: "00000000-0000-4000-8000-0000000000e1", canWrite: h !== "reader" }),
-    now: () => NOW, newId: () => `req-${++id}`, log: () => {} };
+    now: () => NOW, newId: () => `req-${++id}`, log: (line: string) => { logs.push(JSON.parse(line) as Doc); } };
   const headers = (h: Record<string, string>) => (n: string) => h[n.toLowerCase()] ?? (n.toLowerCase() === "authorization" ? "editor" : null);
   const v1 = (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => handleAdminRequest({
     method, path, headers: headers(h), body: body === undefined ? null : JSON.stringify(body) }, { ...base, store, changeLog } as ApiDependencies);
   const v3 = (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => handleV3Request({
     method, path: `/api/v3/${path}`, headers: headers(h), body: body === undefined ? null : JSON.stringify(body),
   }, { ...base, projects: store, catalogStore: null, changeLog, registry, defaultCatalog: null, env: {}, sources: null, cache: new QueryCache(), operations: {} as never } as never);
-  return { store, changeLog, registry, v1, v3 };
+  return { store, changeLog, registry, v1, v3, logs };
 }
 const json = (r: { jsonBody?: unknown }) => r.jsonBody as Doc;
 
@@ -186,4 +187,90 @@ test("v1: create refuses failover; a primary change is refused while failover is
   assert.deepEqual((await store.read("PROJECT02"))!.doc.failover, { enabled: false, fallbackBackendIds: ["foundry-b"], revision: 2, active: null });
   const read = await v1("GET", "/api/projects/PROJECT02");
   assert.equal(read.status, 200);
+});
+
+// PROJECT02 verified on foundry-a > foundry-b; PROJECT03 published then switched off; PROJECT04 never
+// configured; PROJECT05 verified on foundry-c > foundry-a.
+async function verifiedPools() {
+  const s = await registered();
+  await s.registry.save({ backendId: "foundry-c", ...entry("acct-c") } as never, null);
+  await s.store.create(project("PROJECT03"));
+  await s.store.create(project("PROJECT04"));
+  await s.store.create({ ...project("PROJECT05"), backendId: "foundry-c" });
+  const enable = async (id: string, fallbackBackendIds: string[], enabled = true) =>
+    s.v3("PUT", `projects/${id}/failover`, { enabled, fallbackBackendIds }, { "if-match": (await s.store.read(id))!.etag });
+  await enable("PROJECT02", ["foundry-b"]);
+  await enable("PROJECT03", ["foundry-b"]);
+  await enable("PROJECT05", ["foundry-a"]);
+  for (const plan of json(await s.v3("GET", "routing/pending")).pending as Doc[]) {
+    assert.equal((await s.v3("POST", `routing/${plan.projectId}/publication`, { revision: plan.revision, poolBackendId: plan.poolBackendId, verifiedTargets: [APIM] })).status, 200);
+  }
+  await enable("PROJECT03", ["foundry-b"], false);
+  const etags = async () => Object.fromEntries(await Promise.all(["PROJECT02", "PROJECT03", "PROJECT04", "PROJECT05"].map(async (id) => [id, (await s.store.read(id))!.etag])));
+  const putBackend = async (backendId: string, body: Doc) =>
+    s.v3("PUT", `backends/${backendId}`, body, { "if-match": (await s.registry.read(backendId))!.etag });
+  return { ...s, etags, putBackend };
+}
+const requeues = (changeLog: ReturnType<typeof createMemoryChangeLog>) =>
+  [...changeLog.records.values()].filter((r) => r.operation === "v3/backends/routing-revision");
+
+test("a breaker change queues a new revision for each verified project whose pool uses the backend", async () => {
+  const { v3, store, changeLog, logs, etags, putBackend } = await verifiedPools();
+  const before = await etags();
+  const tightened = { ...breaker, failureCount: 1, tripDurationSeconds: 120 };
+  const changed = await putBackend("foundry-b", entry("acct-b", tightened));
+  assert.equal(changed.status, 200);
+  assert.deepEqual(json(changed).routing, { queued: [{ projectId: "PROJECT02", revision: 2 }], failed: [] });
+  const failover = (await store.read("PROJECT02"))!.doc.failover as Doc;
+  assert.equal(failover.revision, 2);
+  assert.equal((failover.active as Doc).revision, 1, "the verified pool keeps serving until revision 2 is published");
+  const after = await etags();
+  assert.notEqual(after.PROJECT02, before.PROJECT02);
+  assert.deepEqual([after.PROJECT03, after.PROJECT04, after.PROJECT05], [before.PROJECT03, before.PROJECT04, before.PROJECT05],
+    "failover off, never configured and pools without the backend are untouched");
+  const pending = json(await v3("GET", "routing/pending")).pending as Doc[];
+  assert.deepEqual(pending.map((p) => [p.projectId, p.revision]), [["PROJECT02", 2]]);
+  assert.match(String(pending[0].poolBackendId), /-r2$/);
+  assert.deepEqual((pending[0].members as Doc[])[1].circuitBreaker, tightened);
+  const records = requeues(changeLog);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].projectId, "PROJECT02");
+  assert.equal(records[0].outcome, "updated");
+  assert.deepEqual(records[0].changes, [{ path: "failover.revision", before: 1, after: 2 }]);
+  assert.equal(records[0].details.backendId, "foundry-b");
+  assert.ok(logs.some((l) => l.schema === "ccof.admin.audit.v1" && l.operation === "v3/backends/routing-revision" && l.projectId === "PROJECT02" && l.outcome === "updated"));
+
+  // A primary's breaker reaches PROJECT05, where foundry-a is a fallback; PROJECT02 is already pending
+  // and its publication reads the current registry, so it is not moved again.
+  const primary = await putBackend("foundry-a", entry("acct-a", { ...breaker, acceptRetryAfter: false }));
+  assert.deepEqual(json(primary).routing, { queued: [{ projectId: "PROJECT05", revision: 2 }], failed: [] });
+  assert.equal(((await store.read("PROJECT02"))!.doc.failover as Doc).revision, 2);
+  assert.equal(((await store.read("PROJECT03"))!.doc.failover as Doc).revision, 1);
+});
+
+test("a backend edit that leaves the breaker unchanged queues no revision", async () => {
+  const { v3, changeLog, etags, putBackend } = await verifiedPools();
+  const before = await etags();
+  const renamed = await putBackend("foundry-a", entry("acct-a", breaker, { displayName: "renamed" }));
+  assert.equal(renamed.status, 200);
+  assert.equal(json(renamed).changed, true);
+  assert.deepEqual(json(renamed).routing, { queued: [], failed: [] });
+  assert.deepEqual(await etags(), before);
+  assert.deepEqual(json(await v3("GET", "routing/pending")).pending, []);
+  assert.equal(requeues(changeLog).length, 0);
+});
+
+test("a breaker requeue re-reads a project changed concurrently and keeps that change", async () => {
+  const { store, putBackend } = await verifiedPools();
+  const replace = store.replace.bind(store);
+  let raced = false;
+  store.replace = async (doc: Doc, etag: string) => {
+    if (!raced) { raced = true; const cur = (await store.read("PROJECT02"))!; await replace({ ...cur.doc, displayName: "edited meanwhile" }, cur.etag); }
+    return replace(doc, etag);
+  };
+  const changed = await putBackend("foundry-b", entry("acct-b", breaker));
+  assert.deepEqual(json(changed).routing, { queued: [{ projectId: "PROJECT02", revision: 2 }], failed: [] });
+  const saved = (await store.read("PROJECT02"))!.doc;
+  assert.equal(saved.displayName, "edited meanwhile");
+  assert.equal((saved.failover as Doc).revision, 2);
 });
