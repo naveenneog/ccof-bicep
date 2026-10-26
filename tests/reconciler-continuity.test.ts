@@ -204,6 +204,23 @@ test("gate on: usage without budget attribution refuses before any write", async
   assert.equal(run.unattributedRequests, 1);
 });
 
+const NO_TOKENS = { input: null, output: null, cacheWrite5m: null, cacheWrite1h: null, cacheRead: null };
+
+test("gate on: an unattributed failed call with no token counts is reported, not refused", async () => {
+  const failed = ledgerRow({ ...NO_TOKENS, attributionKnown: false, requestFailed: true, usageSource: "log" });
+  const azure = pilot({ ledger: ledgerBody([ledgerRow(FULL), ledgerRow({ ...FULL, classification: "PRM", personId: PERSON_B }), failed]) });
+  const { run } = await runOnce(azure);
+  assert.deepEqual([run.outcome, run.reason], ["written", null]);
+  assert.equal(run.unattributedFailedRequests, 1);
+});
+
+test("gate on: an unattributed call still refuses when it succeeded or carries any token count", async () => {
+  const succeeded = pilot({ ledger: ledgerBody([ledgerRow({ ...NO_TOKENS, attributionKnown: false, requestFailed: false, usageSource: "log" })]) });
+  assertRefused(succeeded, (await runOnce(succeeded)).run, "ledger_attribution_missing", "succeeded without tokens");
+  const counted = pilot({ ledger: ledgerBody([ledgerRow({ ...NO_TOKENS, input: 5, attributionKnown: false, requestFailed: true, usageSource: "log" })]) });
+  assertRefused(counted, (await runOnce(counted)).run, "ledger_attribution_missing", "failed with a token count");
+});
+
 test("gate on: a legacy current-period state without a verified coverage marker refuses", async () => {
   const azure = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", null) } });
   const { run } = await runOnce(azure);

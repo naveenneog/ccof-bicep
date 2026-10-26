@@ -150,6 +150,7 @@ export interface LedgerRowSpec {
   cacheWrite1h?: number | null;
   cacheRead?: number | null;
   requestId?: string;
+  requestFailed?: boolean;
 }
 
 let requestCounter = 0;
@@ -174,5 +175,6 @@ export function ledgerRow(spec: LedgerRowSpec = {}): Record<string, unknown> {
     cacheWrite5mTokens: spec.cacheWrite5m === undefined ? 0 : spec.cacheWrite5m,
     cacheWrite1hTokens: spec.cacheWrite1h === undefined ? 0 : spec.cacheWrite1h,
     cacheReadTokens: spec.cacheRead === undefined ? 0 : spec.cacheRead,
+    requestFailed: spec.requestFailed ?? false,
   };
 }

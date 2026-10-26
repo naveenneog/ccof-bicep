@@ -32,6 +32,8 @@ export type RowOutcome =
 export interface ClassifiedRow {
   attribution: Attribution | null;
   outcome: RowOutcome;
+  // The gateway reported the request failed and the ledger has no token count of any kind.
+  failedWithoutUsage: boolean;
   ingestionDelaySeconds: number | null;
   // When the row became queryable; null when the ledger gave no valid time.
   ingestedAtMs: number | null;
@@ -111,6 +113,7 @@ export function classifyRow(row: LedgerRow, period: BudgetPeriod, card: RateCard
   return {
     attribution: attributionOf(row),
     outcome: at === null ? invalidRow : priceRow(row, at, card, schedule),
+    failedWithoutUsage: row.requestFailed === true && TOKEN_COLUMNS.every(([, column]) => row[column] === null),
     ingestionDelaySeconds: at === null || ingested === null ? null : (ingested.getTime() - at.getTime()) / 1000,
     ingestedAtMs: ingested === null ? null : ingested.getTime(),
   };

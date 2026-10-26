@@ -24,6 +24,7 @@ export const LEDGER_COLUMNS = [
   "cacheWrite5mTokens",
   "cacheWrite1hTokens",
   "cacheReadTokens",
+  "requestFailed",
 ] as const;
 
 export type LedgerColumn = (typeof LEDGER_COLUMNS)[number];
@@ -87,12 +88,18 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 // response format", retrieved 2026-10-11): `tables`, each with `columns`
 // and `rows`; a non-fatal error returns 200 with an `error` property, code
 // PartialError, beside whatever rows were returned.
+// Columns a response may lack (answers recorded before the column existed); absent, the value is undefined.
+const OPTIONAL_LEDGER_COLUMNS: ReadonlySet<LedgerColumn> = new Set<LedgerColumn>(["requestFailed"]);
+
 export function parseLedgerResponse(body: unknown, maxRows: number): LedgerRow[] {
   const { names, rows } = readPrimaryResult(body);
   const index = new Map<LedgerColumn, number>();
   for (const column of LEDGER_COLUMNS) {
     const position = names.indexOf(column);
-    if (position < 0) throw new LedgerReadError("ledger_response_invalid", `column:${column}`);
+    if (position < 0) {
+      if (OPTIONAL_LEDGER_COLUMNS.has(column)) continue;
+      throw new LedgerReadError("ledger_response_invalid", `column:${column}`);
+    }
     index.set(column, position);
   }
   // At the limit the service may have stopped early; the period would be
@@ -100,7 +107,10 @@ export function parseLedgerResponse(body: unknown, maxRows: number): LedgerRow[]
   if (rows.length >= maxRows) throw new LedgerReadError("ledger_row_limit_reached", String(rows.length));
   return rows.map((row) => {
     const record = {} as Record<LedgerColumn, unknown>;
-    for (const column of LEDGER_COLUMNS) record[column] = row[index.get(column) as number];
+    for (const column of LEDGER_COLUMNS) {
+      const position = index.get(column);
+      record[column] = position === undefined ? undefined : row[position];
+    }
     return record;
   });
 }

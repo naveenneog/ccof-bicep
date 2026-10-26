@@ -2,6 +2,11 @@
 
 ## 2026-10-26 - Continuity gate: one-time baseline adoption
 
+- Continuity gate: an unattributed ledger row for a failed request with no token count of any kind
+  (a backend timeout or connection failure, which never carries the gateway's attribution trace) is
+  reported as `unattributedFailedRequests` and no longer refuses. Other unattributed rows still
+  refuse. The reconciler reads the ledger's `requestFailed` column; an answer without it is treated
+  as unknown.
 - Fixed: the reconciler refused `RECONCILER_LEDGER_COVERAGE_START_AT` as stored by App Service. The
   platform drops zero milliseconds (`…34.000Z` reads back as `…34Z`), and the parser required exactly
   three fractional digits. Both continuity timestamps now accept a UTC `Z` instant with or without

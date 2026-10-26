@@ -118,3 +118,23 @@ Tests: `tests/reconciler-settings.test.ts` (setting rules) and `tests/reconciler
 (adoption, stamping, mismatch, gap and decrease refusals). Four mutants (adopt any marker, skip the
 mismatch check, skip the gate check, force adoption on) each fail a named test with the test count
 unchanged.
+
+**Failed calls without attribution.** With adoption in place, the lab's first gated run refused with
+`ledger_attribution_missing`. The October ledger had 36 unattributed rows: 20 on gateway A
+(2026-10-24/25) and the 16 drill timeouts on gateway B. All 36 were failed requests with every
+token count null and no `ccof.usage.v1` trace. The gateway emits the attribution trace only when a
+response arrives, so a backend timeout or connection failure is never attributed. A real
+primary-region outage produces exactly these rows, so the gate as written could never promote the
+standby after the outage it exists for.
+
+Decision: an unattributed row whose `requestFailed` is `true` and whose five token counts are all null
+is counted as `unattributedFailedRequests` on the run line and does not refuse. Any other unattributed
+row still refuses: a successful request, or a failed one with any token count. A ledger answer without
+the `requestFailed` column (recorded before it existed) reads the value as unknown, so those rows still
+refuse. Such a row has no figure to charge to anyone, and the gate-off reconciler has always skipped
+it. Refusing it protected no budget figure and blocked promotion.
+
+Residual risk: a call that timed out at the gateway but completed at the backend is billed by Azure
+and not counted. That is true with the gate on or off; the gate cannot recover the count. Tests:
+`tests/reconciler-continuity.test.ts` (exempt case; refusals for a successful call without tokens and
+a failed call with a token count). Five mutants each fail a named test with the test count unchanged.
