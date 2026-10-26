@@ -2,6 +2,10 @@
 
 ## 2026-10-26 - Continuity gate: one-time baseline adoption
 
+- Fixed: the reconciler refused `RECONCILER_LEDGER_COVERAGE_START_AT` as stored by App Service. The
+  platform drops zero milliseconds (`…34.000Z` reads back as `…34Z`), and the parser required exactly
+  three fractional digits. Both continuity timestamps now accept a UTC `Z` instant with or without
+  fractional seconds and are compared in normalized form.
 - Added `RECONCILER_LEDGER_BASELINE_ADOPT`. With the gate `on` and a value equal to
   `RECONCILER_LEDGER_COVERAGE_START_AT`, a run accepts current-period budget states that have no
   coverage marker and stamps the marker on every state it writes. A different marker, a log gap,

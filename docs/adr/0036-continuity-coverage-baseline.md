@@ -106,6 +106,14 @@ that was persisted is caught by `spend_would_decrease`, because the recomputed s
 
 **Consequences.** Region A should run with the gate `on` permanently: the DR-05R checks no longer
 refuse quiet periods, and a gate-off run writes unmarked states that block the next failover.
+
+**Stored timestamp form.** App Service drops zero milliseconds from date-like app setting values: a
+PUT of `2026-10-20T15:41:34.000Z` (through `az functionapp config appsettings set`, `az rest` and a
+raw HTTP request) reads back as `2026-10-20T15:41:34Z` (lab, 2026-10-26). Before this amendment the
+reconciler required exactly three fractional digits, so every deployment that set a coverage start
+would have failed settings validation at run time. Both settings now accept a UTC `Z` instant with
+or without fractional seconds, refuse offsets and impossible dates, and compare the normalized
+millisecond form; markers are written in that form.
 Tests: `tests/reconciler-settings.test.ts` (setting rules) and `tests/reconciler-continuity.test.ts`
 (adoption, stamping, mismatch, gap and decrease refusals). Four mutants (adopt any marker, skip the
 mismatch check, skip the gate check, force adoption on) each fail a named test with the test count

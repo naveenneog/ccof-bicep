@@ -71,6 +71,8 @@ Optional; with none set the reconciler behaves as before. Design: [DR required c
 | `RECONCILER_LEDGER_BASELINE_ADOPT` | not set | One-time adoption of current-period states written before markers existed ([ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption)). The value must equal `RECONCILER_LEDGER_COVERAGE_START_AT` exactly (`mismatch` otherwise) and the gate must be `on` (`gate_not_on`). A missing marker is accepted and stamped; a different marker, a log gap, unattributed usage and lower spend still refuse. The run line reports `continuityBaselineAdopted`. Remove the setting after one passing run |
 
 Set the coverage start before traffic is allowed and keep the value unchanged for the deployment.
+App Service stores `2026-10-20T15:41:34.000Z` as `2026-10-20T15:41:34Z`; the reconciler accepts both
+and compares them as the same instant.
 Quiet periods are valid. A backend-forwarded model request without a matching LLM usage row, or an
 LLM usage row without a gateway request, is not.
 For the first gate-on run, enable diagnostics first and keep the writers fenced until the coverage

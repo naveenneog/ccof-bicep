@@ -193,7 +193,19 @@ function readPacing(r: Reader, settings: Settings, intervalMinutes: number | und
   return { softLimitPercent, windowMinutes };
 }
 
-const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// A UTC instant with a "Z" suffix and optional fractional seconds. App Service stores
+// "2026-10-20T15:41:34.000Z" as "2026-10-20T15:41:34Z" (observed 2026-10-26), so both spellings are
+// accepted and normalized to toISOString() form. Offsets and impossible dates are refused.
+const UTC_INSTANT = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?Z$/;
+
+function parseUtcInstant(raw: string): string | undefined {
+  const match = UTC_INSTANT.exec(raw);
+  if (!match) return undefined;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  const iso = parsed.toISOString();
+  return iso.slice(0, 19) === match[1] ? iso : undefined;
+}
 
 // DR-05R: an enabled gate requires the UTC time at which APIM request and usage
 // diagnostics were verified before model traffic was allowed.
@@ -203,12 +215,8 @@ function readContinuity(r: Reader, settings: Settings): ContinuityGate | undefin
   const rawCoverageStartAt = settings.RECONCILER_LEDGER_COVERAGE_START_AT?.trim();
   let coverageStartAt: string | undefined;
   if (rawCoverageStartAt) {
-    const parsed = UTC_INSTANT.test(rawCoverageStartAt) ? new Date(rawCoverageStartAt) : new Date(Number.NaN);
-    if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== rawCoverageStartAt) {
-      r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "invalid");
-    } else {
-      coverageStartAt = parsed.toISOString();
-    }
+    coverageStartAt = parseUtcInstant(rawCoverageStartAt);
+    if (coverageStartAt === undefined) r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "invalid");
   } else if (gate === "on") {
     r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "missing");
   }
@@ -226,12 +234,12 @@ function readBaselineAdoption(r: Reader, settings: Settings, gate: string | unde
     r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "gate_not_on");
     return false;
   }
-  const parsed = UTC_INSTANT.test(raw) ? new Date(raw) : new Date(Number.NaN);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== raw) {
+  const adopted = parseUtcInstant(raw);
+  if (adopted === undefined) {
     r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "invalid");
     return false;
   }
-  if (coverageStartAt !== undefined && raw !== coverageStartAt) {
+  if (coverageStartAt !== undefined && adopted !== coverageStartAt) {
     r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "mismatch");
     return false;
   }

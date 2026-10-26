@@ -222,6 +222,11 @@ test("DR continuity gate requires a verified UTC coverage start when enabled", (
 test("DR continuity gate: baseline adoption must name the exact coverage start and needs the gate on", () => {
   const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
   const start = "2026-10-20T15:41:34.000Z";
+  // App Service stores "…34.000Z" as "…34Z" (observed 2026-10-26); both spellings name the same instant.
+  const platform = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-20T15:41:34Z", RECONCILER_LEDGER_BASELINE_ADOPT: "2026-10-20T15:41:34Z" });
+  assert.deepEqual(platform.ok && platform.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
+  const mixed = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-20T15:41:34Z", RECONCILER_LEDGER_BASELINE_ADOPT: start });
+  assert.deepEqual(mixed.ok && mixed.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
   const adopted = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: start });
   assert.deepEqual(adopted.ok && adopted.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
   const cases: Array<[Record<string, string>, string]> = [
@@ -244,6 +249,9 @@ test("DR continuity gate: invalid coverage starts and gate values are refused", 
     [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
     [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00+00:00" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
     [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-02-30T00:00:00.000Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-02-30T00:00:00Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T24:00:00Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
     [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: "not-a-date" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
   ];
   for (const [overrides, setting, problem] of cases) {
