@@ -216,7 +216,25 @@ test("DR continuity gate requires a verified UTC coverage start when enabled", (
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.deepEqual(missing.problems, [{ setting: "RECONCILER_LEDGER_COVERAGE_START_AT", problem: "missing" }]);
   const on = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.000Z" });
-  assert.deepEqual(on.ok && on.settings.continuity, { coverageStartAt: "2026-10-01T00:00:00.000Z" });
+  assert.deepEqual(on.ok && on.settings.continuity, { coverageStartAt: "2026-10-01T00:00:00.000Z", adoptUnmarkedBaseline: false });
+});
+
+test("DR continuity gate: baseline adoption must name the exact coverage start and needs the gate on", () => {
+  const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
+  const start = "2026-10-20T15:41:34.000Z";
+  const adopted = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: start });
+  assert.deepEqual(adopted.ok && adopted.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
+  const cases: Array<[Record<string, string>, string]> = [
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: "2026-10-20T15:41:35.000Z" }, "mismatch"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: "yes" }, "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: start }, "gate_not_on"],
+    [{ RECONCILER_LEDGER_BASELINE_ADOPT: start }, "gate_not_on"],
+  ];
+  for (const [overrides, problem] of cases) {
+    const result = read(overrides);
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: "RECONCILER_LEDGER_BASELINE_ADOPT", problem }], JSON.stringify(overrides));
+  }
 });
 
 test("DR continuity gate: invalid coverage starts and gate values are refused", () => {

@@ -210,6 +210,33 @@ test("gate on: a legacy current-period state without a verified coverage marker 
   assertRefused(azure, run, "ledger_coverage_baseline_missing");
 });
 
+const ADOPT = { ...GATE_ON, RECONCILER_LEDGER_BASELINE_ADOPT: COVERAGE_START };
+
+test("gate on with baseline adoption: an unmarked current-period state is adopted, stamped and counted", async () => {
+  const azure = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", null) } });
+  const { run } = await runOnce(azure, ADOPT);
+  assert.deepEqual([run.outcome, run.reason], ["written", null]);
+  assert.equal(run.continuityGate, "passed");
+  assert.equal(run.continuityBaselineAdopted, 1);
+  assert.ok(azure.budgetStates.every((doc) => doc.ledgerCoverageStartAt === COVERAGE_START));
+  assert.ok(azure.aggregateStates.every((doc) => doc.ledgerCoverageStartAt === COVERAGE_START));
+});
+
+test("gate on with baseline adoption: a marked state is not counted as adopted", async () => {
+  const { run } = await runOnce(pilot(), ADOPT);
+  assert.deepEqual([run.outcome, run.continuityBaselineAdopted], ["written", 0]);
+});
+
+test("gate on with baseline adoption: a changed marker, a log gap and lower spend still refuse", async () => {
+  const mismatch = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", "2026-10-02T00:00:00.000Z") } });
+  assertRefused(mismatch, (await runOnce(mismatch, ADOPT)).run, "ledger_coverage_baseline_mismatch");
+  const gap = { gatewayResourceId: APIM_B.toLowerCase(), gapKind: "backend_call_without_llm", issueCount: 1, firstAt: "2026-10-11T12:30:00.000Z" };
+  const gapped = pilot({ continuity: continuityBody([gap]), persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", null) } });
+  assertRefused(gapped, (await runOnce(gapped, ADOPT)).run, "ledger_continuity_gap");
+  const lower = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.16", "2026-10", null) } });
+  assertRefused(lower, (await runOnce(lower, ADOPT)).run, "spend_would_decrease", "an adopted state cannot lower spend");
+});
+
 test("gate on: a persisted coverage marker cannot change within a budget period", async () => {
   const azure = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", "2026-10-02T00:00:00.000Z") } });
   const { run } = await runOnce(azure);

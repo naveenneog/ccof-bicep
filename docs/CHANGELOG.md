@@ -1,5 +1,16 @@
 # Change log
 
+## 2026-10-26 - Continuity gate: one-time baseline adoption
+
+- Added `RECONCILER_LEDGER_BASELINE_ADOPT`. With the gate `on` and a value equal to
+  `RECONCILER_LEDGER_COVERAGE_START_AT`, a run accepts current-period budget states that have no
+  coverage marker and stamps the marker on every state it writes. A different marker, a log gap,
+  unattributed usage and a spend decrease still refuse. The run line reports
+  `continuityBaselineAdopted`. Decision: [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption).
+- Resolved DR-13: the Region B 504s in the 2026-10-25 drill came from the drill's injected backend
+  address; the backend was restored on 2026-10-26. Resolved DR-14: activity-log evidence shows no
+  model API existed on the lab gateway before diagnostics began.
+
 ## 2026-10-26 - DR-05R: coverage-aware continuity gate
 
 - Replaced month-start and recent-event heuristics with bidirectional correlation checks between

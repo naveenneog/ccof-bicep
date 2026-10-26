@@ -67,3 +67,46 @@ changes.
 Tests cover idle periods, a late first request after the configured coverage start, backend requests
 without usage rows, usage rows without gateway requests, requests before coverage start, legacy
 states without a marker, mismatched markers, failed telemetry reads and spend decreases.
+
+## Amendment 2026-10-26: one-time baseline adoption
+
+**Context.** The decision above gives an existing deployment no way to establish its first marker.
+A reconciler that ran with the gate off writes current-period states without
+`ledgerCoverageStartAt`. With the gate on, those states refuse
+(`ledger_coverage_baseline_missing`) until the month ends. The resolver fails closed once budget
+state passes its hard limit (ADR 0008), so a DR failover in such a month leaves the service
+refusing every budget-enforced request. The 2026-10-26 lab drill showed this: 50 of 50 calls through
+Front Door returned HTTP 503 `budget_state_stale`.
+
+**Lab evidence that replaced the October assumption.** The Context section above assumed October
+usage before 2026-10-20 might exist. Read-back on 2026-10-26 shows it cannot. Resource-group
+activity log from 2026-10-01 (2,617 events): the Cosmos account was created 2026-10-20T15:40:51Z,
+the APIM service was first written 15:41:16Z, the gateway diagnostic setting at 15:41:34.8Z, and the
+`claude-messages` API, backends and policies were first written at 16:21Z. No model API existed on
+the gateway before diagnostics began. The gate's correlation query for October, run live with both
+APIM IDs, returned no `backend_call_without_llm`, `llm_without_gateway` or `request_before_coverage`
+rows. APIM writes an LLM log row for a timed-out backend call (16 of 16 drill timeouts had one, with
+0 tokens), so backend failures do not appear as gaps.
+
+**Decision.** Add `RECONCILER_LEDGER_BASELINE_ADOPT`:
+
+- Its value must equal `RECONCILER_LEDGER_COVERAGE_START_AT` exactly, and the gate must be `on`.
+  Otherwise the run fails settings validation (`mismatch`, `gate_not_on`, `invalid`). Binding the
+  value to the coverage start means changing the start later voids the attestation.
+- With it, a current-period state with **no** marker is accepted and the run stamps the marker on
+  every state it writes. A state with a **different** marker still refuses. The coverage-gap,
+  attribution and `spend_would_decrease` checks run unchanged before any write.
+- The run line records `continuityBaselineAdopted` (number of unmarked states accepted).
+- The operator sets it once, with evidence that no model traffic preceded the coverage start
+  (activity log for the APIM API and the Cosmos account), and removes it after one passing run.
+
+**What it does not protect against.** Usage that occurred before the coverage start and was never
+persisted is invisible to every check; the operator's evidence is the only control. Unlogged usage
+that was persisted is caught by `spend_would_decrease`, because the recomputed spend is lower.
+
+**Consequences.** Region A should run with the gate `on` permanently: the DR-05R checks no longer
+refuse quiet periods, and a gate-off run writes unmarked states that block the next failover.
+Tests: `tests/reconciler-settings.test.ts` (setting rules) and `tests/reconciler-continuity.test.ts`
+(adoption, stamping, mismatch, gap and decrease refusals). Four mutants (adopt any marker, skip the
+mismatch check, skip the gate check, force adoption on) each fail a named test with the test count
+unchanged.

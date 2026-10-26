@@ -134,21 +134,33 @@ export function plannedStates(persons: ReadonlyArray<{ doc: BudgetStateDocument 
   ];
 }
 
+export interface CoverageBaselineCheck {
+  issue: CoverageBaselineIssue | null;
+  adopted: number;
+}
+
+// adoptUnmarked accepts a missing marker (counted in adopted); a changed marker always refuses.
 export function coverageBaselineIssue(
   planned: readonly PlannedState[],
   persisted: ReadonlyMap<string, unknown>,
   period: BudgetPeriod,
   coverageStartAt: string,
-): CoverageBaselineIssue | null {
+  adoptUnmarked = false,
+): CoverageBaselineCheck {
+  let adopted = 0;
   for (const state of planned) {
     const doc = persisted.get(`${state.kind}:${state.scopeId}`);
     if (persistedSpend(doc, state.kind, period) === null) continue;
     if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new StateReadError();
     const marker = (doc as Record<string, unknown>).ledgerCoverageStartAt;
-    if (typeof marker !== "string") return "ledger_coverage_baseline_missing";
-    if (marker !== coverageStartAt) return "ledger_coverage_baseline_mismatch";
+    if (marker === undefined && adoptUnmarked) {
+      adopted++;
+      continue;
+    }
+    if (typeof marker !== "string") return { issue: "ledger_coverage_baseline_missing", adopted };
+    if (marker !== coverageStartAt) return { issue: "ledger_coverage_baseline_mismatch", adopted };
   }
-  return null;
+  return { issue: null, adopted };
 }
 
 export interface SpendComparison {

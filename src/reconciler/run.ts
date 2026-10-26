@@ -200,8 +200,9 @@ async function checkContinuity(gate: ContinuityGate, settings: ReconcilerSetting
   }
   const persisted = await step("budget_state_read_failed", () => readPersisted(planned, deps, settings.writeConcurrency));
   const states = plannedStates(planned.result.persons, planned.result.groups);
-  const baselineIssue = await step("budget_state_read_failed", async () => coverageBaselineIssue(states, persisted, period, coverageStartAt));
-  if (baselineIssue) refuse(baselineIssue, { continuityCondition: baselineIssue });
+  const baseline = await step("budget_state_read_failed", async () => coverageBaselineIssue(states, persisted, period, coverageStartAt, gate.adoptUnmarkedBaseline));
+  fields.continuityBaselineAdopted = baseline.adopted;
+  if (baseline.issue) refuse(baseline.issue, { continuityCondition: baseline.issue });
   if (planned.result.counts.unattributedRequests > 0) {
     refuse("ledger_attribution_missing", { unattributedRequests: planned.result.counts.unattributedRequests });
   }

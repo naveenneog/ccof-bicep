@@ -42,6 +42,8 @@ export interface ReconcilerSettings {
 
 export interface ContinuityGate {
   coverageStartAt: string;
+  // ADR 0036 amendment: one-time operator adoption of current-period states written before markers existed.
+  adoptUnmarkedBaseline: boolean;
 }
 
 export interface SettingProblem {
@@ -210,8 +212,30 @@ function readContinuity(r: Reader, settings: Settings): ContinuityGate | undefin
   } else if (gate === "on") {
     r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "missing");
   }
+  const adoptUnmarkedBaseline = readBaselineAdoption(r, settings, gate, coverageStartAt);
   if (gate !== "on" || coverageStartAt === undefined) return undefined;
-  return { coverageStartAt };
+  return { coverageStartAt, adoptUnmarkedBaseline };
+}
+
+// RECONCILER_LEDGER_BASELINE_ADOPT must repeat the exact coverage start, so the attestation that no
+// model traffic preceded coverage is bound to that start and lapses if the start is changed.
+function readBaselineAdoption(r: Reader, settings: Settings, gate: string | undefined, coverageStartAt: string | undefined): boolean {
+  const raw = settings.RECONCILER_LEDGER_BASELINE_ADOPT?.trim();
+  if (!raw) return false;
+  if (gate !== "on") {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "gate_not_on");
+    return false;
+  }
+  const parsed = UTC_INSTANT.test(raw) ? new Date(raw) : new Date(Number.NaN);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== raw) {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "invalid");
+    return false;
+  }
+  if (coverageStartAt !== undefined && raw !== coverageStartAt) {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "mismatch");
+    return false;
+  }
+  return true;
 }
 
 // RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS (DR) is optional; without it the single id is required.

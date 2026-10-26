@@ -36,8 +36,12 @@ Open: BSL-05 (overshoot of about one burst of parallel streams). The per-request
 are implemented and proven live, and merged to `main` on 2026-10-25; results in
 [DR implementation](design/DR-IMPLEMENTATION.md#implemented-and-proven-2026-10-23).
 
-**Active packet:** DR-08 - full regional promotion and failback qualification. Blocked by the
-unresolved October ledger history (DR-14) and Region B primary-backend timeouts (DR-13).
+**Active packet:** DR-08 - full regional promotion and failback qualification. DR-13 and DR-14 are
+resolved (2026-10-26): the Region B 504s came from the drill's own injected backend fault (removed),
+and no October history is missing. Promotion uses the one-time baseline adoption in the
+[ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption).
+Observed on 2026-10-26: with both reconcilers fenced since 2026-10-25, 50 of 50 calls through Front
+Door returned HTTP 503 `budget_state_stale` (fail-closed, ADR 0008).
 
 DR-05R acceptance, complete:
 - Given a request-free period or a first request later in a month, the gate does not refuse solely because no earlier model request exists.
