@@ -223,6 +223,14 @@ Recovery figures documented by Microsoft:
    ([ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption));
    remove it after one passing run with `-Phase RemoveAdoption -Region B -Apply`. Admin B becomes
    writable once Cosmos accepts writes in Central US.
+
+   The driver reads Region A's Function App settings before every change, to confirm Region A is
+   fenced. If Region A's management API does not answer, `Promote` stops (exit 3) and changes
+   nothing; it has no option to skip that check. In that case Region A's writers are confirmed off
+   by other means (Region A unreachable, or its apps stopped), and Region B is promoted by hand: the
+   same settings in the same order, reconciler B gate and coverage first, then the two timers
+   (lab procedure: [runbook section 11.3](runbooks/DR-STANDBY-CLOUD-SHELL.md#113-promote-region-b)).
+   Whether the driver should accept an unreachable Region A is open (UNKNOWNS DR-18).
 7. **Verify.**
    - An admitted model call returns 200 through Front Door.
    - `/ccof-usage/me/usage` returns current figures.

@@ -762,6 +762,10 @@ pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
    **Expect:** lines such as `<region-B reconciler> RECONCILER_CONTINUITY_GATE=on (read back on)`, then
    both `...Disabled=false (read back false)`, the printed workspace call, `region A (...): writing=False`,
    `region B (...): writing=True` and `result: promoted`.
+
+   `Promote` reads region A's app settings first. When region A's management API does not answer,
+   it stops with exit 3 and changes nothing. Region B is then promoted by hand as in 11.3, after
+   region A's writers are confirmed off by other means (UNKNOWNS DR-18).
 4. **Check the run lines** with the 11.3 query. After one `written` run with gate `passed`, remove the
    adoption: `pwsh -NoProfile -File $fo -Phase RemoveAdoption -Region B -ConfigPath $cfg -Apply`.
 5. **Workspace switchover** (optional, owner's decision): run the printed call. Read 11.5 first (DR-17).
