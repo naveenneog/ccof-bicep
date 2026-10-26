@@ -103,8 +103,8 @@ The driver refuses it until the placeholders are replaced. Sections:
 | `tenantId`, `subscriptionId`, `resourceGroup`, `location`, `tags` | all | GUIDs are validated |
 | `stage1` | 1 | Exactly the `main.bicep` parameters. Defaults: every public network access `Disabled`, APIM deferred, `StandardV2` |
 | `cosmos` | 2, 3 | Database name, capacity mode, custom role names |
-| `apim` | 3, 5 | `existing` APIM, or the Stage 1 one; API id, path and display name |
 | `stage1.apimZoneRedundant` | 1 | Optional, default `false`. `true` creates the new APIM as zone redundant (`StandardV2`/`PremiumV2` only; set at creation, not changeable later). Fewer than two `apimUnits` prints a warning. See [Stage 1](#stage-1-resources-only) |
+| `apim` | 3, 5, 6 | `existing` APIM `{ subscriptionId, resourceGroup, name }`, or the Stage 1 one; API id, path and display name. Optional on `existing`, both default `false`: `configureGatewayDiagnostics` (Stage 5 creates or updates the `ccof-gateway-logs` setting, `GatewayLogs` and `GatewayLlmLogs` to the Stage 1 workspace; refuses a same-named setting that targets another workspace) and `integrateOutboundVnet` (Stage 6 PATCHes outbound integration on `network.existing.apimSubnetId`; modes `verify`/`existing`, Standard v2 or Premium v2 only, identity checked afterwards). The example file has `existing: null` |
 | `stage1.foundry` | 0, 1, 6 | Optional new Foundry account: `create`, `accountName`, `publicNetworkAccess` (default `Disabled`), `deployments` [{ name, model, version, sku, capacity }], `modelProviderData` { organizationName, countryCode, industry } (required with deployments), or `modelDeploymentsBlocked` with the reason |
 | `sharedResourceGroup` | 1 | `true` to deploy beside existing resources: apply only when what-if shows no Modify or Delete outside the exact resource IDs recorded by the prior Stage 1 deployment |
 | `backends` | 0, 3, 5, 6 | Foundry accounts, deployment names and inference geography; `privateEndpoint: true` makes Stage 6 check (or, in modes `existing`/`create`, create) its private endpoint and DNS |
@@ -221,7 +221,9 @@ set and Stage 5 is rerun. Nothing in this stage needs the network.
 Stage 1 resource IDs and stops with `verify_failed` on any FAIL row. Its rows are saved in
 `.staged-state\network-check.json` and `evidence\stage6.verify.json`. The check reads private
 endpoints in the VNet's resource group and zones in the deployment subscription; it does not test
-DNS resolution from inside the VNet or firewall egress. Read access is enough to run it.
+DNS resolution from inside the VNet or firewall egress. Read access is enough to run it. The one
+exception is opt-in: with `apim.existing.integrateOutboundVnet: true`, Stage 6 first integrates
+the existing APIM (as in mode `existing`) and the check then includes it.
 
 **`network.mode: existing` (opt-in).** The driver deploys
 [`stage6-network.bicep`](../../infra/staged/stage6-network.bicep) into the customer's subnets and

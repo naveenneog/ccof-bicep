@@ -54,6 +54,8 @@ function Invoke-Stage5 {
         apimIdentityAppId = $apimSp.appId; apimPrincipalId = $ctx.Apim.principalId; admin = $admin
         workbook = $Cfg.workbook; workbookContent = $report.workbookContent.value; workbookContentTags = $report.contentTags.value
     }
+    # Opted-in gateway diagnostics on an existing APIM; a conflicting setting stops the stage before any write.
+    $apimDiagnostics = Invoke-StgExistingApimDiagnostics -Cfg $Cfg -Stage1 $s1 -Apply:$Apply
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name (Get-StgDeploymentName $Cfg 'stage5-config') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 5 $params)
     if (-not $Apply) { return $null }
     $v = [ordered]@{ settings = [ordered]@{} }
@@ -70,6 +72,7 @@ function Invoke-Stage5 {
     Assert-Stg ($api.properties.path -ceq $a.apiPath) 'APIM API path differs'
     $v.api = @{ id = $a.apiId; path = $api.properties.path; policySha256 = (Get-FileHash -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($policy))) -Algorithm SHA256).Hash }
     $v.timers = @{ sync = [bool]$Cfg.syncTimerEnabled; reconciler = [bool]$Cfg.reconciler.timerEnabled }
+    if ($apimDiagnostics) { $v.apimDiagnostics = $apimDiagnostics }
     $null = Write-StgEvidence 'stage5.verify.json' $v
     return @{ gatewayUrl = $out.gatewayUrl; settingsWritten = $out.settingsWritten; workbookDeployed = $out.workbookDeployed; apimIdentityAppId = $apimSp.appId; verify = $v }
 }

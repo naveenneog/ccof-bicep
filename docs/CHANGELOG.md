@@ -40,6 +40,25 @@
   Zone redundancy is set only at creation ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support)).
   Not deployed live; see UNKNOWNS APIM-ZR-01 to APIM-ZR-03.
 
+## 2026-10-26 - Staged driver: existing-APIM diagnostics and outbound integration
+
+- Added two optional flags under `apim.existing`, both default `false`. The driver changes a
+  customer's existing APIM only when one is `true`; before this, both steps were manual for an
+  existing APIM, which in a customer deployment on 2026-10-26 led to hand-run commands.
+- `configureGatewayDiagnostics`: Stage 5 creates or updates the diagnostic setting
+  `ccof-gateway-logs` (`GatewayLogs`, `GatewayLlmLogs`, resource-specific tables) to the Stage 1
+  workspace, as `infra/staged/apim-service.bicep` does for a new APIM, and reads it back. A setting
+  of that name sending to another workspace stops the stage with `apim_diagnostics_conflict`.
+- `integrateOutboundVnet`: Stage 6 integrates the existing APIM on `network.existing.apimSubnetId`
+  through the same ARM PATCH used for a new APIM (`az apim update` is not used: it sets the identity
+  to None without `--enable-managed-identity true`, azure-cli `apim/custom.py`). The APIM's SKU is
+  read at run time and must be Standard v2 or Premium v2; the identity must still be
+  system-assigned afterwards. `Read-StgConfig` refuses non-boolean flags, a missing or
+  other-subscription APIM subnet, `network.mode: create`, and the flags together with a new APIM.
+- With either flag off, the Stage 1 and Stage 5 previews print a one-line note naming the manual
+  step. Docs: [DEPLOY-STEP-BY-STEP](runbooks/DEPLOY-STEP-BY-STEP.md),
+  [STAGED-DEPLOYMENT-V2](runbooks/STAGED-DEPLOYMENT-V2.md#configuration-file).
+
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
