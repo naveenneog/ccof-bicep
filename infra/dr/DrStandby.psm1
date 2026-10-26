@@ -66,7 +66,10 @@ function Get-DrStandbyNames {
 # section that tells the stage functions to keep their names apart from region A's.
 function New-DrStandbyStagedConfig {
     param([Parameter(Mandatory)] [Collections.IDictionary]$Primary, [Parameter(Mandatory)] $Dr, [Parameter(Mandatory)] [string]$VnetId, [Parameter(Mandatory)] [hashtable]$ZoneIds, [string[]]$GatewayResourceIds = @())
-    $coverageStartAt = $Primary.reconciler.ledgerCoverageStartAt
+    $primaryReconciler = $Primary.reconciler
+    $coverageStartAt = if ($primaryReconciler -is [Collections.IDictionary] -and $primaryReconciler.Contains('ledgerCoverageStartAt')) {
+        $primaryReconciler['ledgerCoverageStartAt']
+    } else { $null }
     if ($null -ne $coverageStartAt -and $coverageStartAt -isnot [string]) {
         throw 'primary_coverage_start_invalid: reconciler.ledgerCoverageStartAt must be preserved as a UTC string.'
     }

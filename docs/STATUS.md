@@ -68,10 +68,11 @@ Implementation checkpoint (2026-10-26):
 - Final packet gate after this change passed (`npm test`, typecheck and build); the existing file-size
   and open-unknown warnings remain. The timeout investigation and metadata-only republish path are
   still open under DR-13.
-- `Invoke-DrStandby.ps1 -Phase Verify` was attempted with the explicit lab profile and returned exit
-  code 1 without a diagnostic line, so it produced no refreshed evidence. The last saved Verify
-  result (2026-10-25) listed four apps, both standby writers off, and the APIM API path present.
-  The Verify phase is read-only for Azure; no Azure resource changes were made.
+- The latest read-only `Invoke-DrStandby.ps1 -Phase Verify` succeeded at 2026-10-26T04:59:27Z:
+  four apps were listed, both Region B writers were off, and the APIM API path was present. The retry
+  first exposed a legacy-config bug when the optional coverage property was absent; the local fix
+  passes `tests/Test-DrStandby.ps1` (77 checks) and awaits the final packet gate and commit. The
+  Verify phase made no Azure resource changes.
 - **Current October limitation:** APIM service diagnostics were enabled on 2026-10-20T15:41:34Z. Both gateway tables have no rows before 2026-10-20, while October spend is already persisted. DR-05R must not infer that earlier traffic was absent. The current-month writer promotion remains blocked until that history is recovered or the period changes.
 - **APIM B timeout finding:** 16 priority-1 timeouts and 15 Central US fallback responses were observed in the 2026-10-25 drill. The live breaker opens after one failure for two minutes and includes `Timeout`; the observed cadence is consistent with primary re-probes after the circuit resets. A controlled test must confirm that behavior. The primary timeout's cause and acceptable probe interval remain open.
 

@@ -167,6 +167,12 @@ $b = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/sta
 Check 'standby config: standby location' ($b.location -ceq 'centralus')
 Check 'standby config: both writers off' ($b.syncTimerEnabled -eq $false -and $b.reconciler.timerEnabled -eq $false)
 Check 'standby config: UTC coverage start remains a canonical string' ($b.reconciler.continuityGate -ceq 'on' -and $b.reconciler.ledgerCoverageStartAt -is [string] -and $b.reconciler.ledgerCoverageStartAt -ceq '2026-10-20T15:41:34.000Z')
+$coverageStartAt = $primary.reconciler.ledgerCoverageStartAt
+$primary.reconciler.Remove('continuityGate'); $primary.reconciler.Remove('ledgerCoverageStartAt')
+$withoutCoverage = $null; $failed = $false
+try { $withoutCoverage = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones } catch { $failed = $true }
+Check 'standby config: optional continuity settings remain absent for a single-region config' (-not $failed -and -not $withoutCoverage.reconciler.Contains('continuityGate') -and -not $withoutCoverage.reconciler.Contains('ledgerCoverageStartAt'))
+$primary.reconciler.continuityGate = 'on'; $primary.reconciler.ledgerCoverageStartAt = $coverageStartAt
 Check 'standby config: existing standby subnets and shared zones' ($b.network.mode -ceq 'existing' -and $b.network.existing.functionsSubnetId -ceq '/v/standby/subnets/snet-functions' -and $b.network.existing.privateDnsZoneIds.cosmos -ceq '/z/documents')
 Check 'standby config: no second Foundry private endpoint' ($b.backends[0].privateEndpoint -eq $false)
 Check 'standby config: standby section set' ($b.standby.stage1DeploymentName -ceq 'dr-standby-shells' -and $b.standby.endpointNameSuffix -ceq '-b')
