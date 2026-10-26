@@ -31,11 +31,15 @@ Open: BSL-05 (overshoot of about one burst of parallel streams). The per-request
 
 ## Disaster recovery implementation
 
-**Active packet:** DR-05R - coverage-aware continuity gate. DR-02 to DR-04 and DR-06 (P0-P2)
+**Last completed packet:** DR-05R - coverage-aware continuity gate; committed as `25b77e7` on
+`feat/dr-standby` (not merged). DR-02 to DR-04 and DR-06 (P0-P2)
 are implemented and proven live, and merged to `main` on 2026-10-25; results in
 [DR implementation](design/DR-IMPLEMENTATION.md#implemented-and-proven-2026-10-23).
 
-Acceptance:
+**Active packet:** DR-08 - full regional promotion and failback qualification. Blocked by the
+unresolved October ledger history (DR-14) and Region B primary-backend timeouts (DR-13).
+
+DR-05R acceptance, complete:
 - Given a request-free period or a first request later in a month, the gate does not refuse solely because no earlier model request exists.
 - Given a model backend request without a matching LLM usage row, an LLM row without its gateway request, a request before the verified coverage start, or a state without the expected coverage marker, the gate refuses before writing.
 - Given matching logs, a persisted coverage marker, and nondecreasing spend, the gate writes the reconciled states; an existing state with lower computed spend remains refused.
@@ -53,6 +57,10 @@ Implementation checkpoint (2026-10-26):
   reported existing file-size warnings and open items for later DR packets. No Azure settings,
   routes or writers changed.
 
+- Last lab read-back (2026-10-26T03:22Z): Cosmos writes in Central US; the Front Door primary
+  origin still has the reversible drill fault; sync and reconciler timers are disabled in both
+  regions; the Region B continuity gate is on. No workspace switchover, writer promotion or
+  failback has been completed. The traffic drill has no retained screenshot.
 - **Current October limitation:** APIM service diagnostics were enabled on 2026-10-20T15:41:34Z. Both gateway tables have no rows before 2026-10-20, while October spend is already persisted. DR-05R must not infer that earlier traffic was absent. The current-month writer promotion remains blocked until that history is recovered or the period changes.
 - **APIM B timeout finding:** 16 priority-1 timeouts and 15 Central US fallback responses were observed in the 2026-10-25 drill. The live breaker opens after one failure for two minutes and includes `Timeout`; the observed cadence is consistent with primary re-probes after the circuit resets. A controlled test must confirm that behavior. The primary timeout's cause and acceptable probe interval remain open.
 
