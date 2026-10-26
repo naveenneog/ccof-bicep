@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+# Customer deployment configs and logs: environment identifiers, never committed.
+.customer-private/
 
 # Node dependencies - reinstalled via npm install, never committed
 node_modules/
