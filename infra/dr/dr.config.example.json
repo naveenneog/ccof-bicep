@@ -54,6 +54,9 @@
     "convertServerless": false,
     "autoscaleMaxThroughput": 1000
   },
+  "failover": {
+    "ledgerCoverageStartAt": "REPLACE-2026-01-01T00:00:00.000Z"
+  },
   "frontDoor": {
     "stem": "REPLACE-globally-unique-lowercase-frontdoor-name",
     "wafMode": "Detection",

@@ -199,7 +199,8 @@ Recovery figures documented by Microsoft:
    `az rest` without `--body` waited 55 minutes in the lab without starting the operation. Failback is
    `POST .../workspaces/<name>/failback` with the same body. The replica holds only data ingested after
    replication was enabled: in a month where replication started after the month began, the ledger is
-   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).5. **Ledger continuity gate.** Before enabling the Region B reconciler:
+   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).
+5. **Ledger continuity gate.** Before enabling the Region B reconciler:
    - the workspace answers the ledger query for the current month;
    - the newest APIM A record in the replica is within the replication lag of the outage start;
    - APIM B records are arriving.
@@ -212,16 +213,40 @@ Recovery figures documented by Microsoft:
    before writing. A quiet interval alone is not a gap. If a check fails, keep both writers off,
    preserve the gate, and record the missing evidence; budget-enforced requests are refused once
    figures pass the hard limit.
-6. **Promote Region B writers.** Set `AzureWebJobs.syncEntitlement.Disabled=false` on sync B and
-   enable the reconciler B timer. Admin B becomes writable once Cosmos accepts writes in Central US.
+6. **Promote Region B writers.** Run `infra/dr/Invoke-DrFailover.ps1 -Phase Promote -FenceSource`
+   (preview), then with `-Apply`. It refuses while Region A has a writer enabled (without
+   `-FenceSource`) or while Cosmos DB does not write in Central US, sets `RECONCILER_CONTINUITY_GATE=on`
+   and `RECONCILER_LEDGER_COVERAGE_START_AT` (from `failover.ledgerCoverageStartAt`) on reconciler B,
+   then enables the reconciler B and sync B timers, reading back each change
+   ([runbook section 12](runbooks/DR-STANDBY-CLOUD-SHELL.md#12-scripted-promotion-and-failback)).
+   `-AdoptBaseline` adds the one-time `RECONCILER_LEDGER_BASELINE_ADOPT`
+   ([ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption));
+   remove it after one passing run with `-Phase RemoveAdoption -Region B -Apply`. Admin B becomes
+   writable once Cosmos accepts writes in Central US.
+
+   The driver reads Region A's Function App settings before every change, to confirm Region A is
+   fenced. If Region A's management API does not answer, `Promote` stops (exit 3) and changes
+   nothing; it has no option to skip that check. In that case Region A's writers are confirmed off
+   by other means (Region A unreachable, or its apps stopped), and Region B is promoted by hand: the
+   same settings in the same order, reconciler B gate and coverage first, then the two timers
+   (lab procedure: [runbook section 11.3](runbooks/DR-STANDBY-CLOUD-SHELL.md#113-promote-region-b)).
+   Whether the driver should accept an unreachable Region A is open (UNKNOWNS DR-18).
 7. **Verify.**
    - An admitted model call returns 200 through Front Door.
    - `/ccof-usage/me/usage` returns current figures.
    - The admin console change record accepts a test edit.
    - A reconciler run completes.
+   - `Invoke-DrFailover.ps1 -Phase Status` shows Region B writing, Region A fenced and no
+     `split_brain`.
 
-**Failback:** run the same steps in reverse once Region A is healthy. Before re-enabling the Region A
-writers, turn off the Region B writers, so only one region writes at a time.
+**Failback:** run the same steps in reverse once Region A is healthy. Fail the workspace back first
+(the call `-Phase Failback` prints). Then `infra/dr/Invoke-DrFailover.ps1 -Phase Failback -MoveCosmos -Apply`
+turns off the Region B writers and reads them back before anything else, moves the Cosmos DB write
+region to Region A (without `-MoveCosmos` it stops and prints the command), removes any baseline
+adoption in both regions, sets the gate and coverage start on reconciler A and only then enables the
+Region A writers. A stop at any step leaves both regions fenced, never both writing. Then restore Front
+Door with `Invoke-DrFrontDoor.ps1 -Phase RestorePrimary -Apply`
+([runbook 11.6 and 12.2](runbooks/DR-STANDBY-CLOUD-SHELL.md#122-failback-to-region-a)).
 
 ## Required changes
 

@@ -1,5 +1,6 @@
 # Change log
 
+<<<<<<< HEAD
 ## 2026-10-26 - Lessons from the first customer deployment; Front Door runbook
 
 - Staged driver (`Read-StgConfig`): a trailing comma is reported as `staged configuration is not
@@ -59,6 +60,20 @@
   step. Docs: [DEPLOY-STEP-BY-STEP](runbooks/DEPLOY-STEP-BY-STEP.md),
   [STAGED-DEPLOYMENT-V2](runbooks/STAGED-DEPLOYMENT-V2.md#configuration-file).
 
+=======
+## 2026-10-26 - DR-08: scripted promotion and failback
+
+- Added `infra/dr/Invoke-DrFailover.ps1` (functions in `infra/dr/DrFailover.psm1`) with phases
+  `Status`, `Fence`, `Promote`, `Failback` and `RemoveAdoption`. Each phase except `Status` previews
+  without `-Apply`, reads back every app setting it changes and writes an evidence file. Promote refuses
+  while Region A writes or while Cosmos DB does not write in Region B, and sets the continuity gate and
+  coverage start before enabling Region B. Failback fences Region B first; a stop at any later step
+  leaves both regions fenced. Cosmos DB moves only with `-MoveCosmos`; Front Door and the workspace
+  switchover are not changed (the workspace calls are printed). Steps:
+  [runbook section 12](runbooks/DR-STANDBY-CLOUD-SHELL.md#12-scripted-promotion-and-failback).
+- Added `failover.ledgerCoverageStartAt` to `dr.config.json` (canonical UTC milliseconds).
+- Tests: `tests/Test-DrFailover.ps1`, offline with a fake `az`. Not yet run against Azure.
+>>>>>>> feat/dr-fu-failover
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
