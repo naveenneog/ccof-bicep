@@ -61,8 +61,8 @@ Implementation checkpoint (2026-10-26):
   origin still has the reversible drill fault; sync and reconciler timers are disabled in both
   regions; the Region B continuity gate is on. No workspace switchover, writer promotion or
   failback has been completed. The traffic drill has no retained screenshot.
-- DR-13 follow-up: the local routing publisher now rejects read-back mismatches in breaker interval,
-  status ranges, trip duration and `Retry-After`. `tests/Test-ProjectRouting.ps1` passes 30 checks.
+- DR-13 follow-up: commit `a7d1672` makes the local routing publisher reject read-back mismatches in
+  breaker interval, status ranges, trip duration and `Retry-After`. `tests/Test-ProjectRouting.ps1` passes 30 checks.
   This does not identify the timeout cause, queue a route revision after backend metadata changes,
   or change any live APIM setting.
 - Final packet gate after this change passed (`npm test`, typecheck and build); the existing file-size
