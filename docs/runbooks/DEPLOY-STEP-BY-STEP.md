@@ -142,6 +142,8 @@ notepad $cfg                                        # Cloud Shell: code $cfg
 | `resourceGroup`, `location` | A new, empty resource group and its region (for example `eastus2`) | Your naming standard |
 | `stage1.prefix` | 3 to 8 lowercase letters or digits used in resource names | Your choice |
 | `apim` and `stage1.approveNewPublicApimBootstrap` | **Either** an existing APIM: `apim.existing` with its `name`, `resourceGroup` and `subscriptionId` (system-assigned identity on). **Or** a new one: `approveNewPublicApimBootstrap: true` with `apimPublisherEmail` and `apimPublisherName`; it is created with public ingress, because APIM cannot be created private before a private endpoint exists. With neither, Step 3 stops with `apim_missing`. | [Stage 1 notes](STAGED-DEPLOYMENT-V2.md#stage-1-resources-only) |
+| `apim.existing.configureGatewayDiagnostics` | Optional, `true` or `false` (default `false`). With `true`, Step 5 creates or updates the diagnostic setting `ccof-gateway-logs` on the existing APIM: categories `GatewayLogs` and `GatewayLlmLogs`, resource-specific tables, to the Step 1 Log Analytics workspace, as Step 1 does for a new APIM. The usage ledger and the reconciler's continuity gate read these logs. Step 5 stops with `apim_diagnostics_conflict` and changes nothing if a setting of that name sends to another workspace. With `false`, set it by hand. | `infra/staged/apim-service.bicep` (`apimDiagnostics`), `infra/staged/Staged.Resources.ps1` (`Invoke-StgExistingApimDiagnostics`) |
+| `apim.existing.integrateOutboundVnet` | Optional, `true` or `false` (default `false`). With `true`, Step 6 sets outbound VNet integration of the existing APIM on `network.existing.apimSubnetId` through an ARM PATCH, then checks that the system-assigned identity is still on. Needs `network.mode` `verify` or `existing`, a full `apimSubnetId` in the APIM's subscription, and an APIM on Standard v2 or Premium v2 (read when Step 6 runs; other SKUs are refused). With `false`, integrate it by hand (Step 6, Azure CLI item 5). | [Outbound VNet integration](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound), `infra/staged/Staged.Resources.ps1` (`Invoke-StgExistingApimOutbound`) |
 | `stage1.cosmosCapacityMode` and `cosmos.capacityMode` | Cosmos DB capacity; the two fields go together. `serverless` and `serverless` (the default) for a single-region deployment. `provisioned` and `provisioned-autoscale` when disaster recovery is planned: a serverless account runs in one region and cannot add another ([Cosmos DB serverless](https://learn.microsoft.com/azure/cosmos-db/serverless); lab error `Serverless accounts do not support multiple regions`). With `provisioned-autoscale` the database gets autoscale throughput up to `cosmos.autoscaleMaxThroughput` RU/s (at least 1000). A serverless account can later be changed in place to provisioned throughput, one way only ([change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)); this was not run in the lab. | `infra/staged/main.bicep` (`cosmosCapacityMode`: `serverless`, `provisioned`), `infra/staged/stage2-schema.bicep` (`capacityMode`: `serverless`, `provisioned-autoscale`) |
 | `stage1.functionsPublicNetworkAccess` | `Enabled` for a deployment run from Cloud Shell or a workstation outside the VNet, which is the setting used in both lab runs ([run report](../STAGED-STDV2-RUNS-2026-10-20.md)). The resolver and admin apps still require Entra ID sign-in, and the resolver accepts only the APIM identity. The example file has `Disabled`; with it, APIM reaches the resolver and the operator publishes code only through `sites` private endpoints and a host inside the network ([network handoff](DEPLOYMENT-RUNBOOK.md#2-network-handoff)), which this guide does not create. | `infra/staged/main.bicep` (`functionsPublicNetworkAccess`) |
 | `stage1.foundry` | `create: true` for a new Foundry account with Claude deployments, or `false` to use an existing one | [Foundry section](STAGED-DEPLOYMENT-V2.md#stage-1-foundry-optional) |
@@ -279,6 +281,12 @@ The preview lists every resource as `Create`; when the resource group does not e
 that and stops, and Apply creates the group. Apply took 156 and 273 seconds in the two lab runs of
 20 October 2026 ([run report](../STAGED-STDV2-RUNS-2026-10-20.md)); creating a new APIM instance can
 take longer.
+
+**Existing APIM.** Step 1 does not change an APIM named in `apim.existing`. A new APIM gets the
+gateway diagnostic setting in Step 1 and outbound VNet integration in Step 6; an existing one gets
+them only with `apim.existing.configureGatewayDiagnostics` (applied in Step 5, after the workspace
+exists) and `apim.existing.integrateOutboundVnet` (Step 6). While either flag is off, the Step 1
+and Step 5 previews print a one-line note naming the manual step.
 
 **Azure CLI.** The driver writes the parameter file only when the resource group exists, so the order
 is: create the group, run the driver preview, then deploy.
@@ -691,6 +699,14 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 6 -ConfigPath $cfg -A
 
 The check alone, without the driver:
 [`scripts\manual\Test-NetworkConfiguration.ps1`](../../scripts/manual/Test-NetworkConfiguration.ps1).
+
+**Existing APIM.** With `apim.existing.integrateOutboundVnet: true`, Step 6 (modes `verify` and
+`existing`) first reads the APIM, refuses a SKU other than Standard v2 or Premium v2, then PATCHes
+`virtualNetworkType: External` and the subnet ID from `network.existing.apimSubnetId` on the APIM
+in its own subscription and resource group, waits for `Succeeded`, and checks that the
+system-assigned identity is unchanged. In verify mode this is the only write, and the network check
+then includes the APIM. With the flag off, run item 5 below with `$apimId` set to the existing
+APIM's resource ID.
 
 **Azure CLI: build.** The VNet, subnets, APIM network security group and the Cosmos and blob DNS
 zones exist from [The network](#the-network-before-step-0). These commands add the Foundry DNS zones,

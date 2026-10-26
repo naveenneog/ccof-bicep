@@ -129,6 +129,7 @@ function New-StgStage1Result {
 
 function Invoke-Stage1 {
     param($Cfg, [switch]$Apply)
+    if (-not $Apply) { Write-StgExistingApimNote $Cfg }
     $exists = (Invoke-QsAz @('group', 'exists', '--subscription', $Cfg.subscriptionId, '--name', $Cfg.resourceGroup)) -eq 'true'
     if (-not $exists) {
         if (-not $Apply) { Write-Host "preview: resource group $($Cfg.resourceGroup) does not exist; -Apply creates it in $($Cfg.location) (subscription-scope resourceGroups/write)."; return $null }
@@ -289,6 +290,108 @@ function Test-Stage1 {
     return $v
 }
 
+# ---------------------------------------------------------------- existing APIM (apim.existing)
+# The customer's own APIM changes only on opt-in flags: configureGatewayDiagnostics (Stage 5) and
+# integrateOutboundVnet (Stage 6). A Stage 1 APIM gets both from apim-service.bicep and Stage 6.
+
+$script:StgApimPollSeconds = 30
+$script:StgApimDiagnosticCategories = @('GatewayLogs', 'GatewayLlmLogs')
+
+function Get-StgExistingApimPath { param($Cfg)
+    $e = $Cfg.apim.existing
+    return "/subscriptions/$($e.subscriptionId)/resourceGroups/$($e.resourceGroup)/providers/Microsoft.ApiManagement/service/$($e.name)"
+}
+
+function Test-StgExistingApimFlag {
+    param($Cfg, $Stage1, [string]$Name)
+    $e = $Cfg.apim.existing
+    if ($Stage1.apimName -or $e -isnot [Collections.IDictionary]) { return $false }
+    return ($e[$Name] -is [bool]) -and $e[$Name]
+}
+
+function Write-StgExistingApimNote {
+    param($Cfg)
+    if ($Cfg.stage1.approveNewPublicApimBootstrap -or $Cfg.apim.existing -isnot [Collections.IDictionary]) { return }
+    $off = @()
+    if (-not (Test-StgExistingApimFlag $Cfg @{} 'configureGatewayDiagnostics')) { $off += "diagnostic setting ccof-gateway-logs (GatewayLogs, GatewayLlmLogs) to the Stage 1 workspace (apim.existing.configureGatewayDiagnostics: Stage 5)" }
+    if (-not (Test-StgExistingApimFlag $Cfg @{} 'integrateOutboundVnet')) { $off += "outbound VNet integration on network.existing.apimSubnetId (apim.existing.integrateOutboundVnet: Stage 6)" }
+    if ($off.Count) { Write-Host "note: existing APIM $($Cfg.apim.existing.name) is not changed by the driver; do by hand or set to true: $($off -join '; ')." -ForegroundColor Yellow }
+}
+
+function Invoke-StgExistingApimDiagnostics {
+    <# Stage 5: create or update exactly ccof-gateway-logs on an opted-in existing APIM, as apim-service.bicep does. #>
+    param($Cfg, $Stage1, [switch]$Apply)
+    if ($Stage1.apimName -or $Cfg.apim.existing -isnot [Collections.IDictionary]) { return $null }
+    if (-not (Test-StgExistingApimFlag $Cfg $Stage1 'configureGatewayDiagnostics')) {
+        if (-not $Apply) { Write-StgExistingApimNote $Cfg }
+        return $null
+    }
+    $apimPath = Get-StgExistingApimPath $Cfg
+    $workspaceId = [string]$Stage1.workspaceId
+    Assert-Stg ([bool]$workspaceId) 'Stage 1 recorded no Log Analytics workspace ID for the APIM gateway diagnostics'
+    $settingPath = "$apimPath/providers/Microsoft.Insights/diagnosticSettings/ccof-gateway-logs"
+    $current = @((Get-StgArm "$apimPath/providers/Microsoft.Insights/diagnosticSettings" '2021-05-01-preview').value | Where-Object { $_.name -ceq 'ccof-gateway-logs' })
+    if ($current.Count -and [string]$current[0].properties.workspaceId -ine $workspaceId) {
+        throw "apim_diagnostics_conflict: $($Cfg.apim.existing.name) already has diagnostic setting ccof-gateway-logs sending to $($current[0].properties.workspaceId), not the Stage 1 workspace $workspaceId. Nothing was changed; rename or remove that setting, or turn off apim.existing.configureGatewayDiagnostics."
+    }
+    $categories = $script:StgApimDiagnosticCategories -join ', '
+    if (-not $Apply) {
+        Write-Host "preview: $(if ($current.Count) { 'update' } else { 'create' }) diagnostic setting ccof-gateway-logs on existing APIM $($Cfg.apim.existing.name): $categories to workspace $(($workspaceId -split '/')[-1]) (Dedicated tables)."
+        return $null
+    }
+    $body = Join-Path $script:StateDir 'apim-diagnostics.json'
+    @{ properties = [ordered]@{ workspaceId = $workspaceId; logAnalyticsDestinationType = 'Dedicated'
+        logs = @($script:StgApimDiagnosticCategories | ForEach-Object { [ordered]@{ category = $_; enabled = $true } }) } } |
+        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $body -Encoding utf8NoBOM
+    $null = Invoke-QsAz @('rest', '--method', 'put', '--url', "https://management.azure.com$settingPath`?api-version=2021-05-01-preview", '--headers', 'Content-Type=application/json', '--body', "@$body")
+    $read = Get-StgArm $settingPath '2021-05-01-preview'
+    $enabled = @($read.properties.logs | Where-Object { $_.enabled -eq $true } | ForEach-Object { [string]$_.category })
+    Assert-Stg ([string]$read.properties.workspaceId -ieq $workspaceId) "existing APIM ccof-gateway-logs targets $($read.properties.workspaceId), expected $workspaceId"
+    foreach ($category in $script:StgApimDiagnosticCategories) { Assert-Stg ($enabled -ccontains $category) "existing APIM ccof-gateway-logs does not enable $category" }
+    Write-Host "$($Cfg.apim.existing.name): diagnostic setting ccof-gateway-logs sends $categories to $(($workspaceId -split '/')[-1])."
+    return [ordered]@{ apimId = $apimPath; setting = 'ccof-gateway-logs'; workspaceId = $read.properties.workspaceId; categories = @($enabled | Sort-Object) }
+}
+
+function Invoke-StgApimOutboundIntegration {
+    <# Outbound VNet integration through an ARM PATCH of the two network properties. az apim update is not used:
+       without --enable-managed-identity true it sets the identity to None (azure-cli apim custom.py, apim_update). #>
+    param([string]$ApimPath, [string]$SubnetId, [string]$ExpectedPrincipalId)
+    $name = ($ApimPath -split '/')[-1]
+    $now = Get-StgArm $ApimPath '2024-05-01'
+    if ($now.properties.virtualNetworkType -ceq 'External' -and $now.properties.virtualNetworkConfiguration.subnetResourceId -ieq $SubnetId) { Write-Host "$name already integrated" }
+    else {
+        $body = Join-Path $script:StateDir 'apim-vnet.json'
+        @{ properties = @{ virtualNetworkType = 'External'; virtualNetworkConfiguration = @{ subnetResourceId = $SubnetId } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $body -Encoding utf8NoBOM
+        $null = Invoke-QsAz @('rest', '--method', 'patch', '--url', "https://management.azure.com$ApimPath`?api-version=2024-05-01", '--headers', 'Content-Type=application/json', '--body', "@$body")
+        Write-Host "${name}: outbound VNet integration requested; waiting (Standard v2 updates take up to 45 minutes)."
+        for ($i = 0; $i -lt 120; $i++) { Start-Sleep $script:StgApimPollSeconds; $now = Get-StgArm $ApimPath '2024-05-01'; if ($now.properties.provisioningState -ceq 'Succeeded') { break } }
+    }
+    Assert-Stg ($now.properties.provisioningState -ceq 'Succeeded' -and $now.properties.virtualNetworkType -ceq 'External' -and $now.properties.virtualNetworkConfiguration.subnetResourceId -ieq $SubnetId) "APIM integration state $($now.properties.provisioningState) $($now.properties.virtualNetworkType)"
+    Assert-Stg ([string]$now.identity.type -match 'SystemAssigned' -and $now.identity.principalId -ieq $ExpectedPrincipalId) "APIM $name system-assigned identity changed during VNet integration (identity type now '$($now.identity.type)')"
+    return $now
+}
+
+function Invoke-StgExistingApimOutbound {
+    <# Stage 6: outbound VNet integration of an opted-in existing APIM on network.existing.apimSubnetId. #>
+    param($Cfg, $Stage1, [switch]$Apply)
+    if (-not (Test-StgExistingApimFlag $Cfg $Stage1 'integrateOutboundVnet')) { return $null }
+    $apimPath = Get-StgExistingApimPath $Cfg
+    $subnetId = [string]$Cfg.network.existing.apimSubnetId
+    $before = Get-StgArm $apimPath '2024-05-01'
+    if ($before.sku.name -cnotin 'StandardV2', 'PremiumV2') {
+        throw "apim_sku_unsupported: existing APIM $($Cfg.apim.existing.name) is $($before.sku.name); apim.existing.integrateOutboundVnet supports StandardV2 and PremiumV2 only. Nothing was changed."
+    }
+    $principal = [string]$before.identity.principalId
+    Assert-Stg ([string]$before.identity.type -match 'SystemAssigned' -and $principal -match $script:Guid) "existing APIM $($Cfg.apim.existing.name) has no system-assigned identity"
+    if (-not $Apply) {
+        Write-Host "then: existing APIM $($Cfg.apim.existing.name) ($($before.sku.name)) outbound VNet integration on $(($subnetId -split '/')[-1]) through ARM PATCH (virtualNetworkType External; identity kept; ingress stays public)."
+        return $null
+    }
+    $now = Invoke-StgApimOutboundIntegration -ApimPath $apimPath -SubnetId $subnetId -ExpectedPrincipalId $principal
+    return [ordered]@{ name = $now.name; id = $apimPath; sku = $now.sku.name; virtualNetworkType = $now.properties.virtualNetworkType
+        subnet = ($now.properties.virtualNetworkConfiguration.subnetResourceId -split '/')[-1]; identityType = [string]$now.identity.type; principalId = $principal }
+}
+
 # ---------------------------------------------------------------- stage 6: network (last setup stage)
 # The customer usually builds the network. network.mode verify (the default) changes nothing and runs
 # the read-only check scripts/manual/Test-NetworkConfiguration.ps1. Modes existing and create are
@@ -310,6 +413,9 @@ function Get-StgNetworkVerifyArguments {
     if ($Stage1.apimName -and $Cfg.stage1.apimSku -in 'StandardV2', 'PremiumV2') {
         $arguments.ApimSubnet = ($e.apimSubnetId -split '/')[-1]
         $arguments.ApimResourceId = $Stage1.apimId
+    } elseif (Test-StgExistingApimFlag $Cfg $Stage1 'integrateOutboundVnet') {
+        $arguments.ApimSubnet = ($e.apimSubnetId -split '/')[-1]
+        $arguments.ApimResourceId = Get-StgExistingApimPath $Cfg
     }
     $foundry = @($Cfg.backends | Where-Object privateEndpoint | ForEach-Object { "/subscriptions/$($_.subscriptionId)/resourceGroups/$($_.resourceGroup)/providers/Microsoft.CognitiveServices/accounts/$($_.accountName)" } | Select-Object -Unique)
     if ($foundry.Count) { $arguments.FoundryResourceId = $foundry }
@@ -342,7 +448,14 @@ function Invoke-StgNetworkVerify {
 function Invoke-Stage6 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1
-    if ($Cfg.network.mode -eq 'verify') { return Invoke-StgNetworkVerify -Cfg $Cfg -Stage1 $s1 -Apply:$Apply }    $foundryPrivate = @($Cfg.backends | Where-Object { $_.privateEndpoint -and $_.subscriptionId -ieq $Cfg.subscriptionId -and $_.resourceGroup -ieq $Cfg.resourceGroup } | ForEach-Object { $_.accountName } | Select-Object -Unique)
+    if ($Cfg.network.mode -eq 'verify') {
+        # The only write in verify mode: an opted-in existing APIM's outbound integration, before the read-only check.
+        $existingApim = Invoke-StgExistingApimOutbound -Cfg $Cfg -Stage1 $s1 -Apply:$Apply
+        $result = Invoke-StgNetworkVerify -Cfg $Cfg -Stage1 $s1 -Apply:$Apply
+        if ($result -and $existingApim) { $result.existingApim = $existingApim }
+        return $result
+    }
+    $foundryPrivate = @($Cfg.backends | Where-Object { $_.privateEndpoint -and $_.subscriptionId -ieq $Cfg.subscriptionId -and $_.resourceGroup -ieq $Cfg.resourceGroup } | ForEach-Object { $_.accountName } | Select-Object -Unique)
     $parameters = @{ names = $s1.names; location = $Cfg.location; tags = $Cfg.tags; network = $Cfg.network; foundryAccounts = @($foundryPrivate) }
     $vnetExists = $false
     if ($Cfg.network.mode -eq 'create') {
@@ -366,6 +479,7 @@ function Invoke-Stage6 {
         if ($action -eq 'reuse') { Write-Host 'preview: no network deployment; -Apply verifies and reconciles the remaining Stage 6 integrations.'; return $null }
         Write-Host "then: VNet integration, one app at a time, for $($apps -join ', ') (az functionapp vnet-integration add)."
         if ($integrateApim) { Write-Host "then: APIM $($s1.apimName) outbound VNet integration on the APIM subnet (virtualNetworkType External; ingress stays public)." }
+        $null = Invoke-StgExistingApimOutbound -Cfg $Cfg -Stage1 $s1
         if ($foundryPrivate.Count) { Write-Host "Foundry private endpoints: $($foundryPrivate -join ', ')" }
         return $null
     }
@@ -380,21 +494,12 @@ function Invoke-Stage6 {
     if ($integrateApim) {
         Assert-Stg ([bool]$out.apimSubnetId) 'Standard v2 APIM integration needs network.create.subnets.apim or network.existing.apimSubnetId'
         $apimPath = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.ApiManagement/service/$($s1.apimName)"
-        $now = Get-StgArm $apimPath '2024-05-01'
-        if ($now.properties.virtualNetworkType -ceq 'External' -and $now.properties.virtualNetworkConfiguration.subnetResourceId -ieq $out.apimSubnetId) { Write-Host "$($s1.apimName) already integrated" }
-        else {
-            # PATCH keeps the identity and every other property (unlike az apim update, which drops the identity).
-            $body = Join-Path $script:StateDir 'apim-vnet.json'
-            @{ properties = @{ virtualNetworkType = 'External'; virtualNetworkConfiguration = @{ subnetResourceId = $out.apimSubnetId } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $body -Encoding utf8NoBOM
-            $null = Invoke-QsAz @('rest', '--method', 'patch', '--url', "https://management.azure.com$apimPath`?api-version=2024-05-01", '--headers', 'Content-Type=application/json', '--body', "@$body")
-            Write-Host "$($s1.apimName): outbound VNet integration requested; waiting (Standard v2 updates take up to 45 minutes)."
-            for ($i = 0; $i -lt 120; $i++) { Start-Sleep 30; $now = Get-StgArm $apimPath '2024-05-01'; if ($now.properties.provisioningState -ceq 'Succeeded') { break } }
-        }
-        Assert-Stg ($now.properties.provisioningState -ceq 'Succeeded' -and $now.properties.virtualNetworkType -ceq 'External' -and $now.properties.virtualNetworkConfiguration.subnetResourceId -ieq $out.apimSubnetId) "APIM integration state $($now.properties.provisioningState) $($now.properties.virtualNetworkType)"
-        Assert-Stg ($now.identity.principalId -ieq $s1.apimPrincipalId) 'APIM system-assigned identity changed during VNet integration'
+        $now = Invoke-StgApimOutboundIntegration -ApimPath $apimPath -SubnetId $out.apimSubnetId -ExpectedPrincipalId $s1.apimPrincipalId
     }
+    $existingApim = Invoke-StgExistingApimOutbound -Cfg $Cfg -Stage1 $s1 -Apply
     $v = [ordered]@{ privateEndpoints = @(); privateDnsLinks = @(); apps = @() }
     if ($integrateApim) { $v.apim = [ordered]@{ name = $s1.apimName; sku = $now.sku.name; virtualNetworkType = $now.properties.virtualNetworkType; subnet = ($now.properties.virtualNetworkConfiguration.subnetResourceId -split '/')[-1]; publicNetworkAccess = $now.properties.publicNetworkAccess; identityUnchanged = $true } }
+    if ($existingApim) { $v.existingApim = $existingApim }
     $dnsTargets = Get-StgNetworkDnsTargets -Cfg $Cfg -Outputs $out -HasFoundry ([bool]$foundryPrivate.Count)
     foreach ($zoneId in $dnsTargets.zoneIds) {
         $zone = Get-StgArm "$zoneId/virtualNetworkLinks" '2024-06-01'

@@ -66,6 +66,7 @@ function Read-StgConfig {
         # The customer builds the network; Stage 6 only reads it. The checks need the subnets, all in one VNet.
         $subnets = @($c.network.existing.privateEndpointSubnetId, $c.network.existing.functionsSubnetId)
         if ($c.stage1.approveNewPublicApimBootstrap -and $c.stage1.apimSku -in 'StandardV2', 'PremiumV2') { $subnets += $c.network.existing.apimSubnetId }
+        elseif ($c.apim.existing -is [Collections.IDictionary] -and $c.apim.existing.integrateOutboundVnet -is [bool] -and $c.apim.existing.integrateOutboundVnet) { $subnets += $c.network.existing.apimSubnetId }
         if (@($subnets | Where-Object { -not $_ -or $_ -notmatch $subnetPattern }).Count) {
             $problems.Add('network.mode verify requires network.existing.privateEndpointSubnetId, functionsSubnetId and (for a new Standard v2/Premium v2 APIM) apimSubnetId as full subnet resource IDs')
         } elseif (@($subnets | ForEach-Object { ($_ -replace '/subnets/[^/]+$', '').ToLowerInvariant() } | Select-Object -Unique).Count -ne 1) {
@@ -141,6 +142,27 @@ function Read-StgConfig {
         $problems.Add('a newly created admin registration requires at least one entra.adminEditors assignment; assignment-required is enabled')
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
+    # Opt-in changes to a customer's existing APIM (apim.existing): Stage 5 gateway diagnostics, Stage 6 outbound VNet integration.
+    $apimExisting = $c.apim.existing
+    if ($apimExisting -is [Collections.IDictionary]) {
+        foreach ($k in 'configureGatewayDiagnostics', 'integrateOutboundVnet') {
+            if ($apimExisting.Contains($k) -and $apimExisting[$k] -isnot [bool]) { $problems.Add("apim.existing.$k must be true or false") }
+        }
+        $diagnosticsOn = $apimExisting.configureGatewayDiagnostics -is [bool] -and $apimExisting.configureGatewayDiagnostics
+        $outboundOn = $apimExisting.integrateOutboundVnet -is [bool] -and $apimExisting.integrateOutboundVnet
+        if (($diagnosticsOn -or $outboundOn) -and $c.stage1.approveNewPublicApimBootstrap) {
+            $problems.Add('apim.existing.configureGatewayDiagnostics and integrateOutboundVnet apply only to an existing APIM; with stage1.approveNewPublicApimBootstrap Stage 1 creates the APIM and Stages 1 and 6 already configure it')
+        }
+        if ($outboundOn) {
+            $apimSubnet = $c.network.existing.apimSubnetId
+            if ($c.network.mode -notin 'verify', 'existing') { $problems.Add('apim.existing.integrateOutboundVnet needs network.mode verify or existing') }
+            if (-not $apimSubnet -or $apimSubnet -notmatch $subnetPattern) {
+                $problems.Add('apim.existing.integrateOutboundVnet requires network.existing.apimSubnetId as a full subnet resource ID')
+            } elseif (($apimSubnet -split '/')[2] -ine $apimExisting.subscriptionId) {
+                $problems.Add('apim.existing.integrateOutboundVnet: network.existing.apimSubnetId must be in the same subscription as the existing APIM (Microsoft Learn, integrate-vnet-outbound)')
+            }
+        }
+    }
     if ($problems.Count) { throw "invalid staged configuration:`n  - $($problems -join "`n  - ")" }
     $c.__path = $full
     return $c
@@ -212,6 +234,10 @@ function Get-StgStageInput {
         7 { $input += @{ stage1=$Cfg.stage1; groups=$Cfg.groups; client=$Cfg.client; rateCard=$Cfg.rateCard; sync=$Cfg.sync; entra=$Cfg.entra } }
         8 { $input += @{ stage1=$Cfg.stage1; acceptance=$Cfg.acceptance; gateway=$Cfg.gateway; admin=$Cfg.admin } }
         default { throw "invalid stage number $Number" }
+    }
+    # Only an opted-in existing-APIM integration enters the Stage 6 hash, so completed deployments keep theirs.
+    if ($Number -eq 6 -and $Cfg.apim.existing -is [Collections.IDictionary] -and $Cfg.apim.existing.integrateOutboundVnet -is [bool] -and $Cfg.apim.existing.integrateOutboundVnet) {
+        $input.existingApimOutbound = [ordered]@{ subscriptionId = $Cfg.apim.existing.subscriptionId; resourceGroup = $Cfg.apim.existing.resourceGroup; name = $Cfg.apim.existing.name }
     }
     $canonical = ConvertTo-StgCanonical $input | ConvertTo-Json -Depth 100 -Compress
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
