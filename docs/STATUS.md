@@ -98,6 +98,8 @@ Implementation checkpoint (2026-10-26):
   publication. Gateway forwards a verified project pool; sync/resolver carry `routeBackendId`.
 - Fabrikam lab: Stages 5 and 7 deployed; SASLAB1 failover proven (primary broken, fallback served,
   restore, switch off). Contoso: P0-P2 in Central US verified. Third subscription: HTTP 403.
+- Fabrikam full-DR lab: full-cycle drill on 2026-10-26; results in the table under "Active packet"
+  above and in the [drill record](runbooks/DR-STANDBY-CLOUD-SHELL.md#11-live-drill-record-2026-10-2526).
 - Standard v2 refused API policies over 16 KiB from 2026-10-23; the gateway policy now deploys as
   per-section policy fragments.
 

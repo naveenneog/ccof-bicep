@@ -3,7 +3,8 @@
 Status: accepted for the implementation contract, 2026-10-23.
 Branch: `main` (merged 2026-10-25).
 Supersedes the unconditional backend-pool part of [ADR 0033](0033-dr-active-passive.md).
-Deployment remains unimplemented.
+At acceptance, deployment remained unimplemented. Current implementation and lab status are tracked
+in [STATUS](../STATUS.md), [ROADMAP](../ROADMAP.md), and the [drill record](../runbooks/DR-STANDBY-CLOUD-SHELL.md#11-live-drill-record-2026-10-2526).
 
 ## Context
 

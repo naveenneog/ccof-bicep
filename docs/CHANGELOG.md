@@ -51,6 +51,18 @@
 - A backend breaker metadata change does not automatically queue a new project routing revision;
   toggling an unchanged pool can reuse its prior revision. The runbook warns operators not to assume
   a metadata-only change was applied. No live breaker setting changed.
+## 2026-10-26 - Current full-DR lab state and writer fencing
+
+- The guide and DR status ledger now record the 03:22 IST readback: Front Door's primary-origin drill fault remained active, Cosmos wrote in Central US, both `syncEntitlement` and `reconcileBudgets` timers were disabled in A and B, and B's continuity gate remained `on`. The workspace switchover window had not opened; its earliest time is 2026-10-26T07:09Z (12:39 IST). No writer promotion or failback is claimed; the last workspace readback at 01:50 IST showed no switchover, and the eligibility time had not arrived. No drill screenshot was retained; sanitized query results are documented instead. Documentation only; no code or live Azure state changed.
+
+## 2026-10-26 - Region B 504 evidence in the DR standby guide
+
+- [Section 11.2](runbooks/DR-STANDBY-CLOUD-SHELL.md#112-traffic-to-region-b) records the gateway-log result: 16 HTTP 504s on region B (2026-10-25T19:21:04Z-19:48:42Z), all on the priority-1 backend member, `request-forwarder` / `backend` / `Timeout`, no `BackendResponseCode`; the same window had 15 HTTP 200s from the Central US fallback and one from the priority-1 member. This narrows the symptom only; root cause and why the fallback was not selected on each 504 are unknown, and region B remains not qualified. Documentation only; no identifiers added.
+
+## 2026-10-25 - DR standby region guide for Azure Cloud Shell
+
+- New runbook [DR standby region in Cloud Shell](runbooks/DR-STANDBY-CLOUD-SHELL.md): prerequisites, durable (`clouddrive`) state, a field-by-field `dr.config.json` reference with a complete valid example, P0-P2 and the region B driver phases (`Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify`) as preview then `-Apply`, resuming after the 20-minute timeout, and post-checks.
+- Scope stated in the guide: the region B driver has only offline tests and no recorded live run; Front Door Premium, end-to-end failover and failback, and the production continuity gate are not done. The serverless-to-provisioned Cosmos change is one-way. Documentation only; no code changed.
 
 ## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
 
