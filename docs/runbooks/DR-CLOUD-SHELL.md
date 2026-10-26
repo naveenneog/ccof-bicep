@@ -560,10 +560,11 @@ Admin console > **Backends** > **Register backend**, once for the primary and on
 
 **Expect:** each backend listed with its URL; the primary shows its breaker.
 
-Changing a registered backend's breaker settings does not automatically make a project pending.
-An unchanged pool may reuse a previously published revision when failover is toggled off and on.
-Do not treat the settings as applied unless the project shows a new pending revision and Step 6.3
-read-back verifies it. This metadata-only republish path is not yet qualified.
+Changing a registered backend's breaker settings moves every `verified` project whose pool uses that
+backend to a new `pending publication` revision; publish it (Step 6.3) and confirm read-back before
+treating the settings as applied. Projects with failover off, or `disabled with pool`, are not
+moved; switching such a project back on with the same fallback list reuses its old pool and breaker
+([Admin operations](ADMIN-OPERATIONS.md), backend failover).
 
 ### 6.2 Switch failover on for the project
 

@@ -16,6 +16,20 @@
   publishing after Front Door lockdown) and [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md)
   (budget ledger after a mid-month workspace switchover, UNKNOWNS DR-17).
 
+## 2026-10-26 - DR-13: a backend breaker edit queues a project routing revision
+
+- `PUT /api/v3/backends/{id}` with a changed `circuitBreaker` now moves each active, `verified`
+  project whose pool includes that backend to the next revision (`pending publication`), so the
+  publisher creates new pool members with the edited breaker. The verified pool serves until then.
+  Each project write is ETag-guarded with a change record and audit line
+  (`v3/backends/routing-revision`); the response lists `routing.queued` and `routing.failed`.
+- Not moved: edits that leave the breaker unchanged, projects already pending, and projects with
+  failover off (ADR 0034). Still open (UNKNOWNS DR-13): a `disabled with pool` project switched back
+  on with the same fallbacks reuses its old pool, and a URL-only edit queues nothing.
+- Code: `admin/src/backend-routing.ts`, `admin/src/v3.ts`; three new tests in
+  `admin/tests/backend-routing.test.ts`. Runbooks: ADMIN-OPERATIONS backend failover,
+  DR-CLOUD-SHELL 6.1. No live Azure state changed.
+
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
