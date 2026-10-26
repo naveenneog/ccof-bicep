@@ -1,6 +1,5 @@
 # Change log
 
-<<<<<<< HEAD
 ## 2026-10-26 - Lessons from the first customer deployment; Front Door runbook
 
 - Staged driver (`Read-StgConfig`): a trailing comma is reported as `staged configuration is not
@@ -60,7 +59,7 @@
   step. Docs: [DEPLOY-STEP-BY-STEP](runbooks/DEPLOY-STEP-BY-STEP.md),
   [STAGED-DEPLOYMENT-V2](runbooks/STAGED-DEPLOYMENT-V2.md#configuration-file).
 
-=======
+
 ## 2026-10-26 - DR-08: scripted promotion and failback
 
 - Added `infra/dr/Invoke-DrFailover.ps1` (functions in `infra/dr/DrFailover.psm1`) with phases
@@ -73,7 +72,6 @@
   [runbook section 12](runbooks/DR-STANDBY-CLOUD-SHELL.md#12-scripted-promotion-and-failback).
 - Added `failover.ledgerCoverageStartAt` to `dr.config.json` (canonical UTC milliseconds).
 - Tests: `tests/Test-DrFailover.ps1`, offline with a fake `az`. Not yet run against Azure.
->>>>>>> feat/dr-fu-failover
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
