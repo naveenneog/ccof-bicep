@@ -45,6 +45,18 @@ Check 'APIM id with cmd metacharacters refused' $threw
 $json = { param($o) $o | ConvertTo-Json -Depth 20 | ConvertFrom-Json }
 $members = @{ 'ccof-m-saslab1-1a2b3c4d-r2-0' = (& $json $m0); 'ccof-m-saslab1-1a2b3c4d-r2-1' = (& $json $m1) }
 Check 'faithful read-back verifies' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $members).Count -eq 0)
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].tripDuration = 'PT120S'
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker trip duration mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_trip_duration')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].failureCondition.interval = 'PT120S'
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker interval mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_interval')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].failureCondition.statusCodeRanges[0].min = 429
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker range mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_ranges')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].acceptRetryAfter = $false
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker Retry-After mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_retry_after')
 $p2 = & $json $pool; $p2.properties.pool.services[1].priority = 1
 Check 'changed priority detected' (@(Compare-PublishedRouting $plan $apim $p2 $members) -contains 'pool:services')
 $mm = $members.Clone(); $mm.Remove('ccof-m-saslab1-1a2b3c4d-r2-1')

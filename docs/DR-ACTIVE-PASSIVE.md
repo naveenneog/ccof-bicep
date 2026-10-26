@@ -141,6 +141,12 @@ Circuit-breaker behaviour:
    partially delivered stream. Retrying a generation after an ambiguous failure can duplicate
    execution and charges.
 
+The publisher's read-back verifies breaker count, interval, status ranges, trip duration,
+`Retry-After`, and no-response reasons before marking a revision published. A registered backend's
+breaker-setting update is audited but does not automatically create a project routing revision.
+Switching failover off and on with an unchanged pool can reuse a previously published revision; do
+not assume that it queued a new publication. The metadata-only republish path remains unqualified.
+
 Breaker decisions are approximate and local to gateway instances; there is no globally shared
 breaker state between the two APIM services. A breaker does not create extra quota: Claude
 deployments can share subscription-wide limits, so both local and remote members may throttle.

@@ -560,6 +560,11 @@ Admin console > **Backends** > **Register backend**, once for the primary and on
 
 **Expect:** each backend listed with its URL; the primary shows its breaker.
 
+Changing a registered backend's breaker settings does not automatically make a project pending.
+An unchanged pool may reuse a previously published revision when failover is toggled off and on.
+Do not treat the settings as applied unless the project shows a new pending revision and Step 6.3
+read-back verifies it. This metadata-only republish path is not yet qualified.
+
 ### 6.2 Switch failover on for the project
 
 Projects > project > **Settings** > **Backend failover**: select **Route this project through its

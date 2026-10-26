@@ -61,6 +61,13 @@ Implementation checkpoint (2026-10-26):
   origin still has the reversible drill fault; sync and reconciler timers are disabled in both
   regions; the Region B continuity gate is on. No workspace switchover, writer promotion or
   failback has been completed. The traffic drill has no retained screenshot.
+- DR-13 follow-up: the local routing publisher now rejects read-back mismatches in breaker interval,
+  status ranges, trip duration and `Retry-After`. `tests/Test-ProjectRouting.ps1` passes 30 checks.
+  This does not identify the timeout cause, queue a route revision after backend metadata changes,
+  or change any live APIM setting.
+- Final packet gate after this change passed (`npm test`, typecheck and build); the existing file-size
+  and open-unknown warnings remain. The timeout investigation and metadata-only republish path are
+  still open under DR-13.
 - **Current October limitation:** APIM service diagnostics were enabled on 2026-10-20T15:41:34Z. Both gateway tables have no rows before 2026-10-20, while October spend is already persisted. DR-05R must not infer that earlier traffic was absent. The current-month writer promotion remains blocked until that history is recovered or the period changes.
 - **APIM B timeout finding:** 16 priority-1 timeouts and 15 Central US fallback responses were observed in the 2026-10-25 drill. The live breaker opens after one failure for two minutes and includes `Timeout`; the observed cadence is consistent with primary re-probes after the circuit resets. A controlled test must confirm that behavior. The primary timeout's cause and acceptable probe interval remain open.
 

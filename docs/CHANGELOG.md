@@ -15,6 +15,15 @@
 - No live Azure settings, routing or writer state changed. The lab's existing October states remain
   blocked because diagnostics began after the month started and no coverage marker was persisted.
 
+## 2026-10-26 - DR-08: verify circuit-breaker settings on publication
+
+- APIM route read-back now verifies breaker interval, ranges, trip duration, `Retry-After` handling
+  and failure count before accepting a published project revision. This is required to verify any
+  future timeout-cooldown adjustment; `tests/Test-ProjectRouting.ps1` covers mismatched read-back.
+- A backend breaker metadata change does not automatically queue a new project routing revision;
+  toggling an unchanged pool can reuse its prior revision. The runbook warns operators not to assume
+  a metadata-only change was applied. No live breaker setting changed.
+
 ## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
 
 - Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated, 1-4 distinct APIM resource IDs). `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid; with both set the single ID must be in the list, otherwise the run logs `settings_invalid` with `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS:single_not_in_list`.

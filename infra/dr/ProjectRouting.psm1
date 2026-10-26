@@ -17,6 +17,31 @@ $script:NoResponseErrorReasons = @('BackendConnectionFailure', 'Timeout')
 
 function ConvertTo-IsoSeconds([int]$Seconds) { "PT$($Seconds)S" }
 
+function ConvertFrom-IsoSeconds {
+    param([AllowNull()] $Value)
+    if ($Value -isnot [string]) { return $null }
+    try { $duration = [System.Xml.XmlConvert]::ToTimeSpan($Value) }
+    catch [FormatException] { return $null }
+    catch [OverflowException] { return $null }
+    if ($duration.TotalSeconds -lt 0 -or $duration.TotalSeconds -gt [int]::MaxValue -or
+        $duration.TotalSeconds -ne [Math]::Truncate($duration.TotalSeconds)) { return $null }
+    return [int]$duration.TotalSeconds
+}
+
+function Get-RangeSignature {
+    param([AllowNull()] $Ranges)
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($range in @($Ranges)) {
+        $min = 0; $max = 0
+        if ($null -eq $range -or
+            -not [int]::TryParse([string]$range.min, [ref]$min) -or
+            -not [int]::TryParse([string]$range.max, [ref]$max) -or
+            $min -gt $max) { return $null }
+        $parts.Add("$min-$max")
+    }
+    return (($parts.ToArray() | Sort-Object) -join ',')
+}
+
 function Assert-RoutingPlan {
     param([Parameter(Mandatory)] $Plan)
     $problems = [System.Collections.Generic.List[string]]::new()
@@ -91,9 +116,20 @@ function Compare-PublishedRouting {
         $rules = @(if ($r.properties.PSObject.Properties['circuitBreaker'] -and $r.properties.circuitBreaker) { $r.properties.circuitBreaker.rules })
         if ($wantBreaker -and $rules.Count -ne 1) { $diff.Add("member:$($m.memberBackendId):breaker_missing") }
         if (-not $wantBreaker -and $rules.Count -ne 0) { $diff.Add("member:$($m.memberBackendId):breaker_unexpected") }
-        if ($wantBreaker -and $rules.Count -eq 1 -and [int]$rules[0].failureCondition.count -ne [int]$m.circuitBreaker.failureCount) { $diff.Add("member:$($m.memberBackendId):breaker_count") }
         if ($wantBreaker -and $rules.Count -eq 1) {
-            $reasons = @(if ($rules[0].failureCondition.PSObject.Properties['errorReasons']) { $rules[0].failureCondition.errorReasons })
+            $rule = $rules[0]
+            $condition = $rule.failureCondition
+            if ([int]$condition.count -ne [int]$m.circuitBreaker.failureCount) { $diff.Add("member:$($m.memberBackendId):breaker_count") }
+            if ((ConvertFrom-IsoSeconds $condition.interval) -ne [int]$m.circuitBreaker.failureIntervalSeconds) { $diff.Add("member:$($m.memberBackendId):breaker_interval") }
+            if ((ConvertFrom-IsoSeconds $rule.tripDuration) -ne [int]$m.circuitBreaker.tripDurationSeconds) { $diff.Add("member:$($m.memberBackendId):breaker_trip_duration") }
+            $expectedRanges = Get-RangeSignature $m.circuitBreaker.statusCodeRanges
+            $actualRanges = Get-RangeSignature $condition.statusCodeRanges
+            if ($null -eq $expectedRanges -or $expectedRanges -cne $actualRanges) { $diff.Add("member:$($m.memberBackendId):breaker_ranges") }
+            $retryAfter = $rule.PSObject.Properties['acceptRetryAfter']
+            if ($null -eq $retryAfter -or $retryAfter.Value -isnot [bool] -or $retryAfter.Value -ne [bool]$m.circuitBreaker.acceptRetryAfter) {
+                $diff.Add("member:$($m.memberBackendId):breaker_retry_after")
+            }
+            $reasons = @(if ($condition.PSObject.Properties['errorReasons']) { $condition.errorReasons })
             if ((($reasons | Sort-Object) -join ',') -cne (($script:NoResponseErrorReasons | Sort-Object) -join ',')) { $diff.Add("member:$($m.memberBackendId):breaker_error_reasons") }
         }
     }
