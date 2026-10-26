@@ -25,6 +25,7 @@ export interface ReconcileInput {
   validUntil: Date;
   // ADR 0035; absent or null keeps the unpaced ceiling and adds no soft-limit fields.
   pacing?: SpendPacing | null;
+  ledgerCoverageStartAt?: string;
 }
 
 export interface ScopeProblem {
@@ -120,6 +121,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     contractScheduleVersion: input.contractScheduleVersion,
     computedAt: input.computedAt.toISOString(),
     validUntil: input.validUntil.toISOString(),
+    ...(input.ledgerCoverageStartAt ? { ledgerCoverageStartAt: input.ledgerCoverageStartAt } : {}),
   };
   const problems: Array<RegistryProblem | ScopeProblem> = [...registry.problems];
   const scopes = [...registry.scopes.values()].sort(byKey((s) => s.scopeId));

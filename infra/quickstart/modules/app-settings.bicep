@@ -132,6 +132,14 @@ var reconcilerLedgerGateways = contains(reconciler, 'ledgerGatewayResourceIds') 
   RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS: join(reconciler.ledgerGatewayResourceIds, ',')
 } : {}
 
+// DR-05R: optional coverage-aware continuity gate settings. The app validates their values at startup.
+var reconcilerContinuity = contains(reconciler, 'continuityGate') ? {
+  RECONCILER_CONTINUITY_GATE: reconciler.continuityGate
+} : {}
+var reconcilerCoverageStart = contains(reconciler, 'ledgerCoverageStartAt') ? {
+  RECONCILER_LEDGER_COVERAGE_START_AT: reconciler.ledgerCoverageStartAt
+} : {}
+
 resource resolverSite 'Microsoft.Web/sites@2024-04-01' existing = {
   name: names.apps.resolver.functionApp
 }
@@ -159,7 +167,7 @@ resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: reconcilerSite
   name: 'appsettings'
-  properties: union(reconcilerSettings, reconcilerPacing, reconcilerLedgerGateways)
+  properties: union(reconcilerSettings, reconcilerPacing, reconcilerLedgerGateways, reconcilerContinuity, reconcilerCoverageStart)
 }
 
 // infra/poc/resolver-auth.ps1, New-ResolverAuthSettingsBody: v2 issuer, the resolver API audience,

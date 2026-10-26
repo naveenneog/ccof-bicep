@@ -81,6 +81,22 @@ foreach ($case in $cases) {
 }
 $answers.gatewayResourceIds = @($apimA, $otherSub)
 Assert-True 'ReconcilerDeploy: the standby APIM may be in another subscription' ((Get-Problems $answers).Count -eq 0) ((Get-Problems $answers) -join ',')
+$answers.reconcilerSettings.RECONCILER_CONTINUITY_GATE = 'on'
+$answers.reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT = '2026-10-20T15:41:34.000Z'
+Assert-True 'ReconcilerDeploy: a gate-on coverage start is accepted' ((Get-Problems $answers).Count -eq 0) ((Get-Problems $answers) -join ',')
+$answersPath = Join-Path $PSScriptRoot ".env.dr-answers-$(Get-Random).json"
+try {
+    $answers | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $answersPath -Encoding utf8NoBOM
+    $loadedAnswers = Read-ReconcilerAnswers -Path $answersPath
+    Assert-True 'ReconcilerDeploy: coverage start remains a string when JSON answers are read' ($loadedAnswers.reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT -is [string])
+} finally { Remove-Item -LiteralPath $answersPath -ErrorAction SilentlyContinue }
+$continuitySettings = Get-ReconcilerAppSettings -Answers $answers -IdentityClientId '00000000-0000-4000-8000-0000000000cc'
+Assert-True 'ReconcilerDeploy: continuity gate and coverage start reach app settings' ($continuitySettings.RECONCILER_CONTINUITY_GATE -ceq 'on' -and $continuitySettings.RECONCILER_LEDGER_COVERAGE_START_AT -ceq '2026-10-20T15:41:34.000Z')
+$answers.reconcilerSettings.Remove('RECONCILER_LEDGER_COVERAGE_START_AT')
+Assert-True 'ReconcilerDeploy: an enabled gate requires its coverage start' ((Get-Problems $answers) -contains 'reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT:missing')
+$answers.reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT = '2026-10-20T15:41:34+00:00'
+Assert-True 'ReconcilerDeploy: rejects non-canonical UTC coverage starts' ((Get-Problems $answers) -contains 'reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT:invalid')
+$answers.reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT = '2026-10-20T15:41:34.000Z'
 
 # --- scripts/Core.D2Steps.psm1 (staged D2) ---
 Import-Module (Join-Path $root 'scripts' 'Core.D2Steps.psm1') -Force -DisableNameChecking
@@ -111,6 +127,10 @@ $coreAnswers.reconciler.ledgerGatewayResourceIds = @($apimA, $apimB)
 $core = Get-CoreAppSettings -Answers $coreAnswers -D1 $coreD1 -Connections @{ resolver = 'cs'; sync = 'cs' }
 Assert-True "Core D2: reconciler.ledgerGatewayResourceIds is written comma-joined as $listName" ($core.reconciler[$listName] -ceq "$apimA,$apimB") "got '$($core.reconciler[$listName])'"
 Assert-True 'Core D2: the list is written only to the reconciler' (-not $core.resolver.Contains($listName) -and -not $core.sync.Contains($listName))
+$coreAnswers.reconciler.continuityGate = 'on'
+$coreAnswers.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+$core = Get-CoreAppSettings -Answers $coreAnswers -D1 $coreD1 -Connections @{ resolver = 'cs'; sync = 'cs' }
+Assert-True 'Core D2: continuity gate and coverage start reach reconciler app settings' ($core.reconciler.RECONCILER_CONTINUITY_GATE -ceq 'on' -and $core.reconciler.RECONCILER_LEDGER_COVERAGE_START_AT -ceq '2026-10-20T15:41:34.000Z')
 
 # --- scripts/manual/Session-Helpers.ps1 (manual path) ---
 . (Join-Path $root 'scripts' 'manual' 'Session-Helpers.ps1')
@@ -132,6 +152,23 @@ try {
     New-CcofAppSettings -C $C -App reconciler -Directory $scratch 6>$null | Out-Null
     $written = Get-Content (Join-Path $scratch 'reconciler-settings.object.json') -Raw | ConvertFrom-Json -AsHashtable
     Assert-True "Manual: ledgerGatewayResourceIds is written comma-joined as $listName" ($written[$listName] -ceq "$apimA,$apimB") "got '$($written[$listName])'"
+    $C.continuityGate = 'on'; $C.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+    New-CcofAppSettings -C $C -App reconciler -Directory $scratch 6>$null | Out-Null
+    $written = Get-Content (Join-Path $scratch 'reconciler-settings.object.json') -Raw
+    Assert-True 'Manual: continuity gate and coverage start reach reconciler app settings' ($written -match '"RECONCILER_CONTINUITY_GATE"\s*:\s*"on"' -and $written -match '"RECONCILER_LEDGER_COVERAGE_START_AT"\s*:\s*"2026-10-20T15:41:34\.000Z"')
+    $C.ledgerCoverageStartAt = '"2026-10-20T15:41:34.000Z"' | ConvertFrom-Json
+    New-CcofAppSettings -C $C -App reconciler -Directory $scratch 6>$null | Out-Null
+    $written = Get-Content (Join-Path $scratch 'reconciler-settings.object.json') -Raw
+    Assert-True 'Manual: JSON-parsed timestamps are normalized back to canonical UTC settings' ($written -match '"RECONCILER_LEDGER_COVERAGE_START_AT"\s*:\s*"2026-10-20T15:41:34\.000Z"')
+    $C.continuityGate = $null
+    $invalidGateRefused = $false
+    try { New-CcofAppSettings -C $C -App reconciler -Directory $scratch 6>$null | Out-Null } catch { $invalidGateRefused = $_.Exception.Message -match 'continuityGate must be on or off' }
+    Assert-True 'Manual: a null continuity gate is refused rather than omitted' $invalidGateRefused
+    $C.continuityGate = 'on'
+    $C.ledgerCoverageStartAt = '2026-10-20T15:41:34+00:00'
+    $invalidCoverageRefused = $false
+    try { New-CcofAppSettings -C $C -App reconciler -Directory $scratch 6>$null | Out-Null } catch { $invalidCoverageRefused = $_.Exception.Message -match 'valid UTC timestamp' }
+    Assert-True 'Manual: invalid coverage timestamps are refused before settings are written' $invalidCoverageRefused
 }
 finally { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 
@@ -147,9 +184,13 @@ if ($exit -eq 0) {
     Assert-True 'app-settings.bicep: the reconciler has App Insights connection/auth and no APIM list by default' ($digest -eq '4c49814f0470bb81ef75f1c6548d2a03cab5a108278c1d160f6d788a828d17ad') $digest
     $site = @($arm.resources | Where-Object { $_.name -match 'apps\.reconciler\.functionApp' -and $_.name -match 'appsettings' })
     $properties = if ($site.Count) { [string]$site[0].properties } else { '' }
-    Assert-True 'app-settings.bicep: the reconciler''s settings union the optional ledger list' ($properties -ceq "[union(variables('reconcilerSettings'), variables('reconcilerPacing'), variables('reconcilerLedgerGateways'))]") $properties
+    Assert-True 'app-settings.bicep: the reconciler''s settings union optional continuity and ledger settings' ($properties -ceq "[union(variables('reconcilerSettings'), variables('reconcilerPacing'), variables('reconcilerLedgerGateways'), variables('reconcilerContinuity'), variables('reconcilerCoverageStart'))]") $properties
     $ledger = [string]$arm.variables.reconcilerLedgerGateways
     Assert-True 'app-settings.bicep: absent reconciler.ledgerGatewayResourceIds adds no setting' ($ledger -ceq "[if(contains(parameters('reconciler'), 'ledgerGatewayResourceIds'), createObject('$listName', join(parameters('reconciler').ledgerGatewayResourceIds, ',')), createObject())]") $ledger
+    $continuity = [string]$arm.variables.reconcilerContinuity
+    Assert-True 'app-settings.bicep: absent reconciler.continuityGate adds no setting' ($continuity -ceq "[if(contains(parameters('reconciler'), 'continuityGate'), createObject('RECONCILER_CONTINUITY_GATE', parameters('reconciler').continuityGate), createObject())]") $continuity
+    $coverage = [string]$arm.variables.reconcilerCoverageStart
+    Assert-True 'app-settings.bicep: absent reconciler.ledgerCoverageStartAt adds no setting' ($coverage -ceq "[if(contains(parameters('reconciler'), 'ledgerCoverageStartAt'), createObject('RECONCILER_LEDGER_COVERAGE_START_AT', parameters('reconciler').ledgerCoverageStartAt), createObject())]") $coverage
 }
 
 Write-Host "Test-DrLedgerGateways: $script:Pass passed, $script:Fail failed"

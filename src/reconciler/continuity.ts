@@ -1,14 +1,6 @@
-// The ledger continuity gate (DR-05; docs/DR-ACTIVE-PASSIVE.md, failover runbook step 5). On only
-// with RECONCILER_CONTINUITY_GATE=on. Before any write the run reads, per gateway, the earliest and
-// newest ApiManagementGatewayLlmLog record of the period (the table the ledger's usage rows come
-// from) and the budget states already persisted for the scopes it is about to write. It refuses:
-//   ledger_continuity_gap / no_recent_record: records exist in the period, but no listed gateway has
-//     one newer than now minus the maximum gap;
-//   ledger_continuity_gap / early_history_missing: persisted spend in this period is non-zero, and
-//     the period's earliest record is later than its start plus the maximum gap (or there is none);
-//   spend_would_decrease: a state would record less spend than the persisted one for the same scope
-//     and period.
-// Pure: run.ts does the reads and the logging.
+// The ledger continuity gate (DR-05R). It verifies request-to-usage log coverage
+// and the persisted period baseline before any budget write. Pure: run.ts does
+// the reads and the logging.
 
 import { Money } from "../cost/money.ts";
 import type { AggregateBudgetStateDocument, BudgetStateDocument } from "./documents.ts";
@@ -16,34 +8,62 @@ import { LedgerReadError, assertGatewayIds, readPrimaryResult } from "./ledger.t
 import { budgetPeriodAt } from "./period.ts";
 import type { BudgetPeriod } from "./period.ts";
 
-export interface GatewayExtent {
+export type ContinuityGapKind = "request_before_coverage" | "backend_call_without_llm" | "llm_without_gateway";
+
+export interface ContinuityGap {
   gatewayResourceId: string;
-  earliest: Date;
-  newest: Date;
+  gapKind: ContinuityGapKind;
+  issueCount: number;
+  firstAt: Date;
 }
 
-export type ContinuityCondition = "no_recent_record" | "early_history_missing";
+export type CoverageBaselineIssue = "ledger_coverage_baseline_missing" | "ledger_coverage_baseline_mismatch";
 
-// Condition (a): only the extents and the clock are needed, so the run checks it before reading states.
-export function noRecentRecord(extents: readonly GatewayExtent[], now: Date, maxGapSeconds: number): boolean {
-  if (extents.length === 0) return false;
-  const threshold = now.getTime() - maxGapSeconds * 1000;
-  return !extents.some((extent) => extent.newest.getTime() > threshold);
+export function effectiveCoverageStartAt(period: BudgetPeriod, configuredStartAt: string): string {
+  const configured = new Date(configuredStartAt);
+  return new Date(Math.max(period.start.getTime(), configured.getTime())).toISOString();
 }
 
-export function buildContinuityQuery(period: BudgetPeriod, gatewayResourceIds: readonly string[]): string {
+export function buildContinuityQuery(period: BudgetPeriod, gatewayResourceIds: readonly string[], coverageStartAt: string): string {
   assertGatewayIds(gatewayResourceIds);
+  const coverageStart = effectiveCoverageStartAt(period, coverageStartAt);
   const ids = gatewayResourceIds.map((id) => `'${id}'`).join(", ");
   return [
-    "ApiManagementGatewayLlmLog",
-    `| where TimeGenerated >= datetime(${period.start.toISOString()}) and TimeGenerated < datetime(${period.end.toISOString()})`,
+    `let periodStart = datetime(${period.start.toISOString()});`,
+    `let periodEnd = datetime(${period.end.toISOString()});`,
+    `let coverageStart = datetime(${coverageStart});`,
+    "let usage = ApiManagementGatewayLlmLog",
+    "| where TimeGenerated >= periodStart and TimeGenerated < periodEnd",
     `| where _ResourceId in~ (${ids})`,
-    "| summarize earliest = min(TimeGenerated), newest = max(TimeGenerated) by gatewayResourceId = tolower(_ResourceId)",
+    "| extend gatewayResourceId = tolower(_ResourceId), gatewayRequestId = tolower(tostring(CorrelationId))",
+    "| where isnotempty(gatewayRequestId)",
+    "| summarize usageTime = min(TimeGenerated) by gatewayResourceId, gatewayRequestId;",
+    "let gatewayRequests = ApiManagementGatewayLogs",
+    "| where TimeGenerated >= periodStart and TimeGenerated < periodEnd",
+    `| where _ResourceId in~ (${ids})`,
+    "| extend gatewayResourceId = tolower(_ResourceId), gatewayRequestId = tolower(tostring(CorrelationId))",
+    "| where isnotempty(gatewayRequestId)",
+    "| project gatewayResourceId, gatewayRequestId, requestTime = TimeGenerated, apiId = ApiId, hasBackend = isnotempty(BackendId) or isnotempty(BackendUrl);",
+    "let gatewayRequestIds = gatewayRequests | distinct gatewayResourceId, gatewayRequestId;",
+    "let modelRequests = gatewayRequests",
+    "| where apiId == 'claude-messages' and hasBackend",
+    "| summarize requestTime = min(requestTime) by gatewayResourceId, gatewayRequestId;",
+    "let requestGaps = modelRequests",
+    "| join kind=leftouter usage on gatewayResourceId, gatewayRequestId",
+    "| extend gapKind = case(requestTime < coverageStart, 'request_before_coverage', isnull(usageTime), 'backend_call_without_llm', '')",
+    "| where isnotempty(gapKind)",
+    "| project gatewayResourceId, gatewayRequestId, gapKind, issueTime = requestTime;",
+    "let usageGaps = usage",
+    "| join kind=leftanti gatewayRequestIds on gatewayResourceId, gatewayRequestId",
+    "| extend gapKind = 'llm_without_gateway'",
+    "| project gatewayResourceId, gatewayRequestId, gapKind, issueTime = usageTime;",
+    "union requestGaps, usageGaps",
+    "| summarize issueCount = dcount(gatewayRequestId), firstAt = min(issueTime) by gatewayResourceId, gapKind",
     "",
   ].join("\n");
 }
 
-const COLUMNS = ["gatewayResourceId", "earliest", "newest"] as const;
+const COLUMNS = ["gatewayResourceId", "gapKind", "issueCount", "firstAt"] as const;
 
 function dateOf(value: unknown): Date {
   const date = typeof value === "string" ? new Date(value) : new Date(Number.NaN);
@@ -51,24 +71,22 @@ function dateOf(value: unknown): Date {
   return date;
 }
 
-export function parseContinuityResponse(body: unknown): GatewayExtent[] {
+export function parseContinuityResponse(body: unknown): ContinuityGap[] {
   const { names, rows } = readPrimaryResult(body);
-  const [id, earliest, newest] = COLUMNS.map((column) => {
+  const [id, gapKind, issueCount, firstAt] = COLUMNS.map((column) => {
     const position = names.indexOf(column);
     if (position < 0) throw new LedgerReadError("ledger_response_invalid", `column:${column}`);
     return position;
   });
   return rows.map((row) => {
     if (typeof row[id] !== "string" || !row[id]) throw new LedgerReadError("ledger_response_invalid", "continuity_gateway");
-    return { gatewayResourceId: row[id] as string, earliest: dateOf(row[earliest]), newest: dateOf(row[newest]) };
+    if (row[gapKind] !== "request_before_coverage" && row[gapKind] !== "backend_call_without_llm" && row[gapKind] !== "llm_without_gateway") {
+      throw new LedgerReadError("ledger_response_invalid", "continuity_gap_kind");
+    }
+    const count = typeof row[issueCount] === "number" ? row[issueCount] : typeof row[issueCount] === "string" ? Number(row[issueCount]) : Number.NaN;
+    if (!Number.isSafeInteger(count) || count < 1) throw new LedgerReadError("ledger_response_invalid", "continuity_gap_count");
+    return { gatewayResourceId: row[id] as string, gapKind: row[gapKind], issueCount: count, firstAt: dateOf(row[firstAt]) };
   });
-}
-
-// Condition (b).
-export function earlyHistoryMissing(extents: readonly GatewayExtent[], period: BudgetPeriod, maxGapSeconds: number, persistedSpendNonZero: boolean): boolean {
-  if (!persistedSpendNonZero) return false;
-  const bound = period.start.getTime() + maxGapSeconds * 1000;
-  return !extents.some((extent) => extent.earliest.getTime() <= bound);
 }
 
 export class StateReadError extends Error {
@@ -114,6 +132,23 @@ export function plannedStates(persons: ReadonlyArray<{ doc: BudgetStateDocument 
     ...persons.map(({ doc }) => ({ scopeId: doc.id, kind: "person" as const, spentCcu: doc.spentCcu })),
     ...groups.map(({ doc }) => ({ scopeId: doc.id, kind: "group" as const, spentCcu: doc.spentCcu })),
   ];
+}
+
+export function coverageBaselineIssue(
+  planned: readonly PlannedState[],
+  persisted: ReadonlyMap<string, unknown>,
+  period: BudgetPeriod,
+  coverageStartAt: string,
+): CoverageBaselineIssue | null {
+  for (const state of planned) {
+    const doc = persisted.get(`${state.kind}:${state.scopeId}`);
+    if (persistedSpend(doc, state.kind, period) === null) continue;
+    if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new StateReadError();
+    const marker = (doc as Record<string, unknown>).ledgerCoverageStartAt;
+    if (typeof marker !== "string") return "ledger_coverage_baseline_missing";
+    if (marker !== coverageStartAt) return "ledger_coverage_baseline_mismatch";
+  }
+  return null;
 }
 
 export interface SpendComparison {

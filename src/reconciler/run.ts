@@ -1,5 +1,5 @@
 // One reconciler run (docs/PILOT.md C-7, ADR-0018): lease → registry →
-// ledger → price and compute (pure) → [continuity gate, DR-05, only when
+// ledger → price and compute (pure) → [continuity gate, DR-05R, only when
 // on] → write every state → one run line.
 // Every dependency is injected, so the whole run is tested with fakes
 // (tests/reconciler-run.test.ts); function-app.ts wires Cosmos and the Log
@@ -8,7 +8,7 @@
 import type { ContractSchedule } from "../cost/contract-schedule.ts";
 import type { RateCard } from "../cost/rate-card.ts";
 import type { AggregateBudgetStateDocument, BudgetStateDocument } from "./documents.ts";
-import { buildContinuityQuery, compareSpend, earlyHistoryMissing, noRecentRecord, parseContinuityResponse, plannedStates } from "./continuity.ts";
+import { buildContinuityQuery, compareSpend, coverageBaselineIssue, effectiveCoverageStartAt, parseContinuityResponse, plannedStates } from "./continuity.ts";
 import { LeaseLostError, acquireLease } from "./lease.ts";
 import type { Lease, LeaseStore } from "./lease.ts";
 import { LedgerReadError, buildLedgerQuery, parseLedgerResponse } from "./ledger.ts";
@@ -134,7 +134,17 @@ async function readAndCompute(settings: ReconcilerSettings, assets: RunAssets, d
   // Null: a fresh answer. A number: the query API served a cached answer that many seconds old (WP-E2E G6).
   timings.ledgerResponseAgeSeconds = answer.responseAgeSeconds;
   const registry = readRegistry(projects, entitlements);
-  const result = reconcile({ registry, rows, rateCard: assets.rateCard, contractScheduleVersion: assets.schedule.version, period, computedAt, validUntil, pacing: settings.pacing });
+  const result = reconcile({
+    registry,
+    rows,
+    rateCard: assets.rateCard,
+    contractScheduleVersion: assets.schedule.version,
+    period,
+    computedAt,
+    validUntil,
+    pacing: settings.pacing,
+    ledgerCoverageStartAt: settings.continuity ? effectiveCoverageStartAt(period, settings.continuity.coverageStartAt) : undefined,
+  });
   return { registry, result };
 }
 
@@ -158,30 +168,45 @@ async function readPersisted(planned: Planned, deps: RunDependencies, concurrenc
   return persisted;
 }
 
-// The ledger continuity gate (DR-05, continuity.ts). Returns the run-line fields; throws a Refusal
+// The ledger continuity gate (DR-05R, continuity.ts). Returns the run-line fields; throws a Refusal
 // when the gate refuses, and a Failure when a read fails. Writes nothing.
 async function checkContinuity(gate: ContinuityGate, settings: ReconcilerSettings, deps: RunDependencies, planned: Planned, clock: RunClock): Promise<Record<string, unknown>> {
   const { period, computedAt } = clock;
-  const query = await step("ledger_query_invalid", async () => buildContinuityQuery(period, settings.gatewayResourceIds));
-  const answer = await step("ledger_read_failed", () => deps.queryLedger(query, `${period.start.toISOString()}/${period.end.toISOString()}`));
-  const extents = await step("ledger_read_failed", async () => parseContinuityResponse(answer.body));
+  const coverageStartAt = await step("ledger_query_invalid", async () => effectiveCoverageStartAt(period, gate.coverageStartAt));
   const fields: Record<string, unknown> = {
     continuityGate: "refused",
-    continuityMaxGapSeconds: gate.maxGapSeconds,
-    continuityGateways: extents.map((e) => ({ gatewayResourceId: e.gatewayResourceId, earliest: e.earliest.toISOString(), newest: e.newest.toISOString() })),
+    continuityCoverageStartAt: coverageStartAt,
+    continuityGaps: [],
   };
   const refuse = (reason: string, extra: Record<string, unknown>): never => {
     Object.assign(fields, extra);
     throw new Refusal(reason, fields);
   };
-  if (noRecentRecord(extents, computedAt, gate.maxGapSeconds)) refuse("ledger_continuity_gap", { continuityCondition: "no_recent_record" });
+  if (Date.parse(coverageStartAt) > computedAt.getTime()) {
+    refuse("ledger_coverage_start_future", { continuityCondition: "coverage_start_future" });
+  }
+  const query = await step("ledger_query_invalid", async () => buildContinuityQuery(period, settings.gatewayResourceIds, coverageStartAt));
+  const answer = await step("ledger_read_failed", () => deps.queryLedger(query, `${period.start.toISOString()}/${period.end.toISOString()}`));
+  const gaps = await step("ledger_read_failed", async () => parseContinuityResponse(answer.body));
+  fields.continuityGaps = gaps.map((gap) => ({
+    gatewayResourceId: gap.gatewayResourceId,
+    gapKind: gap.gapKind,
+    issueCount: gap.issueCount,
+    firstAt: gap.firstAt.toISOString(),
+  }));
+  if (gaps.length > 0) {
+    const issueCount = gaps.reduce((sum, gap) => sum + gap.issueCount, 0);
+    refuse("ledger_continuity_gap", { continuityCondition: gaps[0].gapKind, continuityGapCount: issueCount });
+  }
   const persisted = await step("budget_state_read_failed", () => readPersisted(planned, deps, settings.writeConcurrency));
   const states = plannedStates(planned.result.persons, planned.result.groups);
+  const baselineIssue = await step("budget_state_read_failed", async () => coverageBaselineIssue(states, persisted, period, coverageStartAt));
+  if (baselineIssue) refuse(baselineIssue, { continuityCondition: baselineIssue });
+  if (planned.result.counts.unattributedRequests > 0) {
+    refuse("ledger_attribution_missing", { unattributedRequests: planned.result.counts.unattributedRequests });
+  }
   const { persistedSpendNonZero, decreasedScopes } = await step("budget_state_read_failed", async () => compareSpend(states, persisted, period));
   fields.persistedSpendNonZero = persistedSpendNonZero;
-  if (earlyHistoryMissing(extents, period, gate.maxGapSeconds, persistedSpendNonZero)) {
-    refuse("ledger_continuity_gap", { continuityCondition: "early_history_missing" });
-  }
   if (decreasedScopes.length > 0) {
     refuse("spend_would_decrease", { decreasedScopes: decreasedScopes.slice(0, LOGGED_SCOPES_MAX), decreasedScopeCount: decreasedScopes.length });
   }

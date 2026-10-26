@@ -766,19 +766,51 @@ az rest --method patch --url $mu --body "@$work/member0-restore.json" --headers 
 
 ---
 
-## Not deployable yet
+## Current two-region qualification status
 
-These parts of the [DR design](../DR-ACTIVE-PASSIVE.md) have no template or script in this repository
-(N-10, N-11, N-14; [DR walkthrough](../DR-NOVICE-WALKTHROUGH-2026-10-25.md)):
+The [DR design](../DR-ACTIVE-PASSIVE.md) has partial regional tooling on `feat/dr-standby`.
+The procedures in Steps 1-6 cover prerequisites, workspace replication and project-level backend
+failover; they are not an end-to-end regional promotion or failback procedure. The current packet
+status is in [STATUS](../STATUS.md) and [ROADMAP](../ROADMAP.md).
 
-| Part | State | Roadmap |
+| Part | Current state | Roadmap |
 | --- | --- | --- |
-| Standby APIM and Function Apps (resolver, sync, reconciler, admin) | No standby-region template; the staged driver has no secondary-region section | DR-07 |
-| Second Cosmos DB region | Requires provisioned throughput: a serverless account runs in one region only ([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)), and the staged default is serverless. New deployments: `stage1.cosmosCapacityMode: provisioned` with `cosmos.capacityMode: provisioned-autoscale` ([deployment guide, configuration table](DEPLOY-STEP-BY-STEP.md#the-configuration-file)). Existing serverless accounts: the one-way, in-place change to provisioned throughput ([Learn](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)), not tested in this lab. The region is added after that; no repository tooling yet | DR-07 |
-| Front Door Premium with private origins, and Azure Monitor Private Link Scope (AMPLS) | Design only | DR-07 |
-| Role grants for the standby identities (P3) | Needed only once standby apps exist; no script grants them | DR-07 |
-| Accounting across two APIM instances and month-history continuity | Design only | DR-05 |
-| Promotion of standby writers and failback | Design only | DR-08 |
+| Standby APIM and Function Apps (resolver, sync, reconciler, admin) | Regional shells and private origins are partially implemented on `feat/dr-standby`; standby writers remain fenced pending qualification | DR-07 |
+| Second Cosmos DB region | Requires provisioned throughput: a serverless account runs in one region only ([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)). The provisioned migration and regional failover path must be verified for the target account before promotion | DR-07 |
+| Front Door Premium and Azure Monitor Private Link Scope (AMPLS) | Private origins and a reversible traffic shift are implemented on the feature branch; private workspace-query connectivity and failover recovery are not fully qualified | DR-07 |
+| Role grants for the standby identities (P3) | Standby identity grants need explicit read-back before regional writers can run | DR-07 |
+| Accounting across two APIM instances and request/usage continuity | Implemented on `feat/dr-standby`; the current October ledger remains fenced because diagnostics began after the month started and existing states have no coverage marker | DR-05R |
+| Promotion of standby writers and failback | Not completed; blocked by the October continuity baseline and the unresolved APIM B primary-backend timeouts | DR-08 |
+
+### Continuity settings for a fresh deployment
+
+For a new deployment, the `reconciler` object in the staged or core answers JSON can carry both
+gateway IDs and the continuity settings:
+
+```json
+{
+  "ledgerGatewayResourceIds": [
+    "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-primary/providers/Microsoft.ApiManagement/service/apim-primary",
+    "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-standby/providers/Microsoft.ApiManagement/service/apim-standby"
+  ],
+  "continuityGate": "on",
+  "ledgerCoverageStartAt": "2026-10-20T15:41:34.000Z"
+}
+```
+
+The APIM IDs name the gateways whose logs are included in the ledger. `continuityGate` accepts
+`"on"` or `"off"` and is off when omitted. The gate checks for backend requests without usage rows,
+LLM usage rows without gateway requests, and model requests earlier than the coverage start.
+`ledgerCoverageStartAt` uses
+`YYYY-MM-DDTHH:mm:ss.fffZ`; it is required when the gate is on. The timestamp above is a syntax
+example only, not a value to reuse. Set it to the verified UTC time both gateway diagnostic
+categories were enabled, before allowing model traffic. A timestamp later than any request causes
+the reconciler to refuse writes.
+
+Keep both regional writers fenced until the first gated reconciliation succeeds. Existing
+current-period states without the matching coverage marker are not adopted, and disabling then
+re-enabling the gate during the same period does not restore that marker. The lab's October history
+cannot be qualified from the available logs; this configuration does not backfill it.
 
 Status and acceptance criteria per packet: [ROADMAP](../ROADMAP.md).
 

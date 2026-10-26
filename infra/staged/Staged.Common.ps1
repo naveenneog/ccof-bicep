@@ -2,12 +2,61 @@
 
 # ---------------------------------------------------------------- configuration and state
 
+function Get-StgCoverageStartAtFromJson {
+    param([Parameter(Mandatory)] [string]$Json)
+    $document = [System.Text.Json.JsonDocument]::Parse($Json)
+    try {
+        $reconcilerProperty = @($document.RootElement.EnumerateObject() | Where-Object Name -CEQ 'reconciler')
+        if ($reconcilerProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $coverageProperty = @($reconcilerProperty[0].Value.EnumerateObject() | Where-Object Name -CEQ 'ledgerCoverageStartAt')
+        if ($coverageProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $isString = $coverageProperty[0].Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String
+        return @{
+            present = $true
+            isString = $isString
+            value = if ($isString) { $coverageProperty[0].Value.GetString() } else { $null }
+        }
+    } finally {
+        $document.Dispose()
+    }
+}
+
+function Test-StgUtcCoverageStartAt {
+    param([AllowNull()] $Value)
+    if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { return $false }
+    $parsed = [DateTimeOffset]::MinValue
+    return [DateTimeOffset]::TryParseExact(
+        $Value, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )
+}
+
 function Read-StgConfig {
     param([Parameter(Mandatory)] [string]$Path)
     $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
-    $c = Get-Content -LiteralPath $full -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    $raw = Get-Content -LiteralPath $full -Raw
+    $c = $raw | ConvertFrom-Json -AsHashtable -Depth 100
     $problems = [Collections.Generic.List[string]]::new()
     if ($c.schemaVersion -ne 1) { $problems.Add('schemaVersion must be 1') }
+    $continuityGatePresent = $c.reconciler -is [System.Collections.IDictionary] -and $c.reconciler.Contains('continuityGate')
+    $continuityGate = $c.reconciler.continuityGate
+    $coverageSetting = Get-StgCoverageStartAtFromJson $raw
+    $coverageStartAt = $coverageSetting.value
+    if ($continuityGatePresent -and ($continuityGate -isnot [string] -or $continuityGate -cnotin @('on', 'off'))) {
+        $problems.Add('reconciler.continuityGate must be on or off')
+    }
+    if ($coverageSetting.present) {
+        if (-not $coverageSetting.isString -or -not (Test-StgUtcCoverageStartAt $coverageStartAt)) {
+            $problems.Add('reconciler.ledgerCoverageStartAt must be a valid UTC timestamp in YYYY-MM-DDTHH:mm:ss.fffZ form')
+        } else {
+            $c.reconciler.ledgerCoverageStartAt = $coverageStartAt
+        }
+    }
+    if ($continuityGate -ceq 'on' -and -not $coverageSetting.present) {
+        $problems.Add('reconciler.ledgerCoverageStartAt is required when reconciler.continuityGate is on')
+    }
     foreach ($k in 'tenantId', 'subscriptionId') { if ($c[$k] -notmatch $script:Guid) { $problems.Add("$k must be a GUID") } }
     if ($c.resourceGroup -notmatch '^[A-Za-z0-9_.-]{1,90}$') { $problems.Add('resourceGroup is invalid') }
     if ($c.stage1.prefix -cnotmatch '^[a-z0-9]{3,8}$') { $problems.Add('stage1.prefix must be 3-8 lowercase letters or digits') }

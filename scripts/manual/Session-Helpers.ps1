@@ -291,6 +291,23 @@ function Grant-CcofCosmosRole {
     Write-Host 'One native Cosmos assignment verified.'
 }
 
+function ConvertTo-CcofUtcCoverageStartAt {
+    param([AllowNull()] $Value)
+    $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    if ($Value -is [DateTime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified) { return $null }
+        return $Value.ToUniversalTime().ToString($format, $culture)
+    }
+    if ($Value -is [DateTimeOffset]) { return $Value.ToUniversalTime().ToString($format, $culture) }
+    if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { return $null }
+    $parsed = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParseExact($Value, $format, $culture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsed)) {
+        return $null
+    }
+    return $parsed.ToUniversalTime().ToString($format, $culture)
+}
+
 function New-CcofAppSettings {
     param([Parameter(Mandatory)]$C, [Parameter(Mandatory)][ValidateSet('resolver','sync','reconciler')][string]$App,
           [Parameter(Mandatory)][string]$Directory)
@@ -332,6 +349,25 @@ function New-CcofAppSettings {
             $s.RECONCILER_LEASE_CONTAINER='reconcilerLease'; $s.'AzureWebJobs.reconcileBudgets.Disabled'='true'
             # DR-05: the optional list of APIM ids whose logs hold this deployment's usage.
             if ($C.ledgerGatewayResourceIds) { $s.RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS = @($C.ledgerGatewayResourceIds) -join ',' }
+            # DR-05R: optional coverage-aware continuity gate settings.
+            $hasContinuityGate = $C -is [System.Collections.IDictionary] -and $C.Contains('continuityGate')
+            if ($hasContinuityGate) {
+                if ($C.continuityGate -isnot [string] -or $C.continuityGate -cnotin @('on', 'off')) {
+                    throw 'continuityGate must be on or off.'
+                }
+                $s.RECONCILER_CONTINUITY_GATE = $C.continuityGate
+            }
+            $hasCoverageStartAt = $C -is [System.Collections.IDictionary] -and $C.Contains('ledgerCoverageStartAt')
+            if ($hasCoverageStartAt) {
+                $coverageStartAt = ConvertTo-CcofUtcCoverageStartAt $C.ledgerCoverageStartAt
+                if (-not $coverageStartAt) {
+                    throw 'ledgerCoverageStartAt must be a valid UTC timestamp in YYYY-MM-DDTHH:mm:ss.fffZ form.'
+                }
+                $s.RECONCILER_LEDGER_COVERAGE_START_AT = $coverageStartAt
+            }
+            if ($C.continuityGate -ceq 'on' -and -not $hasCoverageStartAt) {
+                throw 'ledgerCoverageStartAt is required when continuityGate is on.'
+            }
         }
     }
     foreach ($key in @($s.Keys)) {

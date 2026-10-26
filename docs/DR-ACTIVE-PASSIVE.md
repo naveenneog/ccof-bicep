@@ -10,7 +10,8 @@ in each region, private behind Front Door Premium, and multiple Foundry backend 
 priority pools and per-member circuit breakers. The staged templates deploy one region today; the
 changes this design needs are listed under [Required changes](#required-changes).
 
-Implementation branch: `main` (merged 2026-10-25). The single-region design without DR is on `feat/admin-console-v2`.
+DR-01 through DR-06 baseline implementation merged to `main` on 2026-10-25. DR-05R coverage-aware
+continuity work and the remaining two-region qualification are on `feat/dr-standby`, not merged.
 [The implementation contract](design/DR-IMPLEMENTATION.md) prepares identity and network handoffs
 before runtime deployment. Backend pools are **optional per project**, off by default; admins select
 the primary and permitted compatible fallback backends. The diagram depicts the enabled case,
@@ -191,12 +192,15 @@ Recovery figures documented by Microsoft:
    - the workspace answers the ledger query for the current month;
    - the newest APIM A record in the replica is within the replication lag of the outage start;
    - APIM B records are arriving.
+   - `RECONCILER_LEDGER_COVERAGE_START_AT` is the verified diagnostics start, earlier than any
+     model traffic allowed through either gateway.
 
-   If the gate fails, keep the reconciler off and enforcement unchanged, and record the gap.
-   Budget-enforced requests are refused once budget figures pass the hard limit.
-   With `RECONCILER_CONTINUITY_GATE=on` and both APIM IDs in `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS`,
-   the reconciler also runs this check before every write and logs outcome `refused` instead of writing
-   (see Required changes, Continuity gate).
+   With `RECONCILER_CONTINUITY_GATE=on` and both APIM IDs in
+   `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS`, the reconciler compares backend-forwarded model requests
+   with LLM usage rows, verifies the persisted period coverage marker, and refuses spend decreases
+   before writing. A quiet interval alone is not a gap. If a check fails, keep both writers off,
+   preserve the gate, and record the missing evidence; budget-enforced requests are refused once
+   figures pass the hard limit.
 6. **Promote Region B writers.** Set `AzureWebJobs.syncEntitlement.Disabled=false` on sync B and
    enable the reconciler B timer. Admin B becomes writable once Cosmos accepts writes in Central US.
 7. **Verify.**
@@ -215,7 +219,7 @@ writers, turn off the Region B writers, so only one region writes at a time.
 | Staged deployment | A `secondaryRegion` section. Stage 1 creates Region B resources using Standard v2; Stages 3, 5 and 7 apply grants, settings (timers off) and code to Region B. Cosmos needs a second region and provisioned throughput. Zone redundancy and any Premium v2 option are explicit, separately validated choices. | Medium |
 | Front Door | New template: profile, WAF policy, origin group with both APIM origins over Private Link, probes, no caching. The client `gatewayUrl` becomes the Front Door host. | Medium |
 | Accounting | **Implemented (DR-05, 2026-10-25).** The ledger query, reconciler, workbook and admin chargeback queries take a list of up to 4 APIM resource IDs. Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated); `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid, and when both are set the single ID must be in the list (`single_not_in_list`) ([settings.ts:212](../src/reconciler/settings.ts#L212)). `CcofUsageLedger` filters both gateway tables with `in~` and keeps one row per `gatewayRequestId` (the APIM `CorrelationId`) ([ledger.kql:12](../analytics/ledger.kql#L12), [:33](../analytics/ledger.kql#L33), [:107](../analytics/ledger.kql#L107)). Workbook answer `gatewayResourceIds` ([config.ts:74](../analytics/workbooks/config.ts#L74)); admin `ADMIN_GATEWAY_RESOURCE_IDS` ([chargeback.ts:52](../admin/src/chargeback.ts#L52)). Deployment inputs: `reconciler.ledgerGatewayResourceIds` in [app-settings.bicep:128](../infra/quickstart/modules/app-settings.bicep#L128) and [Core.D2Steps.psm1:156](../scripts/Core.D2Steps.psm1#L156), `gatewayResourceIds` in [ReconcilerDeploy.psm1:58](../infra/reconciler/ReconcilerDeploy.psm1#L58), `ledgerGatewayResourceIds` in [Session-Helpers.ps1:334](../scripts/manual/Session-Helpers.ps1#L334). Without a list each path renders the same settings as before (`tests/Test-DrLedgerGateways.ps1`). `/ccof-usage/me/usage` reads budget state from Cosmos, not gateway logs, and is unchanged. | Medium |
-| Continuity gate | **Implemented (DR-05, 2026-10-25), off by default.** `RECONCILER_CONTINUITY_GATE=on` (values `on`/`off`) and `RECONCILER_CONTINUITY_MAX_GAP_SECONDS` (default 900, 60-86400) ([settings.ts:200](../src/reconciler/settings.ts#L200)). Before writing, the run reads each listed gateway's earliest and newest `ApiManagementGatewayLlmLog` record in the month ([continuity.ts:34](../src/reconciler/continuity.ts#L34)) and point-reads the persisted states it would replace. It writes nothing and logs outcome `refused` with reason `ledger_continuity_gap` when records exist but none is newer than now minus the gap (`no_recent_record`), or when persisted spend this month is non-zero and the earliest record is later than the month start plus the gap (`early_history_missing`); and with reason `spend_would_decrease` when a person or group state would record less spend than the persisted one for the same period ([run.ts:163](../src/reconciler/run.ts#L163)). Tests: `tests/reconciler-continuity.test.ts`. | Small |
+| Continuity gate | **DR-05R implemented on `feat/dr-standby`, off by default.** `RECONCILER_CONTINUITY_GATE=on` requires `RECONCILER_LEDGER_COVERAGE_START_AT`. The gate correlates backend-forwarded model requests with `ApiManagementGatewayLlmLog`, detects LLM rows without a gateway request, rejects requests before verified coverage, refuses current-period states with a missing or changed coverage marker, and retains the `spend_would_decrease` guard. It no longer treats a quiet interval or a late first request as a gap. Gate settings pass through quick-start/staged Bicep, Core D2, standalone reconciler answers, and manual settings generation. Existing unmarked October states remain fenced; the October diagnostic start is later than the month start. Tests: `tests/reconciler-continuity.test.ts`, `tests/reconciler-settings.test.ts`, `tests/Test-DrLedgerGateways.ps1`, and `tests/Test-StagedStages.ps1`. | Small |
 | Health | A Front Door probe target per region that checks resolver readiness and Cosmos reachability. Today `/api/health` checks only configuration and authentication. | Small |
 | Backends | Model-specific pools, compatible local/remote members, per-member circuit breakers, private routing and identity grants from both APIMs; preserve actual-backend accounting and test streaming failures | Medium |
 | Log Analytics | Enable workspace replication. Associate DCRs with the workspace DCE if any are used. Replicate log alert rules to Region B. | Small |

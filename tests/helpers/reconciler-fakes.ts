@@ -70,14 +70,19 @@ export function ledgerBody(rows: ReadonlyArray<Record<string, unknown>>): Record
   };
 }
 
-// The continuity query's answer (DR-05): one row per gateway with records in the period.
-export function continuityBody(rows: ReadonlyArray<{ gatewayResourceId: string; earliest: string; newest: string }>): Record<string, unknown> {
+// The continuity query's result: one row per detected request/usage gap.
+export function continuityBody(gaps: ReadonlyArray<{ gatewayResourceId: string; gapKind: string; issueCount: number; firstAt: string }> = []): Record<string, unknown> {
   return {
     tables: [
       {
         name: "PrimaryResult",
-        columns: [{ name: "gatewayResourceId", type: "string" }, { name: "earliest", type: "datetime" }, { name: "newest", type: "datetime" }],
-        rows: rows.map((r) => [r.gatewayResourceId, r.earliest, r.newest]),
+        columns: [
+          { name: "gatewayResourceId", type: "string" },
+          { name: "gapKind", type: "string" },
+          { name: "issueCount", type: "long" },
+          { name: "firstAt", type: "datetime" },
+        ],
+        rows: gaps.map((gap) => [gap.gatewayResourceId, gap.gapKind, gap.issueCount, gap.firstAt]),
       },
     ],
   };
@@ -87,7 +92,7 @@ export interface FakeAzureOptions {
   projects?: unknown[];
   entitlements?: unknown[];
   ledger?: unknown | (() => Promise<unknown>);
-  // The continuity gate's per-gateway answer (DR-05); any query that is not the ledger query gets it.
+  // The continuity gate's per-gateway answer; any query that is not the ledger query gets it.
   continuity?: unknown | (() => Promise<unknown>);
   // Budget states already in Cosmos, by document id (DR-05 continuity gate reads them).
   persistedBudgetStates?: Record<string, unknown>;

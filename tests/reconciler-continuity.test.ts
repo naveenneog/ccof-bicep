@@ -1,7 +1,7 @@
-// The ledger continuity gate (DR-05; docs/DR-ACTIVE-PASSIVE.md, failover runbook step 5). With
-// RECONCILER_CONTINUITY_GATE=on a run refuses to write when the ledger shows a gap, or when a state it
-// would write has less spend than the one already persisted for the same scope and period. Off, the
-// run is exactly today's: one ledger query, no state reads.
+// The ledger continuity gate (DR-05R).
+// With the gate on, a run refuses when gateway requests and LLM usage do not
+// correlate, coverage begins after traffic, or persisted spend would decrease.
+// Off, the run is unchanged and performs no state reads.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -23,20 +23,25 @@ const OCTOBER = budgetPeriodAt(new Date(START));
 const FULL = { input: 1000, output: 100, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, inferenceGeo: "global" };
 const APIM_A = validSettings().RECONCILER_LEDGER_GATEWAY_RESOURCE_ID as string;
 const APIM_B = APIM_A.replace("sample-pilot-apim", "sample-dr-apim");
-const GATE_ON = { RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS: `${APIM_A},${APIM_B}` };
+const COVERAGE_START = "2026-10-01T00:00:00.000Z";
+const GATE_ON = {
+  RECONCILER_CONTINUITY_GATE: "on",
+  RECONCILER_LEDGER_COVERAGE_START_AT: COVERAGE_START,
+  RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS: `${APIM_A},${APIM_B}`,
+};
 const PERSON_A_STATE = `${PERSON_A}:CCOFPILOT01`;
 
-// Both gateways: A has the month from its first minutes until the outage, B has records since failover.
-const HEALTHY = [
-  { gatewayResourceId: APIM_A.toLowerCase(), earliest: "2026-10-01T00:03:00Z", newest: "2026-10-11T10:00:00Z" },
-  { gatewayResourceId: APIM_B.toLowerCase(), earliest: "2026-10-11T10:05:00Z", newest: "2026-10-11T12:58:00Z" },
-];
-
-const iso = (rows: typeof HEALTHY) =>
-  rows.map((r) => ({ gatewayResourceId: r.gatewayResourceId, earliest: new Date(r.earliest).toISOString(), newest: new Date(r.newest).toISOString() }));
-
-function personState(spentCcu: string, period = "2026-10"): Record<string, unknown> {
-  return { id: PERSON_A_STATE, personId: PERSON_A, projectId: "CCOFPILOT01", classification: "STD", spentCcu, period, computedAt: "2026-10-11T12:58:00.000Z" };
+function personState(spentCcu: string, period = "2026-10", coverageStartAt: string | null = COVERAGE_START): Record<string, unknown> {
+  return {
+    id: PERSON_A_STATE,
+    personId: PERSON_A,
+    projectId: "CCOFPILOT01",
+    classification: "STD",
+    spentCcu,
+    period,
+    computedAt: "2026-10-11T12:58:00.000Z",
+    ...(coverageStartAt ? { ledgerCoverageStartAt: coverageStartAt } : {}),
+  };
 }
 
 function pilot(options: FakeAzureOptions = {}): FakeAzure {
@@ -47,7 +52,7 @@ function pilot(options: FakeAzureOptions = {}): FakeAzure {
       entitlementDoc(PERSON_B, [{ projectId: "CCOFPILOT01", classification: "PRM" }]),
     ],
     ledger: ledgerBody([ledgerRow(FULL), ledgerRow({ ...FULL, classification: "PRM", personId: PERSON_B })]),
-    continuity: continuityBody(HEALTHY),
+    continuity: continuityBody([]),
     persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10") },
     ...options,
   });
@@ -72,22 +77,39 @@ function assertRefused(azure: FakeAzure, run: Record<string, unknown>, reason: s
   assert.equal(azure.leases.docs.get(RECONCILER_LEASE_ID)?.doc.released, true, `${label}: lease released`);
 }
 
-test("continuity query: per-gateway earliest and newest LLM-log record in the half-open period, for the listed gateways only", () => {
-  const query = buildContinuityQuery(OCTOBER, [APIM_A, APIM_B]);
-  assert.match(query, /^ApiManagementGatewayLlmLog\n/);
-  assert.ok(query.includes("| where TimeGenerated >= datetime(2026-10-01T00:00:00.000Z) and TimeGenerated < datetime(2026-11-01T00:00:00.000Z)"), query);
-  assert.ok(query.includes(`| where _ResourceId in~ ('${APIM_A}', '${APIM_B}')`), query);
-  assert.ok(query.includes("| summarize earliest = min(TimeGenerated), newest = max(TimeGenerated) by gatewayResourceId = tolower(_ResourceId)"), query);
-  assert.throws(() => buildContinuityQuery(OCTOBER, [APIM_A, `${APIM_B}'`]), /gateway resource id/);
+test("continuity query: verifies gateway request and LLM usage coverage from the configured start", () => {
+  const query = buildContinuityQuery(OCTOBER, [APIM_A, APIM_B], COVERAGE_START);
+  assert.match(query, /^let periodStart = datetime\(/);
+  assert.ok(query.includes("ApiManagementGatewayLogs"), query);
+  assert.ok(query.includes("ApiManagementGatewayLlmLog"), query);
+  assert.ok(query.includes("2026-10-01T00:00:00.000Z"), query);
+  assert.ok(query.includes("2026-11-01T00:00:00.000Z"), query);
+  assert.ok(query.includes(COVERAGE_START), query);
+  assert.ok(query.includes(`'${APIM_A}'`) && query.includes(`'${APIM_B}'`), query);
+  assert.ok(query.includes("CorrelationId"), query);
+  assert.ok(query.includes("BackendId"), query);
+  assert.match(query, /join kind=leftanti/, "LLM usage without a gateway request is part of the continuity check");
+  assert.throws(() => buildContinuityQuery(OCTOBER, [APIM_A, `${APIM_B}'`], COVERAGE_START), /gateway resource id/);
 });
 
 test("continuity answer: parsed by column name; a partial or malformed answer is a failed read", () => {
-  const extents = parseContinuityResponse(continuityBody(HEALTHY));
-  assert.deepEqual(extents.map((e) => [e.gatewayResourceId, e.newest.toISOString()]), [
-    [APIM_A.toLowerCase(), "2026-10-11T10:00:00.000Z"],
-    [APIM_B.toLowerCase(), "2026-10-11T12:58:00.000Z"],
+  const gaps = [
+    { gatewayResourceId: APIM_A.toLowerCase(), gapKind: "backend_call_without_llm", issueCount: 2, firstAt: "2026-10-11T10:00:00.000Z" },
+    { gatewayResourceId: APIM_B.toLowerCase(), gapKind: "request_before_coverage", issueCount: 1, firstAt: "2026-10-11T12:58:00.000Z" },
+    { gatewayResourceId: APIM_B.toLowerCase(), gapKind: "llm_without_gateway", issueCount: 1, firstAt: "2026-10-11T12:59:00.000Z" },
+  ];
+  const parsed = parseContinuityResponse(continuityBody(gaps));
+  assert.deepEqual(parsed.map((gap) => [gap.gatewayResourceId, gap.gapKind, gap.issueCount, gap.firstAt.toISOString()]), [
+    [APIM_A.toLowerCase(), "backend_call_without_llm", 2, "2026-10-11T10:00:00.000Z"],
+    [APIM_B.toLowerCase(), "request_before_coverage", 1, "2026-10-11T12:58:00.000Z"],
+    [APIM_B.toLowerCase(), "llm_without_gateway", 1, "2026-10-11T12:59:00.000Z"],
   ]);
-  for (const body of [{ ...continuityBody(HEALTHY), error: { code: "PartialError" } }, { tables: [] }, continuityBody([{ gatewayResourceId: APIM_A, earliest: "x", newest: "y" }])]) {
+  for (const body of [
+    { ...continuityBody(gaps), error: { code: "PartialError" } },
+    { tables: [] },
+    continuityBody([{ gatewayResourceId: APIM_A, gapKind: "unknown", issueCount: 1, firstAt: "x" }]),
+    continuityBody([{ gatewayResourceId: APIM_A, gapKind: "backend_call_without_llm", issueCount: -1, firstAt: "2026-10-11T10:00:00.000Z" }]),
+  ]) {
     assert.throws(() => parseContinuityResponse(body), (e: unknown) => e instanceof LedgerReadError);
   }
 });
@@ -99,58 +121,105 @@ test("gate on, no gap and no lower spend: every state is written and the run lin
   assert.equal(azure.writeCount, 5);
   assert.equal(azure.queries.length, 2, "the ledger query and the continuity query");
   assert.equal(run.continuityGate, "passed");
-  assert.equal(run.continuityMaxGapSeconds, 900);
-  assert.deepEqual(run.continuityGateways, iso(HEALTHY));
+  assert.equal(run.continuityCoverageStartAt, COVERAGE_START);
+  assert.deepEqual(run.continuityGaps, []);
+  assert.ok(azure.budgetStates.every((doc) => doc.ledgerCoverageStartAt === COVERAGE_START));
+  assert.ok(azure.aggregateStates.every((doc) => doc.ledgerCoverageStartAt === COVERAGE_START));
 });
 
-test("gate on, refusal (a): no listed gateway has a record newer than now minus the maximum gap", async () => {
-  const stale = HEALTHY.map((g) => ({ ...g, newest: "2026-10-11T12:44:59Z" }));
-  const azure = pilot({ continuity: continuityBody(stale) });
+test("gate on: a quiet period does not refuse when the persisted coverage marker matches", async () => {
+  const azure = pilot({ continuity: continuityBody([]) });
+  const { run } = await runOnce(azure);
+  assert.deepEqual([run.outcome, run.reason], ["written", null]);
+  assert.equal(azure.writeCount, 5);
+});
+
+test("gate on: a fresh mid-month deployment establishes and reuses its coverage baseline", async () => {
+  const coverageStartAt = "2026-10-11T12:00:00.000Z";
+  const overrides = { ...GATE_ON, RECONCILER_LEDGER_COVERAGE_START_AT: coverageStartAt };
+  const first = pilot({ continuity: continuityBody([]), persistedBudgetStates: {}, persistedAggregateStates: {} });
+  const firstRun = await runOnce(first, overrides);
+  assert.deepEqual([firstRun.run.outcome, firstRun.run.reason], ["written", null]);
+  assert.ok(first.budgetStates.every((doc) => doc.ledgerCoverageStartAt === coverageStartAt));
+  assert.ok(first.aggregateStates.every((doc) => doc.ledgerCoverageStartAt === coverageStartAt));
+  const second = pilot({
+    continuity: continuityBody([]),
+    persistedBudgetStates: Object.fromEntries(first.budgetStates.map((doc) => [doc.id, doc])),
+    persistedAggregateStates: Object.fromEntries(first.aggregateStates.map((doc) => [doc.id, doc])),
+  });
+  const secondRun = await runOnce(second, overrides);
+  assert.deepEqual([secondRun.run.outcome, second.writeCount], ["written", 5]);
+});
+
+test("gate on: a backend request without an LLM usage row refuses before any write", async () => {
+  const gap = {
+    gatewayResourceId: APIM_B.toLowerCase(),
+    gapKind: "backend_call_without_llm",
+    issueCount: 1,
+    firstAt: "2026-10-11T12:30:00.000Z",
+  };
+  const azure = pilot({ continuity: continuityBody([gap]) });
   const { run } = await runOnce(azure);
   assertRefused(azure, run, "ledger_continuity_gap");
-  assert.equal(run.continuityCondition, "no_recent_record");
-  assert.deepEqual(run.continuityGateways, iso(stale));
-  const boundary = pilot({ continuity: continuityBody(HEALTHY.map((g) => ({ ...g, newest: "2026-10-11T12:45:00Z" }))) });
-  assert.equal((await runOnce(boundary)).run.reason, "ledger_continuity_gap", "a record exactly 900 s old is not newer than now minus the gap");
+  assert.equal(run.continuityCondition, "backend_call_without_llm");
 });
 
-test("gate on, (a) is per deployment: one recent gateway is enough, and the bound is the configured gap", async () => {
-  const oneRecent = [{ ...HEALTHY[0], newest: "2026-10-11T12:00:00Z" }, { ...HEALTHY[1], newest: "2026-10-11T12:45:01Z" }];
-  assert.equal((await runOnce(pilot({ continuity: continuityBody(oneRecent) }))).run.outcome, "written", "B is 899 s old");
-  const wider = await runOnce(pilot({ continuity: continuityBody(HEALTHY.map((g) => ({ ...g, newest: "2026-10-11T12:30:01Z" }))) }),
-    { ...GATE_ON, RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "1800" });
-  assert.equal(wider.run.outcome, "written");
-});
-
-test("gate on, refusal (b): the earliest record is later than period start plus the gap while persisted spend is non-zero", async () => {
-  const late = [{ ...HEALTHY[0], earliest: "2026-10-01T00:15:01Z" }, HEALTHY[1]];
-  const azure = pilot({ continuity: continuityBody(late) });
+test("gate on: an LLM usage row without its gateway request refuses before any write", async () => {
+  const gap = {
+    gatewayResourceId: APIM_B.toLowerCase(),
+    gapKind: "llm_without_gateway",
+    issueCount: 1,
+    firstAt: "2026-10-11T12:30:00.000Z",
+  };
+  const azure = pilot({ continuity: continuityBody([gap]) });
   const { run } = await runOnce(azure);
   assertRefused(azure, run, "ledger_continuity_gap");
-  assert.equal(run.continuityCondition, "early_history_missing");
-  assert.equal(run.persistedSpendNonZero, true);
-  const atBound = await runOnce(pilot({ continuity: continuityBody([{ ...HEALTHY[0], earliest: "2026-10-01T00:15:00Z" }, HEALTHY[1]]) }));
-  assert.equal(atBound.run.outcome, "written", "an earliest record exactly at period start plus the gap is not later than it");
+  assert.equal(run.continuityCondition, "llm_without_gateway");
 });
 
-test("gate on, (b) needs persisted spend in this period: none, zero or last month's does not refuse", async () => {
-  const late = continuityBody([{ ...HEALTHY[0], earliest: "2026-10-05T00:00:00Z" }, HEALTHY[1]]);
-  for (const [label, persisted] of [
-    ["none", {}],
-    ["zero", { [PERSON_A_STATE]: personState("0") }],
-    ["last month", { [PERSON_A_STATE]: personState("900", "2026-09") }],
-  ] as const) {
-    const azure = pilot({ continuity: late, persistedBudgetStates: persisted });
-    const { run } = await runOnce(azure);
-    assert.equal(run.outcome, "written", label);
-  }
+test("gate on: a model request before diagnostic coverage refuses before any write", async () => {
+  const gap = {
+    gatewayResourceId: APIM_A.toLowerCase(),
+    gapKind: "request_before_coverage",
+    issueCount: 1,
+    firstAt: "2026-10-01T00:01:00.000Z",
+  };
+  const azure = pilot({ continuity: continuityBody([gap]) });
+  const { run } = await runOnce(azure, { ...GATE_ON, RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:02:00.000Z" });
+  assertRefused(azure, run, "ledger_continuity_gap");
+  assert.equal(run.continuityCondition, "request_before_coverage");
 });
 
-test("gate on: an empty month with persisted spend is a gap; an empty month without it is the start of a month", async () => {
+test("gate on: a future coverage start is refused before continuity reads or writes", async () => {
+  const azure = pilot();
+  const { run } = await runOnce(azure, { ...GATE_ON, RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-11T14:00:00.000Z" });
+  assertRefused(azure, run, "ledger_coverage_start_future");
+  assert.equal(azure.queries.length, 1, "only the ordinary ledger query ran");
+});
+
+test("gate on: usage without budget attribution refuses before any write", async () => {
+  const azure = pilot({ ledger: ledgerBody([ledgerRow({ ...FULL, attributionKnown: false })]) });
+  const { run } = await runOnce(azure);
+  assertRefused(azure, run, "ledger_attribution_missing");
+  assert.equal(run.unattributedRequests, 1);
+});
+
+test("gate on: a legacy current-period state without a verified coverage marker refuses", async () => {
+  const azure = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", null) } });
+  const { run } = await runOnce(azure);
+  assertRefused(azure, run, "ledger_coverage_baseline_missing");
+});
+
+test("gate on: a persisted coverage marker cannot change within a budget period", async () => {
+  const azure = pilot({ persistedBudgetStates: { [PERSON_A_STATE]: personState("0.10", "2026-10", "2026-10-02T00:00:00.000Z") } });
+  const { run } = await runOnce(azure);
+  assertRefused(azure, run, "ledger_coverage_baseline_mismatch");
+});
+
+test("gate on: empty usage cannot lower persisted spend; an empty month without state is a valid baseline", async () => {
   const withSpend = pilot({ ledger: ledgerBody([]), continuity: continuityBody([]) });
   const refused = await runOnce(withSpend);
-  assertRefused(withSpend, refused.run, "ledger_continuity_gap");
-  assert.equal(refused.run.continuityCondition, "early_history_missing");
+  assertRefused(withSpend, refused.run, "spend_would_decrease");
   const fresh = await runOnce(pilot({ ledger: ledgerBody([]), continuity: continuityBody([]), persistedBudgetStates: {} }));
   assert.equal(fresh.run.outcome, "written");
 });
@@ -166,7 +235,7 @@ test("gate on: a person state with less spend than the persisted one for the sam
 });
 
 test("gate on: a group state with less spend than this period's persisted group state is refused; last period's is not compared", async () => {
-  const group = (computedAt: string) => ({ "CCOFPILOT01:STD": { id: "CCOFPILOT01:STD", scopeId: "CCOFPILOT01:STD", spentCcu: "10", computedAt } });
+  const group = (computedAt: string) => ({ "CCOFPILOT01:STD": { id: "CCOFPILOT01:STD", scopeId: "CCOFPILOT01:STD", spentCcu: "10", computedAt, ledgerCoverageStartAt: COVERAGE_START } });
   const azure = pilot({ persistedAggregateStates: group("2026-10-11T12:58:00.000Z") });
   const { run } = await runOnce(azure);
   assertRefused(azure, run, "spend_would_decrease");
@@ -178,7 +247,7 @@ test("gate on: a group state with less spend than this period's persisted group 
 test("gate on: a failed continuity read or a failed or malformed state read writes nothing", async () => {
   const failures: Array<[string, FakeAzureOptions, string]> = [
     ["continuity HTTP error", { continuity: async () => { throw new LedgerReadError("ledger_http_error", "503"); } }, "ledger_http_error"],
-    ["continuity partial", { continuity: { ...continuityBody(HEALTHY), error: { code: "PartialError" } } }, "ledger_partial_result"],
+    ["continuity partial", { continuity: { ...continuityBody([]), error: { code: "PartialError" } } }, "ledger_partial_result"],
     ["state read", { failStateRead: Object.assign(new Error("boom"), { code: 503 }) }, "budget_state_read_failed"],
     ["state malformed", { persistedBudgetStates: { [PERSON_A_STATE]: personState("lots") } }, "budget_state_read_failed"],
     ["state negative", { persistedBudgetStates: { [PERSON_A_STATE]: personState("-5") } }, "budget_state_read_failed"],
@@ -192,7 +261,7 @@ test("gate on: a failed continuity read or a failed or malformed state read writ
 });
 
 test("gate off: today's run, one ledger query, no state read, no gate fields, even with a gap and lower spend", async () => {
-  const gap = continuityBody(HEALTHY.map((g) => ({ ...g, earliest: "2026-10-09T00:00:00Z", newest: "2026-10-09T01:00:00Z" })));
+  const gap = continuityBody([{ gatewayResourceId: APIM_A.toLowerCase(), gapKind: "request_before_coverage", issueCount: 1, firstAt: "2026-10-09T00:00:00Z" }]);
   for (const overrides of [{}, { RECONCILER_CONTINUITY_GATE: "off" }] as Array<Record<string, string>>) {
     const azure = pilot({ continuity: gap, persistedBudgetStates: { [PERSON_A_STATE]: personState("900") } });
     const { run } = await runOnce(azure, overrides);

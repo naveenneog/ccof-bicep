@@ -176,6 +176,24 @@ try {
     $read = Read-StgConfig $tmp
     Assert-Contract ($read.network.mode -ceq 'verify') 'The example network mode must be verify: the customer builds the network.'
     Assert-Contract ($read.stage1.prefix -ceq 'ccofstg' -and $read.stage1.functionsPublicNetworkAccess -ceq 'Disabled' -and $read.stage1.approveNewPublicApimBootstrap -eq $false) 'Example defaults must stay private and defer APIM.'
+    $c.reconciler.continuityGate = 'on'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'ledgerCoverageStartAt is required' }
+    Assert-Contract $bad 'An enabled staged continuity gate must have a coverage start.'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.reconciler.continuityGate -ceq 'on' -and $read.reconciler.ledgerCoverageStartAt -ceq '2026-10-20T15:41:34.000Z') 'Staged config accepts and retains valid continuity settings.'
+    $c.reconciler.continuityGate = $null
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'continuityGate must be on or off' }
+    Assert-Contract $bad 'Staged config refuses an explicitly null continuity gate.'
+    $c.reconciler.continuityGate = 'on'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34+00:00'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'valid UTC timestamp' }
+    Assert-Contract $bad 'Staged config refuses non-canonical UTC coverage starts.'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
     $stage1Parameters = Get-Stage1Parameters $read
     $recordedParameters = @{ properties = @{ parameters = @{} } }
     foreach ($key in $stage1Parameters.Keys) { $recordedParameters.properties.parameters[$key] = @{ value = $stage1Parameters[$key] } }

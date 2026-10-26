@@ -1,12 +1,28 @@
 # Change log
 
+## 2026-10-26 - DR-05R: coverage-aware continuity gate
+
+- Replaced month-start and recent-event heuristics with bidirectional correlation checks between
+  backend-forwarded model requests and LLM usage rows, a verified diagnostics-coverage start, and a
+  persisted period marker. Quiet periods and late first requests no longer fail solely for lacking
+  an earlier event.
+- Added `RECONCILER_LEDGER_COVERAGE_START_AT`. Gate-on settings require a canonical UTC millisecond
+  timestamp; current-period budget states without the matching marker and any spend decrease remain
+  fenced.
+- Passed the optional gate and coverage settings through quick-start/staged Bicep, Core D2, standalone
+  reconciler answers, and manual app-settings generation. Config validators reject a missing or
+  malformed coverage start before deployment.
+- No live Azure settings, routing or writer state changed. The lab's existing October states remain
+  blocked because diagnostics began after the month started and no coverage marker was persisted.
+
 ## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
 
 - Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated, 1-4 distinct APIM resource IDs). `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid; with both set the single ID must be in the list, otherwise the run logs `settings_invalid` with `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS:single_not_in_list`.
 - `analytics/ledger.kql`: `CcofUsageLedger` takes one APIM ID or a comma-joined list, filters with `in~`, and keeps one row per `gatewayRequestId`, so a request in both gateways' logs counts once. The workbook and admin chargeback digests change with the ledger text.
 - Workbook answer `gatewayResourceIds` and admin setting `ADMIN_GATEWAY_RESOURCE_IDS` (same rules); without them the workbook and admin queries are unchanged.
 - Deployment: `reconciler.ledgerGatewayResourceIds` (quick-start/staged Bicep, Core D2), `gatewayResourceIds` (reconciler answers), `ledgerGatewayResourceIds` (manual helpers). Without a list the rendered settings are byte-identical (`tests/Test-DrLedgerGateways.ps1`). The standalone reconciler package now includes `dist/contracts`.
-- Reconciler continuity gate, off by default: `RECONCILER_CONTINUITY_GATE=on`, `RECONCILER_CONTINUITY_MAX_GAP_SECONDS` (default 900). Refusals: `ledger_continuity_gap` (`no_recent_record`, `early_history_missing`) and `spend_would_decrease`; a refused run writes nothing. Details: [DR required changes](DR-ACTIVE-PASSIVE.md#required-changes).
+- Initial continuity gate implementation, off by default, used month-start and recency heuristics.
+  Those checks were replaced by DR-05R on 2026-10-26; see the entry above.
 
 ## 2026-10-25 - Two-region backend failover drill
 

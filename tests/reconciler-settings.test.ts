@@ -204,28 +204,29 @@ test("DR: each listed gateway id passes the APIM pattern; at most 4, no duplicat
   assert.equal(four.ok && four.settings.gatewayResourceIds.length, 4);
 });
 
-test("DR continuity gate: off unless RECONCILER_CONTINUITY_GATE is on; the maximum gap defaults to 900 seconds", () => {
+test("DR continuity gate requires a verified UTC coverage start when enabled", () => {
   const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
   const absent = read({});
   assert.equal(absent.ok && absent.settings.continuity, null);
-  const off = read({ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "120" });
+  const off = read({ RECONCILER_CONTINUITY_GATE: "off" });
   assert.equal(off.ok && off.settings.continuity, null);
-  const on = read({ RECONCILER_CONTINUITY_GATE: "on" });
-  assert.deepEqual(on.ok && on.settings.continuity, { maxGapSeconds: 900 });
-  for (const [value, seconds] of [["60", 60], ["86400", 86400]] as const) {
-    const bound = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: value });
-    assert.deepEqual(bound.ok && bound.settings.continuity, { maxGapSeconds: seconds }, value);
-  }
+  const staged = read({ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.000Z" });
+  assert.equal(staged.ok && staged.settings.continuity, null, "a valid coverage time can be staged before turning the gate on");
+  const missing = read({ RECONCILER_CONTINUITY_GATE: "on" });
+  assert.equal(missing.ok, false);
+  if (!missing.ok) assert.deepEqual(missing.problems, [{ setting: "RECONCILER_LEDGER_COVERAGE_START_AT", problem: "missing" }]);
+  const on = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.000Z" });
+  assert.deepEqual(on.ok && on.settings.continuity, { coverageStartAt: "2026-10-01T00:00:00.000Z" });
 });
 
-test("DR continuity gate: values are on/off only, and the gap is a whole number from 60 to 86400 seconds", () => {
+test("DR continuity gate: invalid coverage starts and gate values are refused", () => {
   const cases: Array<[Record<string, string>, string, string]> = [
     [{ RECONCILER_CONTINUITY_GATE: "ON" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
     [{ RECONCILER_CONTINUITY_GATE: "true" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
-    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "59" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
-    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "86401" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
-    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "15m" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "invalid"],
-    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_CONTINUITY_MAX_GAP_SECONDS: "0" }, "RECONCILER_CONTINUITY_MAX_GAP_SECONDS", "out_of_range"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00+00:00" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-02-30T00:00:00.000Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: "not-a-date" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
   ];
   for (const [overrides, setting, problem] of cases) {
     const result = readReconcilerSettings(validSettings(overrides));

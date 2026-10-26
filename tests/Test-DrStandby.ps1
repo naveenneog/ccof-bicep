@@ -160,12 +160,13 @@ Check 'standby names derive from the primary stem' ($n.stem -ceq 'lab1-abc-b' -a
 $threw = $false; try { $null = Get-DrStandbyNames @{ deploymentPrefix = 'x'; apps = @{ resolver = @{ functionApp = 'x-resolver'; storageAccount = 'lab1abcdefghijklmnopqrres' } } } 'bb' } catch { $threw = "$_" -match 'standby_storage_name_too_long' }
 Check 'storage names over 24 characters refused' $threw
 
-$primary = [ordered]@{ location = 'eastus2'; syncTimerEnabled = $true; reconciler = @{ timerEnabled = $true }; stage1 = @{ apimSku = 'StandardV2' }
+$primary = [ordered]@{ location = 'eastus2'; syncTimerEnabled = $true; reconciler = @{ timerEnabled = $true; continuityGate = 'on'; ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z' }; stage1 = @{ apimSku = 'StandardV2' }
     backends = @(@{ id = 'foundry-a'; privateEndpoint = $true }); network = @{ mode = 'create' }; __path = 'x' }
 $zones = @{ cosmos = '/z/documents'; blob = '/z/blob' }
 $b = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones
 Check 'standby config: standby location' ($b.location -ceq 'centralus')
 Check 'standby config: both writers off' ($b.syncTimerEnabled -eq $false -and $b.reconciler.timerEnabled -eq $false)
+Check 'standby config: UTC coverage start remains a canonical string' ($b.reconciler.continuityGate -ceq 'on' -and $b.reconciler.ledgerCoverageStartAt -is [string] -and $b.reconciler.ledgerCoverageStartAt -ceq '2026-10-20T15:41:34.000Z')
 Check 'standby config: existing standby subnets and shared zones' ($b.network.mode -ceq 'existing' -and $b.network.existing.functionsSubnetId -ceq '/v/standby/subnets/snet-functions' -and $b.network.existing.privateDnsZoneIds.cosmos -ceq '/z/documents')
 Check 'standby config: no second Foundry private endpoint' ($b.backends[0].privateEndpoint -eq $false)
 Check 'standby config: standby section set' ($b.standby.stage1DeploymentName -ceq 'dr-standby-shells' -and $b.standby.endpointNameSuffix -ceq '-b')

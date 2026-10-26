@@ -2,8 +2,8 @@
 
 ## Disaster recovery feature branch
 
-Branch: `main` (merged 2026-10-25). Each packet has a separate RED/GREEN cycle, review,
-gate and commit. No packet implicitly authorizes a later Azure deployment.
+Implementation branch: `feat/dr-standby` (not merged). Each packet has a separate RED/GREEN cycle,
+review, gate and commit. No packet implicitly authorizes a later Azure deployment.
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
@@ -11,10 +11,11 @@ gate and commit. No packet implicitly authorizes a later Azure deployment.
 | DR-02: backend administration | Complete 2026-10-23 (admin 3.3.0, Fabrikam lab live) | Editor registers an existing Foundry endpoint; reader cannot write; invalid/unapproved targets are refused; ETag and write-ahead audit apply |
 | DR-03: project routing | Complete 2026-10-23 (sync/resolver/gateway, Fabrikam lab live) | Existing projects keep direct routing; editor can choose only compatible fallback members; disabled failover produces no pool or breaker; changed routing shows pending/applied/failed |
 | DR-04: pool publication and gateway | Complete 2026-10-23 for one gateway (Fabrikam lab); second-region gateway pending DR-07 | Approved routing is published to both gateways, verified and activated by revision; breaker scope is isolated per project; partial streams are not replayed |
-| DR-05: accounting and continuity | Code complete 2026-10-25 (branch `feat/dr-accounting`); not deployed, no live two-gateway run yet (needs DR-07's standby APIM) | Both APIM IDs and actual serving backends are counted once; incomplete month history cannot lower previously recorded spend; UI/export/usage remain consistent |
+| DR-05: accounting and continuity | Code complete on `feat/dr-standby`; live gate refused before writes on 2026-10-25 because October history starts after month start | Both APIM IDs and actual serving backends are counted once; incomplete month history cannot lower previously recorded spend; UI/export/usage remain consistent |
+| DR-05R: coverage-aware continuity gate | Implementation, deployment paths, council and packet gate complete on `feat/dr-standby`; commit pending | Late first traffic and idle periods do not fail solely for lacking a month-start event; backend calls without LLM usage, LLM usage without a gateway request, invalid coverage starts, unmarked legacy spend, and spend decreases refuse before writes |
 | DR-06: prerequisite deployment | P0-P2 complete 2026-10-23 (Contoso, Fabrikam lab); third subscription blocked (HTTP 403) | Explicit create/reuse identity and network inventory; public ingress not weakened; read-back records permissions and DNS/connectivity evidence |
-| DR-07: regional/data/edge deployment | Pending DR-05 and DR-06 | Standby shells, single-write Cosmos replication, workspace replication and private Front Door origins are verified with standby writers fenced |
-| DR-08: promotion and failback | Pending DR-07 | Losing primary compute, backend, Cosmos and logging are tested separately; no split-brain writer; failback does not reset spend or silently double quotas |
+| DR-07: regional/data/edge deployment | Partially deployed and tested on `feat/dr-standby`; Front Door moved traffic to B; workspace switchover and writer promotion not completed | Standby shells, single-write Cosmos replication, workspace replication and private Front Door origins are verified with standby writers fenced |
+| DR-08: promotion and failback | Blocked by DR-05R's unmarked October history and B's repeated primary-backend timeouts | Losing primary compute, backend, Cosmos and logging are tested separately; no split-brain writer; failback does not reset spend or silently double quotas |
 
 Details and stage owners: [DR implementation](design/DR-IMPLEMENTATION.md).
 

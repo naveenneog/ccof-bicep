@@ -66,9 +66,11 @@ Optional; with none set the reconciler behaves as before. Design: [DR required c
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` | not set (the single `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` is used) | Comma-separated APIM resource IDs (1-4, no duplicates) whose logs are read as one ledger; a request ID in both gateways' logs is counted once. Must include `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` when both are set |
-| `RECONCILER_CONTINUITY_GATE` | `off` | `on` makes each run check the ledger and the persisted states before writing; it writes nothing and logs outcome `refused` (`ledger_continuity_gap` or `spend_would_decrease`) when the check fails |
-| `RECONCILER_CONTINUITY_MAX_GAP_SECONDS` | `900` | 60-86400. The newest record of at least one gateway must be newer than now minus this; the month's earliest record must be no later than the month start plus this while persisted spend this month is non-zero |
+| `RECONCILER_CONTINUITY_GATE` | `off` | `on` checks gateway/LLM request coverage, the period's persisted coverage marker and spend monotonicity before writing |
+| `RECONCILER_LEDGER_COVERAGE_START_AT` | not set | Required when the gate is `on`. UTC timestamp when APIM gateway and LLM diagnostics were enabled and verified before model traffic was allowed. Existing current-period states without a coverage marker remain refused |
 
-With the gate on, a period without any new gateway record for longer than the gap (for example a quiet
-night) also refuses writes; budget figures then age and pass `RESOLVER_BUDGET_STATE_HARD_LIMIT_SECONDS`
-as in any reconciler outage.
+Set the coverage start before traffic is allowed and keep the value unchanged for the deployment.
+Quiet periods are valid. A backend-forwarded model request without a matching LLM usage row, or an
+LLM usage row without a gateway request, is not.
+For the first gate-on run, enable diagnostics first and keep the writers fenced until the coverage
+check passes; the resulting budget states retain the period's coverage marker.

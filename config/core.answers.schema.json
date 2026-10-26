@@ -268,8 +268,14 @@
         "writeConcurrency": { "type": "integer", "minimum": 1, "maximum": 32 },
         "softLimitPercent": { "type": "integer", "minimum": 1, "maximum": 99, "description": "RECONCILER_SOFT_LIMIT_PERCENT (ADR 0035): from this share of a person's budget the usage view warns and the pace halves. Set together with pacingWindowMinutes, or neither." },
         "pacingWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 120, "description": "RECONCILER_PACING_WINDOW_MINUTES (ADR 0035): the remaining budget is spread over at least this many minutes. At least the reconciler interval; above the expected ledger delay." },
+        "ledgerGatewayResourceIds": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "pattern": "^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]+/providers/Microsoft\\.ApiManagement/service/[A-Za-z0-9-]+$" }, "description": "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS (DR-05): APIM resource IDs whose logs form this deployment's usage ledger." },
+        "continuityGate": { "enum": ["on", "off"], "description": "RECONCILER_CONTINUITY_GATE (DR-05R): on refuses budget writes when request/usage coverage or persisted-state continuity is unverified." },
+        "ledgerCoverageStartAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", "description": "RECONCILER_LEDGER_COVERAGE_START_AT (DR-05R): canonical UTC instant when both APIM gateway diagnostic categories were verified, before model traffic was allowed." },
         "logAnalyticsEndpoint": { "$ref": "#/$defs/httpsOrigin", "description": "RECONCILER_LOG_ANALYTICS_ENDPOINT (WP-REC): the Log Analytics query API origin of the workspace's cloud, also the token audience; no path or trailing slash. Public cloud: https://api.loganalytics.io (Learn, Logs query API request format)." }
-      }
+      },
+      "allOf": [
+        { "if": { "properties": { "continuityGate": { "const": "on" } }, "required": ["continuityGate"] }, "then": { "required": ["ledgerCoverageStartAt"] } }
+      ]
     },
     "gateway": {
       "type": "object",

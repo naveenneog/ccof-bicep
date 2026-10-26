@@ -66,6 +66,10 @@ function Get-DrStandbyNames {
 # section that tells the stage functions to keep their names apart from region A's.
 function New-DrStandbyStagedConfig {
     param([Parameter(Mandatory)] [Collections.IDictionary]$Primary, [Parameter(Mandatory)] $Dr, [Parameter(Mandatory)] [string]$VnetId, [Parameter(Mandatory)] [hashtable]$ZoneIds, [string[]]$GatewayResourceIds = @())
+    $coverageStartAt = $Primary.reconciler.ledgerCoverageStartAt
+    if ($null -ne $coverageStartAt -and $coverageStartAt -isnot [string]) {
+        throw 'primary_coverage_start_invalid: reconciler.ledgerCoverageStartAt must be preserved as a UTC string.'
+    }
     $b = $Primary | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
     $b.Remove('__path')
     $sec = $Dr.secondary
@@ -83,6 +87,7 @@ function New-DrStandbyStagedConfig {
     $b.stage1.apimSku = [string]$(if ($Dr.standby.apim.PSObject.Properties['sku'] -and $Dr.standby.apim.sku) { $Dr.standby.apim.sku } else { 'StandardV2' })
     # DR-05: one month can hold usage from both gateways, so both regions read both (app-settings.bicep).
     if ($GatewayResourceIds.Count) { $b.reconciler.ledgerGatewayResourceIds = @($GatewayResourceIds); if (-not $b.Contains('admin') -or -not $b.admin) { $b.admin = @{} }; $b.admin.gatewayResourceIds = @($GatewayResourceIds) }
+    if ($null -ne $coverageStartAt) { $b.reconciler.ledgerCoverageStartAt = $coverageStartAt }
     $b.standby = [ordered]@{ stage1DeploymentName = 'dr-standby-shells'; assignmentNameSalt = "dr-standby-$($Dr.standby.nameSuffix)"; endpointNameSuffix = "-$($Dr.standby.nameSuffix)" }
     return $b
 }
