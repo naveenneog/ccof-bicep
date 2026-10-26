@@ -10,6 +10,41 @@ $script:ReconcilerSettingNames = @(
     'RECONCILER_LEDGER_TIMEOUT_SECONDS', 'RECONCILER_LEDGER_MAX_ROWS', 'RECONCILER_MAX_STATES',
     'RECONCILER_WRITE_CONCURRENCY'
 )
+$script:OptionalReconcilerSettingNames = @(
+    'RECONCILER_CONTINUITY_GATE', 'RECONCILER_LEDGER_COVERAGE_START_AT'
+)
+$script:UtcCoverageStartPattern = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
+
+function Test-ReconcilerUtcCoverageStart {
+    param([AllowNull()] $Value)
+    if ($Value -isnot [string] -or $Value -cnotmatch $script:UtcCoverageStartPattern) { return $false }
+    $parsed = [DateTimeOffset]::MinValue
+    return [DateTimeOffset]::TryParseExact(
+        $Value, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )
+}
+
+function Get-ReconcilerCoverageStartFromJson {
+    param([Parameter(Mandatory)] [string]$Json)
+    $document = [System.Text.Json.JsonDocument]::Parse($Json)
+    try {
+        $settingsProperty = @($document.RootElement.EnumerateObject() | Where-Object Name -CEQ 'reconcilerSettings')
+        if ($settingsProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $coverageProperty = @($settingsProperty[0].Value.EnumerateObject() | Where-Object Name -CEQ 'RECONCILER_LEDGER_COVERAGE_START_AT')
+        if ($coverageProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $isString = $coverageProperty[0].Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String
+        return @{
+            present = $true
+            isString = $isString
+            value = if ($isString) { $coverageProperty[0].Value.GetString() } else { $null }
+        }
+    } finally {
+        $document.Dispose()
+    }
+}
 
 function Get-ReconcilerAnswerRules {
     $rid = '^/subscriptions/{0}/resourceGroups/[A-Za-z0-9._-]+/providers/'
@@ -49,7 +84,27 @@ function Get-ReconcilerAnswerRules {
 function Read-ReconcilerAnswers {
     param([Parameter(Mandatory)] [string] $Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Answers file not found: $Path" }
-    Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
+    $raw = Get-Content -LiteralPath $Path -Raw
+    $answers = $raw | ConvertFrom-Json -AsHashtable
+    $coverage = Get-ReconcilerCoverageStartFromJson $raw
+    if ($coverage.present -and $coverage.isString -and $answers.reconcilerSettings -is [System.Collections.IDictionary]) {
+        $answers.reconcilerSettings['RECONCILER_LEDGER_COVERAGE_START_AT'] = $coverage.value
+    }
+    return $answers
+}
+
+# Optional gatewayResourceIds (active/passive DR, docs/DR-ACTIVE-PASSIVE.md): 1-4 distinct APIM ids, in any
+# subscription, that include gatewayResourceId; the same rules as src/contracts/gateway-resource-ids.ts.
+$script:ApimId = '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]+/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]+\z'
+function Get-GatewayListProblem {
+    param([AllowNull()] $Ids, [string] $Single)
+    if ($Ids -is [string] -or $Ids -isnot [System.Collections.IEnumerable]) { return 'invalid' }
+    $list = @($Ids)
+    if ($list.Count -eq 0 -or @($list | Where-Object { $_ -isnot [string] -or $_ -cnotmatch $script:ApimId }).Count) { return 'invalid' }
+    if ($list.Count -gt 4) { return 'too_many' }
+    if (@($list | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique).Count -ne $list.Count) { return 'duplicate' }
+    if (@($list | Where-Object { $_ -eq $Single }).Count -eq 0) { return 'single_not_in_list' }
+    return $null
 }
 
 # Returns the problems as "<key>:<code>" strings; empty when the answers are complete and valid.
@@ -85,6 +140,10 @@ function Test-ReconcilerAnswers {
         elseif ($Answers[$key] -isnot [bool]) { $problems.Add("${key}:invalid") }
     }
     $settings = $Answers['reconcilerSettings']
+    if ($Answers.Contains('gatewayResourceIds')) {
+        $problem = Get-GatewayListProblem -Ids $Answers['gatewayResourceIds'] -Single ([string]$Answers['gatewayResourceId'])
+        if ($problem) { $problems.Add("gatewayResourceIds:$problem") }
+    }
     if ($settings -isnot [System.Collections.IDictionary]) { $problems.Add('reconcilerSettings:missing') }
     else {
         foreach ($name in $script:ReconcilerSettingNames) {
@@ -92,7 +151,25 @@ function Test-ReconcilerAnswers {
             elseif ($settings[$name] -isnot [string]) { $problems.Add("reconcilerSettings.${name}:not_a_string") }
         }
         foreach ($name in $settings.Keys) {
-            if ($name -notin $script:ReconcilerSettingNames) { $problems.Add("reconcilerSettings.${name}:unexpected") }
+            if ($name -notin $script:ReconcilerSettingNames -and $name -notin $script:OptionalReconcilerSettingNames) {
+                $problems.Add("reconcilerSettings.${name}:unexpected")
+            }
+        }
+        foreach ($name in $script:OptionalReconcilerSettingNames) {
+            if ($settings.Contains($name) -and $settings[$name] -isnot [string]) {
+                $problems.Add("reconcilerSettings.${name}:not_a_string")
+            }
+        }
+        $continuityGate = $settings['RECONCILER_CONTINUITY_GATE']
+        if ($null -ne $continuityGate -and $continuityGate -is [string] -and $continuityGate -cnotin @('on', 'off')) {
+            $problems.Add('reconcilerSettings.RECONCILER_CONTINUITY_GATE:invalid')
+        }
+        $coverageStartAt = $settings['RECONCILER_LEDGER_COVERAGE_START_AT']
+        if ($null -ne $coverageStartAt -and $coverageStartAt -is [string] -and -not (Test-ReconcilerUtcCoverageStart $coverageStartAt)) {
+            $problems.Add('reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT:invalid')
+        }
+        if ($continuityGate -ceq 'on' -and -not $settings.Contains('RECONCILER_LEDGER_COVERAGE_START_AT')) {
+            $problems.Add('reconcilerSettings.RECONCILER_LEDGER_COVERAGE_START_AT:missing')
         }
     }
     return , $problems.ToArray()
@@ -124,6 +201,10 @@ function Get-ReconcilerAppSettings {
         RECONCILER_LEASE_CONTAINER              = $Answers.leaseContainerName
     }
     foreach ($name in $script:ReconcilerSettingNames) { $settings[$name] = $Answers.reconcilerSettings[$name] }
+    foreach ($name in $script:OptionalReconcilerSettingNames) {
+        if ($Answers.reconcilerSettings.Contains($name)) { $settings[$name] = $Answers.reconcilerSettings[$name] }
+    }
+    if ($Answers.Contains('gatewayResourceIds')) { $settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS = @($Answers.gatewayResourceIds) -join ',' }
     return $settings
 }
 

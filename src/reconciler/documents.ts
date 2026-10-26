@@ -25,6 +25,7 @@ export interface BudgetStateDocument {
   validUntil: string;
   completeness: Completeness;
   realtimeCeilingTokensPerMinute: number;
+  ledgerCoverageStartAt?: string;
   // Present only when the reconciler paces spend (ADR 0035).
   softLimitPercent?: number;
   softLimitReached?: boolean;
@@ -41,6 +42,7 @@ export interface AggregateBudgetStateDocument {
   activeMemberCount: number;
   computedAt: string;
   validUntil: string;
+  ledgerCoverageStartAt?: string;
 }
 
 // What a scope's rows added up to in this run.
@@ -58,6 +60,7 @@ export interface StateStamp {
   contractScheduleVersion: string;
   computedAt: string;
   validUntil: string;
+  ledgerCoverageStartAt?: string;
 }
 
 export function completenessOf(tally: ScopeTally): Completeness {

@@ -113,7 +113,7 @@ export function groupBudgetLine(context: LineContext, doc: AggregateBudgetStateD
   });
 }
 
-export type RunOutcome = "written" | "skipped_lease_held" | "failed" | "settings_invalid";
+export type RunOutcome = "written" | "skipped_lease_held" | "failed" | "settings_invalid" | "refused";
 
 // The run line. `schema` first; every other field is optional so that a run
 // that stops early reports only what it knows.

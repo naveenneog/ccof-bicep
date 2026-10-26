@@ -83,7 +83,7 @@ export function reportingInputDiagnostic(error: unknown): { field?: string; deta
   if (error instanceof SyntaxError) return { detail: "json_invalid" };
   if (error instanceof Error && "code" in error && error.code === "ENOENT") return { detail: "local_input_file_missing" };
   const message = error instanceof Error ? error.message : "";
-  const match = /^(schemaVersion|subscriptionId|tenantId|resourceGroupName|location|deploymentName|workbookResourceName|workbookDisplayName|workspaceResourceId|gatewayResourceId|reconcilerResourceId|rateCardPath|ledgerPath|outputDirectory|defaultProjectId|maxRows|topUsers|maxQueryDays|budgetLookbackDays|retentionDays|groups|group\.(?:projectId|classification|groupId|displayName)): ([a-z_]+)$/.exec(message);
+  const match = /^(schemaVersion|subscriptionId|tenantId|resourceGroupName|location|deploymentName|workbookResourceName|workbookDisplayName|workspaceResourceId|gatewayResourceIds|gatewayResourceId|reconcilerResourceId|rateCardPath|ledgerPath|outputDirectory|defaultProjectId|maxRows|topUsers|maxQueryDays|budgetLookbackDays|retentionDays|groups|group\.(?:projectId|classification|groupId|displayName)): ([a-z_]+)$/.exec(message);
   return match ? { field: match[1], detail: match[2] } : {};
 }
 

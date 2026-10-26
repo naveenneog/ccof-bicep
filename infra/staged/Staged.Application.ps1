@@ -43,6 +43,7 @@ function Invoke-Stage5 {
     if ($admin.enabled) {
         $admin += @{ uiClientId = $entra.admin.appId; editorIds = @(); readerIds = @(); v3Enabled = ($Cfg.admin.v3Enabled -ne $false); extraAllowedClientIds = @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
             clientId = $entra.registrations.developerSignIn.appId; gatewayUrl = $ctx.GatewayUrl; projectHeader = $Cfg.gateway.projectHeaderName }
+        if (@($Cfg.admin.gatewayResourceIds).Count) { $admin.gatewayResourceIds = @($Cfg.admin.gatewayResourceIds) }
     }
     $params = @{
         tenantId = $Cfg.tenantId; location = $Cfg.location; names = $ctx.P.names; cosmosEndpoint = $s1.cosmosEndpoint
@@ -53,7 +54,7 @@ function Invoke-Stage5 {
         apimIdentityAppId = $apimSp.appId; apimPrincipalId = $ctx.Apim.principalId; admin = $admin
         workbook = $Cfg.workbook; workbookContent = $report.workbookContent.value; workbookContentTags = $report.contentTags.value
     }
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name 'stage5-config' -Apply:$Apply -Parameters $params
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name (Get-StgDeploymentName $Cfg 'stage5-config') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 5 $params)
     if (-not $Apply) { return $null }
     $v = [ordered]@{ settings = [ordered]@{} }
     foreach ($k in @($s1.names.apps.Keys | Sort-Object)) {

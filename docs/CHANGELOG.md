@@ -1,5 +1,90 @@
 # Change log
 
+## 2026-10-26 - DR-08 full-cycle lab drill
+
+- Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.
+  Results are in [STATUS](STATUS.md#disaster-recovery-implementation). New open items: DR-15 (Region B to
+  East US 2 Foundry connection resets), DR-16 (fallback capacity), DR-17 (a mid-month workspace
+  switchover leaves the ledger incomplete). DR-04 resolved.
+- Failover runbook step 4: the switchover REST call needs a JSON content type and body `{}`.
+
+## 2026-10-26 - Continuity gate: one-time baseline adoption
+
+- Continuity gate: an unattributed ledger row for a failed request with no token count of any kind
+  (a backend timeout or connection failure, which never carries the gateway's attribution trace) is
+  reported as `unattributedFailedRequests` and no longer refuses. Other unattributed rows still
+  refuse. The reconciler reads the ledger's `requestFailed` column; an answer without it is treated
+  as unknown.
+- Fixed: the reconciler refused `RECONCILER_LEDGER_COVERAGE_START_AT` as stored by App Service. The
+  platform drops zero milliseconds (`…34.000Z` reads back as `…34Z`), and the parser required exactly
+  three fractional digits. Both continuity timestamps now accept a UTC `Z` instant with or without
+  fractional seconds and are compared in normalized form.
+- Added `RECONCILER_LEDGER_BASELINE_ADOPT`. With the gate `on` and a value equal to
+  `RECONCILER_LEDGER_COVERAGE_START_AT`, a run accepts current-period budget states that have no
+  coverage marker and stamps the marker on every state it writes. A different marker, a log gap,
+  unattributed usage and a spend decrease still refuse. The run line reports
+  `continuityBaselineAdopted`. Decision: [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption).
+- Resolved DR-13: the Region B 504s in the 2026-10-25 drill came from the drill's injected backend
+  address; the backend was restored on 2026-10-26. Resolved DR-14: activity-log evidence shows no
+  model API existed on the lab gateway before diagnostics began.
+
+## 2026-10-26 - DR-05R: coverage-aware continuity gate
+
+- Replaced month-start and recent-event heuristics with bidirectional correlation checks between
+  backend-forwarded model requests and LLM usage rows, a verified diagnostics-coverage start, and a
+  persisted period marker. Quiet periods and late first requests no longer fail solely for lacking
+  an earlier event.
+- Added `RECONCILER_LEDGER_COVERAGE_START_AT`. Gate-on settings require a canonical UTC millisecond
+  timestamp; current-period budget states without the matching marker and any spend decrease remain
+  fenced.
+- Passed the optional gate and coverage settings through quick-start/staged Bicep, Core D2, standalone
+  reconciler answers, and manual app-settings generation. Config validators reject a missing or
+  malformed coverage start before deployment.
+- No live Azure settings, routing or writer state changed. The lab's existing October states remain
+  blocked because diagnostics began after the month started and no coverage marker was persisted.
+
+## 2026-10-26 - DR-08: verify circuit-breaker settings on publication
+
+- APIM route read-back now verifies breaker interval, ranges, trip duration, `Retry-After` handling
+  and failure count before accepting a published project revision. This is required to verify any
+  future timeout-cooldown adjustment; `tests/Test-ProjectRouting.ps1` covers mismatched read-back.
+- A backend breaker metadata change does not automatically queue a new project routing revision;
+  toggling an unchanged pool can reuse its prior revision. The runbook warns operators not to assume
+  a metadata-only change was applied. No live breaker setting changed.
+## 2026-10-26 - Current full-DR lab state and writer fencing
+
+- The guide and DR status ledger now record the 03:22 IST readback: Front Door's primary-origin drill fault remained active, Cosmos wrote in Central US, both `syncEntitlement` and `reconcileBudgets` timers were disabled in A and B, and B's continuity gate remained `on`. The workspace switchover window had not opened; its earliest time is 2026-10-26T07:09Z (12:39 IST). No writer promotion or failback is claimed; the last workspace readback at 01:50 IST showed no switchover, and the eligibility time had not arrived. No drill screenshot was retained; sanitized query results are documented instead. Documentation only; no code or live Azure state changed.
+
+## 2026-10-26 - Region B 504 evidence in the DR standby guide
+
+- [Section 11.2](runbooks/DR-STANDBY-CLOUD-SHELL.md#112-traffic-to-region-b) records the gateway-log result: 16 HTTP 504s on region B (2026-10-25T19:21:04Z-19:48:42Z), all on the priority-1 backend member, `request-forwarder` / `backend` / `Timeout`, no `BackendResponseCode`; the same window had 15 HTTP 200s from the Central US fallback and one from the priority-1 member. This narrows the symptom only; root cause and why the fallback was not selected on each 504 are unknown, and region B remains not qualified. Documentation only; no identifiers added.
+
+## 2026-10-25 - DR standby region guide for Azure Cloud Shell
+
+- New runbook [DR standby region in Cloud Shell](runbooks/DR-STANDBY-CLOUD-SHELL.md): prerequisites, durable (`clouddrive`) state, a field-by-field `dr.config.json` reference with a complete valid example, P0-P2 and the region B driver phases (`Data`, `Shells`, `Grants`, `Config`, `Network`, `Code`, `Verify`) as preview then `-Apply`, resuming after the 20-minute timeout, and post-checks.
+- Scope stated in the guide: the region B driver has only offline tests and no recorded live run; Front Door Premium, end-to-end failover and failback, and the production continuity gate are not done. The serverless-to-provisioned Cosmos change is one-way. Documentation only; no code changed.
+
+## 2026-10-25 - DR-05: ledger across two gateways, continuity gate
+
+- Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated, 1-4 distinct APIM resource IDs). `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid; with both set the single ID must be in the list, otherwise the run logs `settings_invalid` with `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS:single_not_in_list`.
+- `analytics/ledger.kql`: `CcofUsageLedger` takes one APIM ID or a comma-joined list, filters with `in~`, and keeps one row per `gatewayRequestId`, so a request in both gateways' logs counts once. The workbook and admin chargeback digests change with the ledger text.
+- Workbook answer `gatewayResourceIds` and admin setting `ADMIN_GATEWAY_RESOURCE_IDS` (same rules); without them the workbook and admin queries are unchanged.
+- Deployment: `reconciler.ledgerGatewayResourceIds` (quick-start/staged Bicep, Core D2), `gatewayResourceIds` (reconciler answers), `ledgerGatewayResourceIds` (manual helpers). Without a list the rendered settings are byte-identical (`tests/Test-DrLedgerGateways.ps1`). The standalone reconciler package now includes `dist/contracts`.
+- Initial continuity gate implementation, off by default, used month-start and recency heuristics.
+  Those checks were replaced by DR-05R on 2026-10-26; see the entry above.
+
+## 2026-10-25 - Two-region backend failover drill
+
+- [Drill record](DR-NOVICE-WALKTHROUGH-2026-10-25.md#two-region-backend-failover-drill-central-us-account-in-a-second-subscription): SASLAB1's fallback moved to a Foundry account in Central US in a second subscription of the same tenant. When the primary answered 404, the breaker opened and Central US served 22 of 26 calls; traffic returned to the primary after the fault.
+- Fix (N-20): a primary that does not answer never opened the published breaker, which counted only response codes; an unreachable primary timed out on every call (0 of 4 failed over). `infra/dr/ProjectRouting.psm1` now publishes `failureCondition.errorReasons` `BackendConnectionFailure` and `Timeout` with every enabled breaker and treats a member without them as unverified. Two new checks in `tests/Test-ProjectRouting.ps1` (26 pass); each was shown to fail with its line removed. Live: Central US served 9 of 12 calls with `errorReasons`; revision 4 published by the fixed publisher failed over after 2 timeouts. Pools verified earlier keep the old breaker until a new revision is published ([DR runbook 6.6](runbooks/DR-CLOUD-SHELL.md#66-drill-prove-that-a-fallback-serves-workstation)).
+- [DR runbook](runbooks/DR-CLOUD-SHELL.md): 6.1 covers a fallback account in another subscription and the region-shared Claude quota (N-23). The new 6.6 is a reversible drill that changes the pool member URL. A rejected private endpoint connection cannot be approved again (N-21), and deleting a deployment or lowering its capacity did not cause a failover (N-22).
+
+## 2026-10-25 - DR walkthrough from the documentation
+
+- [DR walkthrough](DR-NOVICE-WALKTHROUGH-2026-10-25.md): a first-time operator followed the README and linked guides in Azure Cloud Shell. In the Fabrikam lab, P0-P2, per-project failover and workspace replication were applied; D1-D6 remain unavailable. In a fresh Contoso sandbox, Stages 0-8 were applied (Stage 8 from the workstation); P2 and workspace replication were applied; the sandbox had no Claude deployment, so there was no positive model call. 19 issues are logged with screenshots and fixes; the main blockers are standby identity grants, provisioned Cosmos and missing D1-D6 tooling.
+- The walkthrough caught a false Stage 1 verification failure: Flex returned a null subnet when no VNet integration was configured. `Get-StgSite` now normalizes the value; a regression test failed before the fix and 357 staged checks pass after it (commit `088e400`).
+- The second Contoso run also exposed missing admin-app preauthorization for Microsoft Azure CLI. `admin.extraAllowedClientIds` was set and Stages 4, 5 and 7 reapplied before the workstation Stage 8 run. Eight pseudonymised Cloud Shell screenshots cover the Contoso deployment and DR results; OCR of all 195 repository images finds no real identifier.
+
 ## 2026-10-24 - Step-by-step deployment guide
 
 - BSL-06 measured on a temporary lab probe API (deleted afterwards): APIM `limit-concurrency` releases

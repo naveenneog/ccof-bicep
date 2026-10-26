@@ -60,6 +60,9 @@ resource resolverInsights 'Microsoft.Insights/components@2020-02-02' existing = 
 resource syncInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: names.apps.sync.appInsights
 }
+resource reconcilerInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: names.apps.reconciler.appInsights
+}
 resource reconcilerSite 'Microsoft.Web/sites@2024-04-01' existing = {
   name: names.apps.reconciler.functionApp
 }
@@ -75,6 +78,7 @@ module settings '../quickstart/modules/app-settings.bicep' = {
     reconcilerClientId: reconcilerClientId
     resolverAppInsightsConnection: resolverInsights.properties.ConnectionString
     syncAppInsightsConnection: syncInsights.properties.ConnectionString
+    reconcilerAppInsightsConnection: reconcilerInsights.properties.ConnectionString
     workspaceCustomerId: workspace.properties.customerId
     apimId: apimService.id
     resolver: resolver
@@ -133,10 +137,12 @@ resource adminInsights 'Microsoft.Insights/components@2020-02-02' existing = if 
 // Admin app settings (docs/ADMIN-V3.md Settings, docs/ADMIN-QUICK-STAGES.md 4g). One shared
 // workspace: the reconciler logs through its diagnostic setting (site id), the admin audit through its
 // Application Insights component.
+// Active/passive DR (DR-05): every gateway this deployment's usage can come from; absent for one region.
+var adminGatewayList = admin.?gatewayResourceIds ?? []
 resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnabled) {
   parent: adminSite
   name: 'appsettings'
-  properties: {
+  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, {
     AzureWebJobsStorage__accountName: names.apps.?admin.?storageAccount ?? ''
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: adminInsights!.properties.ConnectionString
@@ -162,7 +168,7 @@ resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnable
     ADMIN_CLIENT_ID: admin.?clientId ?? ''
     ADMIN_GATEWAY_URL: admin.?gatewayUrl ?? ''
     ADMIN_PROJECT_HEADER: admin.?projectHeader ?? 'x-ccof-project'
-  }
+  })
 }
 
 output gatewayUrl string = '${api.outputs.gatewayUrl}/${apim.apiPath}'

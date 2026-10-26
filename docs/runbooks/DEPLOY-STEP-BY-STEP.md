@@ -50,8 +50,10 @@ and subscriptions in them are pseudonyms with the same shape as the real values.
 | Git | `git --version` | [git-scm.com](https://git-scm.com/) |
 | Azure CLI with Bicep | `az version` and `az bicep version` | [Install the Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) |
 
-Azure Cloud Shell (PowerShell) has all four; it reaches Azure management endpoints, not private
-endpoints inside your network ([Cloud Shell quickstart](CLOUD-SHELL-QUICKSTART.md)).
+Azure Cloud Shell (PowerShell) has the first three and the Azure CLI; its Bicep CLI is added with
+`az bicep install` ([Cloud Shell sign-in](#a-separate-azure-cli-sign-in)). Cloud Shell reaches Azure
+management endpoints, not private endpoints inside your network
+([Cloud Shell quickstart](CLOUD-SHELL-QUICKSTART.md)).
 
 ### Source code
 
@@ -95,6 +97,28 @@ az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o 
 
 **Expect:** your tenant, subscription and account.
 
+**In Azure Cloud Shell.** Cloud Shell is already signed in with the Portal account. A separate
+profile and `az login` there start a device-code sign-in, which Conditional Access policies that
+require a managed device refuse
+([lab screenshot](../images/dr-novice/dr-n03b-conditional-access.png)). In Cloud Shell, the
+variable block above is followed by this block instead of the sign-in block:
+
+```powershell
+Remove-Item Env:AZURE_CONFIG_DIR -ErrorAction SilentlyContinue   # keep Cloud Shell's own sign-in
+$cfg   = "$HOME/ccof-private/staged.config.json"
+$state = "$HOME/ccof-private/.staged-state"
+az account set --subscription $sub        # Cloud Shell's default subscription can be another one
+az bicep install                          # Cloud Shell has no Bicep CLI by default
+az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o table
+```
+
+The deployment driver does not read `AZURE_CONFIG_DIR` (`infra/staged/Invoke-StagedDeployment.ps1`
+and `infra/staged/Staged.*.ps1` contain no reference to it), so Cloud Shell needs no value for it.
+Files under `$HOME` survive the session only when Cloud Shell has a storage account
+([Persist files in Cloud Shell](https://learn.microsoft.com/azure/cloud-shell/persisting-shell-storage));
+otherwise the configuration file and `.staged-state` are downloaded before the session ends.
+Step 8 does not run in Cloud Shell ([Step 8](#step-8-test-end-to-end)).
+
 On Windows, `az` passes its arguments through `cmd.exe`. Values containing `( ) | & < > ^` are
 interpreted by `cmd.exe`, so this guide keeps them out of `az` arguments and puts request bodies in
 files ([driver reference](STAGED-DEPLOYMENT-V2.md#how-a-stage-runs)).
@@ -106,9 +130,9 @@ repository and replace each value that starts with `REPLACE`; the driver refuses
 contains one.
 
 ```powershell
-New-Item -ItemType Directory C:\private\ccof -Force | Out-Null
+New-Item -ItemType Directory (Split-Path $cfg) -Force | Out-Null
 Copy-Item infra\staged\staged.config.example.json $cfg
-notepad $cfg
+notepad $cfg                                        # Cloud Shell: code $cfg
 ```
 
 | Field | What to enter | Where to find it |
@@ -118,13 +142,56 @@ notepad $cfg
 | `resourceGroup`, `location` | A new, empty resource group and its region (for example `eastus2`) | Your naming standard |
 | `stage1.prefix` | 3 to 8 lowercase letters or digits used in resource names | Your choice |
 | `apim` and `stage1.approveNewPublicApimBootstrap` | **Either** an existing APIM: `apim.existing` with its `name`, `resourceGroup` and `subscriptionId` (system-assigned identity on). **Or** a new one: `approveNewPublicApimBootstrap: true` with `apimPublisherEmail` and `apimPublisherName`; it is created with public ingress, because APIM cannot be created private before a private endpoint exists. With neither, Step 3 stops with `apim_missing`. | [Stage 1 notes](STAGED-DEPLOYMENT-V2.md#stage-1-resources-only) |
+| `stage1.cosmosCapacityMode` and `cosmos.capacityMode` | Cosmos DB capacity; the two fields go together. `serverless` and `serverless` (the default) for a single-region deployment. `provisioned` and `provisioned-autoscale` when disaster recovery is planned: a serverless account runs in one region and cannot add another ([Cosmos DB serverless](https://learn.microsoft.com/azure/cosmos-db/serverless); lab error `Serverless accounts do not support multiple regions`). With `provisioned-autoscale` the database gets autoscale throughput up to `cosmos.autoscaleMaxThroughput` RU/s (at least 1000). A serverless account can later be changed in place to provisioned throughput, one way only ([change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)); this was not run in the lab. | `infra/staged/main.bicep` (`cosmosCapacityMode`: `serverless`, `provisioned`), `infra/staged/stage2-schema.bicep` (`capacityMode`: `serverless`, `provisioned-autoscale`) |
+| `stage1.functionsPublicNetworkAccess` | `Enabled` for a deployment run from Cloud Shell or a workstation outside the VNet, which is the setting used in both lab runs ([run report](../STAGED-STDV2-RUNS-2026-10-20.md)). The resolver and admin apps still require Entra ID sign-in, and the resolver accepts only the APIM identity. The example file has `Disabled`; with it, APIM reaches the resolver and the operator publishes code only through `sites` private endpoints and a host inside the network ([network handoff](DEPLOYMENT-RUNBOOK.md#2-network-handoff)), which this guide does not create. | `infra/staged/main.bicep` (`functionsPublicNetworkAccess`) |
 | `stage1.foundry` | `create: true` for a new Foundry account with Claude deployments, or `false` to use an existing one | [Foundry section](STAGED-DEPLOYMENT-V2.md#stage-1-foundry-optional) |
 | `backends` | Each Foundry account, its deployment names and inference geography | Portal: Foundry account > **Models + endpoints** |
 | `groups` | Project, classification and Entra group for each team, with allowed model families and budgets | [Admin operations](ADMIN-OPERATIONS.md#limits-and-budgets) |
-| `network` | `mode: verify` and the three subnet IDs your network team provides | Step 6 below |
+| `network` | `mode: verify` and the three subnet IDs from your network team or from [The network](#the-network-before-step-0) | Step 6 below |
 | `acceptance` | One allowed and one denied project/model pair for the final test | Step 8 below |
 
 The full list of sections is in the [driver reference](STAGED-DEPLOYMENT-V2.md#configuration-file).
+
+### The network (before Step 0)
+
+With the default `network.mode: verify`, the configuration needs the IDs of three subnets in one
+VNet before Step 0, because the driver checks them when it reads the file
+([`Staged.Common.ps1`](../../infra/staged/Staged.Common.ps1)). Where a network team provides them,
+their IDs go in `network.existing`. Otherwise, the repository template
+[`infra/prereqs/network.bicep`](../../infra/prereqs/network.bicep) creates, once:
+
+- the VNet with three subnets: private endpoints, Functions (delegated to `Microsoft.App/environments`)
+  and APIM (delegated to `Microsoft.Web/serverFarms`);
+- the APIM network security group with the nine rules from Microsoft's documented minimum for APIM
+  VNet integration;
+- default outbound access on the APIM and Functions subnets. VNets created after 31 March 2026 give
+  new subnets no default outbound access, which leaves APIM and the Function Apps without a path
+  to Microsoft Graph, Application Insights and Log Analytics unless a NAT gateway or firewall
+  provides one ([default outbound access](https://learn.microsoft.com/azure/virtual-network/ip-services/default-outbound-access));
+- the `privatelink.documents.azure.com` and `privatelink.blob.core.windows.net` DNS zones, linked
+  to the VNet.
+
+The template's subnet list is authoritative: it is run once, at creation, and not against a VNet
+that already has other subnets.
+
+```powershell
+$netRg = 'REPLACE-network-resource-group'      # a group other than $rg: Step 1 refuses a non-empty group
+$vnet  = 'REPLACE-vnet-name'
+az group create -n $netRg -l $location
+@{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'
+   parameters = @{ location = @{ value = $location }; tags = @{ value = @{ workload = 'ccof' } }
+     vnetName = @{ value = $vnet }; addressSpace = @{ value = '10.64.0.0/16' }; apimNsgName = @{ value = "$vnet-nsg-apim" }
+     subnets = @{ value = @{ apim = @{ name = 'snet-apim'; prefix = '10.64.1.0/24' }
+                             privateEndpoints = @{ name = 'snet-private-endpoints'; prefix = '10.64.2.0/24' }
+                             functions = @{ name = 'snet-functions'; prefix = '10.64.3.0/24' } } } } } |
+    ConvertTo-Json -Depth 10 | Set-Content network.parameters.json
+az deployment group create -g $netRg -n ccof-network -f infra/prereqs/network.bicep -p '@network.parameters.json' `
+    --query "properties.outputs.{apim:apimSubnetId.value, privateEndpoints:privateEndpointSubnetId.value, functions:functionsSubnetId.value}" -o json
+```
+
+**Expect:** three subnet IDs. They go in `network.existing` as `apimSubnetId`,
+`privateEndpointSubnetId` and `functionsSubnetId`. The address ranges are examples; the VNet must not
+overlap networks it will be peered with, including a later disaster recovery VNet.
 
 ---
 
@@ -625,30 +692,28 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 6 -ConfigPath $cfg -A
 The check alone, without the driver:
 [`scripts\manual\Test-NetworkConfiguration.ps1`](../../scripts/manual/Test-NetworkConfiguration.ps1).
 
-**Azure CLI: build.** These commands build the same network that the driver's `create` mode builds
-with [`stage6-network.bicep`](../../infra/staged/stage6-network.bicep). They were not run as written in
-the lab, whose network the driver built; the check commands further down were run against it.
-The address ranges are examples.
+**Azure CLI: build.** The VNet, subnets, APIM network security group and the Cosmos and blob DNS
+zones exist from [The network](#the-network-before-step-0). These commands add the Foundry DNS zones,
+the private endpoints and the integrations, and skip zones and links that already exist.
 
 ```powershell
 $netRg   = 'REPLACE-network-resource-group'
 $vnet    = 'REPLACE-vnet-name'
-$apimNsg = 'REPLACE-apim-nsg-name'                   # an existing network security group for the APIM subnet
 $vnetId  = az network vnet show -g $netRg -n $vnet --query id -o tsv
 
-# 1. Subnets
-az network vnet subnet create -g $netRg --vnet-name $vnet -n snet-private-endpoints --address-prefixes 10.64.2.0/24
-az network vnet subnet create -g $netRg --vnet-name $vnet -n snet-functions --address-prefixes 10.64.3.0/24 `
-    --delegations Microsoft.App/environments
-az network vnet subnet create -g $netRg --vnet-name $vnet -n snet-apim --address-prefixes 10.64.1.0/24 `
-    --delegations Microsoft.Web/serverFarms --network-security-group $apimNsg
+# 1. Subnets: created before Step 0 (The network). Nothing to do here.
 
-# 2. Private DNS zones, each linked to the VNet (the last three only for a private Foundry account)
+# 2. Private DNS zones, each linked to the VNet; existing zones and links are kept
+#    (the last three only for a private Foundry account)
 $zones = 'privatelink.documents.azure.com', 'privatelink.blob.core.windows.net',
          'privatelink.cognitiveservices.azure.com', 'privatelink.openai.azure.com', 'privatelink.services.ai.azure.com'
 foreach ($z in $zones) {
-    az network private-dns zone create -g $netRg -n $z
-    az network private-dns link vnet create -g $netRg -z $z -n ccof-link --virtual-network $vnetId --registration-enabled false
+    if (-not (az network private-dns zone list -g $netRg --query "[?name=='$z'].name" -o tsv)) {
+        az network private-dns zone create -g $netRg -n $z
+    }
+    if (-not (az network private-dns link vnet list -g $netRg -z $z --query "[].virtualNetwork.id" -o tsv | Where-Object { $_ -eq $vnetId })) {
+        az network private-dns link vnet create -g $netRg -z $z -n "$vnet-link-ccof" --virtual-network $vnetId --registration-enabled false
+    }
 }
 
 # 3. Private endpoints with their DNS zone groups
@@ -806,6 +871,15 @@ in the `ApiManagementGatewayLlmLog` table within 15 minutes. Allowed requests us
 
 **Who runs it.** A member of each allowed project's group, with Azure CLI allowed as a client of the
 gateway app (`entra.allowAzureCliClient: true`), and Log Analytics Reader on the workspace.
+
+**Where it runs.** A workstation signed in with `az login`, on a device that meets the tenant's
+Conditional Access policy; not Azure Cloud Shell. The driver (`infra/staged/Staged.Application.ps1`)
+and the commands below request the gateway token with
+`az account get-access-token --scope api://.../access_as_user`. Cloud Shell's managed-identity
+credential refuses custom `api://` audiences (`Audience api://... is not a supported MSI token
+audience`), and `az login --scope` in Cloud Shell is the device-code sign-in described under
+[A separate Azure CLI sign-in](#a-separate-azure-cli-sign-in)
+([lab screenshot](../images/dr-novice/dr-n11-token-audience.png)).
 
 **Script**
 

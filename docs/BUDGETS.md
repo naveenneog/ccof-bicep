@@ -58,3 +58,22 @@ Both reconciler settings are required together; with neither, the reconciler beh
 A shorter window allows faster spend but more overshoot: a review simulation reached about 149% of
 budget with 10 minutes and about 100% with 30 ([ADR 0035](adr/0035-budget-soft-limit-and-spend-pacing.md#consequences)).
 How to set them: [admin operations, soft limit and spend pacing](runbooks/ADMIN-OPERATIONS.md#limits-and-budgets).
+
+### Disaster recovery settings (DR-05)
+
+Optional; with none set the reconciler behaves as before. Design: [DR required changes](DR-ACTIVE-PASSIVE.md#required-changes).
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` | not set (the single `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` is used) | Comma-separated APIM resource IDs (1-4, no duplicates) whose logs are read as one ledger; a request ID in both gateways' logs is counted once. Must include `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` when both are set |
+| `RECONCILER_CONTINUITY_GATE` | `off` | `on` checks gateway/LLM request coverage, the period's persisted coverage marker and spend monotonicity before writing |
+| `RECONCILER_LEDGER_COVERAGE_START_AT` | not set | Required when the gate is `on`. UTC timestamp when APIM gateway and LLM diagnostics were enabled and verified before model traffic was allowed. Existing current-period states without a coverage marker remain refused unless adopted with the next setting |
+| `RECONCILER_LEDGER_BASELINE_ADOPT` | not set | One-time adoption of current-period states written before markers existed ([ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption)). The value must equal `RECONCILER_LEDGER_COVERAGE_START_AT` exactly (`mismatch` otherwise) and the gate must be `on` (`gate_not_on`). A missing marker is accepted and stamped; a different marker, a log gap, unattributed usage and lower spend still refuse. The run line reports `continuityBaselineAdopted`. Remove the setting after one passing run |
+
+Set the coverage start before traffic is allowed and keep the value unchanged for the deployment.
+App Service stores `2026-10-20T15:41:34.000Z` as `2026-10-20T15:41:34Z`; the reconciler accepts both
+and compares them as the same instant.
+Quiet periods are valid. A backend-forwarded model request without a matching LLM usage row, or an
+LLM usage row without a gateway request, is not.
+For the first gate-on run, enable diagnostics first and keep the writers fenced until the coverage
+check passes; the resulting budget states retain the period's coverage marker.

@@ -47,6 +47,7 @@ export function buildPersonState(
       : exhausted
         ? 0
         : computeCeilingTokensFromCcu(scope.personBudgetCcu.minus(tally.spentCcu), worstCaseCcuPerToken),
+    ...(stamp.ledgerCoverageStartAt ? { ledgerCoverageStartAt: stamp.ledgerCoverageStartAt } : {}),
     ...(paced && pacing ? { softLimitPercent: pacing.softLimitPercent, softLimitReached: paced.softLimitReached } : {}),
   };
 }

@@ -39,6 +39,41 @@ Check 'bad tenant' (Has { param($c) $c.tenantId = 'contoso' } 'tenantId:invalid'
 Check 'bad primary vnet id' (Has { param($c) $c.primary.vnetId = '/subscriptions/x/resourceGroups/a(b)/providers/Microsoft.Network/virtualNetworks/v' } 'primary.vnetId:invalid')
 Check 'bad identity name' (Has { param($c) $c.identityNames = @('sync b') } 'identityNames:invalid_sync b')
 
+# A partial configuration lists what is missing instead of failing on the first absent field.
+$partial = '{"tenantId":"00000000-0000-4000-8000-000000000001","subscriptionId":"00000000-0000-4000-8000-000000000002","secondary":{"location":"centralus"}}' | ConvertFrom-Json
+$got = @(); $threw = $null
+try { $got = @(Get-DrConfigProblems $partial) } catch { $threw = $_.Exception.Message }
+Check "partial config does not throw ($threw)" ($null -eq $threw)
+foreach ($p in 'secondary.resourceGroup:invalid', 'secondary.vnetName:invalid', 'secondary.addressSpace:invalid', 'secondary.subnets.apim.name:invalid', 'primary.location:invalid') {
+    Check "partial config reports $p" ($got -contains $p)
+}
+
+# The example configuration names every field: refused as shipped, valid once the REPLACE- values are filled.
+$examplePath = Join-Path $PSScriptRoot '..\infra\dr\dr.config.example.json'
+Check 'example config exists' (Test-Path $examplePath)
+if (Test-Path $examplePath) {
+    $raw = Get-Content $examplePath -Raw
+    Check 'example config is refused as shipped' (@(Get-DrConfigProblems ($raw | ConvertFrom-Json)).Count -gt 0)
+    $filled = @(Get-DrConfigProblems (($raw -replace 'REPLACE-', '') | ConvertFrom-Json))
+    Check "example config is valid once filled ($($filled -join ','))" ($filled.Count -eq 0)
+}
+
+# Azure CLI profile: an explicit AZURE_CONFIG_DIR, or Cloud Shell's own signed-in profile.
+$r = Resolve-DrAzureProfile -ConfigDir 'C:\p' -CloudShell $null -HomePath '/home/a'
+Check 'explicit profile kept' ($r.Ok -and $r.ConfigDir -eq 'C:\p')
+$r = Resolve-DrAzureProfile -ConfigDir $null -CloudShell 'true' -HomePath '/home/a'
+Check 'cloud shell uses its own profile' ($r.Ok -and $r.ConfigDir -eq '/home/a/.azure')
+$r = Resolve-DrAzureProfile -ConfigDir $null -CloudShell $null -HomePath '/home/a'
+Check 'workstation without profile refused, message names both options' (-not $r.Ok -and $r.Message -match 'isolated profile' -and $r.Message -match 'Cloud Shell')
+
+# Reusing a resource group in another region: the blocker names the override.
+$sec = [pscustomobject]@{ location = 'centralus' }
+Check 'same-region group accepted' ($null -eq (Get-DrResourceGroupLocationBlocker $sec 'centralus'))
+$b = Get-DrResourceGroupLocationBlocker $sec 'eastus2'
+Check 'other-region group blocked with override hint' ($b -match '^resourceGroup:location_is_eastus2' -and $b -match 'allowResourceGroupInOtherRegion')
+$sec = [pscustomobject]@{ location = 'centralus'; allowResourceGroupInOtherRegion = $true }
+Check 'override accepts other-region group' ($null -eq (Get-DrResourceGroupLocationBlocker $sec 'eastus2'))
+
 $admin = '{"appId":"00000000-0000-4000-8000-00000000dd05","signInAudience":"AzureADMyOrg","identifierUris":["api://00000000-0000-4000-8000-00000000dd05"],
   "api":{"oauth2PermissionScopes":[{"value":"Projects.Manage","isEnabled":true}],"preAuthorizedApplications":[{"appId":"04b07795-8ddb-461a-bbee-02f9e1bf7b46"}]},
   "appRoles":[{"value":"CCOF.Projects.Read","isEnabled":true},{"value":"CCOF.Projects.Write","isEnabled":true}]}'
@@ -60,6 +95,8 @@ $saved = $env:AZURE_CONFIG_DIR; $env:AZURE_CONFIG_DIR = $null
 $out = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '..\infra\dr\Invoke-DrPrerequisites.ps1') -Phase Discover -ConfigPath $tmp -EvidenceDirectory ([IO.Path]::GetTempPath()) 2>&1
 $env:AZURE_CONFIG_DIR = $saved
 Check 'driver refuses without AZURE_CONFIG_DIR' ($LASTEXITCODE -eq 2 -and "$out" -match 'isolated profile')
+$out = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '..\infra\dr\Invoke-DrPrerequisites.ps1') -Phase Discover -ConfigPath (Join-Path ([IO.Path]::GetTempPath()) 'no-such-dr.config.json') -EvidenceDirectory ([IO.Path]::GetTempPath()) 2>&1
+Check 'missing config names the example (exit 2)' ($LASTEXITCODE -eq 2 -and "$out" -match 'dr\.config\.example\.json')
 Remove-Item $tmp
 
 # Templates build (az bicep build works signed out).

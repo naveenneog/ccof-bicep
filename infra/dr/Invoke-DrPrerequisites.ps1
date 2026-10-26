@@ -32,6 +32,7 @@ Import-Module (Join-Path $PSScriptRoot 'DrPrerequisites.psm1') -Force
 # Write-Error would throw under ErrorActionPreference Stop before the intended exit code.
 function Stop-Dr([string]$Message, [int]$Code) { [Console]::Error.WriteLine($Message); exit $Code }
 
+if (-not (Test-Path -LiteralPath $ConfigPath)) { Stop-Dr "No configuration file at ${ConfigPath}: copy infra/dr/dr.config.example.json to it and replace every REPLACE- value (docs/runbooks/DR-CLOUD-SHELL.md)." 2 }
 $cfg = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 $problems = @(Get-DrConfigProblems $cfg)
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" 2 }
@@ -62,7 +63,9 @@ function Save-Evidence {
     Write-Host "evidence: $path"
 }
 
-if (-not $env:AZURE_CONFIG_DIR) { Stop-Dr 'Set AZURE_CONFIG_DIR to an isolated profile for the target tenant.' 2 }
+$azProfile = Resolve-DrAzureProfile -ConfigDir $env:AZURE_CONFIG_DIR -CloudShell $env:ACC_CLOUD -HomePath $HOME
+if (-not $azProfile.Ok) { Stop-Dr $azProfile.Message 2 }
+$env:AZURE_CONFIG_DIR = $azProfile.ConfigDir
 
 # Every phase starts with the tenant/subscription check. The configured subscription is resolved
 # explicitly (never the profile default, which another sign-in can swap) and every subscription-scoped
@@ -161,15 +164,15 @@ switch ($Phase) {
         $template = Join-Path $PSScriptRoot 'dr-prerequisites.bicep'
         $rg = Invoke-AzJson (@('group', 'show', '--name', $sec.resourceGroup) + $sub) -AllowMissing
         if (-not $rg) {
-            if (-not $Apply) { Write-Host "preview: resource group $($sec.resourceGroup) ($($sec.location)) would be created"; $evidence.checks.resourceGroup = 'would_create' }
+            if (-not $Apply) { Write-Host "preview: resource group $($sec.resourceGroup) ($($sec.location)) would be created; this needs Microsoft.Resources/subscriptions/resourceGroups/write on the subscription. Without it, set secondary.resourceGroup to an existing group (and secondary.allowResourceGroupInOtherRegion to true if it is in another region)."; $evidence.checks.resourceGroup = 'would_create' }
             else { $null = Invoke-AzJson (@('group', 'create', '--name', $sec.resourceGroup, '--location', $sec.location, '--tags') + @($cfg.tags.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) + $sub); $evidence.checks.resourceGroup = 'created' }
         } elseif ($rg.location -ne $sec.location) {
             # A resource group's location is metadata only; the template places every resource in the
             # secondary location. Reusing an existing group elsewhere (a subscription without
             # resource-group create rights) is an explicit, recorded choice: its metadata is not
             # reachable while its own region is down.
-            if ($sec.PSObject.Properties['allowResourceGroupInOtherRegion'] -and $sec.allowResourceGroupInOtherRegion -eq $true) { $evidence.checks.resourceGroupWarning = "metadata_in_$($rg.location)" }
-            else { $blockers.Add("resourceGroup:location_is_$($rg.location)") }
+            $rgBlocker = Get-DrResourceGroupLocationBlocker $sec $rg.location; if (-not $rgBlocker) { $evidence.checks.resourceGroupWarning = "metadata_in_$($rg.location)" }
+            else { $blockers.Add($rgBlocker) }
         }
         if ($blockers.Count) { break }
         $name = "ccof-dr-prereq-$stamp"

@@ -26,6 +26,8 @@ Check 'breaker count' ($rule.failureCondition.count -eq 3)
 Check 'breaker interval ISO' ($rule.failureCondition.interval -eq 'PT60S')
 Check 'breaker trip ISO' ($rule.tripDuration -eq 'PT30S')
 Check 'breaker ranges' ($rule.failureCondition.statusCodeRanges[0].min -eq 500 -and $rule.failureCondition.statusCodeRanges[0].max -eq 599)
+# A primary that does not answer (region or network outage) has no status code; only errorReasons count it (drill 2026-10-25).
+Check 'breaker counts no-response failures' ((@($rule.failureCondition.errorReasons) -join ',') -ceq 'BackendConnectionFailure,Timeout')
 Check 'member url' ($m0.properties.url -ceq 'https://acct-a.services.ai.azure.com/anthropic')
 $m1 = New-MemberBackendBody $plan.members[1] 'SASLAB1'
 Check 'no breaker when registry has none' (-not $m1.properties.Contains('circuitBreaker'))
@@ -43,12 +45,26 @@ Check 'APIM id with cmd metacharacters refused' $threw
 $json = { param($o) $o | ConvertTo-Json -Depth 20 | ConvertFrom-Json }
 $members = @{ 'ccof-m-saslab1-1a2b3c4d-r2-0' = (& $json $m0); 'ccof-m-saslab1-1a2b3c4d-r2-1' = (& $json $m1) }
 Check 'faithful read-back verifies' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $members).Count -eq 0)
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].tripDuration = 'PT120S'
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker trip duration mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_trip_duration')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].failureCondition.interval = 'PT120S'
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker interval mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_interval')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].failureCondition.statusCodeRanges[0].min = 429
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker range mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_ranges')
+$mm = $members.Clone(); $changedBreaker = & $json $m0; $changedBreaker.properties.circuitBreaker.rules[0].acceptRetryAfter = $false
+$mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $changedBreaker
+Check 'breaker Retry-After mismatch blocks publication verification' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_retry_after')
 $p2 = & $json $pool; $p2.properties.pool.services[1].priority = 1
 Check 'changed priority detected' (@(Compare-PublishedRouting $plan $apim $p2 $members) -contains 'pool:services')
 $mm = $members.Clone(); $mm.Remove('ccof-m-saslab1-1a2b3c4d-r2-1')
 Check 'missing member detected' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-1:missing')
 $mm = $members.Clone(); $mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = & $json $m1
 Check 'primary without breaker detected' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_missing')
+$mm = $members.Clone(); $old = & $json $m0; $old.properties.circuitBreaker.rules[0].failureCondition.PSObject.Properties.Remove('errorReasons'); $mm['ccof-m-saslab1-1a2b3c4d-r2-0'] = $old
+Check 'breaker without error reasons detected' (@(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -contains 'member:ccof-m-saslab1-1a2b3c4d-r2-0:breaker_error_reasons')
 $mm = $members.Clone(); $mm['ccof-m-saslab1-1a2b3c4d-r2-1'] = & $json $m0
 $got = @(Compare-PublishedRouting $plan $apim (& $json $pool) $mm) -join ','; Check 'unexpected breaker and url detected' ($got -match 'r2-1:url.*r2-1:breaker_unexpected')
 
@@ -60,4 +76,4 @@ $out = & pwsh -NoProfile -File $script -AdminBaseUrl 'https://admin.example' -Ad
 Check 'script refuses a non-admin scope' ($LASTEXITCODE -ne 0 -and "$out" -match 'AdminScope')
 
 Write-Host "Test-ProjectRouting: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 24) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 26) { exit 1 }

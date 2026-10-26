@@ -313,10 +313,24 @@ Failover is off for every project until an editor switches it on. Contract:
 | --- | --- | --- |
 | 1. Register the primary | **Backends** > Register backend: the project's APIM backend ID, Foundry `/anthropic` URL, deployments, inference geography, an enabled circuit breaker | Registry entry in `adminConfig`; no project changes |
 | 2. Register fallbacks | Same page; the circuit breaker is optional | Same |
-| 3. Choose fallbacks | Project > **Settings** > Backend failover: switch on, add fallbacks in order, review | State `pending publication`; requests keep their current route |
-| 4. Publish | `infra/dr/Publish-ProjectRouting.ps1 -AdminBaseUrl … -AdminScope api://<admin app>/Projects.Manage -ApimResourceId <each APIM> -Apply` | Project pool `ccof-pool-<project>-<hash>-r<revision>` and members created, read back, publication recorded; state `verified` |
-| 5. Sync | Next entitlement sync (or snapshot apply) | Memberships carry `routeBackendId`; the gateway sends this project to its pool |
+| 3. Choose fallbacks | Project > **Settings** > Backend failover: switch on, add fallbacks in order, review | State `pending publication`; requests keep their current route. Switching back on with the same ordered fallback list after a verified publication returns directly to `verified` |
+| 4. Publish | `infra/dr/Publish-ProjectRouting.ps1 -AdminBaseUrl https://REPLACE-admin-host -AdminScope api://REPLACE-admin-app-id/Projects.Manage -ApimResourceId REPLACE-apim-resource-id -Apply` (one `-ApimResourceId` per APIM), from a workstation, not Cloud Shell (below) | Project pool `ccof-pool-<project>-<hash>-r<revision>` and members created, read back, publication recorded; state `verified` |
+| 5. Sync | Next entitlement sync, or a [snapshot apply](CLOUD-SHELL-QUICKSTART.md#5-load-group-members-delegated-snapshot-no-graph-application-permission) | Memberships carry `routeBackendId`; the gateway sends this project to its pool |
 | Switch off | Same section, clear the switch | State `disabled with pool`; after the next sync the project routes direct again |
+
+The pool revision changes only when the ordered fallback list changes; switching failover off and
+on keeps it, so an already verified pool is reused and needs no new publication. A changed list or
+order creates a new revision in state `pending publication` (step 4). Source:
+`failoverAfterEdit` and `routingState` in `admin/src/backend-routing.ts`. Step 5 is still needed
+after switching back on: the sync copies the pool ID into memberships only while failover is on
+(`src/contracts/project-routing.ts`).
+
+Step 4 runs from a workstation signed in with `az login`, on a device that meets the tenant's
+Conditional Access policy. The publisher requests the admin token with
+`az account get-access-token --scope api://.../Projects.Manage` (`infra/dr/Publish-ProjectRouting.ps1`);
+Azure Cloud Shell's managed-identity credential refuses custom `api://` audiences (`Audience api://...
+is not a supported MSI token audience`), and `az login` in Cloud Shell is a device-code sign-in that
+such policies refuse ([lab screenshot](../images/dr-novice/dr-n11-token-audience.png)).
 
 The server refuses a fallback that is disabled, in another inference geography, missing any model
 the project admits, equal to the primary or not registered, and refuses switching on while the
@@ -329,6 +343,15 @@ Behaviour measured on Fabrikam lab (2026-10-23): the request that trips a breake
 later requests go to the next member until the trip time ends. Breaker state is per gateway node,
 so a second node can return one more failure before its own breaker opens. Only managed-identity
 backends route to a pool.
+
+The publisher adds `errorReasons` `BackendConnectionFailure` and `Timeout` to every enabled breaker,
+so a primary that does not answer opens it as well as the configured status codes. In the
+2026-10-25 drill, an unreachable primary with the breaker published before this change timed out on
+every call and never moved traffic; with `errorReasons`, a Central US account in a second subscription
+served after one 21-second timeout per node and trip window
+([walkthrough N-20](../DR-NOVICE-WALKTHROUGH-2026-10-25.md#issues-and-required-fixes)). A pool
+published before that change gets them only from a new revision; the steps are in the
+[DR runbook, 6.6](DR-CLOUD-SHELL.md#66-drill-prove-that-a-fallback-serves-workstation).
 
 ## 8. Troubleshooting
 

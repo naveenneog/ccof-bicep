@@ -10,7 +10,8 @@ in each region, private behind Front Door Premium, and multiple Foundry backend 
 priority pools and per-member circuit breakers. The staged templates deploy one region today; the
 changes this design needs are listed under [Required changes](#required-changes).
 
-Implementation branch: `main` (merged 2026-10-25). The single-region design without DR is on `feat/admin-console-v2`.
+DR-01 through DR-06 baseline implementation merged to `main` on 2026-10-25. DR-05R coverage-aware
+continuity work and the remaining two-region qualification are on `feat/dr-standby`, not merged.
 [The implementation contract](design/DR-IMPLEMENTATION.md) prepares identity and network handoffs
 before runtime deployment. Backend pools are **optional per project**, off by default; admins select
 the primary and permitted compatible fallback backends. The diagram depicts the enabled case,
@@ -140,6 +141,12 @@ Circuit-breaker behaviour:
    partially delivered stream. Retrying a generation after an ambiguous failure can duplicate
    execution and charges.
 
+The publisher's read-back verifies breaker count, interval, status ranges, trip duration,
+`Retry-After`, and no-response reasons before marking a revision published. A registered backend's
+breaker-setting update is audited but does not automatically create a project routing revision.
+Switching failover off and on with an unchanged pool can reuse a previously published revision; do
+not assume that it queued a new publication. The metadata-only republish path remains unqualified.
+
 Breaker decisions are approximate and local to gateway instances; there is no globally shared
 breaker state between the two APIM services. A breaker does not create extra quota: Claude
 deployments can share subscription-wide limits, so both local and remote members may throttle.
@@ -186,14 +193,25 @@ Recovery figures documented by Microsoft:
    ([how-to](https://learn.microsoft.com/azure/cosmos-db/how-to-manage-database-account#perform-forced-failover-for-your-azure-cosmos-db-account)).
 4. **Log Analytics.** Trigger the workspace switchover
    ([switch over](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#switch-over-to-your-secondary-workspace)).
-   Expect a few minutes for DNS-based rerouting.
-5. **Ledger continuity gate.** Before enabling the Region B reconciler:
+   Expect a few minutes for DNS-based rerouting. The REST call is
+   `POST .../providers/Microsoft.OperationalInsights/locations/<standby region>/workspaces/<name>/failover?api-version=2025-02-01`
+   with `Content-Type: application/json` and body `{}`: without a body the service returns HTTP 415, and
+   `az rest` without `--body` waited 55 minutes in the lab without starting the operation. Failback is
+   `POST .../workspaces/<name>/failback` with the same body. The replica holds only data ingested after
+   replication was enabled: in a month where replication started after the month began, the ledger is
+   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).5. **Ledger continuity gate.** Before enabling the Region B reconciler:
    - the workspace answers the ledger query for the current month;
    - the newest APIM A record in the replica is within the replication lag of the outage start;
    - APIM B records are arriving.
+   - `RECONCILER_LEDGER_COVERAGE_START_AT` is the verified diagnostics start, earlier than any
+     model traffic allowed through either gateway.
 
-   If the gate fails, keep the reconciler off and enforcement unchanged, and record the gap.
-   Budget-enforced requests are refused once budget figures pass the hard limit.
+   With `RECONCILER_CONTINUITY_GATE=on` and both APIM IDs in
+   `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS`, the reconciler compares backend-forwarded model requests
+   with LLM usage rows, verifies the persisted period coverage marker, and refuses spend decreases
+   before writing. A quiet interval alone is not a gap. If a check fails, keep both writers off,
+   preserve the gate, and record the missing evidence; budget-enforced requests are refused once
+   figures pass the hard limit.
 6. **Promote Region B writers.** Set `AzureWebJobs.syncEntitlement.Disabled=false` on sync B and
    enable the reconciler B timer. Admin B becomes writable once Cosmos accepts writes in Central US.
 7. **Verify.**
@@ -211,8 +229,8 @@ writers, turn off the Region B writers, so only one region writes at a time.
 | --- | --- | --- |
 | Staged deployment | A `secondaryRegion` section. Stage 1 creates Region B resources using Standard v2; Stages 3, 5 and 7 apply grants, settings (timers off) and code to Region B. Cosmos needs a second region and provisioned throughput. Zone redundancy and any Premium v2 option are explicit, separately validated choices. | Medium |
 | Front Door | New template: profile, WAF policy, origin group with both APIM origins over Private Link, probes, no caching. The client `gatewayUrl` becomes the Front Door host. | Medium |
-| Accounting | The ledger query, reconciler setting, workbook and admin queries take a **list** of APIM resource IDs, because one month can contain traffic from both instances. Today each takes one ID (`RECONCILER_LEDGER_GATEWAY_RESOURCE_ID`, `analytics/ledger.kql`). | Medium |
-| Continuity gate | A reconciler pre-check that refuses to write when the ledger has a gap at failover (runbook step 5), with tests | Small |
+| Accounting | **Implemented (DR-05, 2026-10-25).** The ledger query, reconciler, workbook and admin chargeback queries take a list of up to 4 APIM resource IDs. Reconciler: optional `RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` (comma-separated); `RECONCILER_LEDGER_GATEWAY_RESOURCE_ID` stays valid, and when both are set the single ID must be in the list (`single_not_in_list`) ([settings.ts:212](../src/reconciler/settings.ts#L212)). `CcofUsageLedger` filters both gateway tables with `in~` and keeps one row per `gatewayRequestId` (the APIM `CorrelationId`) ([ledger.kql:12](../analytics/ledger.kql#L12), [:33](../analytics/ledger.kql#L33), [:107](../analytics/ledger.kql#L107)). Workbook answer `gatewayResourceIds` ([config.ts:74](../analytics/workbooks/config.ts#L74)); admin `ADMIN_GATEWAY_RESOURCE_IDS` ([chargeback.ts:52](../admin/src/chargeback.ts#L52)). Deployment inputs: `reconciler.ledgerGatewayResourceIds` in [app-settings.bicep:128](../infra/quickstart/modules/app-settings.bicep#L128) and [Core.D2Steps.psm1:156](../scripts/Core.D2Steps.psm1#L156), `gatewayResourceIds` in [ReconcilerDeploy.psm1:58](../infra/reconciler/ReconcilerDeploy.psm1#L58), `ledgerGatewayResourceIds` in [Session-Helpers.ps1:334](../scripts/manual/Session-Helpers.ps1#L334). Without a list each path renders the same settings as before (`tests/Test-DrLedgerGateways.ps1`). `/ccof-usage/me/usage` reads budget state from Cosmos, not gateway logs, and is unchanged. | Medium |
+| Continuity gate | **DR-05R implemented on `feat/dr-standby`, off by default.** `RECONCILER_CONTINUITY_GATE=on` requires `RECONCILER_LEDGER_COVERAGE_START_AT`. The gate correlates backend-forwarded model requests with `ApiManagementGatewayLlmLog`, detects LLM rows without a gateway request, rejects requests before verified coverage, refuses current-period states with a missing or changed coverage marker, and retains the `spend_would_decrease` guard. It no longer treats a quiet interval or a late first request as a gap. Gate settings pass through quick-start/staged Bicep, Core D2, standalone reconciler answers, and manual settings generation. Existing unmarked October states remain fenced; the October diagnostic start is later than the month start. Tests: `tests/reconciler-continuity.test.ts`, `tests/reconciler-settings.test.ts`, `tests/Test-DrLedgerGateways.ps1`, and `tests/Test-StagedStages.ps1`. | Small |
 | Health | A Front Door probe target per region that checks resolver readiness and Cosmos reachability. Today `/api/health` checks only configuration and authentication. | Small |
 | Backends | Model-specific pools, compatible local/remote members, per-member circuit breakers, private routing and identity grants from both APIMs; preserve actual-backend accounting and test streaming failures | Medium |
 | Log Analytics | Enable workspace replication. Associate DCRs with the workspace DCE if any are used. Replicate log alert rules to Region B. | Small |

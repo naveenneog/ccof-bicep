@@ -2,12 +2,61 @@
 
 # ---------------------------------------------------------------- configuration and state
 
+function Get-StgCoverageStartAtFromJson {
+    param([Parameter(Mandatory)] [string]$Json)
+    $document = [System.Text.Json.JsonDocument]::Parse($Json)
+    try {
+        $reconcilerProperty = @($document.RootElement.EnumerateObject() | Where-Object Name -CEQ 'reconciler')
+        if ($reconcilerProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $coverageProperty = @($reconcilerProperty[0].Value.EnumerateObject() | Where-Object Name -CEQ 'ledgerCoverageStartAt')
+        if ($coverageProperty.Count -eq 0) { return @{ present = $false; isString = $false; value = $null } }
+        $isString = $coverageProperty[0].Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String
+        return @{
+            present = $true
+            isString = $isString
+            value = if ($isString) { $coverageProperty[0].Value.GetString() } else { $null }
+        }
+    } finally {
+        $document.Dispose()
+    }
+}
+
+function Test-StgUtcCoverageStartAt {
+    param([AllowNull()] $Value)
+    if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { return $false }
+    $parsed = [DateTimeOffset]::MinValue
+    return [DateTimeOffset]::TryParseExact(
+        $Value, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )
+}
+
 function Read-StgConfig {
     param([Parameter(Mandatory)] [string]$Path)
     $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
-    $c = Get-Content -LiteralPath $full -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    $raw = Get-Content -LiteralPath $full -Raw
+    $c = $raw | ConvertFrom-Json -AsHashtable -Depth 100
     $problems = [Collections.Generic.List[string]]::new()
     if ($c.schemaVersion -ne 1) { $problems.Add('schemaVersion must be 1') }
+    $continuityGatePresent = $c.reconciler -is [System.Collections.IDictionary] -and $c.reconciler.Contains('continuityGate')
+    $continuityGate = $c.reconciler.continuityGate
+    $coverageSetting = Get-StgCoverageStartAtFromJson $raw
+    $coverageStartAt = $coverageSetting.value
+    if ($continuityGatePresent -and ($continuityGate -isnot [string] -or $continuityGate -cnotin @('on', 'off'))) {
+        $problems.Add('reconciler.continuityGate must be on or off')
+    }
+    if ($coverageSetting.present) {
+        if (-not $coverageSetting.isString -or -not (Test-StgUtcCoverageStartAt $coverageStartAt)) {
+            $problems.Add('reconciler.ledgerCoverageStartAt must be a valid UTC timestamp in YYYY-MM-DDTHH:mm:ss.fffZ form')
+        } else {
+            $c.reconciler.ledgerCoverageStartAt = $coverageStartAt
+        }
+    }
+    if ($continuityGate -ceq 'on' -and -not $coverageSetting.present) {
+        $problems.Add('reconciler.ledgerCoverageStartAt is required when reconciler.continuityGate is on')
+    }
     foreach ($k in 'tenantId', 'subscriptionId') { if ($c[$k] -notmatch $script:Guid) { $problems.Add("$k must be a GUID") } }
     if ($c.resourceGroup -notmatch '^[A-Za-z0-9_.-]{1,90}$') { $problems.Add('resourceGroup is invalid') }
     if ($c.stage1.prefix -cnotmatch '^[a-z0-9]{3,8}$') { $problems.Add('stage1.prefix must be 3-8 lowercase letters or digits') }
@@ -283,7 +332,7 @@ function Test-StgExactResourceScope { param([string]$Scope, [string[]]$ResourceI
 
 function Get-StgStage1TargetIds {
     param($Cfg)
-    $root = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Resources/deployments/stage1-services"
+    $root = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Resources/deployments/$(Get-StgStage1DeploymentName $Cfg)"
     $queue = [Collections.Generic.Queue[string]]::new()
     $queue.Enqueue($root)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -326,6 +375,45 @@ function Enter-StgStage7Lock {
 }
 
 function Assert-Stg { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw "verify_failed: $Message" } }
+
+# Role assignments (ARM: properties.principalId; Cosmos SQL: principalId) held by this deployment's
+# principals. A standby region (infra/dr) adds its own grants to the shared workspace and Cosmos account.
+function Select-StgOwnAssignments {
+    param([object[]]$Assignments, [Parameter(Mandatory)] $Principals)
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in @($Principals.Values)) { if ($p) { [void]$ids.Add([string]$p) } }
+    return @($Assignments | Where-Object {
+        if (-not $_) { return $false }
+        $holder = if ($_ -is [Collections.IDictionary]) { if ($_.Contains('properties')) { $_['properties'] } else { $_ } }
+                  elseif ($_.PSObject.Properties['properties']) { $_.properties } else { $_ }
+        $id = if ($holder -is [Collections.IDictionary]) { $holder['principalId'] } elseif ($holder.PSObject.Properties['principalId']) { $holder.principalId } else { $null }
+        $ids.Contains([string]$id)
+    })
+}
+
+# A DR standby region (infra/dr/Invoke-DrStandby.ps1) runs these stage functions with a `standby`
+# section in its derived configuration. Without that section nothing changes.
+function Get-StgStandbyOption { param($Cfg, [string]$Name)
+    if (-not ($Cfg -is [Collections.IDictionary] -and $Cfg.Contains('standby') -and $Cfg.standby)) { return '' }
+    return [string]$Cfg.standby[$Name]
+}
+function Get-StgStage1DeploymentName { param($Cfg)
+    $n = Get-StgStandbyOption $Cfg 'stage1DeploymentName'
+    if ($n) { return $n } else { return 'stage1-services' }
+}
+function Get-StgDeploymentName { param($Cfg, [string]$Name)
+    if (Get-StgStandbyOption $Cfg 'stage1DeploymentName') { return "dr-standby-$Name" } else { return $Name }
+}
+function Add-StgStandbyParameters {
+    param($Cfg, [int]$Stage, [hashtable]$Parameters)
+    if (-not (Get-StgStandbyOption $Cfg 'stage1DeploymentName')) { return $Parameters }
+    switch ($Stage) {
+        3 { $Parameters.assignmentNameSalt = Get-StgStandbyOption $Cfg 'assignmentNameSalt' }
+        5 { $Parameters.workbookContent = @{}; $Parameters.workbookContentTags = @{} }
+        6 { $Parameters.endpointNameSuffix = Get-StgStandbyOption $Cfg 'endpointNameSuffix' }
+    }
+    return $Parameters
+}
 
 function Invoke-StgAzJson {
     # az with JSON output parsed, retried by Invoke-QsAz on transient token errors.
@@ -375,7 +463,8 @@ function Get-StgSite {
     return @{
         name = $site.name
         publicNetworkAccess = (& $pick 'publicNetworkAccess')
-        virtualNetworkSubnetId = (& $pick 'virtualNetworkSubnetId')
+        # A Flex app without VNet integration returns null; '' keeps the read-back's string comparisons valid.
+        virtualNetworkSubnetId = "$(& $pick 'virtualNetworkSubnetId')"
         httpsOnly = (& $pick 'httpsOnly')
         runtimeName = (& $pick 'functionAppConfig').runtime.name
         runtimeVersion = (& $pick 'functionAppConfig').runtime.version

@@ -152,6 +152,11 @@ function Get-CoreAppSettings {
     $c.RECONCILER_SCHEDULE = [string]$rc.schedule; $c.RECONCILER_VALIDITY_SECONDS = [string]$rc.validitySeconds; $c.RECONCILER_LEASE_SECONDS = [string]$rc.leaseSeconds
     $c.RECONCILER_LOG_ANALYTICS_WORKSPACE_ID = [string]$D1.workspace.customerId; $c.RECONCILER_LOG_ANALYTICS_ENDPOINT = [string]$rc.logAnalyticsEndpoint; $c.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID = [string]$D1.apim.id
     $c.RECONCILER_LEDGER_TIMEOUT_SECONDS = [string]$rc.ledgerTimeoutSeconds; $c.RECONCILER_LEDGER_MAX_ROWS = [string]$rc.ledgerMaxRows
+    # DR-05: the optional list of APIM ids whose logs hold this deployment's usage (the reconciler validates it).
+    if ($null -ne $rc.ledgerGatewayResourceIds) { $c.RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS = @($rc.ledgerGatewayResourceIds) -join ',' }
+    # DR-05R: optional coverage-aware continuity gate, configured before model traffic is allowed.
+    if ($null -ne $rc.continuityGate) { $c.RECONCILER_CONTINUITY_GATE = [string]$rc.continuityGate }
+    if ($null -ne $rc.ledgerCoverageStartAt) { $c.RECONCILER_LEDGER_COVERAGE_START_AT = [string]$rc.ledgerCoverageStartAt }
     $c.RECONCILER_MAX_STATES = [string]$rc.maxStates; $c.RECONCILER_WRITE_CONCURRENCY = [string]$rc.writeConcurrency
     # ADR 0035: the optional pacing pair, only when the answers set both.
     if ($null -ne $rc.softLimitPercent -and $null -ne $rc.pacingWindowMinutes) {

@@ -2,8 +2,10 @@
 // decision, written as an app setting by infra/reconciler: there are no
 // defaults, and a missing or invalid value refuses the run before any Azure
 // call. Problems name the setting and a code, never the value. The pacing
-// pair (ADR 0035) is the one optional group: neither set means no pacing.
+// pair (ADR 0035) is optional: neither set means no pacing. DR-05R adds an
+// optional continuity gate with an explicit verified diagnostics-coverage start.
 
+import { gatewayListProblem, includesGateway, splitGatewayList } from "../contracts/gateway-resource-ids.ts";
 import type { SpendPacing } from "./compute-ceiling.ts";
 
 export interface ReconcilerContainers {
@@ -23,7 +25,8 @@ export interface ReconcilerSettings {
   // The query API's base URL for the workspace's cloud; the token audience
   // is the same URL (public cloud: https://api.loganalytics.io).
   logAnalyticsEndpoint: string;
-  gatewayResourceId: string;
+  // One APIM id, or up to four (active/passive DR): the ledger counts each request once.
+  gatewayResourceIds: string[];
   ledgerTimeoutSeconds: number;
   ledgerMaxRows: number;
   maxStates: number;
@@ -32,7 +35,15 @@ export interface ReconcilerSettings {
   cosmosDatabase: string;
   // ADR 0035: null unless both pacing settings are set.
   pacing: SpendPacing | null;
+  // DR-05R coverage-aware continuity gate: null unless RECONCILER_CONTINUITY_GATE is "on".
+  continuity: ContinuityGate | null;
   containers: ReconcilerContainers;
+}
+
+export interface ContinuityGate {
+  coverageStartAt: string;
+  // ADR 0036 amendment: one-time operator adoption of current-period states written before markers existed.
+  adoptUnmarkedBaseline: boolean;
 }
 
 export interface SettingProblem {
@@ -62,6 +73,8 @@ export const SETTING_NAMES = [
   "RECONCILER_AGGREGATE_STATE_CONTAINER",
   "RECONCILER_LEASE_CONTAINER",
 ] as const;
+
+export const GATEWAY_LIST_SETTING = "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS";
 
 export const PACING_SETTING_NAMES = ["RECONCILER_SOFT_LIMIT_PERCENT", "RECONCILER_PACING_WINDOW_MINUTES"] as const;
 
@@ -180,6 +193,75 @@ function readPacing(r: Reader, settings: Settings, intervalMinutes: number | und
   return { softLimitPercent, windowMinutes };
 }
 
+// A UTC instant with a "Z" suffix and optional fractional seconds. App Service stores
+// "2026-10-20T15:41:34.000Z" as "2026-10-20T15:41:34Z" (observed 2026-10-26), so both spellings are
+// accepted and normalized to toISOString() form. Offsets and impossible dates are refused.
+const UTC_INSTANT = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?Z$/;
+
+function parseUtcInstant(raw: string): string | undefined {
+  const match = UTC_INSTANT.exec(raw);
+  if (!match) return undefined;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  const iso = parsed.toISOString();
+  return iso.slice(0, 19) === match[1] ? iso : undefined;
+}
+
+// DR-05R: an enabled gate requires the UTC time at which APIM request and usage
+// diagnostics were verified before model traffic was allowed.
+function readContinuity(r: Reader, settings: Settings): ContinuityGate | undefined {
+  const gate = settings.RECONCILER_CONTINUITY_GATE?.trim();
+  if (gate && gate !== "on" && gate !== "off") return r.fail("RECONCILER_CONTINUITY_GATE", "invalid");
+  const rawCoverageStartAt = settings.RECONCILER_LEDGER_COVERAGE_START_AT?.trim();
+  let coverageStartAt: string | undefined;
+  if (rawCoverageStartAt) {
+    coverageStartAt = parseUtcInstant(rawCoverageStartAt);
+    if (coverageStartAt === undefined) r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "invalid");
+  } else if (gate === "on") {
+    r.fail("RECONCILER_LEDGER_COVERAGE_START_AT", "missing");
+  }
+  const adoptUnmarkedBaseline = readBaselineAdoption(r, settings, gate, coverageStartAt);
+  if (gate !== "on" || coverageStartAt === undefined) return undefined;
+  return { coverageStartAt, adoptUnmarkedBaseline };
+}
+
+// RECONCILER_LEDGER_BASELINE_ADOPT must repeat the exact coverage start, so the attestation that no
+// model traffic preceded coverage is bound to that start and lapses if the start is changed.
+function readBaselineAdoption(r: Reader, settings: Settings, gate: string | undefined, coverageStartAt: string | undefined): boolean {
+  const raw = settings.RECONCILER_LEDGER_BASELINE_ADOPT?.trim();
+  if (!raw) return false;
+  if (gate !== "on") {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "gate_not_on");
+    return false;
+  }
+  const adopted = parseUtcInstant(raw);
+  if (adopted === undefined) {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "invalid");
+    return false;
+  }
+  if (coverageStartAt !== undefined && adopted !== coverageStartAt) {
+    r.fail("RECONCILER_LEDGER_BASELINE_ADOPT", "mismatch");
+    return false;
+  }
+  return true;
+}
+
+// RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS (DR) is optional; without it the single id is required.
+// With both, the single id must be one of the list, so two settings cannot name different gateways.
+function readGateways(r: Reader, settings: Settings): string[] | undefined {
+  const list = settings[GATEWAY_LIST_SETTING]?.trim();
+  if (!list) {
+    const single = r.matching("RECONCILER_LEDGER_GATEWAY_RESOURCE_ID", APIM_RESOURCE_ID);
+    return single === undefined ? undefined : [single];
+  }
+  const ids = splitGatewayList(list);
+  const problem = gatewayListProblem(ids, APIM_RESOURCE_ID);
+  if (problem !== undefined) return r.fail(GATEWAY_LIST_SETTING, problem);
+  const single = settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID?.trim();
+  if (single && !includesGateway(ids, single)) return r.fail(GATEWAY_LIST_SETTING, "single_not_in_list");
+  return ids;
+}
+
 export function readReconcilerSettings(settings: Settings): SettingsResult {
   const r = new Reader(settings);
   const managedIdentityClientId = r.matching("RECONCILER_MANAGED_IDENTITY_CLIENT_ID", GUID)?.toLowerCase();
@@ -191,7 +273,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
   const endpointLa = r.raw("RECONCILER_LOG_ANALYTICS_ENDPOINT");
   const logAnalyticsEndpoint =
     endpointLa === undefined ? undefined : isHttpsOrigin(endpointLa) ? endpointLa : r.fail("RECONCILER_LOG_ANALYTICS_ENDPOINT", "invalid");
-  const gatewayResourceId = r.matching("RECONCILER_LEDGER_GATEWAY_RESOURCE_ID", APIM_RESOURCE_ID);
+  const gatewayResourceIds = readGateways(r, settings);
   const ledgerTimeoutSeconds = r.integer("RECONCILER_LEDGER_TIMEOUT_SECONDS");
   const ledgerMaxRows = r.integer("RECONCILER_LEDGER_MAX_ROWS");
   const maxStates = r.integer("RECONCILER_MAX_STATES");
@@ -201,6 +283,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
   const cosmosDatabase = r.matching("COSMOS_DATABASE", COSMOS_NAME);
   const containers = readContainers(r);
   const pacing = readPacing(r, settings, intervalMinutes);
+  const continuity = readContinuity(r, settings);
 
   // A healthy run renews state before the previous run's state lapses only if
   // the validity outlasts the interval plus the longest ledger read.
@@ -224,7 +307,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
       leaseSeconds: leaseSeconds as number,
       workspaceId: workspaceId as string,
       logAnalyticsEndpoint: logAnalyticsEndpoint as string,
-      gatewayResourceId: gatewayResourceId as string,
+      gatewayResourceIds: gatewayResourceIds as string[],
       ledgerTimeoutSeconds: ledgerTimeoutSeconds as number,
       ledgerMaxRows: ledgerMaxRows as number,
       maxStates: maxStates as number,
@@ -232,6 +315,7 @@ export function readReconcilerSettings(settings: Settings): SettingsResult {
       cosmosEndpoint: cosmosEndpoint as string,
       cosmosDatabase: cosmosDatabase as string,
       pacing: pacing ?? null,
+      continuity: continuity ?? null,
       containers: containers as ReconcilerContainers,
     },
   };

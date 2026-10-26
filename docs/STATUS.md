@@ -31,14 +31,75 @@ Open: BSL-05 (overshoot of about one burst of parallel streams). The per-request
 
 ## Disaster recovery implementation
 
-**Active packet:** DR-07 - standby regional shells and data. DR-02 to DR-04 and DR-06 (P0-P2)
+**Last completed packet:** DR-05R - coverage-aware continuity gate; committed as `25b77e7` on
+`feat/dr-standby` (not merged). DR-02 to DR-04 and DR-06 (P0-P2)
 are implemented and proven live, and merged to `main` on 2026-10-25; results in
 [DR implementation](design/DR-IMPLEMENTATION.md#implemented-and-proven-2026-10-23).
+
+**Active packet:** DR-08 - full regional promotion and failback qualification. DR-13 and DR-14 are
+resolved (2026-10-26): the Region B 504s came from the drill's own injected backend fault (removed),
+and no October history is missing. Promotion uses the one-time baseline adoption in the
+[ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption).
+Observed on 2026-10-26: with both reconcilers fenced since 2026-10-25, 50 of 50 calls through Front
+Door returned HTTP 503 `budget_state_stale` (fail-closed, ADR 0008).
+
+Full-cycle drill, Fabrikam lab, 2026-10-26 (UTC; evidence in session files, not in git):
+
+| Step | Result |
+| --- | --- |
+| Region B promotion | B reconciler on `d5e0108`, gate `on`: first write 06:46:02Z, 4 unmarked states adopted, 36 token-less failed calls reported, then gated writes every 2 minutes |
+| Traffic on B | 50 burst calls: 19 × 200, 29 × 429 (Central US fallback rate limit, DR-16), 2 × 502 (member 0 resets, DR-15). 20 paced calls: 16 × 200, 4 × 502 (DR-15) |
+| Workspace switchover | Operation 08:07:16-08:07:20Z, state `Active`; 6 of 6 new calls ingested (≤ 136 s). Ledger earliest row became 2026-10-25T07:23Z; B refused `spend_would_decrease` until failback (DR-17) |
+| Workspace failback | 08:16:47Z; history from 2026-10-20 queryable again |
+| Writer failback | B fenced, Cosmos write region East US 2 (74 s), A reconciler gate `on`; A writes from 08:22:44Z with markers matching (0 adopted) |
+| Front Door failback | `RestorePrimary` deployed 08:25Z; A origin health 0 % until about 08:50Z, 100 % at 09:13Z (about 45 minutes; the drain took about 15) |
+| Traffic on A | 50 paced calls: 47 × 200 (45 logged on A's local Foundry), 3 × 503 from Front Door during the origin change |
+
+Not qualified for production while DR-15, DR-16 and DR-17 are open (UNKNOWNS).
+
+DR-05R acceptance, complete:
+- Given a request-free period or a first request later in a month, the gate does not refuse solely because no earlier model request exists.
+- Given a model backend request without a matching LLM usage row, an LLM row without its gateway request, a request before the verified coverage start, or a state without the expected coverage marker, the gate refuses before writing.
+- Given matching logs, a persisted coverage marker, and nondecreasing spend, the gate writes the reconciled states; an existing state with lower computed spend remains refused.
+
+Implementation checkpoint (2026-10-26):
+- The gate correlates backend-forwarded requests and LLM usage in both directions, records the
+  verified period marker, and refuses unmarked or decreasing current-period states.
+- The optional settings are wired through quick-start/staged Bicep, Core D2 answers, the standalone
+  reconciler deployment and manual app-settings generation. Staged standby config preserves the
+  canonical UTC timestamp.
+- Focused continuity, settings, schema-validation and deployment-pass-through tests passed.
+- Council: ARCHITECT PASS; CODER PASS; QA PASS; UX PASS (operator docs reviewed; no UI changed);
+  SECURITY PASS (KQL inputs validated and no secrets added).
+- `node .ironclad/gate.mjs --stage packet`: PASS; `npm test`, typecheck and build passed. The gate
+  reported existing file-size warnings and open items for later DR packets. No Azure settings,
+  routes or writers changed.
+
+- Last lab read-back (2026-10-26T03:22Z): Cosmos writes in Central US; the Front Door primary
+  origin still has the reversible drill fault; sync and reconciler timers are disabled in both
+  regions; the Region B continuity gate is on. No workspace switchover, writer promotion or
+  failback has been completed. The traffic drill has no retained screenshot.
+- DR-13 follow-up: commit `a7d1672` makes the local routing publisher reject read-back mismatches in
+  breaker interval, status ranges, trip duration and `Retry-After`. `tests/Test-ProjectRouting.ps1` passes 30 checks.
+  This does not identify the timeout cause, queue a route revision after backend metadata changes,
+  or change any live APIM setting.
+- Final packet gate after this change passed (`npm test`, typecheck and build); the existing file-size
+  and open-unknown warnings remain. The timeout investigation and metadata-only republish path are
+  still open under DR-13.
+- The latest read-only `Invoke-DrStandby.ps1 -Phase Verify` succeeded at 2026-10-26T04:59:27Z:
+  four apps were listed, both Region B writers were off, and the APIM API path was present. The retry
+  first exposed a legacy-config bug when the optional coverage property was absent; the local fix
+  passes `tests/Test-DrStandby.ps1` (77 checks) and awaits the final packet gate and commit. The
+  Verify phase made no Azure resource changes.
+- **Current October limitation:** APIM service diagnostics were enabled on 2026-10-20T15:41:34Z. Both gateway tables have no rows before 2026-10-20, while October spend is already persisted. DR-05R must not infer that earlier traffic was absent. The current-month writer promotion remains blocked until that history is recovered or the period changes.
+- **APIM B timeout finding:** 16 priority-1 timeouts and 15 Central US fallback responses were observed in the 2026-10-25 drill. The live breaker opens after one failure for two minutes and includes `Timeout`; the observed cadence is consistent with primary re-probes after the circuit resets. A controlled test must confirm that behavior. The primary timeout's cause and acceptable probe interval remain open.
 
 - Admin 3.3.0: backend registry with optional circuit breaker, per-project failover, routing
   publication. Gateway forwards a verified project pool; sync/resolver carry `routeBackendId`.
 - Fabrikam lab: Stages 5 and 7 deployed; SASLAB1 failover proven (primary broken, fallback served,
   restore, switch off). Contoso: P0-P2 in Central US verified. Third subscription: HTTP 403.
+- Fabrikam full-DR lab: full-cycle drill on 2026-10-26; results in the table under "Active packet"
+  above and in the [drill record](runbooks/DR-STANDBY-CLOUD-SHELL.md#11-live-drill-record-2026-10-2526).
 - Standard v2 refused API policies over 16 KiB from 2026-10-23; the gateway policy now deploys as
   per-section policy fragments.
 

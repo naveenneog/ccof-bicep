@@ -24,5 +24,6 @@ export function buildGroupState(
     activeMemberCount,
     computedAt: stamp.computedAt,
     validUntil: stamp.validUntil,
+    ...(stamp.ledgerCoverageStartAt ? { ledgerCoverageStartAt: stamp.ledgerCoverageStartAt } : {}),
   };
 }

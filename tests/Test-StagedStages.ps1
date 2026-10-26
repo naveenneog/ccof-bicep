@@ -138,6 +138,13 @@ $dnsConfig = @{ subscriptionId = '00000000-0000-4000-8000-000000000001'; resourc
 $dnsOutputs = @{ functionsSubnetId = '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/functions'; privateDnsZoneIds = @{ cosmos = 'cosmos-zone'; blob = 'blob-zone' } }
 $dnsTargets = Get-StgNetworkDnsTargets -Cfg $dnsConfig -Outputs $dnsOutputs -HasFoundry $true
 Assert-Contract ($dnsTargets.vnetId -ceq '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet' -and $dnsTargets.zoneIds.Count -eq 5) 'Stage 6 must derive DNS targets when earlier deployment outputs lack VNet and Foundry zone IDs.'
+# Flex Consumption apps without VNet integration return virtualNetworkSubnetId null (seen live 2026-10-25);
+# the read-back compares it with '' for Stage 1, so Get-StgSite returns a string.
+function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true } } } }
+$nullSubnetSite = Get-StgSite -Cfg @{ subscriptionId = 's'; resourceGroup = 'g' } -Name 'app'
+Assert-Contract ($nullSubnetSite.virtualNetworkSubnetId -ieq '') 'Get-StgSite must return an empty string, not null, for an app without VNet integration (Stage 1 read-back).'
+Remove-Item Function:\Invoke-StgAzJson
+. $driverPath -DotSourceOnly
 $headers = New-StgGatewayHeaders -Token 'token-placeholder' -Project 'PROJECT01' -ProjectHeader 'x-customer-project'
 Assert-Contract ($headers['x-customer-project'] -ceq 'PROJECT01' -and -not $headers.ContainsKey('x-ccof-project')) 'Stage 8 must use the configured project selector header.'
 $priorResourceId = '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/shared/providers/Microsoft.Storage/storageAccounts/prefix-owned/blobServices/default'
@@ -169,6 +176,24 @@ try {
     $read = Read-StgConfig $tmp
     Assert-Contract ($read.network.mode -ceq 'verify') 'The example network mode must be verify: the customer builds the network.'
     Assert-Contract ($read.stage1.prefix -ceq 'ccofstg' -and $read.stage1.functionsPublicNetworkAccess -ceq 'Disabled' -and $read.stage1.approveNewPublicApimBootstrap -eq $false) 'Example defaults must stay private and defer APIM.'
+    $c.reconciler.continuityGate = 'on'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'ledgerCoverageStartAt is required' }
+    Assert-Contract $bad 'An enabled staged continuity gate must have a coverage start.'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.reconciler.continuityGate -ceq 'on' -and $read.reconciler.ledgerCoverageStartAt -ceq '2026-10-20T15:41:34.000Z') 'Staged config accepts and retains valid continuity settings.'
+    $c.reconciler.continuityGate = $null
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'continuityGate must be on or off' }
+    Assert-Contract $bad 'Staged config refuses an explicitly null continuity gate.'
+    $c.reconciler.continuityGate = 'on'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34+00:00'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'valid UTC timestamp' }
+    Assert-Contract $bad 'Staged config refuses non-canonical UTC coverage starts.'
+    $c.reconciler.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
     $stage1Parameters = Get-Stage1Parameters $read
     $recordedParameters = @{ properties = @{ parameters = @{} } }
     foreach ($key in $stage1Parameters.Keys) { $recordedParameters.properties.parameters[$key] = @{ value = $stage1Parameters[$key] } }

@@ -18,7 +18,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     leaseSeconds: 300,
     workspaceId: "00000000-0000-4000-8000-000001100000",
     logAnalyticsEndpoint: "https://api.loganalytics.io",
-    gatewayResourceId: "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim",
+    gatewayResourceIds: ["/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim"],
     ledgerTimeoutSeconds: 60,
     ledgerMaxRows: 100000,
     maxStates: 10000,
@@ -26,6 +26,7 @@ test("a complete, valid set of settings is read with every value typed", () => {
     cosmosEndpoint: "https://sample-pilot-cosmos.documents.azure.com:443/",
     cosmosDatabase: "ccof",
     pacing: null,
+    continuity: null,
     containers: {
       projects: "projects",
       entitlement: "entitlement",
@@ -155,6 +156,108 @@ test("identifiers are validated: GUIDs, the APIM resource id, the Cosmos endpoin
     const result = readReconcilerSettings(validSettings({ [name]: value }));
     assert.equal(result.ok, false, `${name}=${value}`);
     if (!result.ok) assert.deepEqual(result.problems, [{ setting: name, problem: "invalid" }], `${name}=${value}`);
+  }
+});
+
+const APIM_A = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-pilot-rg/providers/Microsoft.ApiManagement/service/sample-pilot-apim";
+const APIM_B = "/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/sample-dr-rg/providers/Microsoft.ApiManagement/service/sample-dr-apim";
+const LIST = "RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS";
+
+function withList(list: string, single?: string) {
+  const settings = validSettings({ [LIST]: list });
+  if (single === undefined) delete settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID;
+  else settings.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID = single;
+  return readReconcilerSettings(settings);
+}
+
+test("DR: a gateway id list alone is read in order, trimmed; the single setting is then optional", () => {
+  const result = withList(` ${APIM_A} , ${APIM_B} `);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (result.ok) assert.deepEqual(result.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+});
+
+test("DR: with both settings the single id must be in the list (case-insensitively), else a named refusal", () => {
+  const agree = withList(`${APIM_A},${APIM_B}`, APIM_B.replace("sample-dr-apim", "SAMPLE-DR-APIM"));
+  assert.equal(agree.ok, true, JSON.stringify(agree));
+  if (agree.ok) assert.deepEqual(agree.settings.gatewayResourceIds, [APIM_A, APIM_B]);
+  const disagree = withList(APIM_B, APIM_A);
+  assert.equal(disagree.ok, false);
+  if (!disagree.ok) assert.deepEqual(disagree.problems, [{ setting: LIST, problem: "single_not_in_list" }]);
+});
+
+test("DR: each listed gateway id passes the APIM pattern; at most 4, no duplicates, no empty entries", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `${APIM_A}${i}`).join(",");
+  const cases: Array<[string, string]> = [
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg/providers/Microsoft.Web/sites/x`, "invalid"],
+    [`${APIM_A},/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg'|take 1/providers/Microsoft.ApiManagement/service/apim`, "invalid"],
+    [`${APIM_A},,${APIM_B}`, "invalid"],
+    [`${APIM_A},`, "invalid"],
+    [ids(5), "too_many"],
+    [`${APIM_A},${APIM_A.replace("sample-pilot-apim", "SAMPLE-PILOT-APIM")}`, "duplicate"],
+  ];
+  for (const [list, problem] of cases) {
+    const result = withList(list);
+    assert.equal(result.ok, false, list);
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: LIST, problem }], list);
+  }
+  const four = withList(ids(4));
+  assert.equal(four.ok && four.settings.gatewayResourceIds.length, 4);
+});
+
+test("DR continuity gate requires a verified UTC coverage start when enabled", () => {
+  const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
+  const absent = read({});
+  assert.equal(absent.ok && absent.settings.continuity, null);
+  const off = read({ RECONCILER_CONTINUITY_GATE: "off" });
+  assert.equal(off.ok && off.settings.continuity, null);
+  const staged = read({ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.000Z" });
+  assert.equal(staged.ok && staged.settings.continuity, null, "a valid coverage time can be staged before turning the gate on");
+  const missing = read({ RECONCILER_CONTINUITY_GATE: "on" });
+  assert.equal(missing.ok, false);
+  if (!missing.ok) assert.deepEqual(missing.problems, [{ setting: "RECONCILER_LEDGER_COVERAGE_START_AT", problem: "missing" }]);
+  const on = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.000Z" });
+  assert.deepEqual(on.ok && on.settings.continuity, { coverageStartAt: "2026-10-01T00:00:00.000Z", adoptUnmarkedBaseline: false });
+});
+
+test("DR continuity gate: baseline adoption must name the exact coverage start and needs the gate on", () => {
+  const read = (overrides: Record<string, string>) => readReconcilerSettings(validSettings(overrides));
+  const start = "2026-10-20T15:41:34.000Z";
+  // App Service stores "…34.000Z" as "…34Z" (observed 2026-10-26); both spellings name the same instant.
+  const platform = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-20T15:41:34Z", RECONCILER_LEDGER_BASELINE_ADOPT: "2026-10-20T15:41:34Z" });
+  assert.deepEqual(platform.ok && platform.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
+  const mixed = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-20T15:41:34Z", RECONCILER_LEDGER_BASELINE_ADOPT: start });
+  assert.deepEqual(mixed.ok && mixed.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
+  const adopted = read({ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: start });
+  assert.deepEqual(adopted.ok && adopted.settings.continuity, { coverageStartAt: start, adoptUnmarkedBaseline: true });
+  const cases: Array<[Record<string, string>, string]> = [
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: "2026-10-20T15:41:35.000Z" }, "mismatch"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: "yes" }, "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: start, RECONCILER_LEDGER_BASELINE_ADOPT: start }, "gate_not_on"],
+    [{ RECONCILER_LEDGER_BASELINE_ADOPT: start }, "gate_not_on"],
+  ];
+  for (const [overrides, problem] of cases) {
+    const result = read(overrides);
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting: "RECONCILER_LEDGER_BASELINE_ADOPT", problem }], JSON.stringify(overrides));
+  }
+});
+
+test("DR continuity gate: invalid coverage starts and gate values are refused", () => {
+  const cases: Array<[Record<string, string>, string, string]> = [
+    [{ RECONCILER_CONTINUITY_GATE: "ON" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "true" }, "RECONCILER_CONTINUITY_GATE", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00+00:00" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-02-30T00:00:00.000Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-02-30T00:00:00Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T24:00:00Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "on", RECONCILER_LEDGER_COVERAGE_START_AT: "2026-10-01T00:00:00.Z" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+    [{ RECONCILER_CONTINUITY_GATE: "off", RECONCILER_LEDGER_COVERAGE_START_AT: "not-a-date" }, "RECONCILER_LEDGER_COVERAGE_START_AT", "invalid"],
+  ];
+  for (const [overrides, setting, problem] of cases) {
+    const result = readReconcilerSettings(validSettings(overrides));
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    if (!result.ok) assert.deepEqual(result.problems, [{ setting, problem }], JSON.stringify(overrides));
   }
 });
 

@@ -83,6 +83,18 @@ function Test-CoreAnswerRules {
         if ([long]$rec.leaseSeconds -lt 2 * [long]$rec.ledgerTimeoutSeconds) {
             $p.Add((New-CoreRuleProblem 'reconciler.leaseSeconds' 'lease_too_short' 'must be at least twice ledgerTimeoutSeconds'))
         }
+        if ($rec.ledgerCoverageStartAt -is [string]) {
+            $coverageStart = [DateTimeOffset]::MinValue
+            $validCoverageStart = [DateTimeOffset]::TryParseExact(
+                $rec.ledgerCoverageStartAt, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::AssumeUniversal,
+                [ref]$coverageStart
+            )
+            if (-not $validCoverageStart) {
+                $p.Add((New-CoreRuleProblem 'reconciler.ledgerCoverageStartAt' 'coverage_start_invalid' 'must be a real UTC timestamp in YYYY-MM-DDTHH:mm:ss.fffZ form'))
+            }
+        }
     }
     # WP-CLIENT client/src/config.mjs rules.
     $client = $Answers.client

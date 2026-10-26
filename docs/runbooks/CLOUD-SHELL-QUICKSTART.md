@@ -320,21 +320,32 @@ Get-Content (Join-Path (Split-Path $p) '.env.quickstart.state.json')
 Run this after step 4, and again whenever group membership changes.
 
 ```powershell
-$groupIds = @('<group-object-id-1>', '<group-object-id-2>', '<group-object-id-3>')
+$groupIds = @('REPLACE-group-object-id-1', 'REPLACE-group-object-id-2', 'REPLACE-group-object-id-3')
 @{ groupIds = $groupIds } | ConvertTo-Json | Set-Content groups.json
 @{ SYNC_TENANT_ID = $tenant; SYNC_GRAPH_MAX_RETRIES = '3'; SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS = '30'; SYNC_GRAPH_TIMEOUT_SECONDS = '30' } | ConvertTo-Json | Set-Content snapshot-settings.json
 npx tsc -p tsconfig.json
 node dist/sync/cli.js snapshot --credential azure-cli --groups groups.json --settings snapshot-settings.json --out .env.sync-snapshot.json
 ```
 
-Copy the SHA-256 from the last line of that output, then:
+Copy the SHA-256 from the last line of that output. The sync Function App and its Application
+Insights component are named `$prefix-sync-func` and `$prefix-sync-ai` by this quickstart
+(`infra/quickstart/customer-form.bicepparam`) and `<prefix>-<suffix>-sync` and
+`<prefix>-<suffix>-sync-ai` by the [step-by-step deployment](DEPLOY-STEP-BY-STEP.md)
+(`infra/staged/main.bicep`). The block reads the actual names (read-only) and then applies the
+snapshot. For a step-by-step deployment, `$coreRg` is its resource group (`$rg` in that guide).
 
 ```powershell
-$sha = '<sha256 from the line above>'
+$sha     = 'REPLACE-sha256-from-the-line-above'
+$syncApp = @(az functionapp list -g $coreRg --query "[].name" -o tsv | Where-Object { $_ -match '-sync(-func)?$' })
+$syncAi  = @(az resource list -g $coreRg --resource-type microsoft.insights/components --query "[].name" -o tsv | Where-Object { $_ -match '-sync-ai$' })
+if ($syncApp.Count -ne 1 -or $syncAi.Count -ne 1) { throw "Expected one sync app and one sync-ai component, found: $syncApp / $syncAi" }
 pwsh -File infra/sync/Invoke-SnapshotApplyThroughFunction.ps1 -Subscription $sub -ResourceGroup $coreRg `
-  -FunctionApp "$prefix-sync-func" -AppInsights "$prefix-sync-ai" `
+  -FunctionApp $syncApp[0] -AppInsights $syncAi[0] `
   -SnapshotPath .env.sync-snapshot.json -ExpectedSnapshotSha256 $sha
 ```
+
+The `--query` values contain none of `( ) | & < > ^`; the name filter runs in PowerShell, because
+`az` on Windows passes its arguments through `cmd.exe`.
 
 A single apply from Cloud Shell is limited to about 96 KiB of snapshot. For larger directories, see
 [SYNC.md](../SYNC.md).

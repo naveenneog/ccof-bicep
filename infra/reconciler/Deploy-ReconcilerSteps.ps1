@@ -141,7 +141,8 @@ function Invoke-ReconcilerPackage {
     Remove-Item -LiteralPath $stage, $zip -Recurse -Force -ErrorAction SilentlyContinue
     try {
         New-Item -ItemType Directory -Path (Join-Path $stage 'dist'), (Join-Path $stage 'config'), (Join-Path $stage 'analytics') | Out-Null
-        foreach ($dir in @('reconciler', 'cost')) { Copy-Item -Path (Join-Path $repoRoot "dist/$dir") -Destination (Join-Path $stage "dist/$dir") -Recurse }
+        # contracts: registry.ts and settings.ts import src/contracts (model families, gateway id list).
+        foreach ($dir in @('reconciler', 'cost', 'contracts')) { Copy-Item -Path (Join-Path $repoRoot "dist/$dir") -Destination (Join-Path $stage "dist/$dir") -Recurse }
         Copy-Item -Path (Join-Path $repoRoot 'config/rate-card.json'), (Join-Path $repoRoot 'config/contract-schedule.json') -Destination (Join-Path $stage 'config')
         Copy-Item -Path (Join-Path $repoRoot 'analytics/ledger.kql') -Destination (Join-Path $stage 'analytics')
         # The reconciler's own host.json (WP-CORE's D2 code step packages the same file).

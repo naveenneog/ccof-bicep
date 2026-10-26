@@ -1,13 +1,15 @@
 // Trace fields and limits: docs/TELEMETRY.md. The period is UTC and half-open.
-// Append CcofUsageLedger(fromTime, toTime, gatewayResourceId) to invoke.
-let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceId:string) {
+// Append CcofUsageLedger(fromTime, toTime, gatewayResourceIds) to invoke. gatewayResourceIds is one APIM
+// resource id, or several joined by commas (active/passive DR, docs/DR-ACTIVE-PASSIVE.md).
+let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceIds:string) {
+    let gatewayIds = split(resourceIds, ",");
     let ReadCount = (value:dynamic) {
         iff(gettype(value) == "long" and tolong(value) >= 0, tolong(value), long(null))
     };
     let gatewayRows =
         ApiManagementGatewayLogs
         | where TimeGenerated >= fromTime and TimeGenerated < toTime
-        | where isnotempty(resourceId) and _ResourceId =~ resourceId
+        | where isnotempty(resourceIds) and _ResourceId in~ (gatewayIds)
         | extend gatewayResourceId = tolower(_ResourceId),
             gatewayRequestId = tolower(tostring(CorrelationId)), gatewayIngestedAt = ingestion_time()
         | where isnotempty(gatewayRequestId);
@@ -28,7 +30,7 @@ let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceId:string) {
             traceVariants = make_set(traceMessage, 2) by gatewayResourceId, gatewayRequestId;
     ApiManagementGatewayLlmLog
     | where TimeGenerated >= fromTime and TimeGenerated < toTime
-    | where isnotempty(resourceId) and _ResourceId =~ resourceId
+    | where isnotempty(resourceIds) and _ResourceId in~ (gatewayIds)
     | project timestamp = TimeGenerated, llmIngestedAt = ingestion_time(),
         gatewayResourceId = tolower(_ResourceId), gatewayRequestId = tolower(tostring(CorrelationId)),
         providerRequestId = tostring(RequestId), model = tostring(ModelName), deployment = tostring(DeploymentName),
@@ -100,6 +102,9 @@ let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceId:string) {
             and isnotempty(classification) and isnotempty(backendId)
     | extend inputSource = iff(inputTokensKnown, iff(bodyUsageKnown, "body", "llm-log"), "unknown"),
         geoMismatch = inferenceGeoKnown and isnotempty(bodyInferenceGeo) and bodyInferenceGeo != inference_geo
+    // One row per request id: if both gateways' logs carry the same correlation id, the most recently
+    // ingested row is kept, so the request is counted once.
+    | summarize arg_max(ingestedAt, *) by gatewayRequestId
     | project timestamp, ingestedAt, gatewayResourceId, gatewayRequestId, providerRequestId,
         personId, projectId, classification, backendId, deployment, model, streamed,
         classificationGroupId, classificationGroupDisplayName, classificationGroupNameState,

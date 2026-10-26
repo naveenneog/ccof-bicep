@@ -44,49 +44,76 @@ function Test-CidrWithin([string]$Inner, [string]$Outer) {
 function Get-DrConfigProblems {
     param([Parameter(Mandatory)] $Config)
     $p = [System.Collections.Generic.List[string]]::new()
-    $has = { param($o, $n) $null -ne $o -and $o.PSObject.Properties[$n] -and $null -ne $o.$n }
-    foreach ($k in 'tenantId', 'subscriptionId') { if (-not (& $has $Config $k) -or "$($Config.$k)" -notmatch $script:Guid) { $p.Add("${k}:invalid") } }
-    $s = if (& $has $Config 'secondary') { $Config.secondary } else { $null }
+    # Strict mode throws on a missing property; $get returns $null instead, so a partial file lists
+    # every missing field rather than stopping at the first one.
+    $get = { param($o, $n) if ($null -ne $o -and $o -isnot [string] -and $o.PSObject.Properties[$n]) { $o.$n } else { $null } }
+    $cidr = { param($v) if ([string]::IsNullOrWhiteSpace("$v")) { $null } else { ConvertTo-CidrRange "$v" } }
+    foreach ($k in 'tenantId', 'subscriptionId') { if ("$(& $get $Config $k)" -notmatch $script:Guid) { $p.Add("${k}:invalid") } }
+    $s = & $get $Config 'secondary'
     if ($null -eq $s) { $p.Add('secondary:required'); return $p.ToArray() }
-    if ("$($s.location)" -cnotmatch $script:Location) { $p.Add('secondary.location:invalid') }
-    foreach ($k in 'resourceGroup', 'vnetName', 'apimNsgName') { if ("$($s.$k)" -cnotmatch $script:Name) { $p.Add("secondary.${k}:invalid") } }
-    if ($null -eq (ConvertTo-CidrRange "$($s.addressSpace)")) { $p.Add('secondary.addressSpace:invalid') }
+    if ("$(& $get $s 'location')" -cnotmatch $script:Location) { $p.Add('secondary.location:invalid') }
+    foreach ($k in 'resourceGroup', 'vnetName', 'apimNsgName') { if ("$(& $get $s $k)" -cnotmatch $script:Name) { $p.Add("secondary.${k}:invalid") } }
+    $space = & $get $s 'addressSpace'
+    $spaceOk = $null -ne (& $cidr $space)
+    if (-not $spaceOk) { $p.Add('secondary.addressSpace:invalid') }
+    $subnets = & $get $s 'subnets'
     $subnetPrefixes = @{}
     foreach ($k in 'apim', 'functions', 'privateEndpoints') {
-        $sn = if (& $has $s.subnets $k) { $s.subnets.$k } else { $null }
-        if ($null -eq $sn -or "$($sn.name)" -cnotmatch $script:Name) { $p.Add("secondary.subnets.${k}.name:invalid"); continue }
-        $r = ConvertTo-CidrRange "$($sn.prefix)"
+        $sn = & $get $subnets $k
+        if ("$(& $get $sn 'name')" -cnotmatch $script:Name) { $p.Add("secondary.subnets.${k}.name:invalid"); continue }
+        $prefix = & $get $sn 'prefix'
+        $r = & $cidr $prefix
         if ($null -eq $r) { $p.Add("secondary.subnets.${k}.prefix:invalid"); continue }
         if ($r.Bits -gt $script:MaxPrefix[$k]) { $p.Add("secondary.subnets.${k}.prefix:too_small") }
-        if (-not (Test-CidrWithin $sn.prefix $s.addressSpace)) { $p.Add("secondary.subnets.${k}.prefix:outside_address_space") }
-        $subnetPrefixes[$k] = "$($sn.prefix)"
+        if ($spaceOk -and -not (Test-CidrWithin $prefix $space)) { $p.Add("secondary.subnets.${k}.prefix:outside_address_space") }
+        $subnetPrefixes[$k] = "$prefix"
     }
     $keys = @($subnetPrefixes.Keys | Sort-Object)
     for ($i = 0; $i -lt $keys.Count; $i++) { for ($j = $i + 1; $j -lt $keys.Count; $j++) {
             if (Test-CidrOverlap $subnetPrefixes[$keys[$i]] $subnetPrefixes[$keys[$j]]) { $p.Add("secondary.subnets:$($keys[$i])_overlaps_$($keys[$j])") } } }
-    $primary = if (& $has $Config 'primary') { $Config.primary } else { $null }
-    if ($null -eq $primary -or "$($primary.location)" -cnotmatch $script:Location) { $p.Add('primary.location:invalid') }
-    elseif ($primary.location -ceq $s.location) { $p.Add('secondary.location:same_as_primary') }
-    if ($null -ne $primary -and (& $has $primary 'vnetId') -and "$($primary.vnetId)" -cnotmatch $script:VnetId) { $p.Add('primary.vnetId:invalid') }
-    if ($null -ne $primary -and (& $has $primary 'addressSpaces')) {
-        foreach ($a in @($primary.addressSpaces)) { if (Test-CidrOverlap $a $s.addressSpace) { $p.Add("secondary.addressSpace:overlaps_primary_$a") } }
-    }
-    $z = if (& $has $Config 'dnsZones') { $Config.dnsZones } else { $null }
+    $primary = & $get $Config 'primary'
+    $primaryLocation = & $get $primary 'location'
+    if ("$primaryLocation" -cnotmatch $script:Location) { $p.Add('primary.location:invalid') }
+    elseif ($primaryLocation -ceq (& $get $s 'location')) { $p.Add('secondary.location:same_as_primary') }
+    $vnetId = & $get $primary 'vnetId'
+    if ($null -ne $vnetId -and "$vnetId" -cnotmatch $script:VnetId) { $p.Add('primary.vnetId:invalid') }
+    if ($spaceOk) { foreach ($a in @(& $get $primary 'addressSpaces')) { if ($null -ne $a -and (Test-CidrOverlap "$a" $space)) { $p.Add("secondary.addressSpace:overlaps_primary_$a") } } }
+    $z = & $get $Config 'dnsZones'
     if ($null -ne $z) {
-        if ("$($z.subscriptionId)" -notmatch $script:Guid) { $p.Add('dnsZones.subscriptionId:invalid') }
-        if ("$($z.resourceGroup)" -cnotmatch $script:Name) { $p.Add('dnsZones.resourceGroup:invalid') }
-        foreach ($n in @($z.zoneNames)) { if ($script:Zones -cnotcontains $n) { $p.Add("dnsZones.zoneNames:not_approved_$n") } }
+        if ("$(& $get $z 'subscriptionId')" -notmatch $script:Guid) { $p.Add('dnsZones.subscriptionId:invalid') }
+        if ("$(& $get $z 'resourceGroup')" -cnotmatch $script:Name) { $p.Add('dnsZones.resourceGroup:invalid') }
+        foreach ($n in @(& $get $z 'zoneNames')) { if ($null -ne $n -and $script:Zones -cnotcontains $n) { $p.Add("dnsZones.zoneNames:not_approved_$n") } }
     }
-    if (& $has $Config 'tags') { foreach ($tag in $Config.tags.PSObject.Properties) { if ($tag.Name -cnotmatch $script:Name -or "$($tag.Value)" -cnotmatch '^[A-Za-z0-9._:/-]{1,256}$') { $p.Add("tags:invalid_$($tag.Name)") } } }
-    foreach ($n in @(if (& $has $Config 'identityNames') { $Config.identityNames })) { if ("$n" -cnotmatch $script:Name) { $p.Add("identityNames:invalid_$n") } }
-    foreach ($f in @(if (& $has $Config 'foundryAccounts') { $Config.foundryAccounts })) {
-        if ("$($f.subscriptionId)" -notmatch $script:Guid -or "$($f.resourceGroup)" -cnotmatch $script:Name -or "$($f.name)" -cnotmatch $script:Name) { $p.Add('foundryAccounts:invalid') }
+    $tags = & $get $Config 'tags'
+    if ($null -ne $tags) { foreach ($tag in $tags.PSObject.Properties) { if ($tag.Name -cnotmatch $script:Name -or "$($tag.Value)" -cnotmatch '^[A-Za-z0-9._:/-]{1,256}$') { $p.Add("tags:invalid_$($tag.Name)") } } }
+    foreach ($n in @(& $get $Config 'identityNames')) { if ($null -ne $n -and "$n" -cnotmatch $script:Name) { $p.Add("identityNames:invalid_$n") } }
+    foreach ($f in @(& $get $Config 'foundryAccounts')) {
+        if ($null -eq $f) { continue }
+        if ("$(& $get $f 'subscriptionId')" -notmatch $script:Guid -or "$(& $get $f 'resourceGroup')" -cnotmatch $script:Name -or "$(& $get $f 'name')" -cnotmatch $script:Name) { $p.Add('foundryAccounts:invalid') }
     }
-    $e = if (& $has $Config 'entra') { $Config.entra } else { $null }
-    if ($null -ne $e) { foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { if ((& $has $e $k) -and "$($e.$k)" -notmatch $script:Guid) { $p.Add("entra.${k}:invalid") } } }
+    $e = & $get $Config 'entra'
+    if ($null -ne $e) { foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { $v = & $get $e $k; if ($null -ne $v -and "$v" -notmatch $script:Guid) { $p.Add("entra.${k}:invalid") } } }
     $p.ToArray()
 }
 
+# Azure CLI profile for the driver: an explicit AZURE_CONFIG_DIR, or, in Azure Cloud Shell (ACC_CLOUD
+# set), Cloud Shell's own signed-in profile. Cloud Shell's az login uses device code, which Conditional
+# Access policies that require a managed device refuse (docs/DR-NOVICE-WALKTHROUGH-2026-10-25.md N-04).
+function Resolve-DrAzureProfile {
+    param([string]$ConfigDir, [string]$CloudShell, [string]$HomePath)
+    if ($ConfigDir) { return [pscustomobject]@{ Ok = $true; ConfigDir = $ConfigDir; Message = $null } }
+    if ($CloudShell) { return [pscustomobject]@{ Ok = $true; ConfigDir = (Join-Path $HomePath '.azure').Replace('\', '/'); Message = $null } }
+    [pscustomobject]@{ Ok = $false; ConfigDir = $null
+        Message = 'Set AZURE_CONFIG_DIR to an isolated profile for the target tenant (workstation), or run in Azure Cloud Shell, which uses its own signed-in profile.' }
+}
+
+# Blocker for reusing an existing resource group in another region; $null when it can be used.
+function Get-DrResourceGroupLocationBlocker {
+    param([Parameter(Mandatory)] $Secondary, [Parameter(Mandatory)] [string]$GroupLocation)
+    if ($GroupLocation -eq $Secondary.location) { return $null }
+    if ($Secondary.PSObject.Properties['allowResourceGroupInOtherRegion'] -and $Secondary.allowResourceGroupInOtherRegion -eq $true) { return $null }
+    "resourceGroup:location_is_$GroupLocation (set secondary.allowResourceGroupInOtherRegion to true to reuse this group; its metadata stays in $GroupLocation)"
+}
 # Entra app checks from `az ad app show` JSON (ADR 0034 prerequisite handoff, Entra app registrations).
 function Get-EntraAppProblems {
     param([Parameter(Mandatory)] [string]$Role, $App)
@@ -108,4 +135,4 @@ function Get-EntraAppProblems {
     $p.ToArray()
 }
 
-Export-ModuleMember -Function ConvertTo-CidrRange, Test-CidrOverlap, Test-CidrWithin, Get-DrConfigProblems, Get-EntraAppProblems
+Export-ModuleMember -Function ConvertTo-CidrRange, Test-CidrOverlap, Test-CidrWithin, Get-DrConfigProblems, Get-EntraAppProblems, Resolve-DrAzureProfile, Get-DrResourceGroupLocationBlocker

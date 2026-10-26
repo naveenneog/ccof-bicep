@@ -25,6 +25,7 @@ export interface ReconcileInput {
   validUntil: Date;
   // ADR 0035; absent or null keeps the unpaced ceiling and adds no soft-limit fields.
   pacing?: SpendPacing | null;
+  ledgerCoverageStartAt?: string;
 }
 
 export interface ScopeProblem {
@@ -38,6 +39,9 @@ export interface RowCounts {
   noUsageRequests: number;
   // Rows with usage that no scope can be charged for.
   unattributedRequests: number;
+  // Of those, failed calls with no token count at all (a backend timeout or connection failure): the
+  // gateway emits attribution only on a response, and no figure exists to charge (ADR 0036 amendment).
+  unattributedFailedRequests: number;
   // Attributed rows whose project and classification are not registered.
   unregisteredScopeRequests: number;
   // Over the attributed rows with usage.
@@ -81,6 +85,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     ledgerRows: rows.length,
     noUsageRequests: 0,
     unattributedRequests: 0,
+    unattributedFailedRequests: 0,
     unregisteredScopeRequests: 0,
     pricedRequests: 0,
     partialRequests: 0,
@@ -103,6 +108,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     }
     if (attribution === null) {
       counts.unattributedRequests += 1;
+      if (row.failedWithoutUsage) counts.unattributedFailedRequests += 1;
       if (outcome.kind !== "unpriced") unattributedCcu = unattributedCcu.plus(outcome.ccu);
       continue;
     }
@@ -120,6 +126,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     contractScheduleVersion: input.contractScheduleVersion,
     computedAt: input.computedAt.toISOString(),
     validUntil: input.validUntil.toISOString(),
+    ...(input.ledgerCoverageStartAt ? { ledgerCoverageStartAt: input.ledgerCoverageStartAt } : {}),
   };
   const problems: Array<RegistryProblem | ScopeProblem> = [...registry.problems];
   const scopes = [...registry.scopes.values()].sort(byKey((s) => s.scopeId));

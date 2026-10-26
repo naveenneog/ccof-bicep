@@ -48,7 +48,7 @@ test("live: the ledger read for the current UTC month succeeds and every row pri
     getToken: async () => (await credential.getToken(logAnalyticsScope(env.RECONCILER_LOG_ANALYTICS_ENDPOINT))).token,
     fetch: (url, init) => fetch(url, init),
   });
-  const { body } = await query(buildLedgerQuery(loaded.assets.ledgerKql, period, env.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID), `${period.start.toISOString()}/${period.end.toISOString()}`);
+  const { body } = await query(buildLedgerQuery(loaded.assets.ledgerKql, period, [env.RECONCILER_LEDGER_GATEWAY_RESOURCE_ID]), `${period.start.toISOString()}/${period.end.toISOString()}`);
   const rows = parseLedgerResponse(body, 500_000).map((row) => classifyRow(row, period, loaded.assets.rateCard, loaded.assets.schedule));
   const kinds = rows.reduce<Record<string, number>>((acc, row) => ({ ...acc, [row.outcome.kind]: (acc[row.outcome.kind] ?? 0) + 1 }), {});
   console.log(JSON.stringify({ liveLedgerRows: rows.length, kinds, attributed: rows.filter((r) => r.attribution !== null).length }));

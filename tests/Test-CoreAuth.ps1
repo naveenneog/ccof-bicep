@@ -60,6 +60,31 @@ Assert 'example pacing window passes the interval rule' (@(Test-CoreAnswerRules 
 $answers.reconciler.schedule = '0 */15 * * * *'; $answers.reconciler.validitySeconds = 3600; $answers.reconciler.pacingWindowMinutes = 10
 Assert 'answers refuse a pacing window shorter than the schedule interval' (@(Test-CoreAnswerRules -Answers $answers).code -contains 'pacing_window_too_short')
 $answers = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.example.json') -Raw)
+$schema = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.schema.json') -Raw)
+$reconcilerSchema = ConvertFrom-CoreJson ($schema.properties.reconciler | ConvertTo-Json -Depth 30)
+$reconcilerSchema.properties.Remove('logAnalyticsEndpoint')
+$reconcilerSchema.required = @($reconcilerSchema.required | Where-Object { $_ -ne 'logAnalyticsEndpoint' })
+$reconcilerAnswers = ConvertFrom-CoreJson ($answers.reconciler | ConvertTo-Json -Depth 30)
+$reconcilerAnswers.Remove('logAnalyticsEndpoint')
+$reconcilerAnswers.continuityGate = 'on'
+$reconcilerAnswers.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+$reconcilerAnswers.ledgerGatewayResourceIds = @(
+    '/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg-a/providers/Microsoft.ApiManagement/service/apim-a',
+    '/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg-b/providers/Microsoft.ApiManagement/service/apim-b'
+)
+Assert 'answers accept the continuity gate with a verified UTC coverage start and gateway list' (@(Test-CoreSchema -Value $reconcilerAnswers -Schema $reconcilerSchema -Root $schema).Count -eq 0)
+$reconcilerAnswers.Remove('ledgerCoverageStartAt')
+Assert 'answers require a coverage start when the continuity gate is on' (@(Test-CoreSchema -Value $reconcilerAnswers -Schema $reconcilerSchema -Root $schema).Count -gt 0)
+$reconcilerAnswers.ledgerCoverageStartAt = '2026-10-20T15:41:34+00:00'
+Assert 'answers reject a non-canonical UTC coverage start' (@(Test-CoreSchema -Value $reconcilerAnswers -Schema $reconcilerSchema -Root $schema).Count -gt 0)
+$reconcilerAnswers.ledgerCoverageStartAt = '2026-10-20T15:41:34.000Z'
+$reconcilerAnswers.ledgerGatewayResourceIds = @('/subscriptions/00000000-0000-4000-8000-000000000110/resourceGroups/rg-a/providers/Microsoft.ApiManagement/service/apim-a', 'bad-id')
+Assert 'answers reject an invalid gateway resource ID in the continuity list' (@(Test-CoreSchema -Value $reconcilerAnswers -Schema $reconcilerSchema -Root $schema).Count -gt 0)
+$answers = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.example.json') -Raw)
+$answers.reconciler.continuityGate = 'on'
+$answers.reconciler.ledgerCoverageStartAt = '2026-02-30T00:00:00.000Z'
+Assert 'answers reject an impossible coverage date before deployment' (@(Test-CoreAnswerRules -Answers $answers).code -contains 'coverage_start_invalid')
+$answers = ConvertFrom-CoreJson (Get-Content (Join-Path $root 'config\core.answers.example.json') -Raw)
 Assert 'new example defaults to a combined developer/gateway app' ($answers.identity.gatewayApi.appId -eq $answers.identity.developerSignIn.appId)
 foreach ($combinedMode in @($true, $false)) {
     if (-not $combinedMode) { $answers.identity.developerSignIn.appId = $dev }

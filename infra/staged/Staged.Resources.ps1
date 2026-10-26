@@ -240,7 +240,8 @@ function Test-Stage1 {
         Assert-Stg ($databases.Count -eq 0) 'Cosmos database exists before Stage 2'
     }
     # Only assignments on this deployment's resources count: a shared RG has its own, inherited ones.
-    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
+    # The workspace is in the list for the primary; a standby region (infra/dr) shares the primary's.
+    $ownedResourceIds = @(Get-StgStage1TargetIds $Cfg) + @($s1.workspaceId | Where-Object { $_ })
     $grants = @((Get-StgArm "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object {
         (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and (!$grantsStage -or $_.properties.principalId -ine $grantsStage.apimPrincipalId)
     })
@@ -357,7 +358,7 @@ function Invoke-Stage6 {
         foreach ($key in $saved.Keys) { if ($key -cne 'verify' -and $key -cne 'durationSeconds') { $out[$key] = $saved[$key] } }
         Write-Host 'Stage 6 create-mode VNet already exists; skipping the authoritative network deployment.'
     } else {
-        $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-network.bicep' -Name 'stage6-network' -Apply:$Apply -Parameters $parameters
+        $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage6-network.bicep' -Name (Get-StgDeploymentName $Cfg 'stage6-network') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 6 $parameters)
     }
     $apps = @($s1.names.apps.Keys | Sort-Object)
     $integrateApim = $s1.apimName -and $Cfg.stage1.apimSku -in 'StandardV2', 'PremiumV2'
@@ -452,12 +453,14 @@ function Invoke-Stage3 {
     $params = @{ names = $s1.names; principals = $s1.principals; databaseName = $Cfg.cosmos.databaseName; roleNames = $Cfg.cosmos.roleNames
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
-    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name 'stage3-grants' -Apply:$Apply -Parameters $params
+    $params = Add-StgStandbyParameters $Cfg 3 $params
+    $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name (Get-StgDeploymentName $Cfg 'stage3-grants') -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
     $v = [ordered]@{ azure = @(); cosmos = @(); foundry = @() }
     $roleNames = @{ 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' = 'Storage Blob Data Owner'; '3913510d-42f4-4e42-8a64-420c390055eb' = 'Monitoring Metrics Publisher'; '73c42c96-874c-492b-b04d-ab87d138a893' = 'Log Analytics Reader' }
-    $ownedResourceIds = Get-StgStage1TargetIds $Cfg
-    $rgAssignments = @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId })
+    # The workspace is in the list for the primary; a standby region (infra/dr) shares the primary's.
+    $ownedResourceIds = @(Get-StgStage1TargetIds $Cfg) + @($s1.workspaceId | Where-Object { $_ })
+    $rgAssignments = Select-StgOwnAssignments -Principals $s1.principals -Assignments @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId })
     $expectedAzure = @($out.storageOwnerDetails) + @($out.metricsPublisherDetails) + @($out.workspaceReaderDetails)
     foreach ($expected in $expectedAzure) {
         $matches = @($rgAssignments | Where-Object {
@@ -473,7 +476,7 @@ function Invoke-Stage3 {
         $v.azure += [ordered]@{ principal = $k; assignments = @($ra | ForEach-Object { $id = ($_.properties.roleDefinitionId -split '/')[-1]; "$(if ($roleNames[$id]) { $roleNames[$id] } else { $id }) @ $(($_.properties.scope -split '/')[-1])" } | Sort-Object) }
     }
     $v.rgScopedAssignments = $rgAssignments.Count
-    $cosmos = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
+    $cosmos = Select-StgOwnAssignments -Principals $s1.principals -Assignments @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
     Assert-Stg ($cosmos.Count -eq @($out.cosmosAssignmentDetails).Count) "Cosmos has $($cosmos.Count) data-role assignments, expected $(@($out.cosmosAssignmentDetails).Count)"
     foreach ($expected in $out.cosmosAssignmentDetails) {
         $matches = @($cosmos | Where-Object {
