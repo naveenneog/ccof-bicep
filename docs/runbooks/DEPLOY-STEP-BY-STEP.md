@@ -114,10 +114,48 @@ az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o 
 
 The deployment driver does not read `AZURE_CONFIG_DIR` (`infra/staged/Invoke-StagedDeployment.ps1`
 and `infra/staged/Staged.*.ps1` contain no reference to it), so Cloud Shell needs no value for it.
+If the Windows variable block was pasted first, `AZURE_CONFIG_DIR` holds a Windows path such as
+`$HOME\.ccof-az`, and every `az` command in Cloud Shell fails with
+`PermissionError: [Errno 13] Permission denied: '/home/<user>\\.ccof-az'`. The `Remove-Item` line
+above clears it for the current session. A Windows path held in `$cfg` fails in the same way, with
+`Cannot find drive. A drive with the name 'C' does not exist.`
 Files under `$HOME` survive the session only when Cloud Shell has a storage account
 ([Persist files in Cloud Shell](https://learn.microsoft.com/azure/cloud-shell/persisting-shell-storage));
-otherwise the configuration file and `.staged-state` are downloaded before the session ends.
+otherwise the configuration file and `.staged-state` are downloaded before the session ends
+(next section).
 Step 8 does not run in Cloud Shell ([Step 8](#step-8-test-end-to-end)).
+
+### Cloud Shell without storage (ephemeral session)
+
+An ephemeral session has no storage, and Cloud Shell ends a session after 20 minutes without
+interactive activity ([Cloud Shell FAQ](https://learn.microsoft.com/azure/cloud-shell/faq-troubleshooting)).
+Command output does not count as activity; a key press does. Enter is safe while a command runs:
+the shell reads it as an empty line after the command ends. Ctrl+C cancels the running step.
+
+When the session ends, the clone, the configuration file and `.staged-state` are deleted. The
+driver needs `.staged-state` to know which steps are done (`stage_order` otherwise). After each step,
+the two are packed and downloaded with **Manage files > Download**:
+
+```powershell
+$work = "$HOME/ccof-private"
+tar -czf "$HOME/ccof-state.tgz" -C $work staged.config.json .staged-state
+tar -tzf "$HOME/ccof-state.tgz" | Select-String 'staged.config.json|\.staged-state/state.json'
+```
+
+**Expect:** both names listed. A new session clones the repository again, runs `npm ci` and
+`npm run build` (Step 7 publishes the compiled `dist/` folder and does not compile it), uploads
+the archive and restores it:
+
+```powershell
+New-Item -ItemType Directory "$HOME/ccof-private" -Force | Out-Null
+tar -xzf "$HOME/ccof-state.tgz" -C "$HOME/ccof-private"
+$cfg = "$HOME/ccof-private/staged.config.json"; $state = "$HOME/ccof-private/.staged-state"
+(Get-Content "$state/state.json" -Raw | ConvertFrom-Json).stages.PSObject.Properties.Name
+```
+
+**Expect:** the numbers of the completed steps. A step interrupted by a timeout is run again; each
+step reads what already exists in Azure. The archive contains tenant, subscription and application
+IDs and is kept in a private folder.
 
 On Windows, `az` passes its arguments through `cmd.exe`. Values containing `( ) | & < > ^` are
 interpreted by `cmd.exe`, so this guide keeps them out of `az` arguments and puts request bodies in
@@ -151,6 +189,20 @@ notepad $cfg                                        # Cloud Shell: code $cfg
 | `acceptance` | One allowed and one denied project/model pair for the final test | Step 8 below |
 
 The full list of sections is in the [driver reference](STAGED-DEPLOYMENT-V2.md#configuration-file).
+
+**Check the file before Step 0 (offline, no Azure call).** The driver reads the file with strict
+JSON parsing, which refuses a trailing comma that most editors and `ConvertFrom-Json` accept. It then
+applies its own rules: `privateDnsZoneIds` under `network.existing` in `existing` mode, and four
+client aliases (`default`, `opus`, `sonnet`, `haiku`), each a model that the selected group admits
+and its backend lists in `deploymentInferenceGeo` (`Read-StgConfig` in
+[`Staged.Common.ps1`](../../infra/staged/Staged.Common.ps1)). The same function runs offline:
+
+```powershell
+pwsh -NoProfile -Command ". ./infra/staged/Invoke-StagedDeployment.ps1 -DotSourceOnly; Read-StgConfig '$cfg' | Out-Null; 'configuration OK'"
+```
+
+**Expect:** `configuration OK`, or `invalid staged configuration:` followed by each field to fix, or
+`staged configuration is not strict JSON` with the line number (counted from 0).
 
 ### The network (before Step 0)
 
@@ -965,6 +1017,12 @@ telemetry query returns as many requests as there were 200 responses.
 | `stage7_busy` | Another Step 7 is running from this checkout | Wait for it to finish |
 | `'charmap' codec` from `az` | The Azure CLI on Windows met a non-ASCII character | [`scripts/diagnostics/windows-az-utf8`](../../scripts/diagnostics/) |
 | `AuthorizationFailed` | The signed-in account lacks the permission in **Who runs it** | Ask the owner of that scope; check `az account show` |
+| `staged configuration is not strict JSON ... trailing comma ... LineNumber: N` | A comma before `}` or `]` on line N + 1 | Remove the comma; run the offline check in [The configuration file](#the-configuration-file) |
+| `network.existing.privateDnsZoneIds { cosmos, blob } is required ... (it is under network, not under network.existing)` | In `existing` mode the zone IDs belong inside `network.existing` | Move the block |
+| `client.models ...` | The client aliases do not name four admitted, deployed models | Use the models listed in the message |
+| `rg_not_empty: <group> holds N resources` | Step 1 targets an empty resource group | Use an empty group, or set `sharedResourceGroup: true`; the preview then refuses any Modify or Delete of resources Step 1 did not create ([shared resource group](STAGED-DEPLOYMENT-V2.md#stage-1-in-a-shared-resource-group)) |
+| `PermissionError: [Errno 13] Permission denied: '/home/<user>\\.ccof-az'` | `AZURE_CONFIG_DIR` holds a Windows path in Cloud Shell | `Remove-Item Env:AZURE_CONFIG_DIR` ([In Azure Cloud Shell](#a-separate-azure-cli-sign-in)) |
+| `Cannot find drive. A drive with the name 'C' does not exist.` | `$cfg` holds a Windows path in Cloud Shell | Set `$cfg` to the file under `$HOME` |
 
 No step deletes resources, Entra objects or earlier permission grants
 ([recovery](STAGED-DEPLOYMENT-V2.md#recovery)).

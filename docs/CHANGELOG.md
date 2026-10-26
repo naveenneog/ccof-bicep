@@ -1,5 +1,21 @@
 # Change log
 
+## 2026-10-26 - Lessons from the first customer deployment; Front Door runbook
+
+- Staged driver (`Read-StgConfig`): a trailing comma is reported as `staged configuration is not
+  strict JSON` with the parser's line number; `privateDnsZoneIds` placed under `network` instead of
+  `network.existing` is named instead of failing with `Cannot index into a null array`; the client
+  aliases (`client.models`) are checked at Stage 0 with the same rule Stage 7 applies when it writes
+  the client file. `tests/Test-StagedStages.ps1` 366 checks; six mutants caught.
+- [Deploy CCOF step by step](runbooks/DEPLOY-STEP-BY-STEP.md): offline configuration check before
+  Step 0, Cloud Shell `AZURE_CONFIG_DIR` and path errors, ephemeral Cloud Shell sessions (saving and
+  restoring `.staged-state` with `tar`), and the errors met in the customer deployment.
+- New [Front Door runbook](runbooks/DR-FRONT-DOOR.md) for `Invoke-DrFrontDoor.ps1` phases with the
+  lab's measured times.
+- Proposed decisions: [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) (admin code
+  publishing after Front Door lockdown) and [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md)
+  (budget ledger after a mid-month workspace switchover, UNKNOWNS DR-17).
+
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.

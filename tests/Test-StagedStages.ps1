@@ -239,6 +239,33 @@ try {
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'private Foundry.*requires' }
     Assert-Contract $bad 'Existing-network private Foundry configuration must require all three zone IDs.'
+    # Customer deployment 2026-10-26: privateDnsZoneIds placed under network, not network.existing.
+    $c.backends[0].privateEndpoint = $false
+    $zones = $c.network.existing.privateDnsZoneIds
+    $c.network.existing.Remove('privateDnsZoneIds'); $c.network.privateDnsZoneIds = $zones
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'network\.existing\.privateDnsZoneIds' -and $message -match 'not under network' -and $message -notmatch 'null array') "Misplaced privateDnsZoneIds must be named, not crash: $message"
+    $c.network.Remove('privateDnsZoneIds'); $c.network.existing.privateDnsZoneIds = $zones
+    # A trailing comma: strict JSON parse error must name the file as the cause.
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    (Get-Content -LiteralPath $tmp -Raw) -replace '(\S)(\s*\}\s*)$', '$1,$2' | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM -NoNewline
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'staged configuration is not strict JSON' -and $message -match 'trailing comma') "A trailing comma must be reported as a configuration JSON error: $message"
+    # Client aliases are checked at Stage 0, not first at Stage 7 (Invoke-QsClient).
+    $models = $c.client.models
+    $c.client.models = [ordered]@{ default = 'claude-sonnet-5'; sonnet = 'claude-sonnet-5'; haiku = 'claude-haiku-4-5' }
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'client\.models must name exactly default, opus, sonnet and haiku') "Three client aliases must be refused at config read: $message"
+    $c.client.models = [ordered]@{ default = 'claude-sonnet-5'; opus = 'claude-sonnet-5'; sonnet = 'claude-sonnet-5'; haiku = 'claude-haiku-5-5' }
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'client\.models\.haiku' -and $message -match 'claude-haiku-5-5') "An alias outside the selected group's admitted models must be refused: $message"
+    $c.client.models = $models
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.client.models.haiku -ceq 'claude-haiku-4-5') 'Admitted client aliases must be accepted.'
 } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 # State is bound to its tenant/subscription/RG: another target's outputs are refused, not reused.
 $stateDir = Join-Path ([IO.Path]::GetTempPath()) "staged-state-$([guid]::NewGuid().ToString('N'))"

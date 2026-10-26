@@ -21,6 +21,32 @@ function Get-StgCoverageStartAtFromJson {
     }
 }
 
+function Get-StgClientAliasProblems {
+    # The same rule Stage 7 applies when it writes the client file (Invoke-QsClient,
+    # infra/quickstart/Deploy-Quickstart.ps1): four aliases, each an exact model that the selected
+    # project/classification admits and its backend deploys. Checked here so Stage 0 reports it.
+    param([Parameter(Mandatory)] [Collections.IDictionary]$Cfg)
+    $client = $Cfg.client
+    if ($null -eq $client) { return @() }
+    $problems = @()
+    $group = @($Cfg.groups | Where-Object { $_.projectId -ceq $client.projectId -and $_.classification -ceq $client.classification })
+    if ($group.Count -ne 1) { return @("client.projectId/client.classification must select exactly one configured group (found $($group.Count))") }
+    $backend = @($Cfg.backends | Where-Object { $_.id -ceq $group[0].backendId })
+    if ($backend.Count -ne 1) { return @("group $($client.projectId)/$($client.classification) backendId '$($group[0].backendId)' must match one backends[].id") }
+    $deployed = @(($backend[0].deploymentInferenceGeo ?? @{}).Keys)
+    $admitted = @(foreach ($family in @(($group[0].familyPolicy.families ?? @{}).Values)) { foreach ($m in @($family.models)) { if ($deployed -ccontains $m) { $m } } })
+    $aliases = $client.models
+    if ($aliases -isnot [Collections.IDictionary] -or $aliases.Count -ne 4 -or @($aliases.Keys | Where-Object { $_ -cnotin 'default', 'opus', 'sonnet', 'haiku' }).Count) {
+        return @('client.models must name exactly default, opus, sonnet and haiku')
+    }
+    foreach ($alias in 'default', 'opus', 'sonnet', 'haiku') {
+        if ($aliases[$alias] -isnot [string] -or $admitted -cnotcontains $aliases[$alias]) {
+            $problems += "client.models.$alias '$($aliases[$alias])' is not admitted for $($client.projectId)/$($client.classification): admitted models deployed on backend $($backend[0].id) are [$($admitted -join ', ')]"
+        }
+    }
+    return $problems
+}
+
 function Test-StgUtcCoverageStartAt {
     param([AllowNull()] $Value)
     if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { return $false }
@@ -37,6 +63,10 @@ function Read-StgConfig {
     param([Parameter(Mandatory)] [string]$Path)
     $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
     $raw = Get-Content -LiteralPath $full -Raw
+    # The driver reads the file with strict System.Text.Json (Get-StgCoverageStartAtFromJson); a
+    # trailing comma that ConvertFrom-Json tolerates is refused there, so name the file as the cause.
+    try { $strict = [System.Text.Json.JsonDocument]::Parse($raw); $strict.Dispose() }
+    catch { throw "staged configuration is not strict JSON ($full): $($_.Exception.InnerException.Message ?? $_.Exception.Message)" }
     $c = $raw | ConvertFrom-Json -AsHashtable -Depth 100
     $problems = [Collections.Generic.List[string]]::new()
     if ($c.schemaVersion -ne 1) { $problems.Add('schemaVersion must be 1') }
@@ -79,12 +109,18 @@ function Read-StgConfig {
             }
         }
         foreach ($key in 'cosmos', 'blob') {
-            if (-not $c.network.existing.privateDnsZoneIds[$key] -or $c.network.existing.privateDnsZoneIds[$key] -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
+            $zoneIds = $c.network.existing.privateDnsZoneIds
+            if ($zoneIds -isnot [Collections.IDictionary]) {
+                $hint = if ($c.network -is [Collections.IDictionary] -and $c.network.Contains('privateDnsZoneIds')) { ' (it is under network, not under network.existing)' } else { '' }
+                $problems.Add("network.existing.privateDnsZoneIds { cosmos, blob } is required in network.mode existing$hint")
+                break
+            }
+            if (-not $zoneIds[$key] -or $zoneIds[$key] -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
                 $problems.Add("network.existing.privateDnsZoneIds.$key must be a full Private DNS zone resource ID")
             }
         }
         if (@($c.backends | Where-Object privateEndpoint).Count) {
-            $foundryZones = $c.network.existing.privateDnsZoneIds.foundry ?? @{}
+            $foundryZones = ($c.network.existing.privateDnsZoneIds ?? @{}).foundry ?? @{}
             foreach ($key in 'cognitiveServices', 'openAi', 'aiServices') {
                 $id = $foundryZones[$key]
                 if (-not $id -or $id -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
@@ -141,6 +177,7 @@ function Read-StgConfig {
         $problems.Add('a newly created admin registration requires at least one entra.adminEditors assignment; assignment-required is enabled')
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
+    foreach ($p in @(Get-StgClientAliasProblems $c)) { $problems.Add($p) }
     if ($problems.Count) { throw "invalid staged configuration:`n  - $($problems -join "`n  - ")" }
     $c.__path = $full
     return $c
