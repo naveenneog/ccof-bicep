@@ -765,8 +765,20 @@ pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
    `region B (...): writing=True` and `result: promoted`.
 
    `Promote` reads region A's app settings first. When region A's management API does not answer,
-   it stops with exit 3 and changes nothing. Region B is then promoted by hand as in 11.3, after
-   region A's writers are confirmed off by other means (UNKNOWNS DR-18).
+   it stops with exit 3 (`source_unreachable`) and changes nothing. After Azure Service Health
+   confirms the region A outage, rerun with the incident ID as the reason:
+
+   ```powershell
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -SourceUnreachable 'Service Health <incident ID>, <time UTC>'
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -SourceUnreachable 'Service Health <incident ID>, <time UTC>' -Apply
+   ```
+
+   **Expect:** `region A unreadable, declared unreachable: ...`, the same region B lines as above, and
+   `region A was not fenced (unreadable)`. The evidence file holds `switches.sourceUnreachable` and
+   `run.sourceUnreachable` (reason, read error, time). A region A that answers with a writer enabled
+   is still refused (`source_writers_enabled`). Before region A comes back:
+   `pwsh -NoProfile -File $fo -Phase Fence -Region A -ConfigPath $cfg -Apply`, then `-Phase Status`
+   (UNKNOWNS DR-18).
 4. **Check the run lines** with the 11.3 query. After one `written` run with gate `passed`, remove the
    adoption: `pwsh -NoProfile -File $fo -Phase RemoveAdoption -Region B -ConfigPath $cfg -Apply`.
 5. **Workspace switchover** (optional, owner's decision): run the printed call. Read 11.5 first (DR-17).

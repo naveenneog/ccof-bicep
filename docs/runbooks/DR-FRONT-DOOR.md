@@ -54,8 +54,10 @@ Lab observations (2026-10-25):
 `Lockdown` disables public network access on both admin apps. Publishing a package to an admin app
 from Cloud Shell or a workstation outside the VNet then returns HTTP 403 (region B `Code` phase,
 2026-10-26). The admin code is therefore published before `Lockdown`, or from a host that reaches
-the apps privately. Options for later updates are compared in
-[ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md).
+the apps privately. [ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md) (accepted
+2026-10-27) makes publishing from a host inside the VNet the standard path; temporary public access
+is an exception that needs a recorded security approval and a scripted re-disable with read-back.
+The repository does not yet create the private endpoint or host for that path.
 
 ## 4. Drill phases
 

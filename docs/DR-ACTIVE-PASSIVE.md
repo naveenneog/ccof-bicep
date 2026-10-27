@@ -225,12 +225,16 @@ Recovery figures documented by Microsoft:
    writable once Cosmos accepts writes in Central US.
 
    The driver reads Region A's Function App settings before every change, to confirm Region A is
-   fenced. If Region A's management API does not answer, `Promote` stops (exit 3) and changes
-   nothing; it has no option to skip that check. In that case Region A's writers are confirmed off
-   by other means (Region A unreachable, or its apps stopped), and Region B is promoted by hand: the
-   same settings in the same order, reconciler B gate and coverage first, then the two timers
-   (lab procedure: [runbook section 11.3](runbooks/DR-STANDBY-CLOUD-SHELL.md#113-promote-region-b)).
-   Whether the driver should accept an unreachable Region A is open (UNKNOWNS DR-18).
+   fenced. If Region A's management API does not answer, `Promote` stops (exit 3, `source_unreachable`)
+   and changes nothing. When Azure Service Health confirms the Region A outage, rerun with
+   `-SourceUnreachable '<incident ID and evidence>'` (10 or more characters). The driver then skips
+   fencing Region A, records the reason, the read error and the time in the run's evidence file, and
+   keeps every other check: Cosmos DB in Central US, gate and coverage on reconciler B before the
+   timers. Region A is read again before each later change; if it answers with a writer enabled,
+   Promote stops before Region B is enabled. Before Region A is brought back, fence it:
+   `-Phase Fence -Region A -Apply`, then `-Phase Status` shows no `split_brain`
+   ([ADR 0036 amendment 2026-10-27](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-promote-with-region-a-unreachable),
+   UNKNOWNS DR-18).
 7. **Verify.**
    - An admitted model call returns 200 through Front Door.
    - `/ccof-usage/me/usage` returns current figures.

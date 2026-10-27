@@ -16,6 +16,10 @@
                          or while Cosmos DB does not write in region B (it prints the move command; it
                          never runs it). Sets gate on and failover.ledgerCoverageStartAt on reconciler B,
                          -AdoptBaseline sets RECONCILER_LEDGER_BASELINE_ADOPT once, then enables B.
+                         Refuses when region A's settings cannot be read, unless -SourceUnreachable
+                         '<reason>' (10 or more characters, for example the Service Health incident ID)
+                         declares region A down; the reason and the read error go into the evidence
+                         file. A region A that answers with a writer enabled is refused either way.
   -Phase Failback        Fences region B first, then Cosmos DB back to region A (printed; run with
                          -MoveCosmos), removes baseline adoption in both regions, sets gate and coverage
                          on reconciler A, then enables region A.
@@ -35,6 +39,7 @@ param(
     [Parameter(Mandatory)] [string]$ConfigPath,
     [ValidateSet('A', 'B')] [string]$Region = 'A',
     [switch]$FenceSource,
+    [string]$SourceUnreachable,
     [switch]$AdoptBaseline,
     [switch]$MoveCosmos,
     [switch]$Apply
@@ -81,14 +86,18 @@ Write-Host "== DR failover phase $Phase ($mode): $($primaryCfg.resourceGroup), r
 $evidenceDir = Join-Path $standbyStateDir 'evidence'
 New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
 $evidence = [ordered]@{ schema = 'ccof.dr.failover.v1'; phase = $Phase; apply = [bool]$Apply; region = $Region
-    switches = [ordered]@{ fenceSource = [bool]$FenceSource; adoptBaseline = [bool]$AdoptBaseline; moveCosmos = [bool]$MoveCosmos }
+    switches = [ordered]@{ fenceSource = [bool]$FenceSource; sourceUnreachable = $(if ($PSBoundParameters.ContainsKey('SourceUnreachable')) { $SourceUnreachable } else { $null }); adoptBaseline = [bool]$AdoptBaseline; moveCosmos = [bool]$MoveCosmos }
     startedAt = [DateTime]::UtcNow.ToString('o'); commit = (git -C (Split-Path (Split-Path $here -Parent) -Parent) rev-parse HEAD 2>$null) }
 $code = 0
 try {
     switch ($Phase) {
         'Status' { $evidence.status = Get-DrFailoverStatus $ctx }
         'Fence' { $evidence.run = Invoke-DrFence $ctx -Region $Region -Apply:$Apply }
-        'Promote' { $evidence.run = Invoke-DrPromote $ctx -FenceSource:$FenceSource -AdoptBaseline:$AdoptBaseline -Apply:$Apply }
+        'Promote' {
+            $promote = @{ FenceSource = $FenceSource; AdoptBaseline = $AdoptBaseline; Apply = $Apply }
+            if ($PSBoundParameters.ContainsKey('SourceUnreachable')) { $promote.SourceUnreachable = $SourceUnreachable }
+            $evidence.run = Invoke-DrPromote $ctx @promote
+        }
         'Failback' { $evidence.run = Invoke-DrFailback $ctx -MoveCosmos:$MoveCosmos -Apply:$Apply }
         'RemoveAdoption' { $evidence.run = Invoke-DrRemoveAdoption $ctx -Region $Region -Apply:$Apply }
     }

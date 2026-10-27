@@ -1,5 +1,25 @@
 # Change log
 
+## 2026-10-27 - Decisions on ADR 0037 and ADR 0038; Promote with region A unreachable (DR-18)
+
+- `Invoke-DrFailover.ps1 -Phase Promote -SourceUnreachable '<reason>'`: when region A's settings
+  cannot be read, Promote stops by default (`source_unreachable`, exit 3). With a reason of 10 or more
+  characters (for example the Service Health incident ID) it promotes region B without fencing
+  region A and records the reason, the read error and the time in the evidence file. Region A is
+  read again before the gate is set and before region B is enabled; a region A that answers with a
+  writer enabled stops Promote. `-Phase Status` reports `region_<A|B>_unreadable` instead of failing.
+  `tests/Test-DrFailover.ps1` 73 checks; seven mutants caught. UNKNOWNS DR-18 resolved;
+  [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-promote-with-region-a-unreachable).
+- [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) accepted: admin code is published
+  from a host inside the VNet; temporary public access only with a recorded approval and a scripted
+  re-disable; no Front Door route to the deployment endpoint. Until the private path exists, admin
+  code is published before `Lockdown`.
+- [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md) accepted: workspace replication is enabled
+  during the initial region A deployment; a Cosmos DB spend checkpoint is the planned durable fix.
+  UNKNOWNS DR-17 stays open until it ships.
+- Runbooks updated: [DR design](DR-ACTIVE-PASSIVE.md) failover step 6,
+  [DR standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md) section 12.1,
+  [Front Door runbook](runbooks/DR-FRONT-DOOR.md) section 3.
 ## 2026-10-26 - Lessons from the first customer deployment; Front Door runbook
 
 - Staged driver (`Read-StgConfig`): a trailing comma is reported as `staged configuration is not

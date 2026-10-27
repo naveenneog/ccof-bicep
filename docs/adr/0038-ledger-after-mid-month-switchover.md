@@ -1,6 +1,6 @@
 # ADR 0038: Budget ledger after a mid-month workspace switchover
 
-Status: proposed, 2026-10-26. Needs an owner decision before implementation.
+Status: accepted, 2026-10-27 (owner may revise in the review of PR #12).
 Related: [ADR 0036](0036-continuity-coverage-baseline.md), UNKNOWNS DR-17,
 [drill record](../runbooks/DR-STANDBY-CLOUD-SHELL.md#11-live-drill-record-2026-10-2526).
 
@@ -32,11 +32,18 @@ lower recorded spend. The effect is that budget state stops refreshing while swi
    plus replica rows after the watermark, provided the replica covers the watermark. The continuity
    gate checks that coverage. Durable, but a change to the reconciler's model and to ADR 0036's gate.
 
-## Proposed decision
+## Decision
 
-Option 1 now: replication is enabled during the initial region A deployment and the runbooks state
-the limit. Option 3 as the durable change, designed in its own packet with tests for watermark
-gaps, duplicate rows across gateways (DR-11) and monotonic spend.
+Accepted 2026-10-27:
+
+- Option 1 now. Workspace replication is enabled during the initial region A deployment, before
+  model traffic starts, so a full billing month of history is in the replica from the second month.
+  Until then, a workspace switchover stops budget refresh until failback or the month end, and the
+  runbooks state this.
+- Option 3 is the durable change, designed in its own packet with tests for watermark gaps,
+  duplicate rows across gateways (DR-11) and monotonic spend. Until it ships, a workspace switchover
+  is not described as keeping budget enforcement continuous.
+- Option 2 is rejected for the outage case.
 
 ## Consequences
 

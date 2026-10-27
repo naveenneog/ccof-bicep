@@ -1,6 +1,6 @@
 # ADR 0037: Publishing admin code after Front Door lockdown
 
-Status: proposed, 2026-10-26. Needs an owner decision before implementation.
+Status: accepted, 2026-10-27 (owner may revise in the review of PR #12).
 Related: [ADR 0033](0033-dr-active-passive.md), [Front Door runbook](../runbooks/DR-FRONT-DOOR.md).
 
 ## Context
@@ -35,11 +35,19 @@ Resolver, sync and reconciler apps are not Front Door origins and keep their con
    not established; a time-boxed spike against Learn and the lab is needed before relying on it.
 4. **A Front Door route to the deployment endpoint.** Rejected: it exposes the SCM endpoint at the edge.
 
-## Proposed decision
+## Decision
 
-Option 2 as the standard path, with option 1 as a documented exception that requires an approval
-record and a scripted re-disable with read-back. Option 3 is investigated as a spike. Until a
-decision is recorded, admin code is published before `Lockdown` (runbook section 3).
+Accepted 2026-10-27:
+
+- Option 2 is the standard path: admin code is published from a host inside the VNet through a
+  `sites` private endpoint, with public access left disabled. The private endpoint, DNS record and
+  host are not created by the repository yet; until they exist, admin code is published before
+  `Lockdown` (runbook section 3).
+- Option 1 is an exception, used only with a recorded security approval. Public access is enabled
+  with an access restriction to the operator's address, the package is published, and public access
+  is disabled and read back as `Disabled` in the same scripted run.
+- Option 3 is not used until a spike shows it is a supported deployment path.
+- Option 4 is rejected: no Front Door route to the deployment (SCM) endpoint.
 
 ## Consequences
 

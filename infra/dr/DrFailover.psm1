@@ -205,8 +205,16 @@ function Get-DrFrontDoorStatus {
 # Read-only. A read that fails is reported, except an unsafe argument, which stops the run.
 function Get-DrFailoverStatus {
     param([Parameter(Mandatory)] $Ctx)
-    $regions = [ordered]@{ A = (Get-DrRegionState $Ctx 'A'); B = (Get-DrRegionState $Ctx 'B') }
-    $s = [ordered]@{ regions = $regions; problems = [Collections.Generic.List[string]]::new(); warnings = [Collections.Generic.List[string]]::new() }
+    $s = [ordered]@{ regions = [ordered]@{}; problems = [Collections.Generic.List[string]]::new(); warnings = [Collections.Generic.List[string]]::new() }
+    $regions = $s.regions
+    foreach ($k in 'A', 'B') {
+        try { $regions[$k] = Get-DrRegionState $Ctx $k }
+        catch {
+            if ("$_" -match 'az_argument_unsafe') { throw }
+            $regions[$k] = [ordered]@{ location = $Ctx.Regions[$k].Location; error = "$_"; syncDisabled = $null; reconcilerDisabled = $null; writing = $null; fenced = $null; gate = $null; coverageStartAt = $null; baselineAdopt = $null }
+            $s.warnings.Add("region_${k}_unreadable")
+        }
+    }
     if ($regions.A.writing -and $regions.B.writing) { $s.problems.Add('split_brain') }
     foreach ($part in @(@{ k = 'cosmos'; f = 'Get-DrCosmos' }, @{ k = 'workspace'; f = 'Get-DrWorkspaceStatus' }, @{ k = 'frontDoor'; f = 'Get-DrFrontDoorStatus' })) {
         try { $s[$part.k] = & $part.f $Ctx } catch { if ("$_" -match 'az_argument_unsafe') { throw }; $s[$part.k] = [ordered]@{ error = "$_" }; $s.warnings.Add("$($part.k)_unreadable") }
@@ -296,28 +304,56 @@ function Invoke-DrRemoveAdoption {
     $run.result = 'adoption_removed'; return $run
 }
 
+# Region A's writer state, or $null when region A's settings cannot be read and the operator has
+# declared it unreachable (UNKNOWNS DR-18, ADR 0036). Without -SourceUnreachable an unreadable region
+# A stops Promote. A region A that answers is always checked, with or without the declaration.
+function Get-DrSourceState {
+    param($Ctx, [string]$Unreachable, $Run)
+    try { return Get-DrRegionState $Ctx 'A' }
+    catch {
+        if ("$_" -match 'az_argument_unsafe') { throw }
+        if (-not $Unreachable) {
+            throw "source_unreachable: region A's writer settings cannot be read ($_). Promote does not enable region B while region A's writers are unknown. If region A is down (Azure Service Health shows the outage), rerun with -SourceUnreachable '<incident ID and evidence>'; region A must be fenced before it is brought back (docs/DR-ACTIVE-PASSIVE.md failover step 6)."
+        }
+        if (-not $Run.Contains('sourceUnreachable')) { $Run.sourceUnreachable = [ordered]@{ reason = $Unreachable; error = "$_"; at = [DateTime]::UtcNow.ToString('o') } }
+        Write-DrStep $Ctx "region A unreadable, declared unreachable: $Unreachable ($_)"
+        return $null
+    }
+}
+
+function Assert-DrSourceFenced {
+    param($Ctx, [string]$Unreachable, $Run)
+    $s = Get-DrSourceState $Ctx $Unreachable $Run
+    if ($s -and $s.writing) { throw "source_writers_enabled: region A has a writer enabled ($script:Sync=$($s.syncDisabled), $script:Rec=$($s.reconcilerDisabled)). Fence it first: -Phase Fence -Region A -Apply." }
+}
+
 # Region B becomes the writer. Cosmos DB must already write in region B; this phase never moves it.
 function Invoke-DrPromote {
-    param([Parameter(Mandatory)] $Ctx, [switch]$FenceSource, [switch]$AdoptBaseline, [switch]$Apply)
+    param([Parameter(Mandatory)] $Ctx, [switch]$FenceSource, [switch]$AdoptBaseline, [string]$SourceUnreachable, [switch]$Apply)
     $run = Start-DrRun $Ctx 'Promote' $Apply
     Assert-DrCoverage $Ctx
-    $src = Get-DrRegionState $Ctx 'A'
-    if ($src.writing -and -not $FenceSource) { throw "source_writers_enabled: region A has a writer enabled ($script:Sync=$($src.syncDisabled), $script:Rec=$($src.reconcilerDisabled)). Fence it first: -Phase Fence -Region A -Apply, or add -FenceSource." }
+    if ($PSBoundParameters.ContainsKey('SourceUnreachable') -and $SourceUnreachable.Trim().Length -lt 10) {
+        throw "source_unreachable_reason: -SourceUnreachable needs a reason of at least 10 characters, for example the Azure Service Health incident ID. It is recorded in the evidence file."
+    }
+    $src = Get-DrSourceState $Ctx $SourceUnreachable $run
+    if ($src -and $src.writing -and -not $FenceSource) { throw "source_writers_enabled: region A has a writer enabled ($script:Sync=$($src.syncDisabled), $script:Rec=$($src.reconcilerDisabled)). Fence it first: -Phase Fence -Region A -Apply, or add -FenceSource." }
     Assert-DrCosmosIn $Ctx 'B' 'Promote does not move Cosmos DB. After confirming the region A outage (docs/DR-ACTIVE-PASSIVE.md failover step 3), run:'
     $ws = Get-DrWorkspaceCommands $Ctx
     if (-not $Apply) {
-        if ($src.writing) { Write-DrStep $Ctx 'preview: fence region A (sync, reconciler Disabled=true).' }
+        if (-not $src) { Write-DrStep $Ctx "preview: region A not fenced (unreadable). Reason recorded: $SourceUnreachable. Fence region A before it is brought back." }
+        elseif ($src.writing) { Write-DrStep $Ctx 'preview: fence region A (sync, reconciler Disabled=true).' }
         Write-DrStep $Ctx "preview: region B reconciler $script:Gate=on, $script:Coverage=$($Ctx.CoverageStartAt)$(if ($AdoptBaseline) { ", $script:Adopt=$($Ctx.CoverageStartAt)" } else { ", delete $script:Adopt" })."
         Write-DrStep $Ctx 'preview: enable region B reconciler, then sync (Disabled=false). Rerun with -Apply.'
         Write-DrStep $Ctx "workspace switchover (not run here; 24 hours after replication was enabled): $($ws.failover)"
         $run.result = 'preview'; return $run
     }
-    if ($src.writing) { Set-DrWriters $Ctx 'A' $false }
-    Assert-DrFenced $Ctx 'A' 'source_writers_enabled'
+    if ($src -and $src.writing) { Set-DrWriters $Ctx 'A' $false }
+    Assert-DrSourceFenced $Ctx $SourceUnreachable $run
     Set-DrGate $Ctx 'B' -AdoptBaseline:$AdoptBaseline
-    Assert-DrFenced $Ctx 'A' 'source_writers_enabled'
+    Assert-DrSourceFenced $Ctx $SourceUnreachable $run
     Assert-DrCosmosIn $Ctx 'B' 'Cosmos DB moved during Promote; region B writers stay off. Move it back with:'
     Set-DrWriters $Ctx 'B' $true
+    if ($run.Contains('sourceUnreachable')) { Write-DrStep $Ctx 'region A was not fenced (unreadable). Before region A comes back: -Phase Fence -Region A -Apply, then -Phase Status.' }
     Write-DrStep $Ctx "workspace switchover (not run here; 24 hours after replication was enabled): $($ws.failover)"
     if ($AdoptBaseline) { Write-DrStep $Ctx 'after one written run with gate passed: -Phase RemoveAdoption -Region B -Apply.' }
     $run.result = 'promoted'; return $run

@@ -144,6 +144,35 @@ Check 'region A re-enabled during Promote: region B is not enabled' ((Refusal { 
 $w = New-World; $w.hook = { param($e, $w) if ($e -match '^b-rec RECONCILER_LEDGER_COVERAGE_START_AT') { $w.cosmos = 'East US 2' } }
 Check 'Cosmos moved during Promote: region B is not enabled' ((Refusal { Invoke-DrPromote $w.Ctx -Apply } 'cosmos_write_region') -and -not (Enabled $w 'B'))
 
+# ---- Promote while region A's management API does not answer (UNKNOWNS DR-18)
+$down = '--name a-(sync|rec)'
+$reason = 'Service Health incident ABC-123: East US 2 outage'
+$w = New-World; $w.failOn = $down
+$msg = ''; try { Invoke-DrPromote $w.Ctx -Apply | Out-Null } catch { $msg = "$_" }
+Check 'unreachable region A without -SourceUnreachable: Promote stops before any change' ($msg -match 'source_unreachable' -and $msg -match '-SourceUnreachable' -and @(Mutations $w).Count -eq 0)
+$w = New-World; $w.failOn = $down
+Check '-SourceUnreachable needs a reason of at least 10 characters' ((Refusal { Invoke-DrPromote $w.Ctx -Apply -SourceUnreachable 'down' } 'source_unreachable_reason') -and @(Mutations $w).Count -eq 0)
+$w = New-World; $w.failOn = $down
+$r = Invoke-DrPromote $w.Ctx -SourceUnreachable $reason
+Check '-SourceUnreachable preview changes nothing and names the reason' (@(Mutations $w).Count -eq 0 -and $r.result -ceq 'preview' -and ($r.steps -join "`n") -match [regex]::Escape($reason))
+$w = New-World; $w.failOn = $down
+$r = $null; try { $r = Invoke-DrPromote $w.Ctx -Apply -SourceUnreachable $reason } catch { Write-Host "Promote (region A down): $_" }
+$ev = @($w.events)
+$firstEnable = [array]::FindIndex([string[]]$ev, [Predicate[string]] { param($e) $e -match 'Disabled=false' })
+$gateAt = [array]::FindIndex([string[]]$ev, [Predicate[string]] { param($e) $e -ceq 'b-rec RECONCILER_CONTINUITY_GATE=on' })
+Check '-SourceUnreachable with region A down: gate first, then region B enabled' ($r -and $r.result -ceq 'promoted' -and $gateAt -ge 0 -and $firstEnable -gt $gateAt -and $w.settings['b-sync'][$sync] -ceq 'false' -and $w.settings['b-rec'][$rec] -ceq 'false')
+Check '-SourceUnreachable records the reason and the read error' ($r -and $r.Contains('sourceUnreachable') -and $r.sourceUnreachable.reason -ceq $reason -and $r.sourceUnreachable.error -match 'fake_failure')
+Check '-SourceUnreachable writes nothing to region A' (@(Mutations $w | Where-Object { $_ -match '--name a-' }).Count -eq 0)
+$w = New-World; $w.settings['a-sync'][$sync] = 'false'
+Check '-SourceUnreachable does not override region A writing when region A answers' ((Refusal { Invoke-DrPromote $w.Ctx -Apply -SourceUnreachable $reason } 'source_writers_enabled') -and @(Mutations $w).Count -eq 0)
+$w = New-World; $w.failOn = $down; $w.hook = { param($e, $w) if ($e -match '^b-rec RECONCILER_LEDGER_COVERAGE_START_AT') { $w.failOn = $null; $w.settings['a-sync'][$sync] = 'false' } }
+Check 'region A answers again with a writer on before B is enabled: region B is not enabled' ((Refusal { Invoke-DrPromote $w.Ctx -Apply -SourceUnreachable $reason } 'source_writers_enabled') -and -not (Enabled $w 'B') -and $w.violations -eq 0)
+$w = New-World; $w.Ctx.Regions.A.SyncApp = 'a-sync&calc'
+Check 'an unsafe az argument is not treated as an unreachable region' ((Refusal { Invoke-DrPromote $w.Ctx -Apply -SourceUnreachable $reason } 'az_argument_unsafe') -and @(Mutations $w).Count -eq 0)
+$w = New-World; $w.failOn = $down; $w.settings['b-rec'][$rec] = 'false'
+$s = $null; try { $s = Get-DrFailoverStatus $w.Ctx } catch { Write-Host "Status (region A down): $_" }
+Check 'Status with region A unreadable reports it and still reads region B' ($s -and @($s.warnings) -contains 'region_A_unreadable' -and $s.regions.A.error -match 'fake_failure' -and $s.regions.B.writing -and @($s.problems).Count -eq 0)
+
 # ---- Fence and RemoveAdoption
 $w = New-World; $w.settings['a-rec'][$rec] = 'false'
 Quiet { Invoke-DrFence $w.Ctx -Region A }
@@ -230,9 +259,12 @@ $ev = @(Get-ChildItem (Join-Path $dir 'standby-state/evidence') -Filter 'failove
 Check 'driver Status: split-brain exits 4 and writes evidence' ($d.code -eq 4 -and $d.out -match 'ERROR: split_brain' -and $ev.Count -eq 1 -and (Get-Content $ev[0].FullName -Raw) -match 'split_brain')
 $d = & $runDriver @('-Phase', 'Promote')
 Check 'driver Promote refuses while region A writes, exit 3, no change' ($d.code -eq 3 -and $d.out -match 'source_writers_enabled' -and @($d.log | Where-Object { $_ -match 'appsettings (set|delete)' }).Count -eq 0)
+$d = & $runDriver @('-Phase', 'Promote', '-SourceUnreachable', "'Service Health incident ABC-123'")
+$ev = @(Get-ChildItem (Join-Path $dir 'standby-state/evidence') -Filter 'failover-promote-*.json' | Sort-Object LastWriteTime | Select-Object -Last 1)
+Check 'driver passes -SourceUnreachable and records it in the evidence switches' ($ev.Count -eq 1 -and ((Get-Content $ev[0].FullName -Raw | ConvertFrom-Json).switches.sourceUnreachable -ceq 'Service Health incident ABC-123'))
 
 # Every az argument recorded across all scenarios is free of cmd.exe metacharacters.
 Check "no recorded az argument holds ( ) | & < > ^ ($($script:allCalls.Count) calls)" ($script:allCalls.Count -gt 50 -and @($script:allCalls | Where-Object { $_ -match '[()|&<>^]' }).Count -eq 0)
 
 Write-Host "Test-DrFailover: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 62) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 73) { exit 1 }
