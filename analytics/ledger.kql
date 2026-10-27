@@ -93,7 +93,10 @@ let CcofUsageLedger = (fromTime:datetime, toTime:datetime, resourceIds:string) {
         usageSource = iff(noBackendCall, "no-backend-call", iff(bodyUsageKnown, "body", "log")),
         traceObservedAt = iff(traceKnown, todatetime(payload.observedAt), datetime(null)),
         ingestedAt = iff(isnotnull(gatewayIngestedAt) and gatewayIngestedAt > llmIngestedAt, gatewayIngestedAt, llmIngestedAt)
-    | extend requestFailed = gatewayOutcomeKnown and ResponseCode between (400 .. 599),
+    // ResponseCode 0: the client disconnected. Without a backend response the gateway has no usage to log;
+    // after one (a cancelled stream) tokens may have been used, so that row is not a failed request (ADR 0036).
+    | extend requestFailed = gatewayOutcomeKnown and (ResponseCode between (400 .. 599)
+            or (ResponseCode == 0 and (isnull(BackendResponseCode) or BackendResponseCode == 0))),
         inputTokensKnown = isnotnull(inputTokens), outputTokensKnown = isnotnull(outputTokens),
         cacheWrite5mTokensKnown = isnotnull(cacheWrite5mTokens), cacheWrite1hTokensKnown = isnotnull(cacheWrite1hTokens),
         cacheReadTokensKnown = isnotnull(cacheReadTokens),
