@@ -1,5 +1,22 @@
 # Change log
 
+## 2026-10-27 - Live run of the scripted DR phases; ledger fix for abandoned calls
+
+- Live lab run with `main` fc53154 ([DR standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md) section
+  12.3): `Status`, the four `Promote` refusals, `Fence` (130 s), the Cosmos DB move (67 s), `Promote`
+  (129 s) and `Failback -MoveCosmos` (219 s) worked as documented; the reconciler handed over from
+  region A to region B and back with gate `passed`. `Enable-WorkspaceReplication.ps1` enabled replication
+  on a test workspace in 71 s with SKU and retention unchanged; Azure refuses `-Disable` within one hour
+  of enabling, and `-Disable` after the hour read back `enabled: false` in 7 s (`provisioningState` `Disabling`).
+- Ledger: a client disconnect before any backend response (APIM `ResponseCode` 0, no
+  `BackendResponseCode`) is now a failed request, so the continuity gate exempts it when it has no
+  tokens. Before, four abandoned test calls made region A's gated reconciler refuse
+  `ledger_attribution_missing`. [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-client-disconnect-before-a-backend-response);
+  workbook digests updated in `tests/chargeback-shared-queries.test.ts`; UNKNOWNS DR-20 (cancelled
+  streams) opened.
+- Admin updates from a VM run live: Part A in about 10 minutes, `Update` 225 s, public access stayed
+  `Disabled`. Fixed: `npm ci` at the repository root before the admin build on a fresh clone; the
+  `publicNetworkAccess` read; runbook note on `""` with `az.cmd` on Windows. UNKNOWNS DR-19 resolved.
 ## 2026-10-27 - Admin publishing before Lockdown, admin updates from a VM, workspace replication script
 
 - [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) decision revised by the owner:

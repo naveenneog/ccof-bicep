@@ -165,3 +165,26 @@ regions then write until region A is fenced. The runbooks require `-Phase Fence 
 before region A is brought back. Tests: `tests/Test-DrFailover.ps1` (11 checks for the declaration and
 Status); seven mutants each fail a named check with the check count unchanged. Not run against a real
 regional outage.
+
+## Amendment 2026-10-27: client disconnect before a backend response
+
+Context: in the 2026-10-27 lab run (DR-STANDBY-CLOUD-SHELL section 12.3) region A's gated reconciler
+refused every run after failback with `ledger_attribution_missing`. The cause was four test calls that
+the client abandoned after 90 s. APIM logged them with `ResponseCode` 0, no `BackendResponseCode`, an
+LLM log row with zero tokens and no model, and a request-time trace without attribution (attribution is
+written when the response arrives). The ledger set `requestFailed` only for `ResponseCode` 400-599, so
+these rows were neither attributed nor exempt, and each one would have stopped the gate for the rest
+of the billing month.
+
+Decision: `analytics/ledger.kql` also sets `requestFailed` when `ResponseCode` is 0 and there is no
+backend response (`BackendResponseCode` null or 0). Such a row has null token columns (the native counts
+need a 2xx response), so the existing exemption for a failed request without tokens applies. A
+disconnect after a backend response (a cancelled stream, `BackendResponseCode` 200) is not covered: it
+can carry usage, and it still refuses while unattributed (UNKNOWNS DR-20).
+
+Evidence: the ledger with and without the change over 2026-10-01 to 2026-10-28 in the lab returned the
+same 909 rows; only the four abandoned calls changed (`requestFailed` false to true), and the count of
+unattributed non-failed rows went from 4 to 0. The workspace held no `ResponseCode` 0 row with a
+backend response in the last 30 days. Test: `tests/chargeback-report.test.ts` pins the clause; two
+mutants (clause removed, backend guard removed) fail it. The residual risk is the one already recorded:
+a call that the backend completed after the client left is billed by Azure and not counted.

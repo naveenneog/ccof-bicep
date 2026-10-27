@@ -804,3 +804,31 @@ pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
    100 % (11.6 rows 5-7).
 4. **Status** again: region A writing, region B fenced, no `split_brain`, primary host header not
    `dr-drill.invalid`.
+
+### 12.3 Live run of the scripted phases, 2026-10-27
+
+The lab (East US 2 region A, Central US region B, one resource group) ran the phases with the code at
+`main` fc53154. Front Door was not drained, so model traffic stayed on region A's APIM throughout; the
+run tested the writer handover, not traffic failover (11.2 tests that).
+
+| Step (UTC) | Command | Result |
+|---|---|---|
+| 18:12 | `-Phase Status` | Region A writing, region B fenced; `warning: workspace_replication_partial_month`, full months from 2026-11-01 (replication enabled 2026-10-25) |
+| 18:15 | `Promote` without `-FenceSource`; with `-SourceUnreachable` while region A answers; with a 4-character reason; with `-FenceSource` while Cosmos DB writes in region A | Refused: `source_writers_enabled`, `source_writers_enabled`, `source_unreachable_reason`, `cosmos_write_region` with the move command. Nothing changed |
+| 18:19-18:21 | `-Phase Fence -Region A -Apply` | `result: fenced`, 130 s |
+| 18:21-18:22 | The printed `az cosmosdb failover-priority-change ... centralus=0 eastus2=1` | 67 s |
+| 18:23-18:25 | `-Phase Promote -Apply` | `result: promoted`, 129 s. Region A reconciler's last run 18:20; region B reconciler `written`, gate `passed` from 18:25 |
+| 18:31-18:35 | `-Phase Failback -MoveCosmos -Apply` | `result: failed_back`, 219 s, Cosmos DB back in East US 2 |
+| 18:35-18:38 | Region A reconciler | `written`, gate `passed` |
+| 18:40 | Region A reconciler | `refused`, `ledger_attribution_missing`: four test calls that the client abandoned after 90 s (APIM `ResponseCode` 0, no backend response, no tokens). Fixed in the ledger on 2026-10-27 ([ADR 0036 amendment](../adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-client-disconnect-before-a-backend-response)) |
+
+Model calls through Front Door during the run: 15 of 22 returned 200 (14 within about 2 s, one after 79 s); three returned 503
+`temporary_upstream_failure` ("An unexpected error occurred while getting deployment headers") from
+Foundry, and four were abandoned by the client after 90 s. The failures were on region A's APIM and
+its East US 2 Foundry member, before and after the handover. They match DR-15 and DR-16 in kind; the
+lab's Foundry deployment capacity is 10.
+
+After the run: the reconciler package with the ledger fix was published to both reconcilers at 19:22;
+region A's runs from 19:24 were `written` with gate `passed` (55 unattributed requests, all failed without
+tokens). The admin console update after Lockdown ([admin updates from a VM](ADMIN-UPDATE-FROM-VM.md))
+published commit bcb8151 to region A's locked-down admin app in 225 s.

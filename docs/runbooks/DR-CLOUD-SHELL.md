@@ -822,7 +822,7 @@ Status and acceptance criteria per packet: [ROADMAP](../ROADMAP.md).
 | --- | --- |
 | Standby resource group (option A) | `az group delete --name STANDBY-RG` after the resources below are removed |
 | Standby VNet, NSG, DNS links, peering, identities (Step 4) | Block below |
-| Workspace replication (Step 5) | `pwsh -NoProfile -File infra/dr/Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Disable`, then with `-Apply` (same full-object PUT, `enabled` false, read back); a replicated workspace cannot be deleted until replication is off ([Learn](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#deployment-considerations)) |
+| Workspace replication (Step 5) | `pwsh -NoProfile -File infra/dr/Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Disable`, then with `-Apply` (same full-object PUT, `enabled` false, read back). Azure refuses to disable replication within one hour of enabling it ("cannot be disabled at this time because it was enabled in the last hour", lab 2026-10-27); a replicated workspace cannot be deleted until replication is off ([Learn](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#deployment-considerations)) |
 | Project failover on (Step 6.2) | Project > **Settings** > **Backend failover**: clear the switch > **Review failover** > **Save changes**; state `disabled with pool`; then Step 6.4. The pool and member backends stay in APIM for a later switch-on |
 | Registered backends (Step 6.1) | **Backends** page: disable the entry |
 

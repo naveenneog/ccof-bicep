@@ -71,6 +71,14 @@ test("ledger exposes trusted group snapshots and outcome diagnostics without dir
   assert.match(ledger, /noBackendCall/);
 });
 
+// A client that disconnects before the backend answers is logged with ResponseCode 0 and no backend
+// response; it counts as a failed request (exempt from the continuity gate when it has no tokens). A
+// disconnect after a backend response (a cancelled stream) may carry usage and stays not failed.
+test("ledger counts a client disconnect without a backend response as a failed request", () => {
+  const clause = /requestFailed = gatewayOutcomeKnown and \(ResponseCode between \(400 \.\. 599\)\s+or \(ResponseCode == 0 and \(isnull\(BackendResponseCode\) or BackendResponseCode == 0\)\)\)/;
+  assert.match(ledger, clause);
+});
+
 test("zero input/output with missing cache stays partial, never disappears as factual zero", async () => {
   const { buildChargebackWorkbook } = await import("../analytics/workbooks/chargeback.ts");
   const q = buildChargebackWorkbook(workbookAnswers(), card, ledger, groups).queries.totals;
