@@ -163,7 +163,9 @@ $vmPrincipal = az vm show -g $rg -n $vm --query identity.principalId -o tsv
 ```
 
 **Expect:** JSON with `"powerState": "VM running"` and an empty `publicIpAddress`, then the identity's
-object ID. `--generate-ssh-keys` stores a key pair in `$HOME/.ssh` in Cloud Shell; the key is required by
+object ID. On a Windows workstation, `az` runs through `az.cmd`, which drops an empty `""` argument
+(`argument --public-ip-address: expected one argument`); write `'""'` there instead
+(`--public-ip-address '""' --nsg '""'`). Cloud Shell passes `""` as written. `--generate-ssh-keys` stores a key pair in `$HOME/.ssh` in Cloud Shell; the key is required by
 the Linux VM API but is not used, because Run Command needs no SSH connection. If Azure Policy
 refuses the image or the size, choose an allowed image of Ubuntu 22.04 or later and any 2-vCPU size.
 

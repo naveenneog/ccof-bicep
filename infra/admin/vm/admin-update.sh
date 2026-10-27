@@ -67,7 +67,7 @@ do_check() {
   az login --identity --allow-no-subscriptions >>"$LOG" 2>&1 || fail check "managed identity sign-in failed: the VM needs a system-assigned identity"
   az account set --subscription "$SUB" >>"$LOG" 2>&1 || fail check "subscription $SUB is not visible to the VM identity: assign Website Contributor on the admin app"
   local access
-  access=$(az functionapp show --subscription "$SUB" --resource-group "$RG" --name "$APP" --output tsv --query publicNetworkAccess 2>>"$LOG") \
+  access=$(az functionapp show --subscription "$SUB" --resource-group "$RG" --name "$APP" --output tsv --query 'publicNetworkAccess || properties.publicNetworkAccess' 2>>"$LOG") \
     || fail check "cannot read $APP: the VM identity needs Website Contributor on the admin app"
   note "$APP publicNetworkAccess=${access:-unset}"
   local ip
@@ -91,6 +91,8 @@ do_update() {
   git -C "$src" checkout --quiet "$COMMIT" >>"$LOG" 2>&1 || fail clone "commit $COMMIT is not in $REPO_URL: push it first"
   [ "$(git -C "$src" rev-parse HEAD)" = "$COMMIT" ] || fail clone "checked-out commit differs from $COMMIT"
   rm -f "$zip"
+  # The admin build compiles shared files from src/ and analytics/, which import the root packages.
+  (cd "$src" && npm ci --ignore-scripts --no-audit --no-fund) >>"$LOG" 2>&1 || fail build "npm ci at the repository root failed (outbound HTTPS to registry.npmjs.org)"
   pwsh -NoProfile -File "$src/admin/Build-AdminPackage.ps1" -OutFile "$zip" >>"$LOG" 2>&1 || fail build "admin/Build-AdminPackage.ps1 failed (npm ci, build or unit tests)"
   [ -s "$zip" ] || fail build "no package at $zip"
   SHA=$(sha256sum "$zip" | cut -c1-64)

@@ -66,6 +66,7 @@ node() { echo "${STUB_NODE:-v22.11.0}"; }
 curl() { rec "curl $*"; case "$*" in *http_code*) echo "${STUB_HTTP:-200}" ;; *) echo 'echo installed' ;; esac; }
 getent() { echo "${STUB_IP:-10.1.2.3} $2"; }
 apt-get() { rec "apt-get $*"; }
+npm() { rec "npm $* (in $(basename "$PWD"))"; [ -z "${STUB_NPM_FAIL:-}" ] || return 1; }
 dpkg() { rec "dpkg $*"; }
 wget() { rec "wget $*"; }
 '@
@@ -76,12 +77,12 @@ function Invoke-VmScript([string]$Phase, [hashtable]$Env = @{}, [string[]]$Witho
     $script:runId++
     $d = Join-Path $scratch "run$script:runId"; New-Item -ItemType Directory -Force -Path (Join-Path $d 'work') | Out-Null
     [IO.File]::WriteAllText((Join-Path $d 'script.sh'), (New-AdminVmScript -Phase $Phase -Values $values), [Text.UTF8Encoding]::new($false))
-    $fns = @('az', 'git', 'pwsh', 'node', 'curl', 'getent', 'apt-get', 'dpkg', 'wget', 'rec') | Where-Object { $Without -notcontains $_ }
+    $fns = @('az', 'git', 'pwsh', 'node', 'curl', 'getent', 'apt-get', 'dpkg', 'wget', 'npm', 'rec') | Where-Object { $Without -notcontains $_ }
     $exports = ($Env.GetEnumerator() | ForEach-Object { "export $($_.Key)='$($_.Value)'" }) -join "`n"
     $runner = @"
 if [ "`$(uname -s)" = Linux ]; then
   BIN=`$(mktemp -d)
-  for t in mkdir date tr cut tail sed awk grep sha256sum seq sleep rm cat head bash; do ln -s "`$(command -v `$t)" "`$BIN/`$t"; done
+  for t in mkdir date tr cut tail sed awk grep sha256sum seq sleep rm cat head bash basename; do ln -s "`$(command -v `$t)" "`$BIN/`$t"; done
   export PATH="`$BIN"
 else
   export PATH=/usr/bin:/bin
@@ -114,7 +115,7 @@ $r = Invoke-VmScript 'check' @{ STUB_NODE = 'v20.11.0' }
 Check 'check: Node.js older than 22 fails' ($r.run -and $r.run.outcome -ceq 'failed' -and $r.run.detail -match 'older than 22')
 
 $r = Invoke-VmScript 'update'
-$order = @('^az login --identity', '^git clone --quiet --no-checkout https://github.com/example/ccof-bicep ', "^git -C \S+ checkout --quiet $commit", '^pwsh -NoProfile -File \S+/admin/Build-AdminPackage\.ps1 -OutFile ', "^az functionapp deployment source config-zip --subscription $sub --resource-group rg-lab --name lab-admin --src \S+admin-$commit\.zip", '^az functionapp function list ') |
+$order = @('^az login --identity', '^git clone --quiet --no-checkout https://github.com/example/ccof-bicep ', "^git -C \S+ checkout --quiet $commit", "^npm ci --ignore-scripts --no-audit --no-fund \(in src-$commit\)", '^pwsh -NoProfile -File \S+/admin/Build-AdminPackage\.ps1 -OutFile ', "^az functionapp deployment source config-zip --subscription $sub --resource-group rg-lab --name lab-admin --src \S+admin-$commit\.zip", '^az functionapp function list ') |
     ForEach-Object { $p = $_; [array]::FindIndex([string[]]$r.calls, [Predicate[string]] { param($c) $c -match $p }) }
 Check 'update: sign-in, clone, checkout, build, publish, verify in that order' ($r.run -and $r.run.outcome -ceq 'succeeded' -and -not ($order -contains -1) -and (($order | Sort-Object) -join ',') -ceq ($order -join ','))
 Check 'update: run line carries the commit and the package sha256' ($r.run -and $r.run.commit -ceq $commit -and $r.run.sha256 -match '^[0-9a-f]{64}$')
@@ -125,6 +126,8 @@ $r = Invoke-VmScript 'update' @{ STUB_CHECKOUT_FAIL = '1' }
 Check 'update: a commit not on the remote stops before build' ($r.run.step -ceq 'clone' -and $r.run.detail -match 'push it first' -and -not (Has $r '^pwsh -NoProfile -File|config-zip'))
 $r = Invoke-VmScript 'update' @{ STUB_HEAD = ('b' * 40) }
 Check 'update: a different checked-out commit stops before build' ($r.run.step -ceq 'clone' -and -not (Has $r '^pwsh -NoProfile -File|config-zip'))
+$r = Invoke-VmScript 'update' @{ STUB_NPM_FAIL = '1' }
+Check 'update: a failed npm ci at the repository root stops before the admin build' ($r.run.step -ceq 'build' -and $r.run.detail -match 'npm ci' -and -not (Has $r '^pwsh -NoProfile -File|config-zip'))
 $r = Invoke-VmScript 'update' @{ STUB_BUILD_FAIL = '1' }
 Check 'update: a failed build or unit test is not published' ($r.run.step -ceq 'build' -and -not (Has $r 'config-zip') -and $r.err -match 'npm ERR build')
 $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_FAIL = '1' }
@@ -178,4 +181,4 @@ $d = & $runDrv @('-Phase', 'Update', '-Apply', '-Commit', 'HEAD') @{}
 Check 'driver: a commit that is not a 40-character SHA is refused (exit 2)' ($d.code -eq 2 -and $d.out -match 'input_refused' -and $d.log.Count -eq 0)
 
 Write-Host "Test-AdminVmUpdate: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 35) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 36) { exit 1 }
