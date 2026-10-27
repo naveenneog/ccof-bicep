@@ -827,3 +827,8 @@ Model calls through Front Door during the run: 15 of 22 returned 200 (14 within 
 Foundry, and four were abandoned by the client after 90 s. The failures were on region A's APIM and
 its East US 2 Foundry member, before and after the handover. They match DR-15 and DR-16 in kind; the
 lab's Foundry deployment capacity is 10.
+
+After the run: the reconciler package with the ledger fix was published to both reconcilers at 19:22;
+region A's runs from 19:24 were `written` with gate `passed` (55 unattributed requests, all failed without
+tokens). The admin console update after Lockdown ([admin updates from a VM](ADMIN-UPDATE-FROM-VM.md))
+published commit bcb8151 to region A's locked-down admin app in 225 s.

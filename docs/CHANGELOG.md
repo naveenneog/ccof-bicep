@@ -14,6 +14,9 @@
   `ledger_attribution_missing`. [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-client-disconnect-before-a-backend-response);
   workbook digests updated in `tests/chargeback-shared-queries.test.ts`; UNKNOWNS DR-20 (cancelled
   streams) opened.
+- Admin updates from a VM run live: Part A in about 10 minutes, `Update` 225 s, public access stayed
+  `Disabled`. Fixed: `npm ci` at the repository root before the admin build on a fresh clone; the
+  `publicNetworkAccess` read; runbook note on `""` with `az.cmd` on Windows. UNKNOWNS DR-19 resolved.
 ## 2026-10-27 - Admin publishing before Lockdown, admin updates from a VM, workspace replication script
 
 - [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) decision revised by the owner:

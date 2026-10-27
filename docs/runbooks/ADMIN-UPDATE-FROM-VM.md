@@ -3,8 +3,11 @@
 This runbook publishes a new admin console package (a code update or a fix patch) after Front Door
 `Lockdown`. Part A sets up the VM once; Part B is repeated for every update.
 
-**Status:** the scripts are covered by offline tests (`tests/Test-AdminVmUpdate.ps1`). The full path
-has not yet been run against Azure (UNKNOWNS DR-19).
+**Status:** run end to end in the lab on 2026-10-27 against a locked-down Flex Consumption admin app in
+East US 2: Part A took about 10 minutes (zone and private endpoint 134 s, VM 68 s, `Setup` 162 s) and
+`Update` 225 s; the console then answered through Front Door while direct public access returned 403.
+Offline tests: `tests/Test-AdminVmUpdate.ps1`. The lab's tenant deallocated the new VM about ten minutes
+after it was created (an automation identity, not this runbook); B2 starts it again.
 
 ## Why a VM
 
