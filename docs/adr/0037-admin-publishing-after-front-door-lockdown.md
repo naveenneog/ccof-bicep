@@ -1,7 +1,8 @@
 # ADR 0037: Publishing admin code after Front Door lockdown
 
-Status: accepted, 2026-10-27 (owner may revise in the review of PR #12).
-Related: [ADR 0033](0033-dr-active-passive.md), [Front Door runbook](../runbooks/DR-FRONT-DOOR.md).
+Status: accepted, 2026-10-27 (decision set by the owner on 2026-10-27).
+Related: [ADR 0033](0033-dr-active-passive.md), [Front Door runbook](../runbooks/DR-FRONT-DOOR.md),
+[admin updates from a VM](../runbooks/ADMIN-UPDATE-FROM-VM.md).
 
 ## Context
 
@@ -37,20 +38,25 @@ Resolver, sync and reconciler apps are not Front Door origins and keep their con
 
 ## Decision
 
-Accepted 2026-10-27:
+Accepted 2026-10-27 by the owner, replacing the first recorded decision of the same day:
 
-- Option 2 is the standard path: admin code is published from a host inside the VNet through a
-  `sites` private endpoint, with public access left disabled. The private endpoint, DNS record and
-  host are not created by the repository yet; until they exist, admin code is published before
-  `Lockdown` (runbook section 3).
-- Option 1 is an exception, used only with a recorded security approval. Public access is enabled
-  with an access restriction to the operator's address, the package is published, and public access
-  is disabled and read back as `Disabled` in the same scripted run.
-- Option 3 is not used until a spike shows it is a supported deployment path.
-- Option 4 is rejected: no Front Door route to the deployment (SCM) endpoint.
+- **Publish before Lockdown.** The admin package is published by deployment Step 7 (region A) and the
+  DR `Code` phase (region B) before `Invoke-DrFrontDoor.ps1 -Phase Lockdown` runs. This is the normal
+  path and needs no extra resources.
+- **Updates and fix patches after Lockdown come from a VM inside the VNet** (option 2), with
+  `infra/admin/Update-AdminFromVm.ps1`: a Linux VM with a managed identity, a `sites` private endpoint
+  for the admin app and its `privatelink.azurewebsites.net` record, driven by Run Command from Cloud
+  Shell ([runbook](../runbooks/ADMIN-UPDATE-FROM-VM.md)).
+- Temporary public access (option 1) is not used. Option 3 is not pursued. Option 4 is rejected.
 
 ## Consequences
 
-- A DR `Code` phase run after `Lockdown` fails on the admin package by design; the phase reports the
-  three published packages and the refused one.
-- Region B's admin app is one package behind until it is republished by the chosen path.
+- Step 7 and the DR `Code` phase read the admin app's `publicNetworkAccess` before publishing. When it
+  is `Disabled`, they skip the admin package with the warning `admin_public_access_disabled`, publish
+  the other packages, and record `admin.skipped = public_access_disabled` (`Publish-StgAdminPackage`,
+  `infra/staged/Staged.Application.ps1`). Before this change, the admin publish failed with HTTP 403.
+- An admin update after Lockdown needs the one-time VM setup: a VM, a private endpoint, a DNS record,
+  the Website Contributor role for the VM identity, and outbound HTTPS from the VM to the repository
+  and package sources. These are created by the runbook's commands, not by the deployment templates.
+- The VM path is covered by offline tests (`tests/Test-AdminVmUpdate.ps1`) and has not yet been run
+  against Azure (UNKNOWNS DR-19).

@@ -200,13 +200,9 @@ switch ($Phase) {
     $s1 = Get-StgStage $bCfg 1
     $admin = $null
     if ($s1.names.apps.Contains('admin')) {
-        $zip = Join-Path $ctx.GeneratedDir 'admin.zip'
-        & (Join-Path $repo 'admin/Build-AdminPackage.ps1') -OutFile $zip | Out-Host
-        if ($LASTEXITCODE) { throw 'admin_build_failed' }
-        $null = Invoke-QsAz @('functionapp', 'deployment', 'source', 'config-zip', '--subscription', $sub, '--resource-group', $rg, '--name', $s1.names.apps.admin.functionApp, '--src', $zip)
-        $admin = (Get-FileHash $zip -Algorithm SHA256).Hash
+        $admin = Publish-StgAdminPackage -Subscription $sub -ResourceGroup $rg -App $s1.names.apps.admin.functionApp -ZipPath (Join-Path $ctx.GeneratedDir 'admin.zip')
     }
-    Save-DrPhase 'Code' @{ code = $code; adminSha256 = $admin; commit = (git -C $repo rev-parse HEAD) }
+    Save-DrPhase 'Code' @{ code = $code; admin = $admin; adminSha256 = $(if ($admin -and $admin.Contains('sha256')) { $admin.sha256 } else { $null }); commit = (git -C $repo rev-parse HEAD) }
 }
 'Verify' {
     $s1 = Get-StgStage $bCfg 1

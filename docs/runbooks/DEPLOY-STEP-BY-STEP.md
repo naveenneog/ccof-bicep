@@ -428,6 +428,22 @@ and the read-only checks of the later steps, run against the lab after all steps
 
 ![Resource names and read-only checks with the Azure CLI](../images/guide/cli-names-and-checks.png)
 
+### When disaster recovery is planned: turn on workspace replication now
+
+Workspace replication copies only logs ingested after it is enabled, and the budget ledger is built
+from those logs. Turning it on after Step 1, before Step 7 starts model traffic, gives a standby
+region the whole history ([ADR 0038](../adr/0038-ledger-after-mid-month-switchover.md),
+[workspace replication](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication)).
+Replace `REPLACE-standby-region` with the DR region, for example `centralus`:
+
+```powershell
+pwsh -File infra\dr\Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location REPLACE-standby-region
+pwsh -File infra\dr\Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location REPLACE-standby-region -Apply
+```
+
+**Expect:** `replication: enabled, <region>, Succeeded` and `full billing months in the replica from
+<date>`. Replication is billed per ingested GB. Details: [DR-CLOUD-SHELL Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace).
+
 ---
 
 ## Step 2: create the database containers
@@ -892,6 +908,10 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 7 -ConfigPath $cfg -A
 
 Only one Step 7 runs at a time per checkout; a second one stops with `stage7_busy`. The lab apply on
 24 October 2026 took 1,390 seconds.
+
+When the admin app's public access is `Disabled` (Front Door `Lockdown`), Step 7 skips the admin
+package with the warning `admin_public_access_disabled` and publishes the others. The admin package
+is then published from a VM: [admin updates from a VM](ADMIN-UPDATE-FROM-VM.md) (ADR 0037).
 
 **Azure CLI: packages**
 

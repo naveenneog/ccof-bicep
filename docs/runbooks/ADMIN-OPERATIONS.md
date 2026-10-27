@@ -4,6 +4,8 @@ Applies to Admin **3.3.0**, deployed using the [deployment runbook](DEPLOYMENT-R
 Who: CCOF administrators with the `CCOF.Projects.Write` (editor) or `CCOF.Projects.Read` (reader) app role.
 The console is `https://<actual-admin-host>/api/console-v3`.
 Developer setup is in [user onboarding](USER-ONBOARDING.md).
+Publishing console code updates and fix patches after Front Door lockdown:
+[admin updates from a VM](ADMIN-UPDATE-FROM-VM.md).
 
 The current model is **project > classification > Entra group**, with one backend per project.
 The group-centric redesign in the separate `CCOF` repository is not part of this release.

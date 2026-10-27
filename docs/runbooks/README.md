@@ -11,6 +11,7 @@ Step-by-step guides. Read them in this order for a new deployment:
 | 4 | [DR-CLOUD-SHELL.md](DR-CLOUD-SHELL.md) | Operators adding disaster recovery after a single-region deployment | The DR parts deployable today, in Azure Cloud Shell: standby network and identities (P0-P2), workspace replication, per-project backend failover; and the parts not deployable yet |
 | 5 | [DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md) | Operators building the DR standby region (region B) after P0-P2 | Cloud Shell setup with durable state, `dr.config.json` field reference with a full example, the seven region B driver phases (preview then apply), resuming after the 20-minute timeout; section 11: the lab failover drill, region B promotion, workspace switchover and failback to region A |
 | 6 | [DR-FRONT-DOOR.md](DR-FRONT-DOOR.md) | Operators putting Front Door in front of both regions after region B is built | Front Door Premium phases (deploy, approve private links, verify, lock down public access), admin code publishing after lockdown, drain and restore of the primary origins with the measured propagation times |
+| 7 | [ADMIN-UPDATE-FROM-VM.md](ADMIN-UPDATE-FROM-VM.md) | Operators publishing admin console updates and fix patches after Front Door lockdown | One-time VM setup (private endpoint, DNS, VM with managed identity, role), then each update: preview, publish through Run Command, verify, roll back |
 
 Command reference for the deployment driver: [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md).
 

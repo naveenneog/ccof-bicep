@@ -178,6 +178,19 @@ Assert-Contract $bad 'Stage 1 verify must fail when a configured zone-redundant 
 $script:zrArmCalls = @(); $script:zrArmValue = $true
 $zrRead = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $false } } -ApimId '/apim'
 Assert-Contract ($null -eq $zrRead -and $script:zrArmCalls.Count -eq 0) 'Stage 1 verify must not read zone redundancy when the setting is off.'
+# Admin publishing after Front Door Lockdown (ADR 0037): public access Disabled -> skip, no build, no deploy.
+$script:pubCalls = @(); $script:pubBuilds = 0; $script:pubAccess = 'Disabled'
+function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:pubCalls += "GET $Path"; @{ properties = @{ publicNetworkAccess = $script:pubAccess } } }
+function Invoke-QsAz { param([string[]]$Arguments) $script:pubCalls += ($Arguments -join ' '); $null }
+$pubZip = Join-Path ([IO.Path]::GetTempPath()) "ccof-admin-test-$([guid]::NewGuid().ToString('N')).zip"
+$pubBuild = { param($zip) $script:pubBuilds++; [IO.File]::WriteAllText($zip, 'zip') }
+$pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild 3>$null
+Assert-Contract ($pub.skipped -ceq 'public_access_disabled' -and $script:pubBuilds -eq 0 -and @($script:pubCalls | Where-Object { $_ -match 'config-zip' }).Count -eq 0 -and $pub.runbook -match 'ADMIN-UPDATE-FROM-VM') 'Admin publishing must be skipped, without build or deploy, when the admin app has public access Disabled (Front Door Lockdown).'
+$script:pubCalls = @(); $script:pubAccess = 'Enabled'
+try { $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild } finally { Remove-Item -LiteralPath $pubZip -ErrorAction SilentlyContinue }
+Assert-Contract ($script:pubBuilds -eq 1 -and @($script:pubCalls | Where-Object { $_ -match "^functionapp deployment source config-zip --subscription s --resource-group g --name adm --src " }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'Admin publishing with public access Enabled must build once and deploy once with config-zip.'
+$stage7Text = Get-Content -Raw (Join-Path $root 'infra\staged\Staged.Application.ps1'); $drText = Get-Content -Raw (Join-Path $root 'infra\dr\Invoke-DrStandby.ps1')
+Assert-Contract (([regex]::Matches($stage7Text + $drText, "'config-zip'")).Count -eq 1 -and ([regex]::Matches($stage7Text + $drText, 'Publish-StgAdminPackage ')).Count -ge 2) 'Stage 7 and the DR Code phase must publish the admin package only through Publish-StgAdminPackage.'
 Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly

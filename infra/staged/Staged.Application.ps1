@@ -79,6 +79,24 @@ function Invoke-Stage5 {
 
 # ---------------------------------------------------------------- stage 7: code and initial data
 
+# Front Door Lockdown (infra/dr/Invoke-DrFrontDoor.ps1) disables public network access on the admin
+# app, and OneDeploy from outside the VNet then returns HTTP 403. The admin package is published before
+# Lockdown; after it, publishing is skipped here and done from a VM inside the VNet (ADR 0037,
+# docs/runbooks/ADMIN-UPDATE-FROM-VM.md).
+function Publish-StgAdminPackage {
+    param([Parameter(Mandatory)] [string]$Subscription, [Parameter(Mandatory)] [string]$ResourceGroup, [Parameter(Mandatory)] [string]$App,
+        [Parameter(Mandatory)] [string]$ZipPath, [scriptblock]$Build)
+    $site = Get-StgArm "/subscriptions/$Subscription/resourceGroups/$ResourceGroup/providers/Microsoft.Web/sites/$App" '2024-04-01'
+    if ([string]$site.properties.publicNetworkAccess -ceq 'Disabled') {
+        Write-Warning "admin_public_access_disabled: $App has public network access Disabled (Front Door Lockdown); its package was not published. Publish it from a VM inside the VNet: docs/runbooks/ADMIN-UPDATE-FROM-VM.md."
+        return [ordered]@{ app = $App; skipped = 'public_access_disabled'; runbook = 'docs/runbooks/ADMIN-UPDATE-FROM-VM.md' }
+    }
+    if (-not $Build) { $Build = { param($zip) & (Join-Path $script:Repo 'admin/Build-AdminPackage.ps1') -OutFile $zip | Out-Host; if ($LASTEXITCODE) { throw 'admin_build_failed: admin/Build-AdminPackage.ps1' } } }
+    & $Build $ZipPath
+    $null = Invoke-QsAz @('functionapp', 'deployment', 'source', 'config-zip', '--subscription', $Subscription, '--resource-group', $ResourceGroup, '--name', $App, '--src', $ZipPath)
+    return [ordered]@{ app = $App; sha256 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash }
+}
+
 function Invoke-Stage7 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 6; $null = Get-StgStage $Cfg 5; $entra = Get-StgStage $Cfg 4
@@ -96,14 +114,14 @@ function Invoke-Stage7 {
     $result = @{ code = $code }
     if ($Cfg.stage1.includeAdmin) {
         $zip = Join-Path $ctx.GeneratedDir 'admin.zip'
-        & (Join-Path $script:Repo 'admin/Build-AdminPackage.ps1') -OutFile $zip | Out-Host
-        if ($LASTEXITCODE) { throw 'admin_build_failed: admin/Build-AdminPackage.ps1' }
-        $null = Invoke-QsAz @('functionapp', 'deployment', 'source', 'config-zip', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $s1.names.apps.admin.functionApp, '--src', $zip)
-        $want = 'projects', 'adminUi', 'adminHealth'
-        $url = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Web/sites/$($s1.names.apps.admin.functionApp)/functions"
-        for ($i = 0; $i -lt 20; $i++) { $listed = @((Get-StgArm $url '2024-04-01').value | ForEach-Object { ([string]$_.name).Split('/')[-1] }); if (-not @($want | Where-Object { $listed -cnotcontains $_ }).Count) { break }; Start-Sleep 15 }
-        Assert-Stg (-not @($want | Where-Object { $listed -cnotcontains $_ }).Count) "admin lists $($listed -join ',')"
-        $result.admin = @{ sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash; functions = $listed }
+        $result.admin = Publish-StgAdminPackage -Subscription $Cfg.subscriptionId -ResourceGroup $Cfg.resourceGroup -App $s1.names.apps.admin.functionApp -ZipPath $zip
+        if ($result.admin.Contains('sha256')) {
+            $want = 'projects', 'adminUi', 'adminHealth'
+            $url = "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Web/sites/$($s1.names.apps.admin.functionApp)/functions"
+            for ($i = 0; $i -lt 20; $i++) { $listed = @((Get-StgArm $url '2024-04-01').value | ForEach-Object { ([string]$_.name).Split('/')[-1] }); if (-not @($want | Where-Object { $listed -cnotcontains $_ }).Count) { break }; Start-Sleep 15 }
+            Assert-Stg (-not @($want | Where-Object { $listed -cnotcontains $_ }).Count) "admin lists $($listed -join ',')"
+            $result.admin.functions = $listed
+        }
     }
     # Invoke-QsSeed validates each projects document against onboarding's schema first; with the runner
     # off it seeds through the sync app's registrySeed function.

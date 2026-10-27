@@ -182,12 +182,54 @@ function Get-DrWorkspaceStatus {
     $p = $ws.properties
     $failover = if ($p -is [Collections.IDictionary] -and $p.Contains('failover')) { $p.failover } else { $null }
     $replication = if ($p -is [Collections.IDictionary] -and $p.Contains('replication')) { $p.replication } else { $null }
-    $after = $null
-    if ($replication -and $replication.Contains('createdDate')) {
-        $created = ConvertTo-DrUtcInstant $replication.createdDate
-        if ($created) { $after = ConvertTo-DrUtcInstant ([datetime]::Parse($created, $script:Inv, [Globalization.DateTimeStyles]::AdjustToUniversal).AddHours(24)) }
-    }
-    return [ordered]@{ name = $Ctx.WorkspaceName; failover = $failover; replication = $replication; switchoverAllowedAfter = $after; commands = (Get-DrWorkspaceCommands $Ctx) }
+    $now = if ($Ctx.ContainsKey('Now') -and $Ctx.Now) { $Ctx.Now } else { [DateTime]::UtcNow }
+    $coverage = Get-DrReplicationCoverage -Replication $replication -Now $now
+    return [ordered]@{ name = $Ctx.WorkspaceName; failover = $failover; replication = $replication; switchoverAllowedAfter = $coverage.switchoverAllowedAfter; coverage = $coverage; commands = (Get-DrWorkspaceCommands $Ctx) }
+}
+
+# Workspace replication copies only data ingested after it is enabled, and tables can take up to one
+# hour to start replicating (learn.microsoft.com/azure/azure-monitor/logs/workspace-replication). The
+# reconciler's billing period is the UTC calendar month (src/reconciler/period.ts), so the replica holds
+# whole periods from the first month start at least one hour after createdDate (ADR 0038).
+function Get-DrReplicationCoverage {
+    param($Replication, [datetime]$Now = [DateTime]::UtcNow)
+    $c = [ordered]@{ enabled = $false; location = $null; provisioningState = $null; createdDate = $null; switchoverAllowedAfter = $null; fullMonthFrom = $null; fullMonthNow = $false }
+    if (-not ($Replication -is [Collections.IDictionary]) -or $Replication['enabled'] -ne $true) { return $c }
+    $c.enabled = $true; $c.location = $Replication['location']; $c.provisioningState = $Replication['provisioningState']
+    $created = ConvertTo-DrUtcInstant $Replication['createdDate']
+    if (-not $created) { return $c }
+    $styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+    $at = [datetime]::Parse($created, $script:Inv, $styles)
+    $ready = $at.AddHours(1)
+    $from = [datetime]::new($ready.Year, $ready.Month, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    if ($from -lt $ready) { $from = $from.AddMonths(1) }
+    $c.createdDate = $created
+    $c.switchoverAllowedAfter = ConvertTo-DrUtcInstant $at.AddHours(24)
+    $c.fullMonthFrom = ConvertTo-DrUtcInstant $from
+    $c.fullMonthNow = $Now.ToUniversalTime() -ge $from
+    return $c
+}
+
+# 'enable', 'wait' (a change is in progress) or 'none'; throws when replication points elsewhere.
+function Get-DrReplicationPlan {
+    param([Parameter(Mandatory)] $Workspace, [Parameter(Mandatory)] [string]$Location)
+    if (Test-DrSameRegion $Workspace.location $Location) { throw "replication_same_region: the workspace is in $($Workspace.location); replication needs a different region (the standby region)." }
+    $p = $Workspace.properties
+    $r = if ($p -is [Collections.IDictionary] -and $p.Contains('replication')) { $p.replication } else { $null }
+    if (-not ($r -is [Collections.IDictionary]) -or $r['enabled'] -ne $true) { return 'enable' }
+    if (-not (Test-DrSameRegion ([string]$r['location']) $Location)) { throw "replication_other_location: replication is enabled to $($r['location']), not $Location. Disable it first: infra/dr/Enable-WorkspaceReplication.ps1 -Disable -Apply." }
+    if ([string]$r['provisioningState'] -ceq 'Succeeded') { return 'none' }
+    return 'wait'
+}
+
+# The workspace REST PUT replaces the whole object, so the body carries every property read back.
+function New-DrReplicationBody {
+    param([Parameter(Mandatory)] $Workspace, [string]$Location, [switch]$Disable)
+    if (-not $Disable -and -not $Location) { throw 'replication_location_missing: a location is needed to enable replication.' }
+    $props = [ordered]@{}
+    foreach ($k in $Workspace.properties.Keys) { if ($k -cne 'replication') { $props[$k] = $Workspace.properties[$k] } }
+    $props.replication = if ($Disable) { [ordered]@{ enabled = $false } } else { [ordered]@{ enabled = $true; location = $Location } }
+    return [ordered]@{ location = $Workspace.location; tags = $Workspace.tags; properties = $props }
 }
 
 function Get-DrFrontDoorStatus {
@@ -224,6 +266,10 @@ function Get-DrFailoverStatus {
         if ($r.writing -and $r.gate -cne 'on') { $s.warnings.Add("region_${k}_writes_without_gate") }
         if ($r.baselineAdopt) { $s.warnings.Add("region_${k}_baseline_adopt_set") }
         if ($r.writing -and $s.cosmos -is [Collections.IDictionary] -and $s.cosmos.Contains('writeRegion') -and -not (Test-DrSameRegion $s.cosmos.writeRegion $r.location)) { $s.warnings.Add("region_${k}_writes_but_cosmos_writes_in_$($s.cosmos.writeRegion -replace '\s', '')") }
+    }
+    if ($s.workspace -is [Collections.IDictionary] -and $s.workspace.Contains('coverage')) {
+        if (-not $s.workspace.coverage.enabled) { $s.warnings.Add('workspace_replication_off') }
+        elseif (-not $s.workspace.coverage.fullMonthNow) { $s.warnings.Add('workspace_replication_partial_month') }
     }
     return $s
 }
@@ -403,4 +449,5 @@ function Invoke-DrFailback {
 
 Export-ModuleMember -Function Assert-DrAzArguments, Invoke-DrFailoverAz, Invoke-DrAzCli, ConvertFrom-DrJson, ConvertTo-DrUtcInstant, Test-DrCanonicalCoverage, Get-DrJsonText,
     Get-DrFailoverProblems, New-DrFailoverContext, Get-DrRegionState, Get-DrCosmos, Get-DrCosmosMoveCommand, Get-DrWorkspaceCommands, Get-DrFailoverStatus,
+    Get-DrReplicationCoverage, Get-DrReplicationPlan, New-DrReplicationBody,
     Invoke-DrFence, Invoke-DrRemoveAdoption, Invoke-DrPromote, Invoke-DrFailback

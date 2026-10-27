@@ -47,7 +47,13 @@ Accepted 2026-10-27:
 
 ## Consequences
 
-- No code change under option 1; runbooks and the DR readiness checklist gain the replication-start
-  rule.
+- Option 1 is implemented by `infra/dr/Enable-WorkspaceReplication.ps1`: it reads the workspace,
+  adds `properties.replication` to the full object and writes it back (SKU and retention unchanged),
+  then reads back `Succeeded` and prints the first whole billing month in the replica. Deployment
+  runbook Step 1 and DR-CLOUD-SHELL Step 5 run it.
+- The replica holds whole UTC billing months (`src/reconciler/period.ts`) from the first month start
+  at least one hour after replication was enabled; Learn states that tables can take up to one hour to
+  start replicating. `Invoke-DrFailover.ps1 -Phase Status` prints that date and warns
+  `workspace_replication_partial_month` before it, or `workspace_replication_off`.
 - Option 3 adds a Cosmos write per reconcile run per scope and a new failure mode (watermark ahead of
   replica coverage), which the gate refuses.

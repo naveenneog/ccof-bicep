@@ -1,5 +1,31 @@
 # Change log
 
+## 2026-10-27 - Admin publishing before Lockdown, admin updates from a VM, workspace replication script
+
+- [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) decision revised by the owner:
+  the admin code is published before Front Door `Lockdown`. After `Lockdown`, deployment Step 7 and
+  the DR `Code` phase read the admin app's `publicNetworkAccess` and, when it is `Disabled`, skip the
+  admin package with the warning `admin_public_access_disabled` instead of failing with HTTP 403
+  (`Publish-StgAdminPackage`, `infra/staged/Staged.Application.ps1`). `tests/Test-StagedStages.ps1`
+  433 checks; four mutants caught.
+- New `infra/admin/Update-AdminFromVm.ps1` (phases `Setup`, `Check`, `Update`) and
+  `infra/admin/vm/admin-update.sh`: admin console updates and fix patches from a Linux VM inside the
+  VNet, driven by Run Command from Cloud Shell; the VM builds the pushed commit with
+  `admin/Build-AdminPackage.ps1` and publishes it with OneDeploy through a `sites` private endpoint.
+  New runbook [ADMIN-UPDATE-FROM-VM.md](runbooks/ADMIN-UPDATE-FROM-VM.md) with the one-time setup
+  and the per-update steps. `tests/Test-AdminVmUpdate.ps1` 35 checks (bash with stub commands, Git
+  Bash and WSL); thirteen mutants caught. Not run against Azure (UNKNOWNS DR-19).
+- `.gitattributes`: `*.sh` checked out with LF line endings.
+- [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md) option 1 implemented:
+  `infra/dr/Enable-WorkspaceReplication.ps1` turns on workspace replication with a full-object PUT
+  and prints the first whole billing month in the replica. `Invoke-DrFailover.ps1 -Phase Status`
+  prints that date and warns `workspace_replication_partial_month` or `workspace_replication_off`.
+  `-Disable` turns replication off the same way (DR-CLOUD-SHELL Undo).
+  `tests/Test-WorkspaceReplication.ps1` 31 checks; ten mutants caught.
+- Runbooks: [deployment](runbooks/DEPLOY-STEP-BY-STEP.md) Step 1 (replication when DR is planned)
+  and Step 7 (admin skipped after Lockdown); [DR-CLOUD-SHELL](runbooks/DR-CLOUD-SHELL.md) Step 5 uses
+  the script; [DR standby](runbooks/DR-STANDBY-CLOUD-SHELL.md) `Code` and `Status`;
+  [Front Door](runbooks/DR-FRONT-DOOR.md) sections 2 and 3; [admin operations](runbooks/ADMIN-OPERATIONS.md).
 ## 2026-10-27 - Decisions on ADR 0037 and ADR 0038; Promote with region A unreachable (DR-18)
 
 - `Invoke-DrFailover.ps1 -Phase Promote -SourceUnreachable '<reason>'`: when region A's settings

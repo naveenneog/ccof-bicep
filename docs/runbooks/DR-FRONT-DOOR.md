@@ -37,7 +37,7 @@ defines `$repo` and `$cfg`.
 | 3 | `... -Phase Approve -ConfigPath $cfg` | Nothing | One `Pending CCOF origin` line per origin; the driver only acts on connections whose request message starts with `CCOF Front Door origin` or `CCOF Front Door admin origin` |
 | 4 | Same with `-Apply` | Approves those four connections on the two APIMs and two admin apps | `Approved 4 Front Door private links.` Fewer than four stops with `frontdoor_connections_missing` |
 | 5 | `... -Phase Verify -ConfigPath $cfg` | Nothing | `GET /status-0123456789abcdef` returns 200 and `GET /api/console` 200 or 302 through the Front Door host; up to 30 attempts 30 s apart |
-| 6 | `... -Phase Lockdown -ConfigPath $cfg` then with `-Apply` | Sets `publicNetworkAccess` to `Disabled` on both APIMs and both admin apps, one at a time, and reads it back | `publicNetworkAccess Disabled verified` for each; waits up to 45 minutes per resource |
+| 6 | `... -Phase Lockdown -ConfigPath $cfg` then with `-Apply` | Sets `publicNetworkAccess` to `Disabled` on both APIMs and both admin apps, one at a time, and reads it back. Publish the admin code in both regions first (section 3) | `publicNetworkAccess Disabled verified` for each; waits up to 45 minutes per resource |
 
 Lab observations (2026-10-25):
 
@@ -53,11 +53,11 @@ Lab observations (2026-10-25):
 
 `Lockdown` disables public network access on both admin apps. Publishing a package to an admin app
 from Cloud Shell or a workstation outside the VNet then returns HTTP 403 (region B `Code` phase,
-2026-10-26). The admin code is therefore published before `Lockdown`, or from a host that reaches
-the apps privately. [ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md) (accepted
-2026-10-27) makes publishing from a host inside the VNet the standard path; temporary public access
-is an exception that needs a recorded security approval and a scripted re-disable with read-back.
-The repository does not yet create the private endpoint or host for that path.
+2026-10-26). [ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md) (accepted
+2026-10-27): the admin code is published before `Lockdown` (deployment Step 7 and the DR `Code`
+phase). After `Lockdown`, Step 7 and the `Code` phase skip the admin package with the warning
+`admin_public_access_disabled`, and updates and fix patches are published from a VM inside the VNet:
+[admin updates from a VM](ADMIN-UPDATE-FROM-VM.md).
 
 ## 4. Drill phases
 

@@ -119,7 +119,7 @@ if ($status) {
         Write-Host ("region {0} ({1}): writing={2} sync.Disabled={3} reconcile.Disabled={4} gate={5} coverage={6} adopt={7}" -f $k, $r.location, $r.writing, $r.syncDisabled, $r.reconcilerDisabled, $r.gate, $r.coverageStartAt, $r.baselineAdopt)
     }
     if ($status.Contains('cosmos') -and $status.cosmos.Contains('writeRegion')) { Write-Host "Cosmos DB $($status.cosmos.account): write region $($status.cosmos.writeRegion) ($($status.cosmos.provisioningState))" }
-    if ($status.Contains('workspace') -and $status.workspace.Contains('name')) { Write-Host "workspace $($status.workspace.name): failover $(($status.workspace.failover | ConvertTo-Json -Compress -Depth 5)); switchover allowed after $($status.workspace.switchoverAllowedAfter)" }
+    if ($status.Contains('workspace') -and $status.workspace.Contains('name')) { Write-Host "workspace $($status.workspace.name): failover $(($status.workspace.failover | ConvertTo-Json -Compress -Depth 5)); switchover allowed after $($status.workspace.switchoverAllowedAfter); full billing months in the replica from $($status.workspace.coverage.fullMonthFrom)" }
     if ($status.Contains('frontDoor') -and $status.frontDoor.Contains('primaryGateway')) { Write-Host "Front Door $($status.frontDoor.profile): primary gateway host header $($status.frontDoor.primaryGateway.originHostHeader) (drill fault: $($status.frontDoor.primaryGateway.faulted))" }
     foreach ($w in @($status.warnings)) { Write-Host "warning: $w" -ForegroundColor Yellow }
     foreach ($p in @($status.problems)) { Write-Host "ERROR: $p (both regions have a writer enabled; fence one: -Phase Fence -Region <A|B> -Apply)" -ForegroundColor Red }

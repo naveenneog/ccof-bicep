@@ -448,6 +448,10 @@ Notes per phase:
   to time out during it; see section 8. Keep the tab active and do not start another phase meanwhile.
 - **Shells -Apply** deploys a Bicep template. A failed apply records no state; the same command
   is the retry.
+- **Code -Apply** publishes the resolver, sync and reconciler packages, and the admin package while
+  region B's admin app still has public access. After Front Door `Lockdown` it skips the admin package
+  with the warning `admin_public_access_disabled` and records `admin.skipped`; publish it with
+  [admin updates from a VM](ADMIN-UPDATE-FROM-VM.md) ([ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md)).
 - **Config -Apply** edits the admin app registration, so the account needs that right (section 3 row 4).
 - **Code -Apply** uses the same publishing path as Stage 7
   ([Stage 7](STAGED-DEPLOYMENT-V2.md#stage-7-code-and-initial-data)). With
@@ -717,7 +721,7 @@ setting change is read back before the next step (`readback_mismatch` otherwise)
 
 | Phase | Changes | Refuses (error code) |
 | --- | --- | --- |
-| `Status` | Nothing. Reports per region `AzureWebJobs.syncEntitlement.Disabled`, `AzureWebJobs.reconcileBudgets.Disabled`, `RECONCILER_CONTINUITY_GATE`, `RECONCILER_LEDGER_COVERAGE_START_AT`, `RECONCILER_LEDGER_BASELINE_ADOPT`; the Cosmos DB write region; the workspace `properties.failover` and the time a switchover is allowed (replication start + 24 h); the Front Door primary origin host headers (`dr-drill.invalid` means the drill fault is on) | Exit 4 with `ERROR: split_brain` when both regions have a writer enabled |
+| `Status` | Nothing. Reports per region `AzureWebJobs.syncEntitlement.Disabled`, `AzureWebJobs.reconcileBudgets.Disabled`, `RECONCILER_CONTINUITY_GATE`, `RECONCILER_LEDGER_COVERAGE_START_AT`, `RECONCILER_LEDGER_BASELINE_ADOPT`; the Cosmos DB write region; the workspace `properties.failover`, the time a switchover is allowed (replication start + 24 h) and the first whole billing month in the replica (warnings `workspace_replication_partial_month` before it, `workspace_replication_off` without replication; ADR 0038); a region whose settings cannot be read as `region_<A\|B>_unreadable`; the Front Door primary origin host headers (`dr-drill.invalid` means the drill fault is on) | Exit 4 with `ERROR: split_brain` when both regions have a writer enabled |
 | `Fence -Region A\|B` | Both writers of that region off | - |
 | `Promote` | Optional `-FenceSource`: region A writers off. Region B reconciler: gate `on`, coverage start; with `-AdoptBaseline` the adoption setting equal to the coverage start, otherwise any adoption setting is deleted. Then region B reconciler and sync on | Region A writing without `-FenceSource` (`source_writers_enabled`); Cosmos DB not writing in region B (`cosmos_write_region`, with the move command printed; Promote never moves Cosmos DB); coverage not canonical (`coverage_invalid`). Region A and Cosmos DB are checked again just before region B is enabled |
 | `Failback` | Region B writers off (first). Cosmos DB to region A only with `-MoveCosmos` (`az cosmosdb failover-priority-change ... --failover-policies <A>=0 <B>=1`, then waits for `Succeeded`). Adoption deleted in both regions. Region A reconciler: gate `on`, coverage start. Then region A reconciler and sync on | Cosmos DB not in region A without `-MoveCosmos` (`cosmos_write_region`, command printed); move not finished after 20 minutes (`cosmos_move_timeout`); region B writing again before region A is enabled (`standby_writers_enabled`). Any stop after the first step leaves both regions fenced |
