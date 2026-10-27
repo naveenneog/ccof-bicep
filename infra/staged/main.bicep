@@ -48,6 +48,9 @@ param apimSku string = 'StandardV2'
 @minValue(1)
 param apimUnits int = 1
 
+@description('Zone redundancy for a NEW Standard v2 or Premium v2 APIM. Chosen only at creation; cannot be changed later (docs/UNKNOWNS.md APIM-ZR-01).')
+param apimZoneRedundant bool = false
+
 @description('Optional NEW Foundry account: { create: bool, accountName, publicNetworkAccess, deployments: [{ name, model, version, sku, capacity }] }. Default: no Foundry (an existing account is a backend in later stages).')
 param foundry object = { create: false }
 
@@ -138,6 +141,7 @@ module apimService 'apim-service.bicep' = if (approveNewPublicApimBootstrap) {
     tags: tags
     sku: apimSku
     units: apimUnits
+    zoneRedundant: apimZoneRedundant
     publisherEmail: apimPublisherEmail
     publisherName: apimPublisherName
     workspaceId: workspace.id

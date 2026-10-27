@@ -4,6 +4,8 @@ Applies to Admin **3.3.0**, deployed using the [deployment runbook](DEPLOYMENT-R
 Who: CCOF administrators with the `CCOF.Projects.Write` (editor) or `CCOF.Projects.Read` (reader) app role.
 The console is `https://<actual-admin-host>/api/console-v3`.
 Developer setup is in [user onboarding](USER-ONBOARDING.md).
+Publishing console code updates and fix patches after Front Door lockdown:
+[admin updates from a VM](ADMIN-UPDATE-FROM-VM.md).
 
 The current model is **project > classification > Entra group**, with one backend per project.
 The group-centric redesign in the separate `CCOF` repository is not part of this release.
@@ -324,6 +326,19 @@ order creates a new revision in state `pending publication` (step 4). Source:
 `failoverAfterEdit` and `routingState` in `admin/src/backend-routing.ts`. Step 5 is still needed
 after switching back on: the sync copies the pool ID into memberships only while failover is on
 (`src/contracts/project-routing.ts`).
+
+Editing a registered backend's circuit breaker (any breaker field) on the **Backends** page also
+creates a new revision, `pending publication`, for every active project in state `verified` whose
+pool includes that backend (primary or fallback). The project keeps serving its verified pool until
+step 4 publishes the new revision with the edited breaker. The response lists `routing.queued`
+(project and new revision) and `routing.failed`; each project write is ETag-guarded and has its own
+change record and audit line, operation `v3/backends/routing-revision`. Not moved: projects already
+`pending publication` (their publication reads the current registry), projects with failover off or
+`disabled with pool`, and edits that leave the breaker unchanged (for example a display name or URL).
+A `disabled with pool` project switched back on with the same fallback list returns to its old pool
+and old breaker; change the fallback list to get a new revision. A project in `routing.failed` was
+not moved; edit its fallback list to queue a revision. Source: `failoverAfterBreakerChange` in
+`admin/src/backend-routing.ts`, `requeueAfterBreakerChange` in `admin/src/v3.ts`.
 
 Step 4 runs from a workstation signed in with `az login`, on a device that meets the tenant's
 Conditional Access policy. The publisher requests the admin token with

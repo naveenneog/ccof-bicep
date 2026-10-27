@@ -96,6 +96,18 @@ Assert-Contract (($settingsArm.parameters.syncLimitsContainer.defaultValue -ceq 
 $s1 = Build-Arm 'infra\staged\main.bicep'
 Assert-Contract ($s1.outputs.ContainsKey('names') -and $s1.outputs.ContainsKey('apimName')) 'Stage 1 must output names and apimName.'
 Assert-Contract (($s1.parameters.apimSku.allowedValues -join ',') -ceq 'BasicV2,StandardV2' -and $s1.parameters.apimSku.defaultValue -ceq 'StandardV2') 'APIM SKU choice changed.'
+# APIM zone redundancy (UNKNOWNS APIM-ZR-01): off by default; when on, only the preview API resource carries properties.zoneRedundant.
+Assert-Contract ($s1.parameters.ContainsKey('apimZoneRedundant') -and $s1.parameters.apimZoneRedundant.type -ceq 'bool' -and $s1.parameters.apimZoneRedundant.defaultValue -eq $false) 'main.bicep must declare apimZoneRedundant bool defaulting to false.'
+$apimModule = @(Get-Resources $s1 | Where-Object { $_.type -ceq 'Microsoft.Resources/deployments' -and $_.name -ceq 'stage1-apim' })[0]
+Assert-Contract ($apimModule -and $apimModule.properties.parameters.zoneRedundant.value -ceq "[parameters('apimZoneRedundant')]") 'main.bicep must pass apimZoneRedundant to apim-service.bicep.'
+$apimArm = Build-Arm 'infra\staged\apim-service.bicep'
+Assert-Contract ($apimArm.parameters.zoneRedundant.defaultValue -eq $false) 'apim-service.bicep zoneRedundant must default to false.'
+$apimResources = if ($apimArm.resources -is [Collections.IDictionary]) { $apimArm.resources.Values } else { $apimArm.resources }
+$apimServices = @($apimResources | Where-Object { $_.type -ceq 'Microsoft.ApiManagement/service' -and -not $_.existing })
+$apimGa = @($apimServices | Where-Object { $_.apiVersion -ceq '2024-05-01' })
+$apimZr = @($apimServices | Where-Object { $_.apiVersion -ceq '2025-03-01-preview' })
+Assert-Contract ($apimServices.Count -eq 2 -and $apimGa.Count -eq 1 -and $apimGa[0].condition -ceq "[not(parameters('zoneRedundant'))]" -and -not $apimGa[0].properties.ContainsKey('zoneRedundant')) 'Default (zone redundancy off) APIM must use the GA API with no zoneRedundant property.'
+Assert-Contract ($apimZr.Count -eq 1 -and $apimZr[0].condition -ceq "[parameters('zoneRedundant')]" -and $apimZr[0].properties.zoneRedundant -eq $true) 'Zone-redundant APIM must set properties.zoneRedundant true on the preview API resource.'
 
 # Driver: parses, every stage has an entry function, no az argument holds a cmd.exe metacharacter,
 # preview is the default, and later stages read earlier stage state.
@@ -118,6 +130,17 @@ foreach ($line in ($driver -split "`n" | Where-Object { $_ -match "Invoke-Qs(Az|
     }
 }
 Assert-Contract ($driver -match '\[switch\]\$Apply' -and $driver -match "what-if") 'Driver must preview by default.'
+# az apim update sets the identity to None unless --enable-managed-identity true (azure-cli apim custom.py
+# apim_update); APIM changes go through ARM PATCH. Comments may name the command; code may not.
+foreach ($file in $driverFiles) {
+    $tokens = $null; $null = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$null)
+    $code = (@($tokens | Where-Object Kind -NE 'Comment' | ForEach-Object Text) -join ' ')
+    Assert-Contract ($code -notmatch "(?i)'apim'\s*,?\s*'update'|\bapim\s+update\b") "$(Split-Path $file -Leaf) calls az apim update, which strips the APIM managed identity."
+}
+$stageBody = @{}; foreach ($n in 1, 5, 6) { $stageBody[$n] = @($functionAsts | Where-Object Name -EQ "Invoke-Stage$n")[0].Body.Extent.Text }
+Assert-Contract ($stageBody[1] -match 'Write-StgExistingApimNote') 'Stage 1 preview must print the existing-APIM manual-step note.'
+Assert-Contract ($stageBody[5] -match 'Invoke-StgExistingApimDiagnostics') 'Stage 5 must configure the existing APIM gateway diagnostics when opted in.'
+Assert-Contract ($stageBody[6] -match 'Invoke-StgExistingApimOutbound' -and $stageBody[6] -match 'Invoke-StgApimOutboundIntegration') 'Stage 6 must integrate a created or an opted-in existing APIM through one ARM PATCH path.'
 foreach ($n in 2..8) {
     $body = @($functionAsts | Where-Object Name -EQ "Invoke-Stage$n")[0].Body.Extent.Text
     Assert-Contract ($body -match 'Get-StgStage \$Cfg 1') "Invoke-Stage$n does not require Stage 1 state."
@@ -143,6 +166,32 @@ Assert-Contract ($dnsTargets.vnetId -ceq '/subscriptions/00000000-0000-4000-8000
 function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true } } } }
 $nullSubnetSite = Get-StgSite -Cfg @{ subscriptionId = 's'; resourceGroup = 'g' } -Name 'app'
 Assert-Contract ($nullSubnetSite.virtualNetworkSubnetId -ieq '') 'Get-StgSite must return an empty string, not null, for an app without VNet integration (Stage 1 read-back).'
+# Stage 1 verify reads zone redundancy back with the preview API only when the configuration asks for it (UNKNOWNS APIM-ZR-02).
+$script:zrArmCalls = @()
+function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:zrArmCalls += "$ApiVersion"; @{ properties = @{ zoneRedundant = $script:zrArmValue } } }
+$script:zrArmValue = $true
+$zrRead = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $true } } -ApimId '/apim'
+Assert-Contract ($zrRead -eq $true -and ($script:zrArmCalls -join ',') -ceq '2025-03-01-preview') 'Stage 1 verify must read zoneRedundant back with API 2025-03-01-preview when configured.'
+$script:zrArmValue = $false
+$bad = $false; try { $null = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $true } } -ApimId '/apim' } catch { $bad = $_.Exception.Message -match 'verify_failed: APIM zoneRedundant' }
+Assert-Contract $bad 'Stage 1 verify must fail when a configured zone-redundant APIM reads back as not zone redundant.'
+$script:zrArmCalls = @(); $script:zrArmValue = $true
+$zrRead = Assert-StgApimZoneRedundancy -Cfg @{ stage1 = @{ apimZoneRedundant = $false } } -ApimId '/apim'
+Assert-Contract ($null -eq $zrRead -and $script:zrArmCalls.Count -eq 0) 'Stage 1 verify must not read zone redundancy when the setting is off.'
+# Admin publishing after Front Door Lockdown (ADR 0037): public access Disabled -> skip, no build, no deploy.
+$script:pubCalls = @(); $script:pubBuilds = 0; $script:pubAccess = 'Disabled'
+function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:pubCalls += "GET $Path"; @{ properties = @{ publicNetworkAccess = $script:pubAccess } } }
+function Invoke-QsAz { param([string[]]$Arguments) $script:pubCalls += ($Arguments -join ' '); $null }
+$pubZip = Join-Path ([IO.Path]::GetTempPath()) "ccof-admin-test-$([guid]::NewGuid().ToString('N')).zip"
+$pubBuild = { param($zip) $script:pubBuilds++; [IO.File]::WriteAllText($zip, 'zip') }
+$pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild 3>$null
+Assert-Contract ($pub.skipped -ceq 'public_access_disabled' -and $script:pubBuilds -eq 0 -and @($script:pubCalls | Where-Object { $_ -match 'config-zip' }).Count -eq 0 -and $pub.runbook -match 'ADMIN-UPDATE-FROM-VM') 'Admin publishing must be skipped, without build or deploy, when the admin app has public access Disabled (Front Door Lockdown).'
+$script:pubCalls = @(); $script:pubAccess = 'Enabled'
+try { $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild } finally { Remove-Item -LiteralPath $pubZip -ErrorAction SilentlyContinue }
+Assert-Contract ($script:pubBuilds -eq 1 -and @($script:pubCalls | Where-Object { $_ -match "^functionapp deployment source config-zip --subscription s --resource-group g --name adm --src " }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'Admin publishing with public access Enabled must build once and deploy once with config-zip.'
+$stage7Text = Get-Content -Raw (Join-Path $root 'infra\staged\Staged.Application.ps1'); $drText = Get-Content -Raw (Join-Path $root 'infra\dr\Invoke-DrStandby.ps1')
+Assert-Contract (([regex]::Matches($stage7Text + $drText, "'config-zip'")).Count -eq 1 -and ([regex]::Matches($stage7Text + $drText, 'Publish-StgAdminPackage ')).Count -ge 2) 'Stage 7 and the DR Code phase must publish the admin package only through Publish-StgAdminPackage.'
+Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly
 $headers = New-StgGatewayHeaders -Token 'token-placeholder' -Project 'PROJECT01' -ProjectHeader 'x-customer-project'
@@ -176,6 +225,26 @@ try {
     $read = Read-StgConfig $tmp
     Assert-Contract ($read.network.mode -ceq 'verify') 'The example network mode must be verify: the customer builds the network.'
     Assert-Contract ($read.stage1.prefix -ceq 'ccofstg' -and $read.stage1.functionsPublicNetworkAccess -ceq 'Disabled' -and $read.stage1.approveNewPublicApimBootstrap -eq $false) 'Example defaults must stay private and defer APIM.'
+    Assert-Contract ($read.stage1.Contains('apimZoneRedundant') -and $read.stage1.apimZoneRedundant -is [bool] -and $read.stage1.apimZoneRedundant -eq $false -and (Get-Stage1Parameters $read).apimZoneRedundant -eq $false) 'Example stage1.apimZoneRedundant must be false and reach the Stage 1 parameters.'
+    $c.stage1.apimZoneRedundant = 'yes'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'stage1\.apimZoneRedundant must be true or false' }
+    Assert-Contract $bad 'A non-boolean stage1.apimZoneRedundant must be refused.'
+    $c.stage1.apimZoneRedundant = $true; $c.stage1.apimSku = 'BasicV2'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'stage1\.apimZoneRedundant requires stage1\.apimSku StandardV2 or PremiumV2' }
+    Assert-Contract $bad 'Zone redundancy with BasicV2 must be refused.'
+    $c.stage1.apimSku = 'StandardV2'; $c.stage1.apimUnits = 1
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $zrWarnings = $null; $read = Read-StgConfig $tmp -WarningVariable zrWarnings -WarningAction SilentlyContinue
+    Assert-Contract ($read.stage1.apimZoneRedundant -eq $true -and @($zrWarnings | Where-Object { "$_" -match 'stage1\.apimZoneRedundant with stage1\.apimUnits 1.*at least two units' }).Count -eq 1) 'Zone redundancy with one unit must be accepted with a warning (Learn: at least two units recommended).'
+    $c.stage1.apimUnits = 2
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $zrWarnings = $null; $read = Read-StgConfig $tmp -WarningVariable zrWarnings -WarningAction SilentlyContinue
+    Assert-Contract ($read.stage1.apimZoneRedundant -eq $true -and -not @($zrWarnings | Where-Object { "$_" -match 'apimZoneRedundant' }).Count) 'Zone redundancy with two units must be accepted without a warning.'
+    $c.stage1.apimZoneRedundant = $false; $c.stage1.apimUnits = 1
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
     $c.reconciler.continuityGate = 'on'
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'ledgerCoverageStartAt is required' }
@@ -239,6 +308,33 @@ try {
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'private Foundry.*requires' }
     Assert-Contract $bad 'Existing-network private Foundry configuration must require all three zone IDs.'
+    # Customer deployment 2026-10-26: privateDnsZoneIds placed under network, not network.existing.
+    $c.backends[0].privateEndpoint = $false
+    $zones = $c.network.existing.privateDnsZoneIds
+    $c.network.existing.Remove('privateDnsZoneIds'); $c.network.privateDnsZoneIds = $zones
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'network\.existing\.privateDnsZoneIds' -and $message -match 'not under network' -and $message -notmatch 'null array') "Misplaced privateDnsZoneIds must be named, not crash: $message"
+    $c.network.Remove('privateDnsZoneIds'); $c.network.existing.privateDnsZoneIds = $zones
+    # A trailing comma: strict JSON parse error must name the file as the cause.
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    (Get-Content -LiteralPath $tmp -Raw) -replace '(\S)(\s*\}\s*)$', '$1,$2' | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM -NoNewline
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'staged configuration is not strict JSON' -and $message -match 'trailing comma') "A trailing comma must be reported as a configuration JSON error: $message"
+    # Client aliases are checked at Stage 0, not first at Stage 7 (Invoke-QsClient).
+    $models = $c.client.models
+    $c.client.models = [ordered]@{ default = 'claude-sonnet-5'; sonnet = 'claude-sonnet-5'; haiku = 'claude-haiku-4-5' }
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'client\.models must name exactly default, opus, sonnet and haiku') "Three client aliases must be refused at config read: $message"
+    $c.client.models = [ordered]@{ default = 'claude-sonnet-5'; opus = 'claude-sonnet-5'; sonnet = 'claude-sonnet-5'; haiku = 'claude-haiku-5-5' }
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $message = ''; try { $null = Read-StgConfig $tmp } catch { $message = $_.Exception.Message }
+    Assert-Contract ($message -match 'client\.models\.haiku' -and $message -match 'claude-haiku-5-5') "An alias outside the selected group's admitted models must be refused: $message"
+    $c.client.models = $models
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.client.models.haiku -ceq 'claude-haiku-4-5') 'Admitted client aliases must be accepted.'
 } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 # State is bound to its tenant/subscription/RG: another target's outputs are refused, not reused.
 $stateDir = Join-Path ([IO.Path]::GetTempPath()) "staged-state-$([guid]::NewGuid().ToString('N'))"
@@ -350,6 +446,144 @@ try {
     $badPath = Join-Path $stateDir 'bad-vnet.json'; $badVnet | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $badPath -Encoding utf8NoBOM
     $refused = $false; try { $null = Read-StgConfig $badPath } catch { $refused = $_.Exception.Message -match 'same VNet' }
     Assert-Contract $refused 'Verify mode must refuse subnets from different VNets.'
+
+    # Existing APIM (apim.existing): gateway diagnostics and outbound VNet integration are opt-in flags.
+    $apimCfgPath = Join-Path $stateDir 'apim-existing.json'
+    $apimDoc = (Get-Content -LiteralPath $example -Raw | ConvertFrom-Json -AsHashtable -Depth 100)
+    $apimDoc.tenantId = '00000000-0000-4000-8000-000000000001'; $apimDoc.subscriptionId = '00000000-0000-4000-8000-000000000002'
+    $apimDoc.network.existing = @{ functionsSubnetId = "$vnetPath/functions"; privateEndpointSubnetId = "$vnetPath/private"; apimSubnetId = "$vnetPath/apim" }
+    $apimDoc.apim.existing = @{ subscriptionId = '00000000-0000-4000-8000-000000000002'; resourceGroup = 'rg-apim'; name = 'apim-shared'; configureGatewayDiagnostics = $true; integrateOutboundVnet = $true }
+    $writeApimDoc = { $apimDoc | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $apimCfgPath -Encoding utf8NoBOM }
+    & $writeApimDoc
+    $read = Read-StgConfig $apimCfgPath
+    Assert-Contract ($read.apim.existing.configureGatewayDiagnostics -eq $true -and $read.apim.existing.integrateOutboundVnet -eq $true) 'Existing-APIM flags set to true must be accepted with a full APIM subnet ID.'
+    $apimDoc.apim.existing.configureGatewayDiagnostics = 'true'; & $writeApimDoc
+    $refused = $false; try { $null = Read-StgConfig $apimCfgPath } catch { $refused = $_.Exception.Message -match 'apim\.existing\.configureGatewayDiagnostics must be true or false' }
+    Assert-Contract $refused 'apim.existing.configureGatewayDiagnostics must refuse a non-boolean value.'
+    $apimDoc.apim.existing.configureGatewayDiagnostics = $true; $apimDoc.apim.existing.integrateOutboundVnet = 1; & $writeApimDoc
+    $refused = $false; try { $null = Read-StgConfig $apimCfgPath } catch { $refused = $_.Exception.Message -match 'apim\.existing\.integrateOutboundVnet must be true or false' }
+    Assert-Contract $refused 'apim.existing.integrateOutboundVnet must refuse a non-boolean value.'
+    $apimDoc.apim.existing.integrateOutboundVnet = $true; $apimDoc.network.existing.Remove('apimSubnetId'); & $writeApimDoc
+    $refused = $false; try { $null = Read-StgConfig $apimCfgPath } catch { $refused = $_.Exception.Message -match 'integrateOutboundVnet requires network\.existing\.apimSubnetId' }
+    Assert-Contract $refused 'apim.existing.integrateOutboundVnet must refuse a missing network.existing.apimSubnetId.'
+    $apimDoc.network.existing.apimSubnetId = "$vnetPath/apim" -replace '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000009'
+    $apimDoc.network.existing.functionsSubnetId = $apimDoc.network.existing.apimSubnetId -replace '/apim$', '/functions'
+    $apimDoc.network.existing.privateEndpointSubnetId = $apimDoc.network.existing.apimSubnetId -replace '/apim$', '/private'; & $writeApimDoc
+    $refused = $false; try { $null = Read-StgConfig $apimCfgPath } catch { $refused = $_.Exception.Message -match "same subscription as the existing APIM" }
+    Assert-Contract $refused 'apim.existing.integrateOutboundVnet must refuse an APIM subnet in another subscription than the APIM.'
+    $apimDoc.network.existing = @{ functionsSubnetId = "$vnetPath/functions"; privateEndpointSubnetId = "$vnetPath/private"; apimSubnetId = "$vnetPath/apim" }
+    $apimDoc.stage1.approveNewPublicApimBootstrap = $true; & $writeApimDoc
+    $refused = $false; try { $null = Read-StgConfig $apimCfgPath } catch { $refused = $_.Exception.Message -match 'apply only to an existing APIM' }
+    Assert-Contract $refused 'Existing-APIM flags must be refused when Stage 1 creates the APIM.'
+    $apimDoc.stage1.approveNewPublicApimBootstrap = $false; $apimDoc.apim.existing.Remove('configureGatewayDiagnostics'); $apimDoc.apim.existing.Remove('integrateOutboundVnet'); & $writeApimDoc
+    $read = Read-StgConfig $apimCfgPath
+    Assert-Contract (-not $read.apim.existing.Contains('configureGatewayDiagnostics') -and -not $read.apim.existing.Contains('integrateOutboundVnet')) 'Existing-APIM flags must be optional.'
+    $hashAbsent = Get-StgStageInput $read 6
+    $read.apim.existing.integrateOutboundVnet = $false; $read.apim.existing.configureGatewayDiagnostics = $false
+    Assert-Contract ((Get-StgStageInput $read 6) -ceq $hashAbsent) 'Existing-APIM flags set to false must not change the Stage 6 input hash of a completed deployment.'
+    $read.apim.existing.integrateOutboundVnet = $true
+    Assert-Contract ((Get-StgStageInput $read 6) -cne $hashAbsent) 'Turning on apim.existing.integrateOutboundVnet must change the Stage 6 input hash.'
+
+    # Fake ARM for the existing APIM; every az call is recorded.
+    $script:azCalls = @(); $script:fakeDiag = @(); $script:putBody = $null; $script:patchBody = $null; $script:stripIdentity = $false; $script:dropCategory = $false
+    $apimPath = '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg-apim/providers/Microsoft.ApiManagement/service/apim-shared'
+    $workspace = '/subscriptions/00000000-0000-4000-8000-00000000000b/resourceGroups/rg-a/providers/Microsoft.OperationalInsights/workspaces/law-a'
+    $script:fakeApim = @{ id = $apimPath; name = 'apim-shared'; sku = @{ name = 'StandardV2' }; identity = @{ type = 'SystemAssigned'; principalId = '11111111-1111-4111-8111-111111111111' }
+        properties = @{ provisioningState = 'Succeeded'; virtualNetworkType = 'None'; publicNetworkAccess = 'Enabled' } }
+    function Invoke-QsAz {
+        param([string[]]$Arguments)
+        $script:azCalls += , ($Arguments -join ' ')
+        $method = $Arguments[2]; $url = $Arguments[4]
+        if ($Arguments[0] -cne 'rest') { throw "unexpected az call: $($Arguments -join ' ')" }
+        if ($url -like '*/diagnosticSettings/ccof-gateway-logs`?*') {
+            if ($method -eq 'put') {
+                $script:putBody = Get-Content -LiteralPath ($Arguments[$Arguments.IndexOf('--body') + 1].Substring(1)) -Raw | ConvertFrom-Json -AsHashtable
+                $stored = $script:putBody | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+                if ($script:dropCategory) { $stored.properties.logs = @($stored.properties.logs[0]) }
+                $script:fakeDiag = @(@{ name = 'ccof-gateway-logs'; properties = $stored.properties })
+            }
+            return $script:fakeDiag[0]
+        }
+        if ($url -like '*/diagnosticSettings`?*') { return @{ value = $script:fakeDiag } }
+        if ($url -like "https://management.azure.com$apimPath`?*") {
+            if ($method -eq 'patch') {
+                $script:patchBody = Get-Content -LiteralPath ($Arguments[$Arguments.IndexOf('--body') + 1].Substring(1)) -Raw | ConvertFrom-Json -AsHashtable
+                $script:fakeApim.properties.virtualNetworkType = $script:patchBody.properties.virtualNetworkType
+                $script:fakeApim.properties.virtualNetworkConfiguration = @{ subnetResourceId = $script:patchBody.properties.virtualNetworkConfiguration.subnetResourceId }
+                if ($script:stripIdentity) { $script:fakeApim.identity = @{ type = 'None' } }
+                return $null
+            }
+            return $script:fakeApim
+        }
+        throw "unexpected az call: $($Arguments -join ' ')"
+    }
+    $script:StgApimPollSeconds = 0
+    $existingCfg = @{ subscriptionId = '00000000-0000-4000-8000-00000000000b'; resourceGroup = 'rg-a'; stage1 = @{ approveNewPublicApimBootstrap = $false }
+        apim = @{ existing = @{ subscriptionId = '00000000-0000-4000-8000-000000000002'; resourceGroup = 'rg-apim'; name = 'apim-shared' } }
+        network = @{ mode = 'verify'; existing = @{ functionsSubnetId = "$vnetPath/functions"; privateEndpointSubnetId = "$vnetPath/private"; apimSubnetId = "$vnetPath/apim" } } }
+    $existingS1 = @{ apimName = ''; workspaceId = $workspace }
+    $writes = { @($script:azCalls | Where-Object { $_ -match '^rest --method (put|patch|post|delete)' -or $_ -notmatch '^rest --method get' }) }
+
+    # Flags absent and false: no Azure call at all, and preview prints the manual-step note.
+    foreach ($value in @($null, $false)) {
+        $script:azCalls = @()
+        if ($null -ne $value) { $existingCfg.apim.existing.configureGatewayDiagnostics = $value; $existingCfg.apim.existing.integrateOutboundVnet = $value }
+        $note = (Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 6>&1 | Out-String)
+        $applied = Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null
+        $outbound = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null
+        Assert-Contract ($script:azCalls.Count -eq 0 -and $null -eq $applied -and $null -eq $outbound) "Existing-APIM flags $(if ($null -eq $value) { 'absent' } else { 'false' }) must make no Azure call (made: $($script:azCalls -join '; '))."
+        Assert-Contract ($note -match 'apim\.existing\.configureGatewayDiagnostics' -and $note -match 'apim\.existing\.integrateOutboundVnet' -and $note -match 'ccof-gateway-logs') 'Preview for an existing APIM with the flags off must name the manual steps and both flags.'
+    }
+    $stage1Note = (Write-StgExistingApimNote -Cfg $existingCfg 6>&1 | Out-String)
+    Assert-Contract ($stage1Note -match 'integrateOutboundVnet' -and @($stage1Note.Trim() -split "`n").Count -eq 1) 'The existing-APIM note must be one line.'
+    $existingCfg.apim.existing.configureGatewayDiagnostics = $true; $existingCfg.apim.existing.integrateOutboundVnet = $true
+    Assert-Contract (-not (Write-StgExistingApimNote -Cfg $existingCfg 6>&1 | Out-String).Trim()) 'With both flags on, no manual-step note is printed.'
+
+    # Diagnostics on: preview reads only; apply PUTs exactly ccof-gateway-logs and reads it back.
+    $script:azCalls = @()
+    $preview = (Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 6>&1 | Out-String)
+    Assert-Contract ((& $writes).Count -eq 0 -and $preview -match 'preview: .*ccof-gateway-logs.*GatewayLogs, GatewayLlmLogs') "Diagnostics preview must only read (calls: $($script:azCalls -join '; '))."
+    $script:azCalls = @()
+    $diagResult = Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null
+    $puts = @($script:azCalls | Where-Object { $_ -match '^rest --method put' })
+    Assert-Contract ($puts.Count -eq 1 -and $puts[0] -match [regex]::Escape("https://management.azure.com$apimPath/providers/Microsoft.Insights/diagnosticSettings/ccof-gateway-logs?api-version=2021-05-01-preview")) "Diagnostics apply must PUT one ccof-gateway-logs setting on the existing APIM (calls: $($script:azCalls -join '; '))."
+    Assert-Contract ($script:putBody.properties.workspaceId -ceq $workspace -and $script:putBody.properties.logAnalyticsDestinationType -ceq 'Dedicated' -and
+        ((@($script:putBody.properties.logs | ForEach-Object { "$($_.category)=$($_.enabled)" }) -join ',') -ceq 'GatewayLogs=True,GatewayLlmLogs=True') -and $script:putBody.Keys.Count -eq 1 -and -not $script:putBody.properties.Contains('metrics')) 'Diagnostics body must match apim-service.bicep: Stage 1 workspace, Dedicated, GatewayLogs and GatewayLlmLogs.'
+    Assert-Contract ($diagResult.workspaceId -ceq $workspace -and (($diagResult.categories) -join ',') -ceq 'GatewayLlmLogs,GatewayLogs' -and $diagResult.apimId -ceq $apimPath) 'Diagnostics apply must return the read-back workspace and categories.'
+    $script:dropCategory = $true; $script:fakeDiag = @()
+    $refused = $false; try { $null = Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null } catch { $refused = $_.Exception.Message -match 'verify_failed: .*GatewayLlmLogs' }
+    Assert-Contract $refused 'Diagnostics read-back must fail when a category is missing.'
+    $script:dropCategory = $false
+    # A setting of that name sending to another workspace is never overwritten.
+    $script:fakeDiag = @(@{ name = 'ccof-gateway-logs'; properties = @{ workspaceId = ($workspace -replace 'law-a$', 'law-other'); logs = @() } })
+    $script:azCalls = @()
+    $refused = $false; try { $null = Invoke-StgExistingApimDiagnostics -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null } catch { $refused = $_.Exception.Message -match 'apim_diagnostics_conflict: .*law-other' }
+    Assert-Contract ($refused -and (& $writes).Count -eq 0) 'A ccof-gateway-logs setting pointing to another workspace must be refused without a write.'
+    $script:fakeDiag = @()
+
+    # Outbound integration on: sku read at run time; ARM PATCH of the two network properties only; identity kept.
+    $script:fakeApim.sku.name = 'BasicV2'; $script:azCalls = @()
+    $refused = $false; try { $null = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null } catch { $refused = $_.Exception.Message -match 'apim_sku_unsupported: .*BasicV2' }
+    Assert-Contract ($refused -and (& $writes).Count -eq 0) 'Outbound integration must refuse an existing APIM whose SKU is not StandardV2/PremiumV2, without a write.'
+    $script:fakeApim.sku.name = 'StandardV2'; $script:azCalls = @()
+    $null = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 6>$null
+    Assert-Contract ((& $writes).Count -eq 0) 'Outbound integration preview must only read.'
+    $outbound = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null
+    $patches = @($script:azCalls | Where-Object { $_ -match '^rest --method patch' })
+    Assert-Contract ($patches.Count -eq 1 -and $patches[0] -match [regex]::Escape("--url https://management.azure.com$apimPath`?api-version=2024-05-01")) "Outbound integration must PATCH the existing APIM in its own subscription and resource group (calls: $($script:azCalls -join '; '))."
+    Assert-Contract (($script:patchBody | ConvertTo-Json -Depth 5 -Compress) -ceq (@{ properties = @{ virtualNetworkType = 'External'; virtualNetworkConfiguration = @{ subnetResourceId = "$vnetPath/apim" } } } | ConvertTo-Json -Depth 5 -Compress)) 'The PATCH body must hold only virtualNetworkType External and the APIM subnet.'
+    Assert-Contract ($outbound.virtualNetworkType -ceq 'External' -and $outbound.identityType -ceq 'SystemAssigned' -and $outbound.name -ceq 'apim-shared') 'Outbound integration must read back External and a SystemAssigned identity.'
+    $script:azCalls = @()
+    $null = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null
+    Assert-Contract ((& $writes).Count -eq 0) 'An already integrated existing APIM must not be patched again.'
+    $script:fakeApim.properties.virtualNetworkType = 'None'; $script:stripIdentity = $true
+    $refused = $false; try { $null = Invoke-StgExistingApimOutbound -Cfg $existingCfg -Stage1 $existingS1 -Apply 6>$null } catch { $refused = $_.Exception.Message -match 'verify_failed: .*identity' }
+    Assert-Contract $refused 'Outbound integration must fail when the APIM identity is no longer SystemAssigned afterwards.'
+    $verifyArgs = Get-StgNetworkVerifyArguments $existingCfg @{ cosmosAccountId = '/x/cosmos'; apimName = ''; names = @{ apps = @{ sync = @{ functionApp = 'app-sync'; storageAccount = 'stsync' } } } }
+    Assert-Contract ($verifyArgs.ApimSubnet -ceq 'apim' -and $verifyArgs.ApimResourceId -ceq $apimPath) 'Verify mode must check the existing APIM integration when integrateOutboundVnet is on.'
+    Remove-Item Function:\Invoke-QsAz
+    . $driverPath -DotSourceOnly
+    $script:StateDir = $stateDir
 
     $lockPath = Join-Path $stateDir 'stage7.lock'
     $lock = Enter-StgStage7Lock $lockPath

@@ -114,10 +114,48 @@ az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o 
 
 The deployment driver does not read `AZURE_CONFIG_DIR` (`infra/staged/Invoke-StagedDeployment.ps1`
 and `infra/staged/Staged.*.ps1` contain no reference to it), so Cloud Shell needs no value for it.
+If the Windows variable block was pasted first, `AZURE_CONFIG_DIR` holds a Windows path such as
+`$HOME\.ccof-az`, and every `az` command in Cloud Shell fails with
+`PermissionError: [Errno 13] Permission denied: '/home/<user>\\.ccof-az'`. The `Remove-Item` line
+above clears it for the current session. A Windows path held in `$cfg` fails in the same way, with
+`Cannot find drive. A drive with the name 'C' does not exist.`
 Files under `$HOME` survive the session only when Cloud Shell has a storage account
 ([Persist files in Cloud Shell](https://learn.microsoft.com/azure/cloud-shell/persisting-shell-storage));
-otherwise the configuration file and `.staged-state` are downloaded before the session ends.
+otherwise the configuration file and `.staged-state` are downloaded before the session ends
+(next section).
 Step 8 does not run in Cloud Shell ([Step 8](#step-8-test-end-to-end)).
+
+### Cloud Shell without storage (ephemeral session)
+
+An ephemeral session has no storage, and Cloud Shell ends a session after 20 minutes without
+interactive activity ([Cloud Shell FAQ](https://learn.microsoft.com/azure/cloud-shell/faq-troubleshooting)).
+Command output does not count as activity; a key press does. Enter is safe while a command runs:
+the shell reads it as an empty line after the command ends. Ctrl+C cancels the running step.
+
+When the session ends, the clone, the configuration file and `.staged-state` are deleted. The
+driver needs `.staged-state` to know which steps are done (`stage_order` otherwise). After each step,
+the two are packed and downloaded with **Manage files > Download**:
+
+```powershell
+$work = "$HOME/ccof-private"
+tar -czf "$HOME/ccof-state.tgz" -C $work staged.config.json .staged-state
+tar -tzf "$HOME/ccof-state.tgz" | Select-String 'staged.config.json|\.staged-state/state.json'
+```
+
+**Expect:** both names listed. A new session clones the repository again, runs `npm ci` and
+`npm run build` (Step 7 publishes the compiled `dist/` folder and does not compile it), uploads
+the archive and restores it:
+
+```powershell
+New-Item -ItemType Directory "$HOME/ccof-private" -Force | Out-Null
+tar -xzf "$HOME/ccof-state.tgz" -C "$HOME/ccof-private"
+$cfg = "$HOME/ccof-private/staged.config.json"; $state = "$HOME/ccof-private/.staged-state"
+(Get-Content "$state/state.json" -Raw | ConvertFrom-Json).stages.PSObject.Properties.Name
+```
+
+**Expect:** the numbers of the completed steps. A step interrupted by a timeout is run again; each
+step reads what already exists in Azure. The archive contains tenant, subscription and application
+IDs and is kept in a private folder.
 
 On Windows, `az` passes its arguments through `cmd.exe`. Values containing `( ) | & < > ^` are
 interpreted by `cmd.exe`, so this guide keeps them out of `az` arguments and puts request bodies in
@@ -142,6 +180,9 @@ notepad $cfg                                        # Cloud Shell: code $cfg
 | `resourceGroup`, `location` | A new, empty resource group and its region (for example `eastus2`) | Your naming standard |
 | `stage1.prefix` | 3 to 8 lowercase letters or digits used in resource names | Your choice |
 | `apim` and `stage1.approveNewPublicApimBootstrap` | **Either** an existing APIM: `apim.existing` with its `name`, `resourceGroup` and `subscriptionId` (system-assigned identity on). **Or** a new one: `approveNewPublicApimBootstrap: true` with `apimPublisherEmail` and `apimPublisherName`; it is created with public ingress, because APIM cannot be created private before a private endpoint exists. With neither, Step 3 stops with `apim_missing`. | [Stage 1 notes](STAGED-DEPLOYMENT-V2.md#stage-1-resources-only) |
+| `stage1.apimZoneRedundant` | Optional; default `false`. `true` creates the new APIM (`approveNewPublicApimBootstrap: true`) as zone redundant. Requires `stage1.apimSku` `StandardV2`; with fewer than two `stage1.apimUnits` the driver prints a warning. For Standard v2 and Premium v2, zone redundancy can be chosen only when the instance is created and cannot be changed afterwards; units are spread across zones best-effort, and Microsoft recommends at least two units ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support), [reliability in API Management](https://learn.microsoft.com/azure/reliability/reliability-api-management)). Sets `properties.zoneRedundant` with API version `2025-03-01-preview`; not yet deployed live ([UNKNOWNS](../UNKNOWNS.md) APIM-ZR-01, APIM-ZR-02). No effect on an existing APIM. | `infra/staged/main.bicep` (`apimZoneRedundant`), `infra/staged/apim-service.bicep` (`zoneRedundant`) |
+| `apim.existing.configureGatewayDiagnostics` | Optional, `true` or `false` (default `false`). With `true`, Step 5 creates or updates the diagnostic setting `ccof-gateway-logs` on the existing APIM: categories `GatewayLogs` and `GatewayLlmLogs`, resource-specific tables, to the Step 1 Log Analytics workspace, as Step 1 does for a new APIM. The usage ledger and the reconciler's continuity gate read these logs. Step 5 stops with `apim_diagnostics_conflict` and changes nothing if a setting of that name sends to another workspace. With `false`, set it by hand. | `infra/staged/apim-service.bicep` (`apimDiagnostics`), `infra/staged/Staged.Resources.ps1` (`Invoke-StgExistingApimDiagnostics`) |
+| `apim.existing.integrateOutboundVnet` | Optional, `true` or `false` (default `false`). With `true`, Step 6 sets outbound VNet integration of the existing APIM on `network.existing.apimSubnetId` through an ARM PATCH, then checks that the system-assigned identity is still on. Needs `network.mode` `verify` or `existing`, a full `apimSubnetId` in the APIM's subscription, and an APIM on Standard v2 or Premium v2 (read when Step 6 runs; other SKUs are refused). With `false`, integrate it by hand (Step 6, Azure CLI item 5). | [Outbound VNet integration](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound), `infra/staged/Staged.Resources.ps1` (`Invoke-StgExistingApimOutbound`) |
 | `stage1.cosmosCapacityMode` and `cosmos.capacityMode` | Cosmos DB capacity; the two fields go together. `serverless` and `serverless` (the default) for a single-region deployment. `provisioned` and `provisioned-autoscale` when disaster recovery is planned: a serverless account runs in one region and cannot add another ([Cosmos DB serverless](https://learn.microsoft.com/azure/cosmos-db/serverless); lab error `Serverless accounts do not support multiple regions`). With `provisioned-autoscale` the database gets autoscale throughput up to `cosmos.autoscaleMaxThroughput` RU/s (at least 1000). A serverless account can later be changed in place to provisioned throughput, one way only ([change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)); this was not run in the lab. | `infra/staged/main.bicep` (`cosmosCapacityMode`: `serverless`, `provisioned`), `infra/staged/stage2-schema.bicep` (`capacityMode`: `serverless`, `provisioned-autoscale`) |
 | `stage1.functionsPublicNetworkAccess` | `Enabled` for a deployment run from Cloud Shell or a workstation outside the VNet, which is the setting used in both lab runs ([run report](../STAGED-STDV2-RUNS-2026-10-20.md)). The resolver and admin apps still require Entra ID sign-in, and the resolver accepts only the APIM identity. The example file has `Disabled`; with it, APIM reaches the resolver and the operator publishes code only through `sites` private endpoints and a host inside the network ([network handoff](DEPLOYMENT-RUNBOOK.md#2-network-handoff)), which this guide does not create. | `infra/staged/main.bicep` (`functionsPublicNetworkAccess`) |
 | `stage1.foundry` | `create: true` for a new Foundry account with Claude deployments, or `false` to use an existing one | [Foundry section](STAGED-DEPLOYMENT-V2.md#stage-1-foundry-optional) |
@@ -151,6 +192,20 @@ notepad $cfg                                        # Cloud Shell: code $cfg
 | `acceptance` | One allowed and one denied project/model pair for the final test | Step 8 below |
 
 The full list of sections is in the [driver reference](STAGED-DEPLOYMENT-V2.md#configuration-file).
+
+**Check the file before Step 0 (offline, no Azure call).** The driver reads the file with strict
+JSON parsing, which refuses a trailing comma that most editors and `ConvertFrom-Json` accept. It then
+applies its own rules: `privateDnsZoneIds` under `network.existing` in `existing` mode, and four
+client aliases (`default`, `opus`, `sonnet`, `haiku`), each a model that the selected group admits
+and its backend lists in `deploymentInferenceGeo` (`Read-StgConfig` in
+[`Staged.Common.ps1`](../../infra/staged/Staged.Common.ps1)). The same function runs offline:
+
+```powershell
+pwsh -NoProfile -Command ". ./infra/staged/Invoke-StagedDeployment.ps1 -DotSourceOnly; Read-StgConfig '$cfg' | Out-Null; 'configuration OK'"
+```
+
+**Expect:** `configuration OK`, or `invalid staged configuration:` followed by each field to fix, or
+`staged configuration is not strict JSON` with the line number (counted from 0).
 
 ### The network (before Step 0)
 
@@ -280,6 +335,12 @@ that and stops, and Apply creates the group. Apply took 156 and 273 seconds in t
 20 October 2026 ([run report](../STAGED-STDV2-RUNS-2026-10-20.md)); creating a new APIM instance can
 take longer.
 
+**Existing APIM.** Step 1 does not change an APIM named in `apim.existing`. A new APIM gets the
+gateway diagnostic setting in Step 1 and outbound VNet integration in Step 6; an existing one gets
+them only with `apim.existing.configureGatewayDiagnostics` (applied in Step 5, after the workspace
+exists) and `apim.existing.integrateOutboundVnet` (Step 6). While either flag is off, the Step 1
+and Step 5 previews print a one-line note naming the manual step.
+
 **Azure CLI.** The driver writes the parameter file only when the resource group exists, so the order
 is: create the group, run the driver preview, then deploy.
 
@@ -366,6 +427,22 @@ $foundryId     = az cognitiveservices account show -g $foundryRg -n $foundry --q
 and the read-only checks of the later steps, run against the lab after all steps were complete.
 
 ![Resource names and read-only checks with the Azure CLI](../images/guide/cli-names-and-checks.png)
+
+### When disaster recovery is planned: turn on workspace replication now
+
+Workspace replication copies only logs ingested after it is enabled, and the budget ledger is built
+from those logs. Turning it on after Step 1, before Step 7 starts model traffic, gives a standby
+region the whole history ([ADR 0038](../adr/0038-ledger-after-mid-month-switchover.md),
+[workspace replication](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication)).
+Replace `REPLACE-standby-region` with the DR region, for example `centralus`:
+
+```powershell
+pwsh -File infra\dr\Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location REPLACE-standby-region
+pwsh -File infra\dr\Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location REPLACE-standby-region -Apply
+```
+
+**Expect:** `replication: enabled, <region>, Succeeded` and `full billing months in the replica from
+<date>`. Replication is billed per ingested GB. Details: [DR-CLOUD-SHELL Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace).
 
 ---
 
@@ -692,6 +769,14 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 6 -ConfigPath $cfg -A
 The check alone, without the driver:
 [`scripts\manual\Test-NetworkConfiguration.ps1`](../../scripts/manual/Test-NetworkConfiguration.ps1).
 
+**Existing APIM.** With `apim.existing.integrateOutboundVnet: true`, Step 6 (modes `verify` and
+`existing`) first reads the APIM, refuses a SKU other than Standard v2 or Premium v2, then PATCHes
+`virtualNetworkType: External` and the subnet ID from `network.existing.apimSubnetId` on the APIM
+in its own subscription and resource group, waits for `Succeeded`, and checks that the
+system-assigned identity is unchanged. In verify mode this is the only write, and the network check
+then includes the APIM. With the flag off, run item 5 below with `$apimId` set to the existing
+APIM's resource ID.
+
 **Azure CLI: build.** The VNet, subnets, APIM network security group and the Cosmos and blob DNS
 zones exist from [The network](#the-network-before-step-0). These commands add the Foundry DNS zones,
 the private endpoints and the integrations, and skip zones and links that already exist.
@@ -823,6 +908,10 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 7 -ConfigPath $cfg -A
 
 Only one Step 7 runs at a time per checkout; a second one stops with `stage7_busy`. The lab apply on
 24 October 2026 took 1,390 seconds.
+
+When the admin app's public access is `Disabled` (Front Door `Lockdown`), Step 7 skips the admin
+package with the warning `admin_public_access_disabled` and publishes the others. The admin package
+is then published from a VM: [admin updates from a VM](ADMIN-UPDATE-FROM-VM.md) (ADR 0037).
 
 **Azure CLI: packages**
 
@@ -965,6 +1054,12 @@ telemetry query returns as many requests as there were 200 responses.
 | `stage7_busy` | Another Step 7 is running from this checkout | Wait for it to finish |
 | `'charmap' codec` from `az` | The Azure CLI on Windows met a non-ASCII character | [`scripts/diagnostics/windows-az-utf8`](../../scripts/diagnostics/) |
 | `AuthorizationFailed` | The signed-in account lacks the permission in **Who runs it** | Ask the owner of that scope; check `az account show` |
+| `staged configuration is not strict JSON ... trailing comma ... LineNumber: N` | A comma before `}` or `]` on line N + 1 | Remove the comma; run the offline check in [The configuration file](#the-configuration-file) |
+| `network.existing.privateDnsZoneIds { cosmos, blob } is required ... (it is under network, not under network.existing)` | In `existing` mode the zone IDs belong inside `network.existing` | Move the block |
+| `client.models ...` | The client aliases do not name four admitted, deployed models | Use the models listed in the message |
+| `rg_not_empty: <group> holds N resources` | Step 1 targets an empty resource group | Use an empty group, or set `sharedResourceGroup: true`; the preview then refuses any Modify or Delete of resources Step 1 did not create ([shared resource group](STAGED-DEPLOYMENT-V2.md#stage-1-in-a-shared-resource-group)) |
+| `PermissionError: [Errno 13] Permission denied: '/home/<user>\\.ccof-az'` | `AZURE_CONFIG_DIR` holds a Windows path in Cloud Shell | `Remove-Item Env:AZURE_CONFIG_DIR` ([In Azure Cloud Shell](#a-separate-azure-cli-sign-in)) |
+| `Cannot find drive. A drive with the name 'C' does not exist.` | `$cfg` holds a Windows path in Cloud Shell | Set `$cfg` to the file under `$HOME` |
 
 No step deletes resources, Entra objects or earlier permission grants
 ([recovery](STAGED-DEPLOYMENT-V2.md#recovery)).

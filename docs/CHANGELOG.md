@@ -1,5 +1,123 @@
 # Change log
 
+## 2026-10-27 - Admin publishing before Lockdown, admin updates from a VM, workspace replication script
+
+- [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) decision revised by the owner:
+  the admin code is published before Front Door `Lockdown`. After `Lockdown`, deployment Step 7 and
+  the DR `Code` phase read the admin app's `publicNetworkAccess` and, when it is `Disabled`, skip the
+  admin package with the warning `admin_public_access_disabled` instead of failing with HTTP 403
+  (`Publish-StgAdminPackage`, `infra/staged/Staged.Application.ps1`). `tests/Test-StagedStages.ps1`
+  433 checks; four mutants caught.
+- New `infra/admin/Update-AdminFromVm.ps1` (phases `Setup`, `Check`, `Update`) and
+  `infra/admin/vm/admin-update.sh`: admin console updates and fix patches from a Linux VM inside the
+  VNet, driven by Run Command from Cloud Shell; the VM builds the pushed commit with
+  `admin/Build-AdminPackage.ps1` and publishes it with OneDeploy through a `sites` private endpoint.
+  New runbook [ADMIN-UPDATE-FROM-VM.md](runbooks/ADMIN-UPDATE-FROM-VM.md) with the one-time setup
+  and the per-update steps. `tests/Test-AdminVmUpdate.ps1` 35 checks (bash with stub commands, Git
+  Bash and WSL); thirteen mutants caught. Not run against Azure (UNKNOWNS DR-19).
+- `.gitattributes`: `*.sh` checked out with LF line endings.
+- [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md) option 1 implemented:
+  `infra/dr/Enable-WorkspaceReplication.ps1` turns on workspace replication with a full-object PUT
+  and prints the first whole billing month in the replica. `Invoke-DrFailover.ps1 -Phase Status`
+  prints that date and warns `workspace_replication_partial_month` or `workspace_replication_off`.
+  `-Disable` turns replication off the same way (DR-CLOUD-SHELL Undo).
+  `tests/Test-WorkspaceReplication.ps1` 31 checks; ten mutants caught.
+- Runbooks: [deployment](runbooks/DEPLOY-STEP-BY-STEP.md) Step 1 (replication when DR is planned)
+  and Step 7 (admin skipped after Lockdown); [DR-CLOUD-SHELL](runbooks/DR-CLOUD-SHELL.md) Step 5 uses
+  the script; [DR standby](runbooks/DR-STANDBY-CLOUD-SHELL.md) `Code` and `Status`;
+  [Front Door](runbooks/DR-FRONT-DOOR.md) sections 2 and 3; [admin operations](runbooks/ADMIN-OPERATIONS.md).
+## 2026-10-27 - Decisions on ADR 0037 and ADR 0038; Promote with region A unreachable (DR-18)
+
+- `Invoke-DrFailover.ps1 -Phase Promote -SourceUnreachable '<reason>'`: when region A's settings
+  cannot be read, Promote stops by default (`source_unreachable`, exit 3). With a reason of 10 or more
+  characters (for example the Service Health incident ID) it promotes region B without fencing
+  region A and records the reason, the read error and the time in the evidence file. Region A is
+  read again before the gate is set and before region B is enabled; a region A that answers with a
+  writer enabled stops Promote. `-Phase Status` reports `region_<A|B>_unreadable` instead of failing.
+  `tests/Test-DrFailover.ps1` 73 checks; seven mutants caught. UNKNOWNS DR-18 resolved;
+  [ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-promote-with-region-a-unreachable).
+- [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) accepted: admin code is published
+  from a host inside the VNet; temporary public access only with a recorded approval and a scripted
+  re-disable; no Front Door route to the deployment endpoint. Until the private path exists, admin
+  code is published before `Lockdown`.
+- [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md) accepted: workspace replication is enabled
+  during the initial region A deployment; a Cosmos DB spend checkpoint is the planned durable fix.
+  UNKNOWNS DR-17 stays open until it ships.
+- Runbooks updated: [DR design](DR-ACTIVE-PASSIVE.md) failover step 6,
+  [DR standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md) section 12.1,
+  [Front Door runbook](runbooks/DR-FRONT-DOOR.md) section 3.
+## 2026-10-26 - Lessons from the first customer deployment; Front Door runbook
+
+- Staged driver (`Read-StgConfig`): a trailing comma is reported as `staged configuration is not
+  strict JSON` with the parser's line number; `privateDnsZoneIds` placed under `network` instead of
+  `network.existing` is named instead of failing with `Cannot index into a null array`; the client
+  aliases (`client.models`) are checked at Stage 0 with the same rule Stage 7 applies when it writes
+  the client file. `tests/Test-StagedStages.ps1` 366 checks; six mutants caught.
+- [Deploy CCOF step by step](runbooks/DEPLOY-STEP-BY-STEP.md): offline configuration check before
+  Step 0, Cloud Shell `AZURE_CONFIG_DIR` and path errors, ephemeral Cloud Shell sessions (saving and
+  restoring `.staged-state` with `tar`), and the errors met in the customer deployment.
+- New [Front Door runbook](runbooks/DR-FRONT-DOOR.md) for `Invoke-DrFrontDoor.ps1` phases with the
+  lab's measured times.
+- Proposed decisions: [ADR 0037](adr/0037-admin-publishing-after-front-door-lockdown.md) (admin code
+  publishing after Front Door lockdown) and [ADR 0038](adr/0038-ledger-after-mid-month-switchover.md)
+  (budget ledger after a mid-month workspace switchover, UNKNOWNS DR-17).
+
+## 2026-10-26 - DR-13: a backend breaker edit queues a project routing revision
+
+- `PUT /api/v3/backends/{id}` with a changed `circuitBreaker` now moves each active, `verified`
+  project whose pool includes that backend to the next revision (`pending publication`), so the
+  publisher creates new pool members with the edited breaker. The verified pool serves until then.
+  Each project write is ETag-guarded with a change record and audit line
+  (`v3/backends/routing-revision`); the response lists `routing.queued` and `routing.failed`.
+- Not moved: edits that leave the breaker unchanged, projects already pending, and projects with
+  failover off (ADR 0034). Still open (UNKNOWNS DR-13): a `disabled with pool` project switched back
+  on with the same fallbacks reuses its old pool, and a URL-only edit queues nothing.
+- Code: `admin/src/backend-routing.ts`, `admin/src/v3.ts`; three new tests in
+  `admin/tests/backend-routing.test.ts`. Runbooks: ADMIN-OPERATIONS backend failover,
+  DR-CLOUD-SHELL 6.1. No live Azure state changed.
+
+## 2026-10-26 - Optional APIM zone redundancy
+
+- New optional `stage1.apimZoneRedundant` (staged) and `standby.apim.zoneRedundant` (DR standby),
+  default `false`. `true` creates a new Standard v2 or Premium v2 APIM with `properties.zoneRedundant`
+  (API `2025-03-01-preview`); the default path is unchanged and keeps API `2024-05-01`. The staged
+  reader refuses a non-boolean value or a SKU other than `StandardV2`/`PremiumV2`; both readers print a
+  warning for fewer than two units. Stage 1 verify and the DR Shells phase read the setting back.
+  Zone redundancy is set only at creation ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support)).
+  Not deployed live; see UNKNOWNS APIM-ZR-01 to APIM-ZR-03.
+
+## 2026-10-26 - Staged driver: existing-APIM diagnostics and outbound integration
+
+- Added two optional flags under `apim.existing`, both default `false`. The driver changes a
+  customer's existing APIM only when one is `true`; before this, both steps were manual for an
+  existing APIM, which in a customer deployment on 2026-10-26 led to hand-run commands.
+- `configureGatewayDiagnostics`: Stage 5 creates or updates the diagnostic setting
+  `ccof-gateway-logs` (`GatewayLogs`, `GatewayLlmLogs`, resource-specific tables) to the Stage 1
+  workspace, as `infra/staged/apim-service.bicep` does for a new APIM, and reads it back. A setting
+  of that name sending to another workspace stops the stage with `apim_diagnostics_conflict`.
+- `integrateOutboundVnet`: Stage 6 integrates the existing APIM on `network.existing.apimSubnetId`
+  through the same ARM PATCH used for a new APIM (`az apim update` is not used: it sets the identity
+  to None without `--enable-managed-identity true`, azure-cli `apim/custom.py`). The APIM's SKU is
+  read at run time and must be Standard v2 or Premium v2; the identity must still be
+  system-assigned afterwards. `Read-StgConfig` refuses non-boolean flags, a missing or
+  other-subscription APIM subnet, `network.mode: create`, and the flags together with a new APIM.
+- With either flag off, the Stage 1 and Stage 5 previews print a one-line note naming the manual
+  step. Docs: [DEPLOY-STEP-BY-STEP](runbooks/DEPLOY-STEP-BY-STEP.md),
+  [STAGED-DEPLOYMENT-V2](runbooks/STAGED-DEPLOYMENT-V2.md#configuration-file).
+
+
+## 2026-10-26 - DR-08: scripted promotion and failback
+
+- Added `infra/dr/Invoke-DrFailover.ps1` (functions in `infra/dr/DrFailover.psm1`) with phases
+  `Status`, `Fence`, `Promote`, `Failback` and `RemoveAdoption`. Each phase except `Status` previews
+  without `-Apply`, reads back every app setting it changes and writes an evidence file. Promote refuses
+  while Region A writes or while Cosmos DB does not write in Region B, and sets the continuity gate and
+  coverage start before enabling Region B. Failback fences Region B first; a stop at any later step
+  leaves both regions fenced. Cosmos DB moves only with `-MoveCosmos`; Front Door and the workspace
+  switchover are not changed (the workspace calls are printed). Steps:
+  [runbook section 12](runbooks/DR-STANDBY-CLOUD-SHELL.md#12-scripted-promotion-and-failback).
+- Added `failover.ledgerCoverageStartAt` to `dr.config.json` (canonical UTC milliseconds).
+- Tests: `tests/Test-DrFailover.ps1`, offline with a fake `az`. Not yet run against Azure.
 ## 2026-10-26 - DR-08 full-cycle lab drill
 
 - Ran failover, Region B promotion, workspace switchover, and failback to Region A in the Fabrikam lab.

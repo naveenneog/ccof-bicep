@@ -138,3 +138,30 @@ Residual risk: a call that timed out at the gateway but completed at the backend
 and not counted. That is true with the gate on or off; the gate cannot recover the count. Tests:
 `tests/reconciler-continuity.test.ts` (exempt case; refusals for a successful call without tokens and
 a failed call with a token count). Five mutants each fail a named test with the test count unchanged.
+
+## Amendment 2026-10-27: Promote with region A unreachable
+
+Context (UNKNOWNS DR-18): `Invoke-DrFailover.ps1 -Phase Promote` reads region A's writer settings
+before each change. When region A's management API does not answer, which is the usual reason to fail
+over, Promote stopped with exit 3 and the only path left was a manual promotion without the driver's
+ordering checks or evidence.
+
+Decision: the default is unchanged; an unreadable region A stops Promote (`source_unreachable`). The
+operator can declare region A unreachable with `-SourceUnreachable '<reason>'`, 10 or more characters,
+for example the Azure Service Health incident ID. With the declaration:
+
+- region A is not fenced; the reason, the read error and the time are recorded in the run
+  (`run.sourceUnreachable`) and the evidence file (`switches.sourceUnreachable`);
+- region A is read again before the gate is set and before region B is enabled; if it answers with a
+  writer enabled, Promote stops (`source_writers_enabled`) and region B stays off;
+- an `az_argument_unsafe` error is never treated as an unreachable region;
+- the Cosmos DB write-region check and the gate-and-coverage-before-timers order are unchanged.
+
+`-Phase Status` reports an unreadable region as `region_<A|B>_unreadable` instead of failing, so the
+driver can record the state after a promotion during an outage.
+
+Residual risk: region A can come back with its timers enabled after region B is promoted, and both
+regions then write until region A is fenced. The runbooks require `-Phase Fence -Region A -Apply`
+before region A is brought back. Tests: `tests/Test-DrFailover.ps1` (11 checks for the declaration and
+Status); seven mutants each fail a named check with the check count unchanged. Not run against a real
+regional outage.

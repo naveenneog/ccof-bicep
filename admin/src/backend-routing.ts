@@ -134,3 +134,14 @@ export function routingPlan(project: Doc, registry: Map<string, RegisteredBacken
 }
 
 export const publicEntry = (e: { doc: RegisteredBackend; etag: string }) => ({ ...e.doc, etag: e.etag });
+
+// UNKNOWNS DR-13: the publisher copies a registry breaker onto member entities only when it creates a
+// revision's pool, so a breaker edit moves the revision of each verified project whose pool includes
+// the backend. A pending revision already publishes the current registry; a project with failover off
+// keeps its direct route and is not touched. Null means unaffected.
+export function failoverAfterBreakerChange(project: Doc, backendId: string): Doc | null {
+  if (project.status !== "active" || routingState(project.failover) !== "verified") return null;
+  const failover = project.failover as Doc;
+  if (![String(project.backendId), ...(failover.fallbackBackendIds as string[])].includes(backendId)) return null;
+  return { ...failover, revision: Number(failover.revision) + 1 };
+}

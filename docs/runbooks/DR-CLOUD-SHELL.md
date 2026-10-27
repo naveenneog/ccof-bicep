@@ -474,33 +474,27 @@ East US 2 or South Central US cannot replicate to another region of that set.
 `Microsoft.Insights/dataCollectionEndpoints/write` on the workspace, for example Monitoring Contributor.
 
 The Azure CLI in Cloud Shell has `--replication-enabled` but no replication-location argument (N-09),
-and the REST call is a full-object PUT: any setting left out of the body is reset. The block reads the
-workspace, adds `properties.replication` and writes the whole object back, so SKU, retention and the
-other settings stay unchanged.
+and the REST call is a full-object PUT: any setting left out of the body is reset.
+`infra/dr/Enable-WorkspaceReplication.ps1` reads the workspace, adds `properties.replication`, writes
+the whole object back with a JSON body file, and reads it back, so SKU, retention and the other
+settings stay unchanged ([ADR 0038](../adr/0038-ledger-after-mid-month-switchover.md)). Without
+`-Apply` it only reads and prints the plan. With one workspace in the resource group, `-Workspace`
+can be left out.
 
 ```powershell
-$workspace = az monitor log-analytics workspace list -g $rg --query "[0].name" -o tsv
-$url = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.OperationalInsights/workspaces/${workspace}?api-version=2025-02-01"
-$ws = az rest --method get --url $url | ConvertFrom-Json
-"workspace=$workspace sku=$($ws.properties.sku.name) retention=$($ws.properties.retentionInDays)"
-$body = [ordered]@{ location = $ws.location; tags = $ws.tags; properties = $ws.properties }
-$body.properties | Add-Member replication ([ordered]@{ enabled = $true; location = $standbyRegion }) -Force
-$body | ConvertTo-Json -Depth 20 | Set-Content "$work/ws-body.json"
-az rest --method put --url $url --body "@$work/ws-body.json" --query "properties.replication" -o json
+pwsh -NoProfile -File infra/dr/Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location $standbyRegion
+pwsh -NoProfile -File infra/dr/Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Location $standbyRegion -Apply
 ```
 
-**Expect:** the workspace name with its SKU and retention, then `replication` with `"enabled": true`,
-your standby region as `location` and `"provisioningState": "EnableRequested"`. `${workspace}` is
-written with braces because PowerShell would otherwise read `$workspace?api` as one variable name.
-
-```powershell
-az rest --method get --url $url --query "{state:properties.replication.provisioningState, location:properties.replication.location, sku:properties.sku.name, retention:properties.retentionInDays}" -o table
-```
-
-**Expect:** `Succeeded`, the standby region, and the same SKU and retention as before, within a few
-minutes. All tables can take up to one hour to start replicating
+**Expect:** the workspace name with its SKU and retention and
+`preview: enable replication to <region>`; then, with `-Apply`, `replication requested`, after a few
+minutes `replication: enabled, <region>, Succeeded`, the time a switchover is allowed (24 hours
+later) and `full billing months in the replica from <date>`. Exit 5 (`replication_in_progress`)
+means the state is not `Succeeded` yet; the same command is the retry. All tables can take up to one
+hour to start replicating
 ([enable and disable](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#enable-and-disable-workspace-replication)).
-
+Earlier logs are not copied: a workspace switchover carries the budget ledger for whole months only
+from the printed date (UNKNOWNS DR-17).
 ![Workspace replication: the CLI argument is missing; the full-object REST PUT returns EnableRequested with SKU and retention unchanged](../images/dr-novice/dr-n10-workspace-replication.png)
 
 **Check (Portal).** Log Analytics workspace > **Overview** > **JSON View**: `properties.replication`
@@ -560,10 +554,11 @@ Admin console > **Backends** > **Register backend**, once for the primary and on
 
 **Expect:** each backend listed with its URL; the primary shows its breaker.
 
-Changing a registered backend's breaker settings does not automatically make a project pending.
-An unchanged pool may reuse a previously published revision when failover is toggled off and on.
-Do not treat the settings as applied unless the project shows a new pending revision and Step 6.3
-read-back verifies it. This metadata-only republish path is not yet qualified.
+Changing a registered backend's breaker settings moves every `verified` project whose pool uses that
+backend to a new `pending publication` revision; publish it (Step 6.3) and confirm read-back before
+treating the settings as applied. Projects with failover off, or `disabled with pool`, are not
+moved; switching such a project back on with the same fallback list reuses its old pool and breaker
+([Admin operations](ADMIN-OPERATIONS.md), backend failover).
 
 ### 6.2 Switch failover on for the project
 
@@ -827,7 +822,7 @@ Status and acceptance criteria per packet: [ROADMAP](../ROADMAP.md).
 | --- | --- |
 | Standby resource group (option A) | `az group delete --name STANDBY-RG` after the resources below are removed |
 | Standby VNet, NSG, DNS links, peering, identities (Step 4) | Block below |
-| Workspace replication (Step 5) | Step 5 block with `enabled = $false` in place of `enabled = $true; location = $standbyRegion`; a replicated workspace cannot be deleted until replication is off ([Learn](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#deployment-considerations)) |
+| Workspace replication (Step 5) | `pwsh -NoProfile -File infra/dr/Enable-WorkspaceReplication.ps1 -Subscription $sub -ResourceGroup $rg -Disable`, then with `-Apply` (same full-object PUT, `enabled` false, read back); a replicated workspace cannot be deleted until replication is off ([Learn](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#deployment-considerations)) |
 | Project failover on (Step 6.2) | Project > **Settings** > **Backend failover**: clear the switch > **Review failover** > **Save changes**; state `disabled with pool`; then Step 6.4. The pool and member backends stay in APIM for a later switch-on |
 | Registered backends (Step 6.1) | **Backends** page: disable the entry |
 

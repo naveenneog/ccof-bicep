@@ -31,7 +31,7 @@ import type { ChangeLog } from "./change-log.ts";
 import { limitsFromBody, MAX_OVERRIDE_DAYS, overrideState, publicLimits } from "./sync-limits.ts";
 import type { LimitsStore } from "./sync-limits.ts";
 import { stripSystem, ValidationError } from "./validation.ts";
-import { failoverAfterEdit, publicEntry, registryEntryFromBody, registryMap, routingPlan, routingState } from "./backend-routing.ts";
+import { failoverAfterBreakerChange, failoverAfterEdit, publicEntry, registryEntryFromBody, registryMap, routingPlan, routingState } from "./backend-routing.ts";
 import type { RegistryStore } from "./backend-routing.ts";
 import { poolBackendIdFor } from "../../src/contracts/project-routing.ts";
 
@@ -455,7 +455,10 @@ async function routingRequest(path: string, method: string, url: URL, request: A
     if (!etag) { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
     await pending.finish(current ? "updated" : "created", { etagAfter: etag });
     audit(operation, { outcome: current ? "updated" : "created", backendId, etagAfter: etag, changes: changed });
-    return response(current ? 200 : 201, { backend: { ...doc, etag }, changed: true });
+    const routing = current && changed.some((c) => c.path === "circuitBreaker")
+      ? await requeueAfterBreakerChange(backendId, requestId, actor, deps, audit)
+      : { queued: [], failed: [] };
+    return response(current ? 200 : 201, { backend: { ...doc, etag }, changed: true, routing });
   }
   if (!deps.projects) throw new ApiError(503, "project_store_not_configured");
   if (failover) {
@@ -529,4 +532,42 @@ async function routingRequest(path: string, method: string, url: URL, request: A
     return response(200, { projectId, changed: true, failover: next, state: routingState(next) });
   }
   return null;
+}
+
+// After a saved breaker edit: one ETag-guarded, change-recorded write per affected project. The registry
+// is already saved, so a project that cannot be written is reported in `failed` rather than undoing it.
+async function requeueAfterBreakerChange(backendId: string, requestId: string, actor: { oid: string }, deps: V3Dependencies,
+  audit: (operation: string, fields: Doc) => void): Promise<{ queued: { projectId: string; revision: number }[]; failed: string[] }> {
+  const queued: { projectId: string; revision: number }[] = [];
+  const failed: string[] = [];
+  if (!deps.projects) return { queued, failed };
+  const operation = "v3/backends/routing-revision";
+  const candidates = (await deps.projects.list()).filter((p) => failoverAfterBreakerChange(p.doc, backendId)).map((p) => String(p.doc.projectId)).sort();
+  for (const projectId of candidates) {
+    let outcome: "queued" | "skipped" | "failed" = "failed";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const current = await deps.projects.read(projectId);
+      const next = current ? failoverAfterBreakerChange(current.doc, backendId) : null;
+      if (!current || !next) { outcome = "skipped"; break; }
+      const changed = [{ path: "failover.revision", before: (current.doc.failover as Doc).revision, after: next.revision }];
+      let pending;
+      try {
+        pending = await beginChange(deps.changeLog, { requestId: `${requestId}:${projectId}:${attempt}`, at: deps.now().toISOString(), actorOid: actor.oid,
+          operation, projectId, changes: changed, details: { backendId, triggeredBy: requestId, etagBefore: current.etag } }, deps.now, deps.log);
+      } catch { break; }
+      let written: string;
+      try { written = await deps.projects.replace({ ...stripSystem(current.doc), failover: next }, current.etag); } catch {
+        await pending.finish("unconfirmed", { code: "write_failed" });
+        break;
+      }
+      if (written === "precondition_failed") { await pending.finish("refused", { code: "etag_mismatch" }); continue; }
+      await pending.finish("updated", { etagAfter: written });
+      audit(operation, { outcome: "updated", projectId, backendId, etagBefore: current.etag, etagAfter: written, changes: changed });
+      queued.push({ projectId, revision: Number(next.revision) });
+      outcome = "queued";
+      break;
+    }
+    if (outcome === "failed") { failed.push(projectId); audit(operation, { outcome: "failed", projectId, backendId }); }
+  }
+  return { queued, failed };
 }

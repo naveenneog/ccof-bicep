@@ -48,11 +48,14 @@
     "nameSuffix": "b",
     "functionsPublicNetworkAccess": "Disabled",
     "storagePublicNetworkAccess": "Disabled",
-    "apim": { "sku": "StandardV2", "units": 1, "publisherEmail": "REPLACE-platform-team@example.com", "publisherName": "REPLACE-Platform Team" }
+    "apim": { "sku": "StandardV2", "units": 1, "zoneRedundant": false, "publisherEmail": "REPLACE-platform-team@example.com", "publisherName": "REPLACE-Platform Team" }
   },
   "cosmos": {
     "convertServerless": false,
     "autoscaleMaxThroughput": 1000
+  },
+  "failover": {
+    "ledgerCoverageStartAt": "REPLACE-2026-01-01T00:00:00.000Z"
   },
   "frontDoor": {
     "stem": "REPLACE-globally-unique-lowercase-frontdoor-name",

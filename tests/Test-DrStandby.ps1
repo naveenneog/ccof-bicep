@@ -147,6 +147,20 @@ Check 'example placeholders are refused by name' ($x -contains 'standby.stagedCo
 $c = New-DrCfg; $c.standby.nameSuffix = 'B-1'; Check 'name suffix must be 1-2 lowercase characters' (@(Get-DrStandbyProblems $c) -contains 'standby.nameSuffix:one_or_two_lowercase_letters_or_digits')
 $c = New-DrCfg; $c.secondary.location = $c.primary.location; Check 'standby in the primary location refused' (@(Get-DrStandbyProblems $c) -contains 'secondary.location:same_as_primary')
 $c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_or_PremiumV2')
+$c = New-DrCfg; Check 'example standby.apim.zoneRedundant is false' ($c.standby.apim.PSObject.Properties['zoneRedundant'] -and $c.standby.apim.zoneRedundant -is [bool] -and $c.standby.apim.zoneRedundant -eq $false)
+$c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant 'yes'; Check 'zoneRedundant must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.zoneRedundant:true_or_false')
+$c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant $true; $c.standby.apim.units = 1; $zrw = $null
+$zrp = @(Get-DrStandbyProblems $c -WarningVariable zrw -WarningAction SilentlyContinue)
+Check 'zoneRedundant with one unit: accepted with a two-unit warning' ($zrp.Count -eq 0 -and @($zrw | Where-Object { "$_" -match 'standby\.apim\.zoneRedundant with standby\.apim\.units 1.*at least two units' }).Count -eq 1)
+$c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant $true; $c.standby.apim.units = 2; $zrw = $null
+$zrp = @(Get-DrStandbyProblems $c -WarningVariable zrw -WarningAction SilentlyContinue)
+Check 'zoneRedundant with two units: no problem, no warning' ($zrp.Count -eq 0 -and -not @($zrw).Count)
+$sb = Build 'infra/dr/standby.bicep'
+$sbAll = if ($sb.resources -is [array]) { @($sb.resources) } else { @($sb.resources.PSObject.Properties.Value) }
+$sbApim = @($sbAll | Where-Object { $_.type -ceq 'Microsoft.Resources/deployments' -and $_.name -ceq 'dr-standby-apim' })[0]
+$sbZr = if ($sbApim) { $sbApim.properties.parameters.PSObject.Properties['zoneRedundant'] } else { $null }
+$sbZrValue = if ($sbZr) { "$($sbZr.Value.value)" } else { '' }
+Check 'standby.bicep passes apim.zoneRedundant (default false) to apim-service.bicep' ($sbZrValue -match "tryGet\(parameters\('apim'\), 'zoneRedundant'\)" -and $sbZrValue -match 'false\(\)\)\]$')
 $c = New-DrCfg; $c.cosmos.autoscaleMaxThroughput = 1500; Check 'autoscale max must be a multiple of 1000' (@(Get-DrStandbyProblems $c) -contains 'cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000')
 $c = New-DrCfg; $c.cosmos.convertServerless = 'yes'; Check 'convertServerless must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'cosmos.convertServerless:true_or_false')
 $c = New-DrCfg; $c.standby.functionsPublicNetworkAccess = 'Open'; Check 'public access must be Enabled or Disabled' (@(Get-DrStandbyProblems $c) -contains 'standby.functionsPublicNetworkAccess:Enabled_or_Disabled')
@@ -176,6 +190,9 @@ $primary.reconciler.continuityGate = 'on'; $primary.reconciler.ledgerCoverageSta
 Check 'standby config: existing standby subnets and shared zones' ($b.network.mode -ceq 'existing' -and $b.network.existing.functionsSubnetId -ceq '/v/standby/subnets/snet-functions' -and $b.network.existing.privateDnsZoneIds.cosmos -ceq '/z/documents')
 Check 'standby config: no second Foundry private endpoint' ($b.backends[0].privateEndpoint -eq $false)
 Check 'standby config: standby section set' ($b.standby.stage1DeploymentName -ceq 'dr-standby-shells' -and $b.standby.endpointNameSuffix -ceq '-b')
+Check 'standby config: APIM zone redundancy from standby.apim, not the primary' ($b.stage1['apimZoneRedundant'] -is [bool] -and $b.stage1['apimZoneRedundant'] -eq $false)
+$zrDr = New-DrCfg; $zrDr.standby.apim | Add-Member -Force zoneRedundant $true
+Check 'standby config: standby.apim.zoneRedundant true reaches stage1.apimZoneRedundant' ((New-DrStandbyStagedConfig -Primary $primary -Dr $zrDr -VnetId '/v/standby' -ZoneIds $zones).stage1['apimZoneRedundant'] -eq $true)
 Check 'primary configuration not modified' ($primary.syncTimerEnabled -eq $true -and $primary.backends[0].privateEndpoint -eq $true -and $primary.location -ceq 'eastus2')
 $gw = @('/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/a', '/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/b')
 $b2 = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones -GatewayResourceIds $gw

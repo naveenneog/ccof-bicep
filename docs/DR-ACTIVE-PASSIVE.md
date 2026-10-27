@@ -199,7 +199,8 @@ Recovery figures documented by Microsoft:
    `az rest` without `--body` waited 55 minutes in the lab without starting the operation. Failback is
    `POST .../workspaces/<name>/failback` with the same body. The replica holds only data ingested after
    replication was enabled: in a month where replication started after the month began, the ledger is
-   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).5. **Ledger continuity gate.** Before enabling the Region B reconciler:
+   incomplete while switched over and the gate refuses `spend_would_decrease` (UNKNOWNS DR-17).
+5. **Ledger continuity gate.** Before enabling the Region B reconciler:
    - the workspace answers the ledger query for the current month;
    - the newest APIM A record in the replica is within the replication lag of the outage start;
    - APIM B records are arriving.
@@ -212,16 +213,44 @@ Recovery figures documented by Microsoft:
    before writing. A quiet interval alone is not a gap. If a check fails, keep both writers off,
    preserve the gate, and record the missing evidence; budget-enforced requests are refused once
    figures pass the hard limit.
-6. **Promote Region B writers.** Set `AzureWebJobs.syncEntitlement.Disabled=false` on sync B and
-   enable the reconciler B timer. Admin B becomes writable once Cosmos accepts writes in Central US.
+6. **Promote Region B writers.** Run `infra/dr/Invoke-DrFailover.ps1 -Phase Promote -FenceSource`
+   (preview), then with `-Apply`. It refuses while Region A has a writer enabled (without
+   `-FenceSource`) or while Cosmos DB does not write in Central US, sets `RECONCILER_CONTINUITY_GATE=on`
+   and `RECONCILER_LEDGER_COVERAGE_START_AT` (from `failover.ledgerCoverageStartAt`) on reconciler B,
+   then enables the reconciler B and sync B timers, reading back each change
+   ([runbook section 12](runbooks/DR-STANDBY-CLOUD-SHELL.md#12-scripted-promotion-and-failback)).
+   `-AdoptBaseline` adds the one-time `RECONCILER_LEDGER_BASELINE_ADOPT`
+   ([ADR 0036 amendment](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption));
+   remove it after one passing run with `-Phase RemoveAdoption -Region B -Apply`. Admin B becomes
+   writable once Cosmos accepts writes in Central US.
+
+   The driver reads Region A's Function App settings before every change, to confirm Region A is
+   fenced. If Region A's management API does not answer, `Promote` stops (exit 3, `source_unreachable`)
+   and changes nothing. When Azure Service Health confirms the Region A outage, rerun with
+   `-SourceUnreachable '<incident ID and evidence>'` (10 or more characters). The driver then skips
+   fencing Region A, records the reason, the read error and the time in the run's evidence file, and
+   keeps every other check: Cosmos DB in Central US, gate and coverage on reconciler B before the
+   timers. Region A is read again before each later change; if it answers with a writer enabled,
+   Promote stops before Region B is enabled. Before Region A is brought back, fence it:
+   `-Phase Fence -Region A -Apply`, then `-Phase Status` shows no `split_brain`
+   ([ADR 0036 amendment 2026-10-27](adr/0036-continuity-coverage-baseline.md#amendment-2026-10-27-promote-with-region-a-unreachable),
+   UNKNOWNS DR-18).
 7. **Verify.**
    - An admitted model call returns 200 through Front Door.
    - `/ccof-usage/me/usage` returns current figures.
    - The admin console change record accepts a test edit.
    - A reconciler run completes.
+   - `Invoke-DrFailover.ps1 -Phase Status` shows Region B writing, Region A fenced and no
+     `split_brain`.
 
-**Failback:** run the same steps in reverse once Region A is healthy. Before re-enabling the Region A
-writers, turn off the Region B writers, so only one region writes at a time.
+**Failback:** run the same steps in reverse once Region A is healthy. Fail the workspace back first
+(the call `-Phase Failback` prints). Then `infra/dr/Invoke-DrFailover.ps1 -Phase Failback -MoveCosmos -Apply`
+turns off the Region B writers and reads them back before anything else, moves the Cosmos DB write
+region to Region A (without `-MoveCosmos` it stops and prints the command), removes any baseline
+adoption in both regions, sets the gate and coverage start on reconciler A and only then enables the
+Region A writers. A stop at any step leaves both regions fenced, never both writing. Then restore Front
+Door with `Invoke-DrFrontDoor.ps1 -Phase RestorePrimary -Apply`
+([runbook 11.6 and 12.2](runbooks/DR-STANDBY-CLOUD-SHELL.md#122-failback-to-region-a)).
 
 ## Required changes
 
@@ -233,7 +262,7 @@ writers, turn off the Region B writers, so only one region writes at a time.
 | Continuity gate | **DR-05R implemented on `feat/dr-standby`, off by default.** `RECONCILER_CONTINUITY_GATE=on` requires `RECONCILER_LEDGER_COVERAGE_START_AT`. The gate correlates backend-forwarded model requests with `ApiManagementGatewayLlmLog`, detects LLM rows without a gateway request, rejects requests before verified coverage, refuses current-period states with a missing or changed coverage marker, and retains the `spend_would_decrease` guard. It no longer treats a quiet interval or a late first request as a gap. Gate settings pass through quick-start/staged Bicep, Core D2, standalone reconciler answers, and manual settings generation. Existing unmarked October states remain fenced; the October diagnostic start is later than the month start. Tests: `tests/reconciler-continuity.test.ts`, `tests/reconciler-settings.test.ts`, `tests/Test-DrLedgerGateways.ps1`, and `tests/Test-StagedStages.ps1`. | Small |
 | Health | A Front Door probe target per region that checks resolver readiness and Cosmos reachability. Today `/api/health` checks only configuration and authentication. | Small |
 | Backends | Model-specific pools, compatible local/remote members, per-member circuit breakers, private routing and identity grants from both APIMs; preserve actual-backend accounting and test streaming failures | Medium |
-| Log Analytics | Enable workspace replication. Associate DCRs with the workspace DCE if any are used. Replicate log alert rules to Region B. | Small |
+| Log Analytics | Enable workspace replication when region A is deployed, before model traffic (`infra/dr/Enable-WorkspaceReplication.ps1`, ADR 0038). Associate DCRs with the workspace DCE if any are used. Replicate log alert rules to Region B. | Small |
 | Private log queries | Azure Monitor Private Link Scope associated with the workspace, Monitor private endpoints in both regional PE subnets, approved private DNS/forwarding and connected corporate/VDI access. Diagnostic ingestion is a separate managed channel. | Small |
 | Testing | A failover drill in a lab: drain origin A, Cosmos failover, workspace switchover and the continuity gate, then failback | Medium |
 

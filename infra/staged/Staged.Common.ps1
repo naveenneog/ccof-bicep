@@ -21,6 +21,32 @@ function Get-StgCoverageStartAtFromJson {
     }
 }
 
+function Get-StgClientAliasProblems {
+    # The same rule Stage 7 applies when it writes the client file (Invoke-QsClient,
+    # infra/quickstart/Deploy-Quickstart.ps1): four aliases, each an exact model that the selected
+    # project/classification admits and its backend deploys. Checked here so Stage 0 reports it.
+    param([Parameter(Mandatory)] [Collections.IDictionary]$Cfg)
+    $client = $Cfg.client
+    if ($null -eq $client) { return @() }
+    $problems = @()
+    $group = @($Cfg.groups | Where-Object { $_.projectId -ceq $client.projectId -and $_.classification -ceq $client.classification })
+    if ($group.Count -ne 1) { return @("client.projectId/client.classification must select exactly one configured group (found $($group.Count))") }
+    $backend = @($Cfg.backends | Where-Object { $_.id -ceq $group[0].backendId })
+    if ($backend.Count -ne 1) { return @("group $($client.projectId)/$($client.classification) backendId '$($group[0].backendId)' must match one backends[].id") }
+    $deployed = @(($backend[0].deploymentInferenceGeo ?? @{}).Keys)
+    $admitted = @(foreach ($family in @(($group[0].familyPolicy.families ?? @{}).Values)) { foreach ($m in @($family.models)) { if ($deployed -ccontains $m) { $m } } })
+    $aliases = $client.models
+    if ($aliases -isnot [Collections.IDictionary] -or $aliases.Count -ne 4 -or @($aliases.Keys | Where-Object { $_ -cnotin 'default', 'opus', 'sonnet', 'haiku' }).Count) {
+        return @('client.models must name exactly default, opus, sonnet and haiku')
+    }
+    foreach ($alias in 'default', 'opus', 'sonnet', 'haiku') {
+        if ($aliases[$alias] -isnot [string] -or $admitted -cnotcontains $aliases[$alias]) {
+            $problems += "client.models.$alias '$($aliases[$alias])' is not admitted for $($client.projectId)/$($client.classification): admitted models deployed on backend $($backend[0].id) are [$($admitted -join ', ')]"
+        }
+    }
+    return $problems
+}
+
 function Test-StgUtcCoverageStartAt {
     param([AllowNull()] $Value)
     if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { return $false }
@@ -37,6 +63,10 @@ function Read-StgConfig {
     param([Parameter(Mandatory)] [string]$Path)
     $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
     $raw = Get-Content -LiteralPath $full -Raw
+    # The driver reads the file with strict System.Text.Json (Get-StgCoverageStartAtFromJson); a
+    # trailing comma that ConvertFrom-Json tolerates is refused there, so name the file as the cause.
+    try { $strict = [System.Text.Json.JsonDocument]::Parse($raw); $strict.Dispose() }
+    catch { throw "staged configuration is not strict JSON ($full): $($_.Exception.InnerException.Message ?? $_.Exception.Message)" }
     $c = $raw | ConvertFrom-Json -AsHashtable -Depth 100
     $problems = [Collections.Generic.List[string]]::new()
     if ($c.schemaVersion -ne 1) { $problems.Add('schemaVersion must be 1') }
@@ -66,6 +96,7 @@ function Read-StgConfig {
         # The customer builds the network; Stage 6 only reads it. The checks need the subnets, all in one VNet.
         $subnets = @($c.network.existing.privateEndpointSubnetId, $c.network.existing.functionsSubnetId)
         if ($c.stage1.approveNewPublicApimBootstrap -and $c.stage1.apimSku -in 'StandardV2', 'PremiumV2') { $subnets += $c.network.existing.apimSubnetId }
+        elseif ($c.apim.existing -is [Collections.IDictionary] -and $c.apim.existing.integrateOutboundVnet -is [bool] -and $c.apim.existing.integrateOutboundVnet) { $subnets += $c.network.existing.apimSubnetId }
         if (@($subnets | Where-Object { -not $_ -or $_ -notmatch $subnetPattern }).Count) {
             $problems.Add('network.mode verify requires network.existing.privateEndpointSubnetId, functionsSubnetId and (for a new Standard v2/Premium v2 APIM) apimSubnetId as full subnet resource IDs')
         } elseif (@($subnets | ForEach-Object { ($_ -replace '/subnets/[^/]+$', '').ToLowerInvariant() } | Select-Object -Unique).Count -ne 1) {
@@ -79,12 +110,18 @@ function Read-StgConfig {
             }
         }
         foreach ($key in 'cosmos', 'blob') {
-            if (-not $c.network.existing.privateDnsZoneIds[$key] -or $c.network.existing.privateDnsZoneIds[$key] -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
+            $zoneIds = $c.network.existing.privateDnsZoneIds
+            if ($zoneIds -isnot [Collections.IDictionary]) {
+                $hint = if ($c.network -is [Collections.IDictionary] -and $c.network.Contains('privateDnsZoneIds')) { ' (it is under network, not under network.existing)' } else { '' }
+                $problems.Add("network.existing.privateDnsZoneIds { cosmos, blob } is required in network.mode existing$hint")
+                break
+            }
+            if (-not $zoneIds[$key] -or $zoneIds[$key] -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
                 $problems.Add("network.existing.privateDnsZoneIds.$key must be a full Private DNS zone resource ID")
             }
         }
         if (@($c.backends | Where-Object privateEndpoint).Count) {
-            $foundryZones = $c.network.existing.privateDnsZoneIds.foundry ?? @{}
+            $foundryZones = ($c.network.existing.privateDnsZoneIds ?? @{}).foundry ?? @{}
             foreach ($key in 'cognitiveServices', 'openAi', 'aiServices') {
                 $id = $foundryZones[$key]
                 if (-not $id -or $id -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/privateDnsZones/[^/]+$') {
@@ -141,6 +178,39 @@ function Read-StgConfig {
         $problems.Add('a newly created admin registration requires at least one entra.adminEditors assignment; assignment-required is enabled')
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
+    foreach ($p in @(Get-StgClientAliasProblems $c)) { $problems.Add($p) }
+    if ($c.stage1 -is [Collections.IDictionary] -and $c.stage1.Contains('apimZoneRedundant')) {
+        # Standard v2 / Premium v2 only, chosen at creation; one unit is allowed but two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
+        $zoneRedundant = $c.stage1.apimZoneRedundant
+        $apimSku = $c.stage1.apimSku ?? 'StandardV2'
+        $apimUnits = $c.stage1.apimUnits ?? 1
+        if ($zoneRedundant -isnot [bool]) { $problems.Add('stage1.apimZoneRedundant must be true or false') }
+        elseif ($zoneRedundant -and $apimSku -cnotin 'StandardV2', 'PremiumV2') { $problems.Add("stage1.apimZoneRedundant requires stage1.apimSku StandardV2 or PremiumV2 (got $apimSku)") }
+        elseif ($zoneRedundant -and [int]$apimUnits -lt 2) {
+            Write-Warning "stage1.apimZoneRedundant with stage1.apimUnits $apimUnits is allowed; Microsoft recommends at least two units so a zone outage does not reduce gateway capacity (https://learn.microsoft.com/azure/reliability/reliability-api-management)."
+        }
+    }
+    # Opt-in changes to a customer's existing APIM (apim.existing): Stage 5 gateway diagnostics, Stage 6 outbound VNet integration.
+    $apimExisting = $c.apim.existing
+    if ($apimExisting -is [Collections.IDictionary]) {
+        foreach ($k in 'configureGatewayDiagnostics', 'integrateOutboundVnet') {
+            if ($apimExisting.Contains($k) -and $apimExisting[$k] -isnot [bool]) { $problems.Add("apim.existing.$k must be true or false") }
+        }
+        $diagnosticsOn = $apimExisting.configureGatewayDiagnostics -is [bool] -and $apimExisting.configureGatewayDiagnostics
+        $outboundOn = $apimExisting.integrateOutboundVnet -is [bool] -and $apimExisting.integrateOutboundVnet
+        if (($diagnosticsOn -or $outboundOn) -and $c.stage1.approveNewPublicApimBootstrap) {
+            $problems.Add('apim.existing.configureGatewayDiagnostics and integrateOutboundVnet apply only to an existing APIM; with stage1.approveNewPublicApimBootstrap Stage 1 creates the APIM and Stages 1 and 6 already configure it')
+        }
+        if ($outboundOn) {
+            $apimSubnet = $c.network.existing.apimSubnetId
+            if ($c.network.mode -notin 'verify', 'existing') { $problems.Add('apim.existing.integrateOutboundVnet needs network.mode verify or existing') }
+            if (-not $apimSubnet -or $apimSubnet -notmatch $subnetPattern) {
+                $problems.Add('apim.existing.integrateOutboundVnet requires network.existing.apimSubnetId as a full subnet resource ID')
+            } elseif (($apimSubnet -split '/')[2] -ine $apimExisting.subscriptionId) {
+                $problems.Add('apim.existing.integrateOutboundVnet: network.existing.apimSubnetId must be in the same subscription as the existing APIM (Microsoft Learn, integrate-vnet-outbound)')
+            }
+        }
+    }
     if ($problems.Count) { throw "invalid staged configuration:`n  - $($problems -join "`n  - ")" }
     $c.__path = $full
     return $c
@@ -212,6 +282,10 @@ function Get-StgStageInput {
         7 { $input += @{ stage1=$Cfg.stage1; groups=$Cfg.groups; client=$Cfg.client; rateCard=$Cfg.rateCard; sync=$Cfg.sync; entra=$Cfg.entra } }
         8 { $input += @{ stage1=$Cfg.stage1; acceptance=$Cfg.acceptance; gateway=$Cfg.gateway; admin=$Cfg.admin } }
         default { throw "invalid stage number $Number" }
+    }
+    # Only an opted-in existing-APIM integration enters the Stage 6 hash, so completed deployments keep theirs.
+    if ($Number -eq 6 -and $Cfg.apim.existing -is [Collections.IDictionary] -and $Cfg.apim.existing.integrateOutboundVnet -is [bool] -and $Cfg.apim.existing.integrateOutboundVnet) {
+        $input.existingApimOutbound = [ordered]@{ subscriptionId = $Cfg.apim.existing.subscriptionId; resourceGroup = $Cfg.apim.existing.resourceGroup; name = $Cfg.apim.existing.name }
     }
     $canonical = ConvertTo-StgCanonical $input | ConvertTo-Json -Depth 100 -Compress
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()

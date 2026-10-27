@@ -6,7 +6,8 @@ and wants to build the second-region ("region B") copy of the CCOF services with
 **Result after sections 1-10:** a standby APIM and four Function Apps in the standby region, Cosmos DB
 with a second read region, region B grants, settings and private networking, the same code as region
 A, and a read-only check that both writers are off. These build steps do not change Front Door routing
-or promote a writer. Section 11 records the live failover and failback drill.
+or promote a writer. Section 11 records the live failover and failback drill; section 12 scripts its
+promotion and failback steps.
 
 > **Drilled, not production-qualified.** On **2026-10-26** the lab ran the whole cycle: traffic to
 > region B, region B promoted as the only writer, Log Analytics workspace switchover, then failback of
@@ -22,6 +23,7 @@ State of the work on **2026-10-26** (read this first):
 | Front Door Premium with private origins | Deployed; failover to region B and failback to region A both observed | Sections 11.1, 11.2, 11.6 |
 | Region B promotion under the continuity gate | Done: region B wrote budget states with the gate `on` after a one-time baseline adoption | Section 11.3, [ADR 0036 amendment](../adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption) |
 | Workspace switchover and failback | Done; while switched over, the ledger lacked history from before replication began and the gate refused (DR-17) | Sections 11.4, 11.5 |
+| Scripted promotion and failback (`Invoke-DrFailover.ps1`) | Implemented 2026-10-26 with offline tests (`tests/Test-DrFailover.ps1`); **not yet run against Azure** | Section 12 |
 | Live lab state after the drill | Front Door serves region A; Cosmos writes in East US 2; region A writers on with the gate `on`; region B writers fenced; workspace back in East US 2 | Section 11.6 |
 So after sections 1-10 the standby stack **exists and is fenced**, but the DR design as a whole is not
 finished. The standby Foundry fallback is a different mechanism (backends and project pools in
@@ -249,10 +251,12 @@ A "name" below means `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`; a "region" means lower
 | `standby.storagePublicNetworkAccess` | `Disabled` | `Enabled` / `Disabled` | Same, for the apps' storage accounts |
 | `standby.apim.sku` | `StandardV2` | `StandardV2` / `PremiumV2` | Region B's gateway tier. Use the primary's tier unless you decided otherwise (`az apim list` above); it is not copied automatically. Check region availability |
 | `standby.apim.units` | `1` | Integer; default 1 | Capacity units; match the primary's `sku.capacity`. Not range-checked by the driver |
+| `standby.apim.zoneRedundant` | `false` | `true` / `false`; default `false` | Creates Region B's APIM as zone redundant. Chosen only when the instance is created; cannot be changed later. With fewer than two `standby.apim.units` the driver prints a warning; Microsoft recommends at least two units ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support), [reliability in API Management](https://learn.microsoft.com/azure/reliability/reliability-api-management)). The Shells phase reads it back; not yet deployed live ([UNKNOWNS](../UNKNOWNS.md) APIM-ZR-01, APIM-ZR-02) |
 | `standby.apim.publisherEmail` | `platform-team@example.com` | Non-empty, not `REPLACE-` | APIM publisher contact (receives service notices). Use the primary's value from `az apim list` or a shared mailbox |
 | `standby.apim.publisherName` | `Contoso Platform Team` | Non-empty, not `REPLACE-` | Publisher organisation name; same source |
 | `cosmos.convertServerless` | `false` | `true` / `false` | **Consent for an irreversible change.** Needed only when the account is serverless (section 6). `false` makes `Data -Apply` stop with `cosmos_serverless` and change nothing |
 | `cosmos.autoscaleMaxThroughput` | `1000` | Integer, multiple of 1000, at least 1000 (default 1000) | Autoscale maximum RU/s **per container**, applied in every region. See section 6 for how to choose it |
+| `failover.ledgerCoverageStartAt` | `2026-10-20T15:41:34.000Z` | UTC with exactly three fractional digits and `Z` (`Test-DrCanonicalCoverage` in [`DrFailover.psm1`](../../infra/dr/DrFailover.psm1)); required by `Invoke-DrFailover.ps1 -Phase Promote` and `Failback` only | The verified time APIM gateway diagnostics began, earlier than any model traffic on either gateway (section 11.3, [ADR 0036](../adr/0036-continuity-coverage-baseline.md)). Read it from the resource group's activity log. The driver writes it to `RECONCILER_LEDGER_COVERAGE_START_AT`; App Service reads it back without `.000`, which the driver accepts |
 
 ### 5.3 Complete valid example
 
@@ -316,6 +320,9 @@ Synthetic values only (GUIDs are made up, names are fictional). Replace each wit
   "cosmos": {
     "convertServerless": false,
     "autoscaleMaxThroughput": 1000
+  },
+  "failover": {
+    "ledgerCoverageStartAt": "2026-10-20T15:41:34.000Z"
   }
 }
 ```
@@ -441,6 +448,10 @@ Notes per phase:
   to time out during it; see section 8. Keep the tab active and do not start another phase meanwhile.
 - **Shells -Apply** deploys a Bicep template. A failed apply records no state; the same command
   is the retry.
+- **Code -Apply** publishes the resolver, sync and reconciler packages, and the admin package while
+  region B's admin app still has public access. After Front Door `Lockdown` it skips the admin package
+  with the warning `admin_public_access_disabled` and records `admin.skipped`; publish it with
+  [admin updates from a VM](ADMIN-UPDATE-FROM-VM.md) ([ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md)).
 - **Config -Apply** edits the admin app registration, so the account needs that right (section 3 row 4).
 - **Code -Apply** uses the same publishing path as Stage 7
   ([Stage 7](STAGED-DEPLOYMENT-V2.md#stage-7-code-and-initial-data)). With
@@ -694,3 +705,102 @@ az monitor metrics list --resource $fdProfileId --metric OriginHealthPercentage 
   incomplete; the reconciler then cannot write until failback.
 - Region B's admin package could not be republished after Front Door made the admin app private
   (HTTP 403 from the deployment endpoint). The admin code was unchanged since its last deployment.
+
+## 12. Scripted promotion and failback
+
+[`infra/dr/Invoke-DrFailover.ps1`](../../infra/dr/Invoke-DrFailover.ps1) runs the writer, gate and
+Cosmos DB steps of 11.3 and 11.6 with guards. It reads the same `dr.config.json`, the primary's staged
+state and region B's state as `Invoke-DrStandby.ps1`. Promote and Failback also need
+`failover.ledgerCoverageStartAt` (section 5.2). The code is tested offline only
+([`tests/Test-DrFailover.ps1`](../../tests/Test-DrFailover.ps1), fake `az`); it has **not yet been run
+against Azure**. The 2026-10-26 drill (section 11) used the manual commands.
+
+Each phase except `Status` previews without `-Apply` and changes Azure only with `-Apply`. Every app
+setting change is read back before the next step (`readback_mismatch` otherwise). Every run writes
+`standby.stateDirectory/evidence/failover-<phase>-<UTC time>.json`, also when it refuses.
+
+| Phase | Changes | Refuses (error code) |
+| --- | --- | --- |
+| `Status` | Nothing. Reports per region `AzureWebJobs.syncEntitlement.Disabled`, `AzureWebJobs.reconcileBudgets.Disabled`, `RECONCILER_CONTINUITY_GATE`, `RECONCILER_LEDGER_COVERAGE_START_AT`, `RECONCILER_LEDGER_BASELINE_ADOPT`; the Cosmos DB write region; the workspace `properties.failover`, the time a switchover is allowed (replication start + 24 h) and the first whole billing month in the replica (warnings `workspace_replication_partial_month` before it, `workspace_replication_off` without replication; ADR 0038); a region whose settings cannot be read as `region_<A\|B>_unreadable`; the Front Door primary origin host headers (`dr-drill.invalid` means the drill fault is on) | Exit 4 with `ERROR: split_brain` when both regions have a writer enabled |
+| `Fence -Region A\|B` | Both writers of that region off | - |
+| `Promote` | Optional `-FenceSource`: region A writers off. Region B reconciler: gate `on`, coverage start; with `-AdoptBaseline` the adoption setting equal to the coverage start, otherwise any adoption setting is deleted. Then region B reconciler and sync on | Region A writing without `-FenceSource` (`source_writers_enabled`); Cosmos DB not writing in region B (`cosmos_write_region`, with the move command printed; Promote never moves Cosmos DB); coverage not canonical (`coverage_invalid`). Region A and Cosmos DB are checked again just before region B is enabled |
+| `Failback` | Region B writers off (first). Cosmos DB to region A only with `-MoveCosmos` (`az cosmosdb failover-priority-change ... --failover-policies <A>=0 <B>=1`, then waits for `Succeeded`). Adoption deleted in both regions. Region A reconciler: gate `on`, coverage start. Then region A reconciler and sync on | Cosmos DB not in region A without `-MoveCosmos` (`cosmos_write_region`, command printed); move not finished after 20 minutes (`cosmos_move_timeout`); region B writing again before region A is enabled (`standby_writers_enabled`). Any stop after the first step leaves both regions fenced |
+| `RemoveAdoption -Region A\|B` | Deletes `RECONCILER_LEDGER_BASELINE_ADOPT` from that reconciler | - |
+
+Not changed by this driver: Front Door (`Invoke-DrFrontDoor.ps1`) and the workspace switchover and
+failback, which are allowed only 24 hours after replication starts and belong to the monitoring owner.
+Promote and Failback print the exact call; it writes `{}` to a body file, because without a body the
+service answers HTTP 415 (11.4):
+
+```powershell
+Set-Content -Path ws-empty.json -Value '{}'; az rest --method post --headers Content-Type=application/json --body '@ws-empty.json' --url 'https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/locations/<region B>/workspaces/<name>/failover?api-version=2025-02-01'
+```
+
+Failback uses `.../providers/Microsoft.OperationalInsights/workspaces/<name>/failback?api-version=2025-02-01`
+with the same headers and body. All Azure CLI arguments are refused if they contain `( ) | & < > ^ " %`
+(`az_argument_unsafe`): on Windows `az.cmd` passes them through `cmd.exe` again.
+
+Exit codes: 0 done or preview; 2 configuration or state file refused, before any Azure call; 3 a guard
+refused or a step failed (message and evidence file name printed); 4 `Status` found split-brain.
+
+### 12.1 Failover to region B
+
+```powershell
+$cfg = "$HOME/clouddrive/ccof-dr/dr.config.json"
+$fo = "$repo/infra/dr/Invoke-DrFailover.ps1"
+pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
+```
+
+1. **Traffic.** Front Door moves traffic to region B by health probes; in a drill, run
+   `Invoke-DrFrontDoor.ps1 -Phase DrainPrimary -Apply` (11.2).
+2. **Cosmos DB.** Confirm it writes in region B (`Status`), or move it after confirming the outage
+   ([DR design](../DR-ACTIVE-PASSIVE.md#failover-runbook-region-a-lost) step 3). Promote prints the
+   command when it refuses.
+3. **Promote.** Preview, then apply. Add `-AdoptBaseline` only the first time a region writes with the gate
+   `on` over budget states that have no coverage marker, and only with the evidence 11.3 describes.
+
+   ```powershell
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -FenceSource
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -FenceSource -Apply
+   ```
+
+   **Expect:** lines such as `<region-B reconciler> RECONCILER_CONTINUITY_GATE=on (read back on)`, then
+   both `...Disabled=false (read back false)`, the printed workspace call, `region A (...): writing=False`,
+   `region B (...): writing=True` and `result: promoted`.
+
+   `Promote` reads region A's app settings first. When region A's management API does not answer,
+   it stops with exit 3 (`source_unreachable`) and changes nothing. After Azure Service Health
+   confirms the region A outage, rerun with the incident ID as the reason:
+
+   ```powershell
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -SourceUnreachable 'Service Health <incident ID>, <time UTC>'
+   pwsh -NoProfile -File $fo -Phase Promote -ConfigPath $cfg -SourceUnreachable 'Service Health <incident ID>, <time UTC>' -Apply
+   ```
+
+   **Expect:** `region A unreadable, declared unreachable: ...`, the same region B lines as above, and
+   `region A was not fenced (unreadable)`. The evidence file holds `switches.sourceUnreachable` and
+   `run.sourceUnreachable` (reason, read error, time). A region A that answers with a writer enabled
+   is still refused (`source_writers_enabled`). Before region A comes back:
+   `pwsh -NoProfile -File $fo -Phase Fence -Region A -ConfigPath $cfg -Apply`, then `-Phase Status`
+   (UNKNOWNS DR-18).
+4. **Check the run lines** with the 11.3 query. After one `written` run with gate `passed`, remove the
+   adoption: `pwsh -NoProfile -File $fo -Phase RemoveAdoption -Region B -ConfigPath $cfg -Apply`.
+5. **Workspace switchover** (optional, owner's decision): run the printed call. Read 11.5 first (DR-17).
+
+### 12.2 Failback to region A
+
+1. **Workspace failback**, if it was switched over: run the call that Failback prints (11.6 row 1).
+2. **Failback.** Preview, then apply. Without `-MoveCosmos` it stops after fencing region B and prints the
+   Cosmos DB command; region A stays fenced until you rerun.
+
+   ```powershell
+   pwsh -NoProfile -File $fo -Phase Failback -ConfigPath $cfg
+   pwsh -NoProfile -File $fo -Phase Failback -ConfigPath $cfg -MoveCosmos -Apply
+   ```
+
+   **Expect:** region B `...Disabled=true` first, `Cosmos DB writes in East US 2 (region A)`, adoption
+   `absent` or `deleted`, region A gate and coverage, region A `...Disabled=false`, `result: failed_back`.
+3. **Front Door:** `Invoke-DrFrontDoor.ps1 -Phase RestorePrimary -Apply`, then wait for region A origins at
+   100 % (11.6 rows 5-7).
+4. **Status** again: region A writing, region B fenced, no `split_brain`, primary host header not
+   `dr-drill.invalid`.

@@ -163,9 +163,10 @@ switch ($Phase) {
     $params = @{ location = $dr.secondary.location; tags = $primaryCfg.tags; stem = $names.stem; storageStem = $names.storageStem; workspaceId = $pS1.workspaceId
         identities = $ids; includeAdmin = [bool]$primaryCfg.stage1.includeAdmin; functionsPublicNetworkAccess = [string]$dr.standby.functionsPublicNetworkAccess
         storagePublicNetworkAccess = [string]$dr.standby.storagePublicNetworkAccess
-        apim = @{ sku = $bCfg.stage1.apimSku; units = $(if ($dr.standby.apim.PSObject.Properties['units']) { [int]$dr.standby.apim.units } else { 1 }); publisherEmail = $dr.standby.apim.publisherEmail; publisherName = $dr.standby.apim.publisherName } }
+        apim = @{ sku = $bCfg.stage1.apimSku; zoneRedundant = [bool]$bCfg.stage1.apimZoneRedundant; units = $(if ($dr.standby.apim.PSObject.Properties['units']) { [int]$dr.standby.apim.units } else { 1 }); publisherEmail = $dr.standby.apim.publisherEmail; publisherName = $dr.standby.apim.publisherName } }
     $out = Invoke-StgBicep -Cfg $bCfg -Template '../dr/standby.bicep' -Name 'dr-standby-shells' -Apply:$Apply -Parameters $params
     if (-not $Apply) { return }
+    $null = Assert-StgApimZoneRedundancy -Cfg $bCfg -ApimId $out.apimId
     $s1 = New-DrStandbyStage1Outputs -Primary $pS1 -Shells $out -Identities $ids -StandbyNames $names
     # Region B's stage state: its own Stage 1, and the primary's Stage 2 (schema) and Stage 4 (Entra),
     # which both regions share.
@@ -199,13 +200,9 @@ switch ($Phase) {
     $s1 = Get-StgStage $bCfg 1
     $admin = $null
     if ($s1.names.apps.Contains('admin')) {
-        $zip = Join-Path $ctx.GeneratedDir 'admin.zip'
-        & (Join-Path $repo 'admin/Build-AdminPackage.ps1') -OutFile $zip | Out-Host
-        if ($LASTEXITCODE) { throw 'admin_build_failed' }
-        $null = Invoke-QsAz @('functionapp', 'deployment', 'source', 'config-zip', '--subscription', $sub, '--resource-group', $rg, '--name', $s1.names.apps.admin.functionApp, '--src', $zip)
-        $admin = (Get-FileHash $zip -Algorithm SHA256).Hash
+        $admin = Publish-StgAdminPackage -Subscription $sub -ResourceGroup $rg -App $s1.names.apps.admin.functionApp -ZipPath (Join-Path $ctx.GeneratedDir 'admin.zip')
     }
-    Save-DrPhase 'Code' @{ code = $code; adminSha256 = $admin; commit = (git -C $repo rev-parse HEAD) }
+    Save-DrPhase 'Code' @{ code = $code; admin = $admin; adminSha256 = $(if ($admin -and $admin.Contains('sha256')) { $admin.sha256 } else { $null }); commit = (git -C $repo rev-parse HEAD) }
 }
 'Verify' {
     $s1 = Get-StgStage $bCfg 1
