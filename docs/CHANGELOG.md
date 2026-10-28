@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-10-28 - Step 4 verifies registrations an Entra administrator configured
+
+- Staged Step 4 sends a Microsoft Graph change to an existing app registration or the admin enterprise
+  application only when a required setting is missing (identifier URI, scope, v2 tokens, redirects,
+  preauthorized clients, app roles, assignment required). Before, it always sent them, so an operator who
+  is not an owner received `Authorization_RequestDenied` (HTTP 403) even when an administrator had set
+  everything (customer deployment, 2026-10-28). `tests/Test-StagedStages.ps1` 437 checks; four mutants caught.
+- [Deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) Step 4: Portal steps for an Entra administrator,
+  and the Graph Explorer steps that grant the sync managed identity `GroupMember.Read.All` and
+  `User.Read.All` (no Portal page exists for that grant).
 ## 2026-10-27 - Live run of the scripted DR phases; ledger fix for abandoned calls
 
 - Live lab run with `main` fc53154 ([DR standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md) section

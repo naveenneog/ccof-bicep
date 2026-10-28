@@ -686,6 +686,73 @@ Unattended group sync also needs Microsoft Graph application permissions, grante
 Role Administrator. Step 4 does not grant them; the default `sync.mode: delegated-snapshot` does not
 need them ([permissions](../PERMISSIONS.md)).
 
+### When the operator is not an owner: an Entra administrator sets Step 4 in the Portal
+
+Step 4 changes an existing app registration only when a required setting is missing. When an Entra
+administrator has set everything below by hand, the operator's `Step 4 -Apply` only reads, verifies and
+records the IDs for later steps; without these settings an operator who is not an owner receives
+`Authorization_RequestDenied` (HTTP 403). The administrator needs Cloud Application Administrator or
+Application Administrator ([least-privileged roles](https://learn.microsoft.com/entra/identity/role-based-access-control/delegate-by-task#enterprise-applications-least-privileged-roles)).
+The admin app's host name is `<admin Function App>.azurewebsites.net`, from Step 1.
+
+**Gateway app** (App registrations > the gateway app):
+
+1. **Expose an API** > **Application ID URI** > **Add** > keep `api://<application (client) ID>` > **Save**.
+2. **Expose an API** > **Add a scope**: name `access_as_user`, **Who can consent** Admins and users,
+   display name and description "Access the Claude gateway as the signed-in user", state Enabled.
+3. **Expose an API** > **Add a client application**: the gateway app's own application (client) ID,
+   tick `access_as_user`. With `entra.allowAzureCliClient: true`, add `04b07795-8ddb-461a-bbee-02f9e1bf7b46`
+   (Azure CLI) the same way.
+4. **Authentication** > **Add a platform** > **Mobile and desktop applications** > custom redirect URIs
+   `http://localhost` and `ms-appx-web://microsoft.aad.brokerplugin/<application (client) ID>`.
+   **Allow public client flows**: Yes. **Save**.
+5. **Manifest**: `"requestedAccessTokenVersion": 2` under `api` (in the AAD Graph manifest:
+   `"accessTokenAcceptedVersion": 2`). **Save**.
+
+**Resolver app:** **Expose an API** > Application ID URI `api://<application (client) ID>`; **Manifest**
+token version 2 as in step 5. No scope, redirect URI or secret.
+
+**Admin app:**
+
+1. **Expose an API**: Application ID URI `api://<application (client) ID>`; scope `Projects.Manage`,
+   **Who can consent** Admins only, state Enabled; **Add a client application** with the admin app's own
+   application (client) ID and each ID in `admin.extraAllowedClientIds`, ticking `Projects.Manage`.
+2. **App roles** > **Create app role** twice: value `CCOF.Projects.Write` (display name "CCOF project
+   editor") and `CCOF.Projects.Read` ("CCOF project reader"), **Allowed member types** Users/Groups, enabled.
+3. **Authentication** > **Add a platform** > **Single-page application**:
+   `https://<admin host>/api/console` and `https://<admin host>/api/console-v3`.
+4. **Manifest**: token version 2.
+5. **Enterprise applications** > the admin app > **Properties** > **Assignment required?** Yes > **Save**;
+   **Users and groups** > **Add user/group**: each person in `entra.adminEditors` with "CCOF project
+   editor", each in `entra.adminReaders` with "CCOF project reader". `@me` in the configuration is the
+   operator who runs Step 4.
+
+**Groups:** with `groups[].groupId` set, Step 4 changes no group. Members listed in `groups[].members`
+are added by a group owner or Groups Administrator (**Groups** > the group > **Members** > **Add members**).
+
+**Sync managed identity, Graph application permissions** (`sync.mode: application-permission`). The Portal
+has no page that grants an application permission to a managed identity
+([managed identity app roles](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/how-to-assign-app-role-managed-identity)).
+A Privileged Role Administrator uses [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
+in a browser, signed in, after Step 1 (which creates the identity `<prefix>-<suffix>-sync-id`):
+
+1. Enterprise applications > filter **Application type** Managed Identities > `<...>-sync-id` > copy its
+   **Object ID** (the service principal ID; the same value as the identity's **Principal ID**).
+2. In Graph Explorer: **Modify permissions** > consent to `AppRoleAssignment.ReadWrite.All` and
+   `Application.Read.All` for the session.
+3. `GET https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '00000003-0000-0000-c000-000000000000'&$select=id`
+   and copy `id` (Microsoft Graph's service principal in the tenant).
+4. Twice, `POST https://graph.microsoft.com/v1.0/servicePrincipals/<sync Object ID>/appRoleAssignments`
+   with body `{"principalId":"<sync Object ID>","resourceId":"<Graph id>","appRoleId":"<role id>"}` and role id
+   `98830695-27a2-44f7-8c18-0c3ebc9698f6` (`GroupMember.Read.All`), then `df021288-bdef-4463-88db-98f22de89214`
+   (`User.Read.All`) ([permission IDs](https://learn.microsoft.com/graph/permissions-reference)). Expect
+   `201 Created`.
+5. Check: Enterprise applications > the `-sync-id` application > **Permissions** lists both under
+   Microsoft Graph with type Application.
+
+Grant before `syncTimerEnabled` is `true`: a managed identity's token is cached for about 24 hours, so
+a run before the grant keeps a token without the permissions ([SYNC.md](../SYNC.md#graph-permission-before-the-first-run)).
+
 ---
 
 ## Step 5: configure the apps and the gateway
