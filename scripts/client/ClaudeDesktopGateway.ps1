@@ -3,7 +3,7 @@
 . (Join-Path $PSScriptRoot 'ClientProjectHeaders.ps1')
 
 function New-CcofDesktopProfile {
-    param($Config, $Schema, [string]$HelperPath)
+    param($Config, $Schema, [string]$HelperPath, [switch]$AzureCli)
     $models = @($Config.models.default) + @($Config.models.available | Where-Object {
         -not [string]::Equals($_, $Config.models.default, 'Ordinal')
     })
@@ -12,7 +12,7 @@ function New-CcofDesktopProfile {
         inferenceGatewayAuthScheme = 'bearer'
         inferenceModels = @($models | ForEach-Object { @{ name = $_ } })
     }
-    if ($Schema.credentialKinds -ccontains 'external-idp' -and
+    if (-not $AzureCli -and $Schema.credentialKinds -ccontains 'external-idp' -and
         $Schema.keys -ccontains 'inferenceIdpOidc' -and $Schema.keys -ccontains 'inferenceIdpAuthFlow') {
         $scope = [string]$Config.scope
         $selfPrefix = "api://$($Config.clientId)/"
@@ -29,9 +29,10 @@ function New-CcofDesktopProfile {
         if ($Schema.credentialKinds -cnotcontains 'helper-script') { throw 'The installed Desktop schema does not support a compatible credential helper. No profile written.' }
         $profile.inferenceCredentialKind = 'helper-script'
         $profile.inferenceCredentialHelper = $HelperPath
-        $profile.inferenceCredentialHelperArgs = @('token')
+        if ($AzureCli) { $profile.inferenceCredentialHelperArgs = @() } else { $profile.inferenceCredentialHelperArgs = @('token') }
         $profile.inferenceCredentialHelperTtlSec = $Config.helperTtlSeconds
-        $profile.inferenceCredentialHelperTimeoutSec = $Config.tokenTimeoutSeconds * 3
+        # The Azure CLI helper may run one interactive sign-in; allow it time, within Desktop's 600-second limit.
+        $profile.inferenceCredentialHelperTimeoutSec = $(if ($AzureCli) { 300 } else { $Config.tokenTimeoutSeconds * 3 })
         $profile.inferenceCredentialHelperSilentRefreshEnabled = $true
         if ($profile.inferenceCredentialHelperTimeoutSec -gt 600) { throw 'Configuration tokenTimeoutSeconds exceeds the Desktop helper timeout support.' }
     }
@@ -46,15 +47,16 @@ function New-CcofDesktopProfile {
 
 function Set-CcofClaudeDesktop {
     param([string]$ConfigPath, [string]$LibraryPath, [string]$BackupRoot, $Inventory, $Schema,
-        [string]$NodePath, [string]$TokenEntryPath, [switch]$Confirmed)
+        [string]$NodePath, [string]$TokenEntryPath, [ValidateSet('Helper', 'AzureCli')][string]$TokenSource = 'Helper', [switch]$Confirmed)
     Assert-ClientConfirmation -Confirmed:$Confirmed
     if (-not $Inventory.DesktopVersion) { return (@{ event = 'not_installed'; component = 'claude-desktop' } | ConvertTo-Json -Compress) }
-    $config = Read-ClientConfiguration $ConfigPath
+    $azureCli = $TokenSource -eq 'AzureCli'
+    $config = if ($azureCli) { Read-ClientConfigurationBasic $ConfigPath } else { Read-ClientConfiguration $ConfigPath }
     $id = $config.desktop.profileId
     $metaPath = Join-Path $LibraryPath '_meta.json'
     $profilePath = Join-Path $LibraryPath "$id.json"
-    $helperPath = Join-Path (Split-Path $LibraryPath -Parent) 'ccof-token.cmd'
-    $profile = New-CcofDesktopProfile $config $Schema $helperPath
+    $helperPath = Join-Path (Split-Path $LibraryPath -Parent) $(if ($azureCli) { 'az-gateway-token.cmd' } else { 'ccof-token.cmd' })
+    $profile = New-CcofDesktopProfile $config $Schema $helperPath -AzureCli:$azureCli
     $existing = Read-ClientJson $profilePath
     if ($config.project) {
         $profile.inferenceCustomHeaders = Merge-CcofProjectHeaders -Sources @($existing.inferenceCustomHeaders) -Project $config.project
@@ -66,7 +68,7 @@ function Set-CcofClaudeDesktop {
         if ($Schema.keys -cnotcontains $key) { throw 'The installed Desktop schema does not support an existing profile key. Review it in the application; nothing was overwritten.' }
         $profile[$key] = $existing[$key]
     }
-    $shim = New-ClientTokenShim $ConfigPath $NodePath $TokenEntryPath
+    $shim = if ($azureCli) { New-ClientAzureCliShim $config } else { New-ClientTokenShim $ConfigPath $NodePath $TokenEntryPath }
     $meta = Read-ClientJson $metaPath
     if ($meta.hybridPointer) { throw 'Desktop uses a hybrid bootstrap selection. Switch to a local configuration in Desktop before rerunning; nothing was changed.' }
     if ($meta.Contains('entries') -and $meta.entries -isnot [array]) { throw 'Desktop metadata entries must be an array; nothing was changed.' }
@@ -81,5 +83,5 @@ function Set-CcofClaudeDesktop {
     Write-ClientJson $metaPath $meta
     Complete-ClientSnapshot $snapshot
     return (@{ event = 'configured'; component = 'claude-desktop'; changeId = $snapshot.Manifest.changeId
-        credentialKind = $profile.inferenceCredentialKind } | ConvertTo-Json -Compress)
+        credentialKind = $profile.inferenceCredentialKind; tokenSource = $TokenSource } | ConvertTo-Json -Compress)
 }

@@ -1,5 +1,17 @@
 # Change log
 
+## 2026-10-28 - Azure CLI token route for Claude Code, VS Code and Desktop setup
+
+- `scripts/client/Set-ClaudeCodeGateway.ps1` and `Set-ClaudeDesktopGateway.ps1` accept
+  `-TokenSource AzureCli` (default `Helper`, unchanged). The helper they write is the existing
+  auto-sign-in CMD (`docs/examples/az-gateway-token-auto-login.cmd`) filled with the tenant and gateway
+  scope from `config.json`; Claude Code and VS Code call it through `apiKeyHelper`, Desktop as a
+  helper-script credential (always helper-script on this route, 300-second timeout for the first sign-in).
+  The client file is checked without Node.js; Desktop uses the documented helper-script keys when Node.js
+  is absent. `scripts/client/tests/Test-GatewayClients.ps1` 38 checks (5 new).
+- Lab check: the generated helper returned a gateway token through the Azure CLI, and Claude Code 2.1.272
+  answered through APIM with it. Desktop and a first interactive sign-in on a user laptop not run.
+- [User onboarding](runbooks/USER-ONBOARDING.md) section 3.C documents the route.
 ## 2026-10-28 - Developer sign-in without an http://localhost redirect
 
 - New optional `entra.browserSignIn` (default `true`). With `false`, Step 4 requires only the Windows

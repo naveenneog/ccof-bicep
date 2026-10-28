@@ -24,14 +24,14 @@ function New-CcofCodeEnvironment {
 
 function Set-CcofClaudeCode {
     param([string]$ConfigPath, [string]$ClaudeHome, [string]$VSCodeSettingsPath, [string]$BackupRoot,
-        $Inventory, [string]$NodePath, [string]$TokenEntryPath, [switch]$Confirmed)
+        $Inventory, [string]$NodePath, [string]$TokenEntryPath, [ValidateSet('Helper', 'AzureCli')][string]$TokenSource = 'Helper', [switch]$Confirmed)
     Assert-ClientConfirmation -Confirmed:$Confirmed
     if (-not $Inventory.CliVersion -and -not $Inventory.VSCodeVersion) {
         return (@{ event = 'not_installed'; component = 'claude-code' } | ConvertTo-Json -Compress)
     }
-    $config = Read-ClientConfiguration $ConfigPath
+    $config = if ($TokenSource -eq 'AzureCli') { Read-ClientConfigurationBasic $ConfigPath } else { Read-ClientConfiguration $ConfigPath }
     $path = Join-Path $ClaudeHome 'settings.json'
-    $helper = Join-Path $ClaudeHome 'ccof-token.cmd'
+    $helper = Join-Path $ClaudeHome $(if ($TokenSource -eq 'AzureCli') { 'az-gateway-token.cmd' } else { 'ccof-token.cmd' })
     $settings = Read-ClientJson $path
     if ($settings.Contains('env') -and $settings.env -isnot [Collections.IDictionary]) { throw 'Claude Code env must be an object; nothing was changed.' }
     if (-not $settings.env) { $settings.env = @{} }
@@ -56,11 +56,11 @@ function Set-CcofClaudeCode {
     foreach ($key in $envs.Keys) { $settings.env[$key] = $envs[$key] }
     foreach ($key in @('ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL',
         'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN')) { $settings.env.Remove($key) | Out-Null }
-    $settings.apiKeyHelper = "`"$helper`" token"
+    $settings.apiKeyHelper = if ($TokenSource -eq 'AzureCli') { "`"$helper`"" } else { "`"$helper`" token" }
     $settings.model = $config.models.default
     $settings.availableModels = @($config.models.available)
     $settings.enforceAvailableModels = $true
-    $shim = New-ClientTokenShim $ConfigPath $NodePath $TokenEntryPath
+    $shim = if ($TokenSource -eq 'AzureCli') { New-ClientAzureCliShim $config } else { New-ClientTokenShim $ConfigPath $NodePath $TokenEntryPath }
     $paths = @($path, $helper)
     if ($Inventory.VSCodeVersion) {
         $merged = @($entries | Where-Object {
@@ -76,5 +76,5 @@ function Set-CcofClaudeCode {
     Write-ClientJson $path $settings
     if ($Inventory.VSCodeVersion) { Write-ClientJson $VSCodeSettingsPath $vscode }
     Complete-ClientSnapshot $snapshot
-    return (@{ event = 'configured'; component = 'claude-code'; changeId = $snapshot.Manifest.changeId } | ConvertTo-Json -Compress)
+    return (@{ event = 'configured'; component = 'claude-code'; changeId = $snapshot.Manifest.changeId; tokenSource = $TokenSource } | ConvertTo-Json -Compress)
 }

@@ -120,3 +120,49 @@ function New-ClientTokenShim {
     $entry = $TokenEntryPath.Replace('%', '%%')
     return "@echo off`r`nsetlocal DisableDelayedExpansion`r`nset `"CCOF_CONFIG_FILE=$config`"`r`n`"$node`" `"$entry`" %*`r`nexit /b %errorlevel%`r`n"
 }
+
+# Azure CLI token route (docs/runbooks/PUBLIC-ACCESS-WORKBOOK.md Step 13 A-refresh and 17.8d): the helper
+# is docs/examples/az-gateway-token-auto-login.cmd with the tenant and gateway scope filled in. It needs
+# the Azure CLI on PATH, not Node.js. The gateway app must preauthorize the Azure CLI client and APIM must
+# list it as a delegated client (staged entra.allowAzureCliClient: true).
+$script:ClientGuid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+# The client file fields the Claude Code and Desktop settings use, checked without Node.js.
+function Read-ClientConfigurationBasic {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw 'Client configuration path must be absolute.' }
+    $bad = 'Client configuration is missing or invalid. Review docs/CLIENTS.md and the administrator answers.'
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw $bad }
+    try { $c = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { throw $bad }
+    $ok = $c -is [Collections.IDictionary] -and $c.schemaVersion -eq 1 -and
+        "$($c.tenantId)" -match $script:ClientGuid -and "$($c.clientId)" -match $script:ClientGuid -and
+        $c.scope -is [string] -and $c.gatewayUrl -is [string] -and $c.gatewayUrl -cmatch '^https://[^\s"]+$'
+    if (-not $ok) { throw $bad }
+    foreach ($k in 'helperTtlSeconds', 'tokenTimeoutSeconds') { if (-not ($c[$k] -is [int] -or $c[$k] -is [long]) -or $c[$k] -le 0) { throw $bad } }
+    $m = $c.models
+    if ($m -isnot [Collections.IDictionary] -or @($m.available).Count -eq 0) { throw $bad }
+    foreach ($alias in 'default', 'opus', 'sonnet', 'haiku') { if (@($m.available) -cnotcontains $m[$alias]) { throw $bad } }
+    if ($c.desktop -isnot [Collections.IDictionary] -or "$($c.desktop.profileId)" -notmatch $script:ClientGuid -or -not "$($c.desktop.profileName)".Trim()) { throw $bad }
+    if ($c.Contains('project') -and ($c.project -isnot [Collections.IDictionary] -or $c.project.selectorHeader -isnot [string])) { throw $bad }
+    $null = Get-ClientAzureCliScope $c
+    return $c
+}
+
+# The scope the Azure CLI requests: an identifier URI (az account get-access-token --scope).
+function Get-ClientAzureCliScope {
+    param($Config)
+    $scope = [string]$Config.scope
+    if ($scope -match '^[0-9a-fA-F-]{36}/[A-Za-z0-9][A-Za-z0-9_.-]*$') { $scope = "api://$scope" }
+    # Written into a CMD file: no quotes, percent signs, carets or other cmd.exe syntax.
+    if ($scope -cnotmatch '^(api|https)://[A-Za-z0-9._/-]+$') { throw 'Client configuration scope cannot be used with the Azure CLI helper.' }
+    return $scope
+}
+
+function New-ClientAzureCliShim {
+    param($Config)
+    $template = [IO.File]::ReadAllText((Join-Path $script:ClientRepoRoot 'docs\examples\az-gateway-token-auto-login.cmd')).Replace("`r`n", "`n")
+    $scopeLine = 'set "SCOPE=api://REPLACE-gateway-app-client-guid/access_as_user"'
+    if (-not $template.Contains('set "TENANT=REPLACE-tenant-guid"') -or -not $template.Contains($scopeLine)) { throw 'Azure CLI helper template changed; no helper written.' }
+    $text = $template.Replace('set "TENANT=REPLACE-tenant-guid"', "set `"TENANT=$($Config.tenantId)`"").Replace($scopeLine, "set `"SCOPE=$(Get-ClientAzureCliScope $Config)`"")
+    return $text.Replace("`n", "`r`n")
+}
