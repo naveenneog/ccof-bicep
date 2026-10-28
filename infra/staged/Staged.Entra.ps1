@@ -34,6 +34,11 @@ function Merge-StgPreauthorized {
     }
     return , @($list)
 }
+function Test-StgHasAll { param([object[]]$Current, [object[]]$Want) return -not @($Want | Where-Object { @($Current) -notcontains $_ }).Count }
+function Test-StgPreauthorized { param($App, [string[]]$ClientIds, [string]$ScopeId)
+    foreach ($cid in $ClientIds) { if (-not @($App.api.preAuthorizedApplications | Where-Object { $_.appId -ieq $cid -and @($_.delegatedPermissionIds) -contains $ScopeId }).Count) { return $false } }
+    return $true
+}
 function New-StgApp { param([string]$DisplayName, [switch]$Apply)
     $app = Get-StgApp $DisplayName
     if ($app) { Write-Host "reuse application '$DisplayName' ($($app.appId))"; return $app }
@@ -74,12 +79,23 @@ function Invoke-Stage4 {
     }
     $gwScope = Set-StgScope $gw 'access_as_user' 'User' 'Access the Claude gateway as the signed-in user'
     $clients = @($gw.appId) + $(if ($e.allowAzureCliClient) { @($script:AzureCliClientId) } else { @() })
-    $null = Send-StgGraph 'patch' "applications/$($gw.id)" @{
-        identifierUris = (Join-StgUnique $gw.identifierUris @("api://$($gw.appId)")); isFallbackPublicClient = $true
-        api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = $gwScope.scopes }
-        publicClient = @{ redirectUris = (Join-StgUnique $gw.publicClient.redirectUris @('http://localhost', "ms-appx-web://microsoft.aad.brokerplugin/$($gw.appId)")) } }
-    $null = Send-StgGraph 'patch' "applications/$($gw.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $gw $clients $gwScope.id) } }
-    $null = Send-StgGraph 'patch' "applications/$($res.id)" @{ identifierUris = (Join-StgUnique $res.identifierUris @("api://$($res.appId)")); api = @{ requestedAccessTokenVersion = 2 } }
+    # Each change is sent only when a required setting is missing, so registrations an Entra administrator
+    # has configured (for example by hand in the Portal) are verified by an operator who cannot write them.
+    $gwRedirects = @('http://localhost', "ms-appx-web://microsoft.aad.brokerplugin/$($gw.appId)")
+    $gwExisting = @($gw.api.oauth2PermissionScopes | Where-Object { $_.value -ceq 'access_as_user' -and $_.isEnabled })
+    if ((Test-StgHasAll $gw.identifierUris @("api://$($gw.appId)")) -and $gw.isFallbackPublicClient -eq $true -and $gw.api.requestedAccessTokenVersion -eq 2 -and
+        $gwExisting.Count -eq 1 -and (Test-StgHasAll $gw.publicClient.redirectUris $gwRedirects)) { Write-Host 'gateway app: identifier URI, scope, v2 tokens, public client redirects already set' }
+    else {
+        $null = Send-StgGraph 'patch' "applications/$($gw.id)" @{
+            identifierUris = (Join-StgUnique $gw.identifierUris @("api://$($gw.appId)")); isFallbackPublicClient = $true
+            api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = $gwScope.scopes }
+            publicClient = @{ redirectUris = (Join-StgUnique $gw.publicClient.redirectUris $gwRedirects) } }
+        $gw = Get-StgAppById $gw.appId
+    }
+    if (Test-StgPreauthorized $gw $clients $gwScope.id) { Write-Host 'gateway app: clients already preauthorized' }
+    else { $null = Send-StgGraph 'patch' "applications/$($gw.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $gw $clients $gwScope.id) } } }
+    if ((Test-StgHasAll $res.identifierUris @("api://$($res.appId)")) -and $res.api.requestedAccessTokenVersion -eq 2) { Write-Host 'resolver app: identifier URI and v2 tokens already set' }
+    else { $null = Send-StgGraph 'patch' "applications/$($res.id)" @{ identifierUris = (Join-StgUnique $res.identifierUris @("api://$($res.appId)")); api = @{ requestedAccessTokenVersion = 2 } } }
     $gwSp = Get-StgServicePrincipal $gw.appId -Apply; $resSp = Get-StgServicePrincipal $res.appId -Apply
     $registrations = @{ gatewayApi = @{ appId = $gw.appId; scope = 'access_as_user'; accessTokenVersion = 2 }; developerSignIn = @{ appId = $gw.appId }; resolverApi = @{ appId = $res.appId } }
     $admin = @{}
@@ -91,15 +107,27 @@ function Invoke-Stage4 {
             if (-not ($roles | Where-Object { $_.value -ceq $r.v })) { $roles += @{ id = [guid]::NewGuid().ToString(); value = $r.v; displayName = $r.n; description = $r.n; allowedMemberTypes = @('User'); isEnabled = $true } }
         }
         $hostName = "$($s1.names.apps.admin.functionApp).azurewebsites.net"
-        $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ identifierUris = (Join-StgUnique $adm.identifierUris @("api://$($adm.appId)")); appRoles = $roles
-            api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = $scope.scopes }
-            spa = @{ redirectUris = (Join-StgUnique $adm.spa.redirectUris @("https://$hostName/api/console", "https://$hostName/api/console-v3")) } }
+        $admRedirects = @("https://$hostName/api/console", "https://$hostName/api/console-v3")
+        $roleNames = @($adm.appRoles | Where-Object { $_.isEnabled } | ForEach-Object { $_.value })
+        if ((Test-StgHasAll $adm.identifierUris @("api://$($adm.appId)")) -and $adm.api.requestedAccessTokenVersion -eq 2 -and
+            @($adm.api.oauth2PermissionScopes | Where-Object { $_.value -ceq 'Projects.Manage' -and $_.isEnabled }).Count -eq 1 -and
+            (Test-StgHasAll $roleNames @('CCOF.Projects.Read', 'CCOF.Projects.Write')) -and (Test-StgHasAll $adm.spa.redirectUris $admRedirects)) {
+            Write-Host 'admin app: identifier URI, scope, app roles, v2 tokens, SPA redirects already set'
+        } else {
+            $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ identifierUris = (Join-StgUnique $adm.identifierUris @("api://$($adm.appId)")); appRoles = $roles
+                api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = $scope.scopes }
+                spa = @{ redirectUris = (Join-StgUnique $adm.spa.redirectUris $admRedirects) } }
+            $adm = Get-StgAppById $adm.appId
+            $scope = Set-StgScope $adm 'Projects.Manage' 'Admin' 'Manage CCOF projects'
+        }
         # ADMIN_ALLOWED_CLIENT_IDS also lists admin.extraAllowedClientIds (Staged.Application.ps1); without
         # preauthorization those clients cannot get a token without a consent prompt (AADSTS65001).
         $adminClients = @($adm.appId) + @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
-        $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $adm $adminClients $scope.id) } }
+        if (Test-StgPreauthorized $adm $adminClients $scope.id) { Write-Host 'admin app: clients already preauthorized' }
+        else { $null = Send-StgGraph 'patch' "applications/$($adm.id)" @{ api = @{ preAuthorizedApplications = (Merge-StgPreauthorized $adm $adminClients $scope.id) } } }
         $admSp = Get-StgServicePrincipal $adm.appId -Apply
-        $null = Send-StgGraph 'patch' "servicePrincipals/$($admSp.id)" @{ appRoleAssignmentRequired = $true }
+        if ($admSp.appRoleAssignmentRequired -eq $true) { Write-Host 'admin enterprise application: assignment already required' }
+        else { $null = Send-StgGraph 'patch' "servicePrincipals/$($admSp.id)" @{ appRoleAssignmentRequired = $true } }
         $adm = Get-StgAppById $adm.appId
         $assigned = @((Get-StgGraph "servicePrincipals/$($admSp.id)/appRoleAssignedTo").value)
         foreach ($pair in @(@{ ids = $e.adminEditors; role = 'CCOF.Projects.Write' }, @{ ids = $e.adminReaders; role = 'CCOF.Projects.Read' })) {

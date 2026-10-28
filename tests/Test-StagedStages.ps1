@@ -191,6 +191,56 @@ try { $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App '
 Assert-Contract ($script:pubBuilds -eq 1 -and @($script:pubCalls | Where-Object { $_ -match "^functionapp deployment source config-zip --subscription s --resource-group g --name adm --src " }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'Admin publishing with public access Enabled must build once and deploy once with config-zip.'
 $stage7Text = Get-Content -Raw (Join-Path $root 'infra\staged\Staged.Application.ps1'); $drText = Get-Content -Raw (Join-Path $root 'infra\dr\Invoke-DrStandby.ps1')
 Assert-Contract (([regex]::Matches($stage7Text + $drText, "'config-zip'")).Count -eq 1 -and ([regex]::Matches($stage7Text + $drText, 'Publish-StgAdminPackage ')).Count -ge 2) 'Stage 7 and the DR Code phase must publish the admin package only through Publish-StgAdminPackage.'
+# Stage 4 with existing registrations already configured by an Entra administrator (for example by hand
+# in the Portal): an operator who is not an owner can read but not write, so Stage 4 sends nothing.
+$cli = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
+function New-S4World {
+    $gwScope = '11111111-0000-4000-8000-000000000001'; $admScope = '11111111-0000-4000-8000-000000000002'
+    $w = @{
+        sends = [Collections.Generic.List[string]]::new()
+        apps = @{
+            gw = @{ id = 'o-gw'; appId = 'a-gw'; displayName = 'gw'; identifierUris = @('api://a-gw'); isFallbackPublicClient = $true
+                api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = @(@{ id = $gwScope; value = 'access_as_user'; type = 'Admin'; isEnabled = $true; adminConsentDisplayName = 'Portal text' })
+                    preAuthorizedApplications = @(@{ appId = 'a-gw'; delegatedPermissionIds = @($gwScope) }, @{ appId = $cli; delegatedPermissionIds = @($gwScope) }) }
+                publicClient = @{ redirectUris = @('ms-appx-web://microsoft.aad.brokerplugin/a-gw', 'http://localhost') } }
+            res = @{ id = 'o-res'; appId = 'a-res'; displayName = 'res'; identifierUris = @('api://a-res'); api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = @(); preAuthorizedApplications = @() } }
+            adm = @{ id = 'o-adm'; appId = 'a-adm'; displayName = 'adm'; identifierUris = @('api://a-adm')
+                appRoles = @(@{ id = 'r-read'; value = 'CCOF.Projects.Read'; isEnabled = $true; allowedMemberTypes = @('User') }, @{ id = 'r-write'; value = 'CCOF.Projects.Write'; isEnabled = $true; allowedMemberTypes = @('User') })
+                api = @{ requestedAccessTokenVersion = 2; oauth2PermissionScopes = @(@{ id = $admScope; value = 'Projects.Manage'; type = 'Admin'; isEnabled = $true })
+                    preAuthorizedApplications = @(@{ appId = 'a-adm'; delegatedPermissionIds = @($admScope) }, @{ appId = $cli; delegatedPermissionIds = @($admScope) }) }
+                spa = @{ redirectUris = @('https://lab-admin.azurewebsites.net/api/console', 'https://lab-admin.azurewebsites.net/api/console-v3') } }
+        }
+        sp = @{ 'a-gw' = @{ id = 'sp-gw'; appId = 'a-gw' }; 'a-res' = @{ id = 'sp-res'; appId = 'a-res' }; 'a-adm' = @{ id = 'sp-adm'; appId = 'a-adm'; appRoleAssignmentRequired = $true } }
+        assigned = @(@{ principalId = 'u-me'; appRoleId = 'r-write' })
+    }
+    return $w
+}
+$cfg4 = @{ entra = @{ existing = @{ gatewayAppId = 'a-gw'; resolverAppId = 'a-res'; adminAppId = 'a-adm' }; allowAzureCliClient = $true; adminEditors = @('@me'); adminReaders = @() }
+    stage1 = @{ includeAdmin = $true }; admin = @{ extraAllowedClientIds = @($cli) }
+    groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1'; members = @() }) }
+function Get-StgStage { param($Cfg, $N) @{ names = @{ apps = @{ admin = @{ functionApp = 'lab-admin' } } } } }
+function Write-StgEvidence { param($Name, $Value) $null }
+function Get-StgGraph { param([string]$Path)
+    if ($Path -like 'me*') { return @{ id = 'u-me' } }
+    if ($Path -match "^applications\?\`$filter=appId eq '([^']+)'") { $a = @($script:s4.apps.Values | Where-Object { $_.appId -eq $Matches[1] }); return @{ value = $a } }
+    if ($Path -match "^servicePrincipals\?\`$filter=appId eq '([^']+)'") { return @{ value = @($script:s4.sp[$Matches[1]]) } }
+    if ($Path -match '/appRoleAssignedTo$') { return @{ value = $script:s4.assigned } }
+    if ($Path -match '^groups/g-1/members') { return @{ value = @() } }
+    if ($Path -match '^groups/g-1') { return @{ id = 'g-1'; displayName = 'G1'; securityEnabled = $true } }
+    throw "unexpected graph read $Path" }
+function Send-StgGraph { param([string]$Method, [string]$Path, $Body) $script:s4.sends.Add("$Method $Path"); throw 'Authorization_RequestDenied (fake 403)' }
+$script:s4 = New-S4World
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($null -eq $s4err -and $script:s4.sends.Count -eq 0) "Stage 4 must send no Graph change when the existing registrations are already configured (a non-owner operator gets 403 on any write). sends: $($script:s4.sends -join '; ') error: $s4err"
+$script:s4 = New-S4World; $script:s4.apps.adm.spa.redirectUris = @('https://lab-admin.azurewebsites.net/api/console')
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($s4err -match 'fake 403' -and @($script:s4.sends) -contains 'patch applications/o-adm') 'Stage 4 must still update an existing registration that lacks a required setting (missing admin SPA redirect).'
+$script:s4 = New-S4World; $script:s4.apps.gw.api.preAuthorizedApplications = @(@{ appId = 'a-gw'; delegatedPermissionIds = @('11111111-0000-4000-8000-000000000001') })
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage 4 must preauthorize the Azure CLI on the gateway app when it is missing.'
+$script:s4 = New-S4World; $script:s4.sp['a-adm'].appRoleAssignmentRequired = $false
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract (@($script:s4.sends) -contains 'patch servicePrincipals/sp-adm') 'Stage 4 must require assignment on the admin enterprise application when it is off.'
 Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly
