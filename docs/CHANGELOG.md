@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-10-28 - Developer sign-in without an http://localhost redirect
+
+- New optional `entra.browserSignIn` (default `true`). With `false`, Step 4 requires only the Windows
+  broker redirect on the gateway app, and Step 7 writes `browserSignIn: false` into the client file;
+  `ccof-token login` then uses the Windows broker and, without it, device code instead of the browser
+  loopback. Default behaviour is unchanged. `https://localhost` does not replace `http://localhost`:
+  MSAL Node 7 listens only on `http://localhost:<port>` and refuses other redirect URIs outside the broker.
+  Client tests 61 (4 new), `tests/Test-StagedStages.ps1` 442, `tests/Test-QuickstartClient.ps1` 21;
+  six mutants caught. Docs: [deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) Step 4,
+  [user onboarding](runbooks/USER-ONBOARDING.md), [clients](CLIENTS.md).
 ## 2026-10-28 - Step 4 verifies registrations an Entra administrator configured
 
 - Staged Step 4 sends a Microsoft Graph change to an existing app registration or the admin enterprise

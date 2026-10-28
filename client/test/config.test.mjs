@@ -105,3 +105,10 @@ test('optional project profiles accept an explicit selector or explicit clearing
     assert.throws(() => validateConfig({ ...settings, project: value }), /configuration/i);
   }
 });
+
+test('browserSignIn is optional and must be a boolean', () => {
+  assert.equal(validateConfig({ ...settings, browserSignIn: false }).browserSignIn, false);
+  assert.equal(validateConfig({ ...settings, browserSignIn: true }).browserSignIn, true);
+  assert.equal(Object.hasOwn(validateConfig(structuredClone(settings)), 'browserSignIn'), false);
+  for (const bad of ['false', 0, null]) assert.throws(() => validateConfig({ ...settings, browserSignIn: bad }), /browserSignIn/);
+});

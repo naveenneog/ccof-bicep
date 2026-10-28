@@ -49,7 +49,9 @@ export function createTokenService(config, runtime, { now = Date.now } = {}) {
       }
       if (!result) {
         const browser = await runtime.getClient('browser');
-        result = await bounded(() => deviceCode
+        const useDeviceCode = deviceCode || config.browserSignIn === false;
+        if (useDeviceCode && !deviceCode) runtime.report?.('browser_sign_in_disabled_using_device_code');
+        result = await bounded(() => useDeviceCode
           ? browser.acquireTokenByDeviceCode({ scopes, deviceCodeCallback: onDeviceCode })
           : browser.acquireTokenInteractive({ scopes, openBrowser: runtime.openBrowser }),
         config.loginTimeoutSeconds);

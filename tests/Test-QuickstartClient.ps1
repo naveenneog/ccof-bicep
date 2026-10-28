@@ -36,6 +36,12 @@ try {
     $null=& node (Join-Path $root 'client\bin\validate-config.mjs') $out.onboardingJson
     Check 'export passes workstation strict client schema' ($LASTEXITCODE -eq 0)
     Check 'no policy, price, token or secret data exported' ((Get-Content $out.onboardingJson -Raw) -notmatch '"(?:familyPolicy|aggregateLimits|tokenQuota|price|secret|accessToken|classification)"')
+    Check 'browserSignIn is not written by default' (-not $config.ContainsKey('browserSignIn'))
+    $noBrowser=$p|ConvertTo-Json -Depth 40|ConvertFrom-Json -AsHashtable; $noBrowser.browserSignIn=$false
+    $ctxNo=@{P=$noBrowser;GeneratedDir=(Join-Path $work 'nobrowser');State=$ctx.State}; New-Item -ItemType Directory $ctxNo.GeneratedDir | Out-Null
+    $outNo=Invoke-QsClient $ctxNo
+    $cfgNo=Get-Content $outNo.clientConfig -Raw | ConvertFrom-Json -AsHashtable
+    Check 'browserSignIn false is written to the client file and passes the client schema' ($cfgNo.browserSignIn -eq $false)
     foreach($case in @('unknown-project','wrong-case','unknown-classification','unadmitted-alias','missing-deployment','missing-selection','unknown-client-field','invalid-workstation-schema')) {
         $copy=$p|ConvertTo-Json -Depth 40|ConvertFrom-Json -AsHashtable
         switch($case) {

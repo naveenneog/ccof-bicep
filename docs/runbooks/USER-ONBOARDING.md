@@ -131,7 +131,9 @@ node .\client\bin\ccof-token.mjs status
 ```
 
 Windows attempts WAM first; supported browser/PKCE loopback is the fallback. Device code is an
-explicit approved choice, not an automatic bypass of Conditional Access. `status` is local
+explicit approved choice, not an automatic bypass of Conditional Access. With `browserSignIn: false`
+in the client file (the gateway app has no `http://localhost` redirect), the fallback is device code
+instead of the browser: `ccof-token login` prints a code and the address to enter it. `status` is local
 state, not a live inference test.
 
 The command `ccof-token token` prints a credential for helper consumers. It is not a diagnostic

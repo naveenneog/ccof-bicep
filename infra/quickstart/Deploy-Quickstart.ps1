@@ -729,6 +729,8 @@ function Invoke-QsClient {
         desktop = [ordered]@{ profileId = [guid]::NewGuid().ToString(); profileName = 'Claude gateway (quick-start)' }
         project = [ordered]@{ id = $selection.projectId; selectorHeader = $p.gateway.projectHeaderName }
     }
+    # The gateway app has no http://localhost redirect: the client uses the Windows broker or device code.
+    if ($p -is [Collections.IDictionary] -and $p.Contains('browserSignIn') -and $p.browserSignIn -eq $false) { $config.browserSignIn = $false }
     $candidate=Join-Path $Ctx.GeneratedDir '.env.client-config.pending.json'
     try {
         $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $candidate -Encoding utf8NoBOM

@@ -706,6 +706,15 @@ The admin app's host name is `<admin Function App>.azurewebsites.net`, from Step
 4. **Authentication** > **Add a platform** > **Mobile and desktop applications** > custom redirect URIs
    `http://localhost` and `ms-appx-web://microsoft.aad.brokerplugin/<application (client) ID>`.
    **Allow public client flows**: Yes. **Save**.
+
+   `http://localhost` is the client's browser sign-in. The sign-in library (MSAL Node 7) listens only
+   on `http://localhost:<port>` and accepts no other redirect URI outside the Windows broker
+   (`client/node_modules/@azure/msal-node`, `LoopbackClient` and `NodeAuthError`), so `https://localhost`
+   does not replace it ([redirect URI rules](https://learn.microsoft.com/entra/identity-platform/reply-url):
+   `http` is accepted for `localhost` only). When an organization does not allow `http://localhost`,
+   set `entra.browserSignIn: false`: Step 4 then requires only the broker redirect, and Step 7 writes
+   `browserSignIn: false` into the client file, so `ccof-token login` uses the Windows broker and,
+   without it (macOS, Linux, or no broker), device code. Device code must be allowed by Conditional Access.
 5. **Manifest**: `"requestedAccessTokenVersion": 2` under `api` (in the AAD Graph manifest:
    `"accessTokenAcceptedVersion": 2`). **Save**.
 

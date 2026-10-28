@@ -84,6 +84,7 @@ depend on the terminal environment.
 | `models.capabilities` | Optional documented capability string per pinned alias |
 | `desktop.profileId`, `profileName` | Stable profile GUID and non-personal display label |
 | `project` | Optional C-1 selector: `{id, selectorHeader}`; explicit `id: null` clears that header |
+| `browserSignIn` | Optional boolean, default `true`. `false` when the gateway app has no `http://localhost` redirect: without the Windows broker, `ccof-token login` uses device code instead of the browser loopback |
 
 The pilot example uses a five-minute helper TTL and a six-minute minimum remaining
 lifetime. These are explicit answers, not a claim that every Entra token lives an
