@@ -241,6 +241,17 @@ Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage
 $script:s4 = New-S4World; $script:s4.sp['a-adm'].appRoleAssignmentRequired = $false
 $s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
 Assert-Contract (@($script:s4.sends) -contains 'patch servicePrincipals/sp-adm') 'Stage 4 must require assignment on the admin enterprise application when it is off.'
+# entra.browserSignIn false: the organization does not allow http://localhost on the gateway app.
+$script:s4 = New-S4World; $script:s4.apps.gw.publicClient.redirectUris = @('ms-appx-web://microsoft.aad.brokerplugin/a-gw', 'https://localhost')
+$cfgNoLoopback = $cfg4.Clone(); $cfgNoLoopback.entra = $cfg4.entra.Clone(); $cfgNoLoopback.entra.browserSignIn = $false
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgNoLoopback -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($null -eq $s4err -and $script:s4.sends.Count -eq 0) "Stage 4 with entra.browserSignIn false must not require http://localhost on the gateway app. sends: $($script:s4.sends -join '; ') error: $s4err"
+$script:s4 = New-S4World; $script:s4.apps.gw.publicClient.redirectUris = @('ms-appx-web://microsoft.aad.brokerplugin/a-gw', 'https://localhost')
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfg4 -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage 4 by default must still require http://localhost on the gateway app (https://localhost does not match the client loopback).'
+$script:s4 = New-S4World; $script:s4.apps.gw.publicClient.redirectUris = @('https://localhost')
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgNoLoopback -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage 4 with entra.browserSignIn false must still require the Windows broker redirect.'
 Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly
@@ -293,6 +304,15 @@ try {
     $zrWarnings = $null; $read = Read-StgConfig $tmp -WarningVariable zrWarnings -WarningAction SilentlyContinue
     Assert-Contract ($read.stage1.apimZoneRedundant -eq $true -and -not @($zrWarnings | Where-Object { "$_" -match 'apimZoneRedundant' }).Count) 'Zone redundancy with two units must be accepted without a warning.'
     $c.stage1.apimZoneRedundant = $false; $c.stage1.apimUnits = 1
+    $c.entra.browserSignIn = 'no'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'entra\.browserSignIn must be true or false' }
+    Assert-Contract $bad 'A non-boolean entra.browserSignIn must be refused.'
+    $c.entra.browserSignIn = $false
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.entra.browserSignIn -eq $false -and (Get-Command Get-StgQuickstartParameters) ) 'entra.browserSignIn false must be accepted.'
+    $c.entra.Remove('browserSignIn')
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $read = Read-StgConfig $tmp
     $c.reconciler.continuityGate = 'on'

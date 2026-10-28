@@ -6,7 +6,9 @@ $boundary = $text.IndexOf("`n---`n`n<!-- ADMIN-HAND-CONFIG-APPENDIX-START -->", 
 if ($boundary -lt 0) { throw 'Append-only admin boundary is missing.' }
 $original = $text.Substring(0, $boundary)
 $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($original))).ToLowerInvariant()
-if ($digest -cne 'fb87965cc53372171951594e458dc83c3cfd1ff22a6b5fc13ea68f91bb8b5147') {
+# Changed 2026-10-28 only by the hand-copy client sources (src/config.mjs, src/token-service.mjs: browserSignIn),
+# which tests/manual-guide.test.ts keeps equal to client/.
+if ($digest -cne 'd89c2dda6e168b3a6942a9d5e6239d4542dfbf406685e782360f24bc744d4290') {
     throw 'Original workbook changed. Modules 00-16 and the existing Step 13 must remain untouched.'
 }
 $appendix = $text.Substring($boundary)

@@ -227,3 +227,29 @@ test('unexpected MSAL or cache errors never echo secrets or personal data', asyn
   assert.match(stderr, /ccof-token login/);
   assert.ok(!/synthetic-credential|personal-name/.test(stderr));
 });
+
+test('browserSignIn false: without a broker, login uses device code instead of the localhost browser flow', async () => {
+  const shown = [];
+  const f = fixture({ broker: false });
+  const service = createTokenService({ ...config, browserSignIn: false }, f.runtime, { now: () => now });
+  await service.login({ onDeviceCode: (response) => shown.push(response) });
+  assert.ok(f.calls.some((call) => call[0] === 'browser' && call[1] === 'device'));
+  assert.ok(!f.calls.some((call) => call[1] === 'interactive'));
+  assert.equal(f.state().mode, 'browser');
+});
+
+test('browserSignIn false: a broker failure falls back to device code, not the localhost browser flow', async () => {
+  const f = fixture({ failure: { broker: Object.assign(new Error('hidden'), { errorCode: 'broker_unavailable' }) } });
+  const service = createTokenService({ ...config, browserSignIn: false }, f.runtime, { now: () => now });
+  await service.login({});
+  assert.deepEqual(f.calls.filter((call) => call[1] === 'interactive').map((call) => call[0]), ['broker']);
+  assert.ok(f.calls.some((call) => call[0] === 'browser' && call[1] === 'device'));
+});
+
+test('browserSignIn false keeps the Windows broker as the first choice', async () => {
+  const f = fixture();
+  const service = createTokenService({ ...config, browserSignIn: false }, f.runtime, { now: () => now });
+  const value = await service.login({});
+  assert.equal(value.method, 'broker');
+  assert.ok(!f.calls.some((call) => call[1] === 'device'));
+});

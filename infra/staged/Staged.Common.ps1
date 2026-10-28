@@ -153,6 +153,7 @@ function Read-StgConfig {
         $(if (-not $existingApps.resolverAppId) { $c.entra.resolverAppDisplayName })
         $(if (-not $existingApps.adminAppId) { $c.entra.adminAppDisplayName })) + @($c.groups | Where-Object { -not $_.groupId } | ForEach-Object { $_.groupDisplayName })
     foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { if ($existingApps[$k] -and $existingApps[$k] -notmatch $script:Guid) { $problems.Add("entra.existing.$k must be a GUID") } }
+    if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('browserSignIn') -and $c.entra.browserSignIn -isnot [bool]) { $problems.Add('entra.browserSignIn must be true or false') }
     foreach ($n in @($entraNames | Where-Object { $_ })) { if ($n -notmatch '^[A-Za-z0-9 ._-]{1,120}$') { $problems.Add("Entra display name '$n' may hold only letters, digits, space . _ -") } }
     $fd = $c.stage1.foundry
     if ($fd -and $fd.create) {
@@ -579,7 +580,7 @@ function Get-StgQuickstartParameters {
         registrations = $entra.registrations; backends = @($Cfg.backends); cosmos = $Cfg.cosmos
         resolver = $Cfg.resolver; sync = $Cfg.sync; reconciler = $Cfg.reconciler; budgetState = $Cfg.budgetState
         gateway = $Cfg.gateway; rateCard = $rate; workbook = $Cfg.workbook; runner = @{ enabled = $false }
-        logRetentionDays = $Cfg.stage1.retentionInDays
+        logRetentionDays = $Cfg.stage1.retentionInDays; browserSignIn = ($Cfg.entra.browserSignIn -ne $false)
     }
 }
 

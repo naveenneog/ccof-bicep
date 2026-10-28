@@ -70,7 +70,7 @@ function Invoke-Stage4 {
     $res = Resolve-StgApp $Cfg 'resolver' -Apply:$Apply
     $adm = if ($Cfg.stage1.includeAdmin) { Resolve-StgApp $Cfg 'admin' -Apply:$Apply }
     if (-not $Apply) {
-        Write-Host ('preview: gateway app: api://<appId>, access_as_user, v2 tokens, public client (localhost, WAM), self preauthorized' + $(if ($e.allowAzureCliClient) { ' and Azure CLI' } else { '' }))
+        Write-Host ('preview: gateway app: api://<appId>, access_as_user, v2 tokens, public client (' + $(if ($e.browserSignIn -ne $false) { 'localhost, WAM' } else { 'WAM only; entra.browserSignIn false' }) + '), self preauthorized' + $(if ($e.allowAzureCliClient) { ' and Azure CLI' } else { '' }))
         Write-Host 'preview: resolver app: api://<appId>, v2 tokens, no redirects or secrets'
         if ($Cfg.stage1.includeAdmin) { Write-Host ('preview: admin app: Projects.Manage scope, CCOF.Projects.Read/Write roles, SPA redirects /api/console and /api/console-v3, assignment required, self preauthorized' + $(if (@($Cfg.admin.extraAllowedClientIds).Count) { " and $(@($Cfg.admin.extraAllowedClientIds) -join ', ')" } else { '' })) }
         foreach ($g in $Cfg.groups) { Write-Host "preview: group $($g.projectId)/$($g.classification): $(if ($g.groupId) { "use $($g.groupId)" } else { "create or reuse '$($g.groupDisplayName)'" }), members $(@($g.members) -join ',')" }
@@ -81,7 +81,7 @@ function Invoke-Stage4 {
     $clients = @($gw.appId) + $(if ($e.allowAzureCliClient) { @($script:AzureCliClientId) } else { @() })
     # Each change is sent only when a required setting is missing, so registrations an Entra administrator
     # has configured (for example by hand in the Portal) are verified by an operator who cannot write them.
-    $gwRedirects = @('http://localhost', "ms-appx-web://microsoft.aad.brokerplugin/$($gw.appId)")
+    $gwRedirects = @("ms-appx-web://microsoft.aad.brokerplugin/$($gw.appId)") + $(if ($e.browserSignIn -ne $false) { @('http://localhost') } else { @() })
     $gwExisting = @($gw.api.oauth2PermissionScopes | Where-Object { $_.value -ceq 'access_as_user' -and $_.isEnabled })
     if ((Test-StgHasAll $gw.identifierUris @("api://$($gw.appId)")) -and $gw.isFallbackPublicClient -eq $true -and $gw.api.requestedAccessTokenVersion -eq 2 -and
         $gwExisting.Count -eq 1 -and (Test-StgHasAll $gw.publicClient.redirectUris $gwRedirects)) { Write-Host 'gateway app: identifier URI, scope, v2 tokens, public client redirects already set' }

@@ -2332,7 +2332,7 @@ function invalid(field) {
 }
 
 export function validateConfig(value) {
-  if (!object(value) || Object.keys(value).some((key) => !keys.includes(key) && key !== 'project')) invalid('keys');
+  if (!object(value) || Object.keys(value).some((key) => !keys.includes(key) && !['project', 'browserSignIn'].includes(key))) invalid('keys');
   for (const key of keys) if (!Object.hasOwn(value, key)) invalid(key);
   if (value.schemaVersion !== 1) invalid('schemaVersion');
   if (!guid.test(value.tenantId ?? '') || !guid.test(value.clientId ?? '')) invalid('tenantId/clientId');
@@ -2380,6 +2380,9 @@ export function validateConfig(value) {
         typeof project.selectorHeader !== 'string' || !/^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(project.selectorHeader) ||
         reserved.includes(project.selectorHeader.toLowerCase())) invalid('project');
   }
+  // Optional. false: the gateway app has no http://localhost redirect, so without the Windows broker
+  // ccof-token login uses device code (MSAL Node's browser flow listens only on http://localhost).
+  if (Object.hasOwn(value, 'browserSignIn') && typeof value.browserSignIn !== 'boolean') invalid('browserSignIn');
   return { ...value, gatewayUrl: gateway.toString().replace(/\/+$/, '') };
 }
 
@@ -2715,7 +2718,9 @@ export function createTokenService(config, runtime, { now = Date.now } = {}) {
       }
       if (!result) {
         const browser = await runtime.getClient('browser');
-        result = await bounded(() => deviceCode
+        const useDeviceCode = deviceCode || config.browserSignIn === false;
+        if (useDeviceCode && !deviceCode) runtime.report?.('browser_sign_in_disabled_using_device_code');
+        result = await bounded(() => useDeviceCode
           ? browser.acquireTokenByDeviceCode({ scopes, deviceCodeCallback: onDeviceCode })
           : browser.acquireTokenInteractive({ scopes, openBrowser: runtime.openBrowser }),
         config.loginTimeoutSeconds);
