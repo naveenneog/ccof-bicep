@@ -164,6 +164,30 @@ causes refusal; setup does not remove organizational policy. Fully quit/reopen D
 the exported profile in **Settings > Connection** (or the build's Third-Party Inference screen).
 Credentials are access tokens, not OIDC ID tokens.
 
+#### Azure CLI token route (no Node.js or `ccof-token` on the laptop)
+
+When the gateway app preauthorizes the Azure CLI and APIM lists it as an allowed client (staged
+`entra.allowAzureCliClient: true`), both setup scripts accept `-TokenSource AzureCli`:
+
+```powershell
+pwsh -NoProfile -File .\scripts\client\Set-ClaudeCodeGateway.ps1 -ConfigPath $config -TokenSource AzureCli -Confirmed
+pwsh -NoProfile -File .\scripts\client\Set-ClaudeDesktopGateway.ps1 -ConfigPath $config -TokenSource AzureCli -Confirmed
+```
+
+The helper they write is `az-gateway-token.cmd`
+([`docs/examples/az-gateway-token-auto-login.cmd`](../examples/az-gateway-token-auto-login.cmd) with the
+tenant and gateway scope from `config.json`). It returns a cached or refreshed Azure CLI token for
+the gateway scope; when none is available it starts one Azure CLI sign-in (`az login --tenant ... --scope ...`),
+which on Windows uses the Web Account Manager broker. Claude Code and the VS Code extension call it
+through `apiKeyHelper`; Desktop runs it as its helper-script credential, with a 300-second timeout so the
+sign-in can finish. The laptop needs the Azure CLI on `PATH` and PowerShell 7 for this one-time setup;
+Node.js is used only to inspect the Desktop bundle when it is present (otherwise the documented
+helper-script keys are written and a warning asks the user to check the profile in Desktop).
+
+Lab check, 2026-10-28: the generated helper returned a gateway token through the Azure CLI, and Claude
+Code 2.1.272 answered through APIM with it. Claude Desktop with this helper and the first interactive
+sign-in on a user laptop were not run in the lab.
+
 ### D. Acceptance
 
 ```powershell

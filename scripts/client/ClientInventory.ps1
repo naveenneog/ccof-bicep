@@ -72,6 +72,16 @@ function Get-CcofInstalledDesktopSchema {
     return @{ keys = $keys; credentialKinds = $kinds }
 }
 
+# The helper-script profile keys documented for Desktop's third-party inference profiles; used only
+# when Node.js is unavailable to inspect the installed bundle (Set-ClaudeDesktopGateway.ps1 -TokenSource AzureCli).
+function Get-CcofKnownDesktopHelperSchema {
+    return @{ credentialKinds = @('helper-script')
+        keys = @('inferenceProvider', 'inferenceGatewayBaseUrl', 'inferenceGatewayAuthScheme', 'inferenceModels',
+            'inferenceCredentialKind', 'inferenceCredentialHelper', 'inferenceCredentialHelperArgs',
+            'inferenceCredentialHelperTtlSec', 'inferenceCredentialHelperTimeoutSec',
+            'inferenceCredentialHelperSilentRefreshEnabled', 'inferenceCustomHeaders') }
+}
+
 function Assert-NoCcofManagedDesktopPolicy {
     if ([Environment]::OSVersion.Platform -ne 'Win32NT') { return }
     foreach ($key in @('HKLM:\SOFTWARE\Policies\Claude', 'HKCU:\SOFTWARE\Policies\Claude')) {

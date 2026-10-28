@@ -5,6 +5,7 @@ $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Pare
 . (Join-Path $repo 'scripts/client/ClaudeCodeGateway.ps1')
 . (Join-Path $repo 'scripts/client/ClaudeDesktopGateway.ps1')
 . (Join-Path $repo 'scripts/client/DeveloperSignInRedirects.ps1')
+. (Join-Path $repo 'scripts/client/ClientInventory.ps1')
 
 $work = Join-Path $repo ('client/.test-work/scripts-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($work)
@@ -459,6 +460,53 @@ try {
             Refuses { Merge-CcofProjectHeaders -Sources @($source) -Project $project } 'headers|credential'
         }
         Refuses { Merge-CcofProjectHeaders -Sources @('X-Other: one', 'X-Other: two') -Project $project } 'conflict'
+    }
+    # ---- Azure CLI token route (-TokenSource AzureCli): no Node.js, helper is the auto-sign-in CMD
+    $azWork = Join-Path $work 'azcli'
+    $azHome = Join-Path $azWork '.claude'; $azVs = Join-Path $azWork 'code/settings.json'; $azLib = Join-Path $azWork 'Claude-3p/configLibrary'
+    Test-Case 'Azure CLI route: config is read without Node.js and refuses a scope cmd.exe would re-parse' {
+        $loaded = Read-ClientConfigurationBasic $configPath
+        Assert ($loaded.tenantId -ceq $config.tenantId) 'basic reader lost the tenant'
+        Assert ((Get-ClientAzureCliScope $loaded) -ceq $config.scope) 'api:// scope must pass unchanged'
+        Assert ((Get-ClientAzureCliScope @{ scope = '33333333-3333-4333-8333-333333333333/access_as_user' }) -ceq 'api://33333333-3333-4333-8333-333333333333/access_as_user') 'GUID scope must become an identifier URI'
+        Refuses { Get-ClientAzureCliScope @{ scope = 'api://x/a&calc' } } 'Azure CLI helper'
+        $badPath = Join-Path $work 'bad.json'; $badCfg = $config.Clone(); $badCfg.gatewayUrl = 'http://gateway.example.test/anthropic'; Write-ClientJson $badPath $badCfg
+        Refuses { Read-ClientConfigurationBasic $badPath } 'invalid'
+    }
+    Test-Case 'Azure CLI route: Claude Code and VS Code use the filled auto-sign-in CMD, not ccof-token' {
+        $r = Set-CcofClaudeCode -ConfigPath $configPath -ClaudeHome $azHome -VSCodeSettingsPath $azVs -BackupRoot (Join-Path $azWork 'backups') `
+            -Inventory $inventory -NodePath '' -TokenEntryPath '' -TokenSource AzureCli -Confirmed | ConvertFrom-Json
+        Assert ($r.event -ceq 'configured' -and $r.tokenSource -ceq 'AzureCli') 'not configured'
+        $s = Read-ClientJson (Join-Path $azHome 'settings.json')
+        $helper = Join-Path $azHome 'az-gateway-token.cmd'
+        Assert ($s.apiKeyHelper -ceq "`"$helper`"") "apiKeyHelper $($s.apiKeyHelper)"
+        $cmd = [IO.File]::ReadAllText($helper)
+        Assert ($cmd -cmatch "set `"TENANT=$($config.tenantId)`"" -and $cmd -cmatch [regex]::Escape("set `"SCOPE=$($config.scope)`"")) 'tenant/scope not filled'
+        Assert ($cmd -notmatch 'REPLACE-tenant-guid|REPLACE-gateway-app-client-guid|ccof-token') 'placeholder or ccof-token left in the helper'
+        Assert ($cmd -match 'az\.cmd login --tenant' -and $cmd.Contains("`r`n")) 'not the auto-sign-in CMD with CRLF'
+        Assert ($s.env.ANTHROPIC_BASE_URL -ceq $config.gatewayUrl) 'gateway URL missing'
+        $vs = Read-ClientJson $azVs
+        Assert (@($vs['claudeCode.environmentVariables'] | Where-Object { $_.name -ceq 'ANTHROPIC_BASE_URL' }).Count -eq 1) 'VS Code env not set'
+    }
+    Test-Case 'Azure CLI route: Desktop uses helper-script with the CMD even when external-idp is available' {
+        $schemaAll = @{ credentialKinds = @('helper-script', 'external-idp'); keys = @((Get-CcofKnownDesktopHelperSchema).keys) + @('inferenceIdpOidc', 'inferenceIdpAuthFlow') }
+        $r = Set-CcofClaudeDesktop -ConfigPath $configPath -LibraryPath $azLib -BackupRoot (Join-Path $azWork 'backups-d') -Inventory $inventory `
+            -Schema $schemaAll -NodePath '' -TokenEntryPath '' -TokenSource AzureCli -Confirmed | ConvertFrom-Json
+        Assert ($r.credentialKind -ceq 'helper-script' -and $r.tokenSource -ceq 'AzureCli') "kind $($r.credentialKind)"
+        $p = Read-ClientJson (Join-Path $azLib "$($config.desktop.profileId).json")
+        $helper = Join-Path (Split-Path $azLib -Parent) 'az-gateway-token.cmd'
+        Assert ($p.inferenceCredentialHelper -ceq $helper -and $p.inferenceCredentialHelperArgs -is [array] -and @($p.inferenceCredentialHelperArgs).Count -eq 0) 'helper path/args'
+        Assert ($p.inferenceCredentialHelperTimeoutSec -eq 300 -and $p.inferenceCredentialHelperTimeoutSec -le 600) 'timeout for interactive sign-in'
+        Assert ((Test-Path $helper) -and ([IO.File]::ReadAllText($helper)) -match 'az\.cmd account get-access-token') 'helper not written'
+    }
+    Test-Case 'Azure CLI route: the known helper schema covers every key the Desktop profile writes' {
+        $schemaKnown = Get-CcofKnownDesktopHelperSchema
+        $prof = New-CcofDesktopProfile (Read-ClientConfigurationBasic $configPath) $schemaKnown 'C:\x\az-gateway-token.cmd' -AzureCli
+        Assert ($prof.inferenceCredentialKind -ceq 'helper-script') 'kind'
+    }
+    Test-Case 'Helper route unchanged: Desktop keeps ccof-token helper args and timeout' {
+        $prof = New-CcofDesktopProfile (Read-ClientConfigurationBasic $configPath) (Get-CcofKnownDesktopHelperSchema) 'C:\x\ccof-token.cmd'
+        Assert (@($prof.inferenceCredentialHelperArgs) -ceq 'token' -and $prof.inferenceCredentialHelperTimeoutSec -eq 90) 'helper route changed'
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
