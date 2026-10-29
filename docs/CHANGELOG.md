@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-10-29 - Front Door in front of the primary region before region B exists
+
+- `infra/dr/Invoke-DrFrontDoor.ps1 -PrimaryOnly` deploys, approves and verifies Front Door Premium with
+  region A's APIM and admin origins only, so users can be given the permanent Front Door host before
+  the DR standby region is built. Before: the driver stopped when region B's state was missing.
+- Profile, endpoint, origin group, route, WAF and security policy names depend on `frontDoor.stem`
+  only, so a later run without `-PrimaryOnly` adds region B's origins behind the same host.
+  `Approve` and `Verify` expect two connections in this mode and four otherwise; `frontdoor-state.json`
+  records the mode, and a mode change clears earlier approvals and verification.
+- `Lockdown`, `DrainPrimary` and `RestorePrimary` refuse `-PrimaryOnly` and a primary-only state.
+  Without the switch, parameters and validation are unchanged. Offline tests only; no Azure call.
+  [Runbook](runbooks/DR-FRONT-DOOR.md#5-primary-region-first).
+
 ## 2026-10-29 - Stage 5 omits null optional admin gateway IDs
 
 - An omitted `admin.gatewayResourceIds` became `[null]` in the generated parameters because

@@ -8,13 +8,19 @@
   -Phase Verify    Read back Front Door origins, APIM connections, and gateway/admin routes through the FD hostname.
   -Phase Lockdown  After Verify passes, disable direct public access to both APIM origins.
 
+  -PrimaryOnly     Before region B exists: Deploy, Approve and Verify region A's APIM and admin origins
+                   only. Region B's origins are added later by the same phases without -PrimaryOnly;
+                   the profile, endpoint and host name stay the same. Lockdown and the drill phases
+                   refuse to run in this mode.
+
   Each phase is idempotent and stores its result in standby.stateDirectory/frontdoor-state.json.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [ValidateSet('Deploy', 'Approve', 'Verify', 'Lockdown', 'DrainPrimary', 'RestorePrimary')] [string]$Phase,
     [Parameter(Mandatory)] [string]$ConfigPath,
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$PrimaryOnly
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -46,12 +52,14 @@ function Get-FdState {
     return Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
 }
 
+Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
+Import-Module (Join-Path $here 'DrStandby.psm1') -Force
+$phaseProblem = Get-DrFrontDoorPhaseProblem -Phase $Phase -PrimaryOnly:$PrimaryOnly -State $null
+if ($phaseProblem) { Stop-Dr $phaseProblem }
 if (-not (Test-Path -LiteralPath $ConfigPath)) { Stop-Dr "No DR config at $ConfigPath." }
 $drPath = (Resolve-Path -LiteralPath $ConfigPath).Path
 $dr = Get-Content -LiteralPath $drPath -Raw | ConvertFrom-Json
-Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
-Import-Module (Join-Path $here 'DrStandby.psm1') -Force
-$problems = @(Get-DrConfigProblems $dr) + @(Get-DrStandbyProblems $dr)
+$problems = @(if ($PrimaryOnly) { Get-DrFrontDoorPrimaryOnlyProblems $dr } else { @(Get-DrConfigProblems $dr) + @(Get-DrStandbyProblems $dr) })
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" }
 if (-not $dr.PSObject.Properties['frontDoor'] -or -not $dr.frontDoor.stem -or "$($dr.frontDoor.stem)" -match '^REPLACE') {
     Stop-Dr 'Configuration refused: frontDoor.stem is required and must be a globally unique Azure Front Door endpoint prefix.'
@@ -67,43 +75,61 @@ $primaryStateDir = if ([IO.Path]::IsPathRooted([string]$dr.standby.stagedStateDi
 $primaryStatePath = Join-Path $primaryStateDir 'state.json'
 $standbyStateDir = if ([IO.Path]::IsPathRooted([string]$dr.standby.stateDirectory)) { [string]$dr.standby.stateDirectory } else { Join-Path (Split-Path $drPath -Parent) $dr.standby.stateDirectory }
 $standbyStageState = Join-Path $standbyStateDir 'state.json'
-foreach ($p in $primaryConfigPath, $primaryStatePath, $standbyStageState) { if (-not (Test-Path -LiteralPath $p)) { Stop-Dr "Required state/config missing: $p" } }
+$requiredPaths = if ($PrimaryOnly) { @($primaryConfigPath, $primaryStatePath) } else { @($primaryConfigPath, $primaryStatePath, $standbyStageState) }
+foreach ($p in $requiredPaths) { if (-not (Test-Path -LiteralPath $p)) { Stop-Dr "Required state/config missing: $p" } }
+if ($PrimaryOnly) { New-Item -ItemType Directory -Force -Path $standbyStateDir | Out-Null }
 $statePath = Join-Path $standbyStateDir 'frontdoor-state.json'
+$phaseProblem = Get-DrFrontDoorPhaseProblem -Phase $Phase -PrimaryOnly:$PrimaryOnly -State (Get-FdState)
+if ($phaseProblem) { Stop-Dr $phaseProblem 3 }
+$fdMode = Get-DrFrontDoorMode -PrimaryOnly:$PrimaryOnly
+$expectedConnections = Get-DrFrontDoorExpectedConnections -PrimaryOnly:$PrimaryOnly
 $primaryCfg = Get-Content -LiteralPath $primaryConfigPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
 $primaryState = Get-Content -LiteralPath $primaryStatePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
-$standbyState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
 $a = $primaryState.stages['1'].outputs
-$b = $standbyState.stages['1'].outputs
 $sub = [string]$primaryCfg.subscriptionId
 $rg = [string]$primaryCfg.resourceGroup
-$apimIds = @(Get-DrGatewayResourceIds -PrimaryApimId ([string]$a.apimId) -StandbyApimId ([string]$b.apimId))
 $aHost = ([uri]$a.apimGatewayUrl).Host
-$bHost = ([uri]$b.apimGatewayUrl).Host
 $aAdmin = [string]$a.names.apps.admin.functionApp
-$bAdmin = [string]$b.names.apps.admin.functionApp
-if (-not $aAdmin -or -not $bAdmin) { Stop-Dr 'Front Door admin origins require an admin Function App in both regions.' }
-$aAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $aAdmin)
-$bAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $bAdmin)
 $fdTags = @{}
-foreach ($tag in $dr.tags.PSObject.Properties) { $fdTags[$tag.Name] = [string]$tag.Value }
-
-$parameters = New-DrFrontDoorParameters -Stem $profileStem `
-    -PrimaryApimId $a.apimId -PrimaryApimHost $aHost -PrimaryApimLocation ([string]$dr.primary.location) `
-    -StandbyApimId $b.apimId -StandbyApimHost $bHost -StandbyApimLocation ([string]$dr.secondary.location) `
-    -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location) `
-    -StandbyAdminSiteId $bAdminSite.id -StandbyAdminHost $bAdminSite.properties.defaultHostName -StandbyAdminLocation ([string]$dr.secondary.location) `
-    -WafMode $(if ($dr.frontDoor.wafMode) { [string]$dr.frontDoor.wafMode } else { 'Detection' }) `
-    -ProbeIntervalSeconds $(if ($dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 }) `
-    -DisablePrimaryOrigins:$false -DisablePrimaryAdminOrigins:$false -SimulatePrimaryFailure:($Phase -eq 'DrainPrimary') -Tags $fdTags
+if ($dr.PSObject.Properties['tags'] -and $dr.tags) { foreach ($tag in $dr.tags.PSObject.Properties) { $fdTags[$tag.Name] = [string]$tag.Value } }
+$originArgs = @{
+    Stem = $profileStem
+    PrimaryApimId = $a.apimId; PrimaryApimHost = $aHost; PrimaryApimLocation = ([string]$dr.primary.location)
+    WafMode = $(if ($dr.frontDoor.PSObject.Properties['wafMode'] -and $dr.frontDoor.wafMode) { [string]$dr.frontDoor.wafMode } else { 'Detection' })
+    ProbeIntervalSeconds = $(if ($dr.frontDoor.PSObject.Properties['probeIntervalSeconds'] -and $dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 })
+    DisablePrimaryOrigins = $false; DisablePrimaryAdminOrigins = $false; SimulatePrimaryFailure = ($Phase -eq 'DrainPrimary'); Tags = $fdTags
+}
+if ($PrimaryOnly) {
+    if (-not $aAdmin) { Stop-Dr 'Front Door admin origin requires an admin Function App in region A.' }
+    $aAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $aAdmin)
+    $apimIds = @([string]$a.apimId)
+    $adminSiteIds = @([string]$aAdminSite.id)
+    $parameters = New-DrFrontDoorParameters @originArgs -PrimaryOnly `
+        -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location)
+} else {
+    $standbyState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    $b = $standbyState.stages['1'].outputs
+    $apimIds = @(Get-DrGatewayResourceIds -PrimaryApimId ([string]$a.apimId) -StandbyApimId ([string]$b.apimId))
+    $bHost = ([uri]$b.apimGatewayUrl).Host
+    $bAdmin = [string]$b.names.apps.admin.functionApp
+    if (-not $aAdmin -or -not $bAdmin) { Stop-Dr 'Front Door admin origins require an admin Function App in both regions.' }
+    $aAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $aAdmin)
+    $bAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $bAdmin)
+    $adminSiteIds = @($aAdminSite.id, $bAdminSite.id)
+    $parameters = New-DrFrontDoorParameters @originArgs `
+        -StandbyApimId $b.apimId -StandbyApimHost $bHost -StandbyApimLocation ([string]$dr.secondary.location) `
+        -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location) `
+        -StandbyAdminSiteId $bAdminSite.id -StandbyAdminHost $bAdminSite.properties.defaultHostName -StandbyAdminLocation ([string]$dr.secondary.location)
+}
 
 $mode = if ($Apply) { 'apply' } else { 'preview' }
-Write-Host "== Front Door $Phase ($mode), profile $profileStem, resource group $rg"
+Write-Host "== Front Door $Phase ($mode, $fdMode), profile $profileStem, resource group $rg"
 
 switch ($Phase) {
         { $_ -in 'Deploy', 'DrainPrimary', 'RestorePrimary' } {
             if ($Phase -eq 'DrainPrimary') {
                 $state = Get-FdState
-                if (-not $state -or -not $state.verifiedAt) { Stop-Dr 'frontdoor_verify_required: verify both Front Door routes before draining the primary.' 3 }
+                if (-not $state -or -not (Get-DrValue $state 'verifiedAt')) { Stop-Dr 'frontdoor_verify_required: verify both Front Door routes before draining the primary.' 3 }
             }
         $parameterFile = Join-Path $standbyStateDir 'frontdoor.parameters.json'
         $doc = [ordered]@{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = [ordered]@{} }
@@ -123,9 +149,10 @@ switch ($Phase) {
         $out = @{}; foreach ($k in $deployment.properties.outputs.Keys) { $out[$k] = $deployment.properties.outputs[$k].value }
         $state = Get-FdState
         if (-not $state) { $state = @{} }
+        $state = Set-DrFrontDoorStateMode -State $state -Mode $fdMode
         $state.stem = $profileStem; $state.subscriptionId = $sub; $state.resourceGroup = $rg
         $state.profileName = $out.profileName; $state.profileId = $out.profileId; $state.endpointHostName = $out.endpointHostName
-        $state.apimIds = $apimIds; $state.adminSiteIds = @($aAdminSite.id, $bAdminSite.id)
+        $state.apimIds = $apimIds; $state.adminSiteIds = $adminSiteIds
         $state.deployedAt = [DateTime]::UtcNow.ToString('o'); $state.outputs = $out
         if ($Phase -eq 'DrainPrimary') { $state.primaryDrainedAt = [DateTime]::UtcNow.ToString('o') }
         if ($Phase -eq 'RestorePrimary') { $state.primaryRestoredAt = [DateTime]::UtcNow.ToString('o') }
@@ -157,14 +184,14 @@ switch ($Phase) {
             }
         }
         if (-not $Apply) { Write-Host "Preview only: $($pending.Count) approvals pending; run -Phase Approve -Apply after confirming names."; return }
-        if ($approved.Count -lt 4) { throw "frontdoor_connections_missing: only $($approved.Count) of 4 APIM/admin Private Link connections are approved." }
+        if ($approved.Count -lt $expectedConnections) { throw "frontdoor_connections_missing: only $($approved.Count) of $expectedConnections APIM/admin Private Link connections are approved." }
         $state.approvedConnections = $approved; $state.approvedAt = [DateTime]::UtcNow.ToString('o'); Save-FdState $state
         Write-Host "Approved $($approved.Count) Front Door private links."
     }
     'Verify' {
         $state = Get-FdState
         if (-not $state) { Stop-Dr 'frontdoor_state_missing: run -Phase Deploy -Apply first.' 3 }
-        if (@($state.approvedConnections).Count -lt 4) { Stop-Dr 'frontdoor_approval_missing: run -Phase Approve -Apply first.' 3 }
+        if (@(Get-DrValue $state 'approvedConnections' | Where-Object { $_ }).Count -lt $expectedConnections) { Stop-Dr 'frontdoor_approval_missing: run -Phase Approve -Apply first.' 3 }
         $tests = @(
             @{ path = '/status-0123456789abcdef'; accepted = @(200); label = 'APIM gateway route' }
             @{ path = '/api/console'; accepted = @(200, 302); label = 'admin console route' }
@@ -189,7 +216,7 @@ switch ($Phase) {
     }
     'Lockdown' {
         $state = Get-FdState
-        if (-not $state -or -not $state.verifiedAt) { Stop-Dr 'frontdoor_verify_required: Verify both routes before disabling APIM public access.' 3 }
+        if (-not $state -or -not (Get-DrValue $state 'verifiedAt')) { Stop-Dr 'frontdoor_verify_required: Verify both routes before disabling APIM public access.' 3 }
         if (-not $Apply) { Write-Host 'Preview only: set publicNetworkAccess Disabled on both APIM origins after Front Door private routes passed.'; return }
         $origins = @()
         foreach ($id in @($state.apimIds)) { $origins += @{ id = $id; apiVersion = '2024-05-01'; type = 'Microsoft.ApiManagement/service' } }
