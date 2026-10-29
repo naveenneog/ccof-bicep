@@ -152,6 +152,41 @@ $null = & pwsh -NoProfile -File (Join-Path $repo 'infra/dr/Invoke-DrFrontDoor.ps
 $fdCode = $LASTEXITCODE; $fdText = Get-Content -LiteralPath $fdErr -Raw; Remove-Item -LiteralPath $fdErr -ErrorAction SilentlyContinue
 Check 'driver refuses -PrimaryOnly Lockdown before reading config or calling az' ($fdCode -eq 2 -and "$fdText" -match 'frontdoor_primary_only_phase_refused')
 
+# Region A on an existing APIM: stage 1 records apimId = '' and apimGatewayUrl = '', so the driver
+# takes the APIM from the staged config apim.existing and its gateway URL from ARM (stub az in a
+# child pwsh, no Azure call).
+$fdDir = Join-Path $repo '.env.public-test-scratch/dr-frontdoor-existing-apim'
+Remove-Item -LiteralPath $fdDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path (Join-Path $fdDir '.staged-state') | Out-Null
+$minimal | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $fdDir 'dr.config.json')
+$fdStub = @'
+function global:az {
+    $l = $args -join ' '; Add-Content -LiteralPath $env:FAKE_AZ_LOG -Value $l; $global:LASTEXITCODE = 0
+    if ($l -match '^rest --method get --url https://management\.azure\.com/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/rg-apim/providers/Microsoft\.ApiManagement/service/apim-a\?api-version=') { return '{"properties":{"gatewayUrl":"https://apim-a.azure-api.net"}}' }
+    if ($l -match '^rest --method get --url https://management\.azure\.com/\S+/service/apim-z\?') { return '{"properties":{}}' }
+    if ($l -match '^functionapp show') { return '{"id":"/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers/Microsoft.Web/sites/admin-a","properties":{"defaultHostName":"admin-a.azurewebsites.net"}}' }
+    if ($l -match '^deployment group what-if') { return '{"changes":[]}' }
+    $global:LASTEXITCODE = 1; Write-Error "stub: unexpected $l"
+}
+'@
+$fdCase = { param($Outputs, $Existing)
+    @{ subscriptionId = '00000000-0000-4000-8000-000000000002'; resourceGroup = 'rg'; apim = @{ existing = $Existing } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $fdDir 'staged.config.json')
+    @{ stages = @{ '1' = @{ outputs = $Outputs + @{ names = @{ apps = @{ admin = @{ functionApp = 'admin-a' } } } } } } } | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $fdDir '.staged-state/state.json')
+    $env:FAKE_AZ_LOG = Join-Path $fdDir 'az.log'; Set-Content $env:FAKE_AZ_LOG ''
+    $fdParams = Join-Path $fdDir '.dr-standby-state/frontdoor.parameters.json'; Remove-Item -LiteralPath $fdParams -ErrorAction SilentlyContinue
+    $out = pwsh -NoProfile -Command "$fdStub; `$env:AZURE_CONFIG_DIR = '$fdDir'; & '$(Join-Path $repo 'infra/dr/Invoke-DrFrontDoor.ps1')' -Phase Deploy -PrimaryOnly -ConfigPath '$(Join-Path $fdDir 'dr.config.json')'; exit `$LASTEXITCODE" 2>&1 | Out-String
+    @{ code = $LASTEXITCODE; out = $out; origin = $(if (Test-Path $fdParams) { (Get-Content $fdParams -Raw | ConvertFrom-Json).parameters.apimOrigins.value[0] }) } }
+$existingApim = @{ subscriptionId = '00000000-0000-4000-8000-000000000003'; resourceGroup = 'rg-apim'; name = 'apim-a' }
+$existingApimId = '/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/rg-apim/providers/Microsoft.ApiManagement/service/apim-a'
+$r = & $fdCase @{ apimId = ''; apimGatewayUrl = '' } $existingApim
+Check 'Front Door takes an existing APIM from apim.existing and its host from ARM when stage 1 apimId and apimGatewayUrl are empty' ($r.code -eq 0 -and (Get-DrValue $r.origin 'apimId') -ceq $existingApimId -and (Get-DrValue $r.origin 'hostName') -ceq 'apim-a.azure-api.net' -and $r.out -match 'Preview only')
+$r = & $fdCase @{ apimId = $existingApimId; apimGatewayUrl = '' } @{}
+Check 'Front Door reads the gateway host from ARM when only stage 1 apimGatewayUrl is empty' ($r.code -eq 0 -and (Get-DrValue $r.origin 'apimId') -ceq $existingApimId -and (Get-DrValue $r.origin 'hostName') -ceq 'apim-a.azure-api.net')
+$r = & $fdCase @{ apimId = ''; apimGatewayUrl = '' } @{}
+Check 'Front Door stops with a clear error when stage 1 and apim.existing name no APIM' ($r.code -eq 2 -and $r.out -match 'Region A APIM is unknown' -and $r.out -notmatch 'what-if')
+$r = & $fdCase @{ apimId = ''; apimGatewayUrl = '' } @{ subscriptionId = '00000000-0000-4000-8000-000000000003'; resourceGroup = 'rg-apim'; name = 'apim-z' }
+Check 'Front Door stops with a clear error when the APIM gateway host is still unknown' ($r.code -eq 2 -and $r.out -match 'Region A APIM gateway host is unknown' -and $r.out -notmatch 'what-if')
+
 # Region A's Stage 3 read-back counts only its own principals, so region B's grants on the shared
 # workspace and Cosmos account do not fail it.
 . (Join-Path $repo 'infra/staged/Invoke-StagedDeployment.ps1') -DotSourceOnly
@@ -274,4 +309,4 @@ Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosS
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 75) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 79) { exit 1 }

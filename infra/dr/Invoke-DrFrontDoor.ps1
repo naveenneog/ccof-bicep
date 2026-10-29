@@ -47,6 +47,28 @@ function Save-FdState($Value) {
     $Value | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
     Write-Host "Front Door state: $statePath"
 }
+# Stage 1 records apimId and apimGatewayUrl only when it created the APIM. For an existing APIM the ID
+# comes from the staged config the same way as Get-StgApim (Staged.Common.ps1) and the URL from ARM.
+function Get-FdApim($Outputs, $Cfg, [string]$Region) {
+    $apimId = [string](Get-DrValue $Outputs 'apimId')
+    if (-not $apimId) {
+        $apimName = [string](Get-DrValue $Outputs 'apimName')
+        $ref = if ($apimName) { @{ subscriptionId = [string](Get-DrValue $Cfg 'subscriptionId'); resourceGroup = [string](Get-DrValue $Cfg 'resourceGroup'); name = $apimName } }
+               else { @{ subscriptionId = [string](Get-DrValue $Cfg 'apim.existing.subscriptionId'); resourceGroup = [string](Get-DrValue $Cfg 'apim.existing.resourceGroup'); name = [string](Get-DrValue $Cfg 'apim.existing.name') } }
+        if (-not $ref.subscriptionId -or -not $ref.resourceGroup -or -not $ref.name) {
+            Stop-Dr "Region $Region APIM is unknown: stage 1 state has no apimId and the staged config has no apim.existing subscriptionId, resourceGroup and name."
+        }
+        $apimId = "/subscriptions/$($ref.subscriptionId)/resourceGroups/$($ref.resourceGroup)/providers/Microsoft.ApiManagement/service/$($ref.name)"
+    }
+    $url = [string](Get-DrValue $Outputs 'apimGatewayUrl')
+    if (-not $url) {
+        $apim = Invoke-DrAz @('rest', '--method', 'get', '--url', "https://management.azure.com${apimId}?api-version=2024-05-01")
+        $url = [string](Get-DrValue $apim 'properties.gatewayUrl')
+    }
+    $apimHost = if ($url) { ([uri]$url).Host } else { '' }
+    if (-not $apimHost) { Stop-Dr "Region $Region APIM gateway host is unknown: stage 1 state has no apimGatewayUrl and APIM '$apimId' returned no properties.gatewayUrl." }
+    return @{ Id = $apimId; Host = $apimHost }
+}
 function Get-FdState {
     if (-not (Test-Path -LiteralPath $statePath)) { return $null }
     return Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
@@ -88,13 +110,13 @@ $primaryState = Get-Content -LiteralPath $primaryStatePath -Raw | ConvertFrom-Js
 $a = $primaryState.stages['1'].outputs
 $sub = [string]$primaryCfg.subscriptionId
 $rg = [string]$primaryCfg.resourceGroup
-$aHost = ([uri]$a.apimGatewayUrl).Host
+$aApim = Get-FdApim $a $primaryCfg 'A'
 $aAdmin = [string]$a.names.apps.admin.functionApp
 $fdTags = @{}
 if ($dr.PSObject.Properties['tags'] -and $dr.tags) { foreach ($tag in $dr.tags.PSObject.Properties) { $fdTags[$tag.Name] = [string]$tag.Value } }
 $originArgs = @{
     Stem = $profileStem
-    PrimaryApimId = $a.apimId; PrimaryApimHost = $aHost; PrimaryApimLocation = ([string]$dr.primary.location)
+    PrimaryApimId = $aApim.Id; PrimaryApimHost = $aApim.Host; PrimaryApimLocation = ([string]$dr.primary.location)
     WafMode = $(if ($dr.frontDoor.PSObject.Properties['wafMode'] -and $dr.frontDoor.wafMode) { [string]$dr.frontDoor.wafMode } else { 'Detection' })
     ProbeIntervalSeconds = $(if ($dr.frontDoor.PSObject.Properties['probeIntervalSeconds'] -and $dr.frontDoor.probeIntervalSeconds) { [int]$dr.frontDoor.probeIntervalSeconds } else { 30 })
     DisablePrimaryOrigins = $false; DisablePrimaryAdminOrigins = $false; SimulatePrimaryFailure = ($Phase -eq 'DrainPrimary'); Tags = $fdTags
@@ -102,22 +124,24 @@ $originArgs = @{
 if ($PrimaryOnly) {
     if (-not $aAdmin) { Stop-Dr 'Front Door admin origin requires an admin Function App in region A.' }
     $aAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $aAdmin)
-    $apimIds = @([string]$a.apimId)
+    $apimIds = @($aApim.Id)
     $adminSiteIds = @([string]$aAdminSite.id)
     $parameters = New-DrFrontDoorParameters @originArgs -PrimaryOnly `
         -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location)
 } else {
     $standbyState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
     $b = $standbyState.stages['1'].outputs
-    $apimIds = @(Get-DrGatewayResourceIds -PrimaryApimId ([string]$a.apimId) -StandbyApimId ([string]$b.apimId))
-    $bHost = ([uri]$b.apimGatewayUrl).Host
+    $standbyCfgPath = Join-Path $standbyStateDir 'standby.staged.config.json'
+    $standbyCfg = if (Test-Path -LiteralPath $standbyCfgPath) { Get-Content -LiteralPath $standbyCfgPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100 } else { $null }
+    $bApim = Get-FdApim $b $standbyCfg 'B'
+    $apimIds = @(Get-DrGatewayResourceIds -PrimaryApimId $aApim.Id -StandbyApimId $bApim.Id)
     $bAdmin = [string]$b.names.apps.admin.functionApp
     if (-not $aAdmin -or -not $bAdmin) { Stop-Dr 'Front Door admin origins require an admin Function App in both regions.' }
     $aAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $aAdmin)
     $bAdminSite = Invoke-DrAz @('functionapp', 'show', '--subscription', $sub, '--resource-group', $rg, '--name', $bAdmin)
     $adminSiteIds = @($aAdminSite.id, $bAdminSite.id)
     $parameters = New-DrFrontDoorParameters @originArgs `
-        -StandbyApimId $b.apimId -StandbyApimHost $bHost -StandbyApimLocation ([string]$dr.secondary.location) `
+        -StandbyApimId $bApim.Id -StandbyApimHost $bApim.Host -StandbyApimLocation ([string]$dr.secondary.location) `
         -PrimaryAdminSiteId $aAdminSite.id -PrimaryAdminHost $aAdminSite.properties.defaultHostName -PrimaryAdminLocation ([string]$dr.primary.location) `
         -StandbyAdminSiteId $bAdminSite.id -StandbyAdminHost $bAdminSite.properties.defaultHostName -StandbyAdminLocation ([string]$dr.secondary.location)
 }

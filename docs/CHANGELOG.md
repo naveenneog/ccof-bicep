@@ -1,5 +1,16 @@
 # Change log
 
+## 2026-10-29 - Front Door with an existing APIM in a region
+
+- `infra/dr/Invoke-DrFrontDoor.ps1` works when a region uses an existing APIM. Stage 1 records
+  `apimId` and `apimGatewayUrl` only when it creates the APIM, so for an existing APIM both were empty
+  and the driver stopped with "Cannot bind argument to parameter 'PrimaryApimHost' (or
+  'PrimaryApimId') because it is an empty string". The driver now takes the APIM resource ID from the
+  staged config `apim.existing` (subscriptionId, resourceGroup, name), as stage 1 itself does, and
+  reads the gateway URL from Azure Resource Manager. The same applies to region B. If the APIM or its
+  gateway URL is still unknown, the driver stops with a message naming the region.
+  Behaviour is unchanged when the state has both values.
+
 ## 2026-10-29 - Front Door in front of the primary region before region B exists
 
 - `infra/dr/Invoke-DrFrontDoor.ps1 -PrimaryOnly` deploys, approves and verifies Front Door Premium with
