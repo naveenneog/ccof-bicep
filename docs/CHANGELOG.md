@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-10-29 - Stage 5 workbook strings stay literal across ARM deployments
+
+- Stage 5 serializes workbook content before passing it to the nested workbook deployment.
+  Previously ARM interpreted the Period dropdown's JSON-array string as a template expression,
+  refusing even a no-`Apply` preview with `InvalidTemplate`. No Graph/RBAC change is involved.
+- The workbook module accepts the serialized string without parsing/re-escaping it. Existing object
+  callers retain their original serialization default; generated artifacts, configuration files and
+  content digests are unchanged.
+- Offline regression checks the compiled Stage 5 boundary and legacy fallback, rejects the original
+  object transport as a negative control, and round-trips the actual chargeback dropdown/digest.
+  [Recovery commands](runbooks/DEPLOY-STEP-BY-STEP.md#step-5-configure-the-apps-and-the-gateway).
+  No Azure/customer command was executed.
+
 ## 2026-10-29 - Steps 4 and 5 for an operator without a Microsoft Graph token
 
 - New optional `entra.manualVerification` (`confirmedBy`, `confirmedOn`). With it, staged Step 4 makes no

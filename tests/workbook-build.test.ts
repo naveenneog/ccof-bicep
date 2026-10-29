@@ -216,13 +216,15 @@ test("Bicep deploys only a shared workbook and has no environment defaults or ha
   const template = readFileSync(new URL("../infra/workbook/main.bicep", import.meta.url), "utf8");
   assert.deepEqual(auditTemplate(template), []);
   assert.match(template, /Microsoft\.Insights\/workbooks@2023-06-01/);
-  assert.match(template, /serializedData:\s*string\(workbookContent\)/);
+  assert.match(template, /serializedData:\s*workbookSerializedData\b/);
+  assert.match(template, /param workbookSerializedData string = string\(workbookContent\)/);
   assert.match(template, /sourceId:\s*workspaceResourceId/);
   const hardcoded = template + '\nvar accidentalId = "11111111-1111-4111-8111-111111111111"';
   assert.ok(auditTemplate(hardcoded).includes("hardcoded_id"));
   assert.ok(auditTemplate(template + "\nparam wrong string = 'default'").includes("parameter_default"));
   assert.ok(auditTemplate(template.replace("Microsoft.Insights/workbooks@", "Microsoft.Web/sites@")).includes("resource_boundary"));
   assert.ok(auditTemplate(template.replace("string(workbookContent)", "'{}'")).includes("serialized_content"));
+  assert.ok(auditTemplate(template.replace("serializedData: workbookSerializedData", "serializedData: '{}'")).includes("serialized_content"));
   assert.ok(auditTemplate(template.replace("sourceId: workspaceResourceId", "sourceId: 'azure monitor'")).includes("workspace_binding"));
 });
 

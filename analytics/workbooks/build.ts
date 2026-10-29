@@ -19,11 +19,13 @@ export function auditTemplate(template: string, stage: "content" | "resource" = 
   const code = withoutComments(template);
   const violations: string[] = [];
   if (/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i.test(code)) violations.push("hardcoded_id");
-  if (/^\s*param\s+\w+\s+\w+\s*=/m.test(code)) violations.push("parameter_default");
+  const serializationDefault = /^\s*param workbookSerializedData string = string\(workbookContent\)\s*$/m;
+  const defaultCode = stage === "content" ? code.replace(serializationDefault, "") : code;
+  if (/^\s*param\s+\w+\s+\w+\s*=/m.test(defaultCode)) violations.push("parameter_default");
   const resources = [...code.matchAll(/^\s*resource\s+\w+\s+'([^']+)'/gm)].map(match => match[1]);
   if (resources.length !== 1 || resources[0] !== "Microsoft.Insights/workbooks@2023-06-01") violations.push("resource_boundary");
-  const content = stage === "content" ? /serializedData:\s*string\(workbookContent\)/ : /serializedData:\s*string\(\{/;
-  if (!content.test(code)) violations.push("serialized_content");
+  const content = stage === "content" ? /serializedData:\s*workbookSerializedData\b/ : /serializedData:\s*string\(\{/;
+  if (!content.test(code) || (stage === "content" && !serializationDefault.test(code))) violations.push("serialized_content");
   if (!/sourceId:\s*workspaceResourceId\b/.test(code)) violations.push("workspace_binding");
   return violations;
 }

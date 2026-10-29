@@ -1,5 +1,9 @@
 # Deployment packets
 
+| Packet | Status | Observable acceptance |
+| --- | --- | --- |
+| S5-ARM | Implemented; full gate/PR CI pending | Stage 5 sends workbook JSON as a string across the nested ARM boundary; dropdown/bracket literals and content digests remain unchanged; legacy object callers still serialize normally |
+
 ## Disaster recovery feature branch
 
 Implementation branch: `feat/dr-standby` (not merged). Each packet has a separate RED/GREEN cycle,
