@@ -13,6 +13,14 @@
   Without the switch, parameters and validation are unchanged. Offline tests only; no Azure call.
   [Runbook](runbooks/DR-FRONT-DOOR.md#5-primary-region-first).
 
+## 2026-10-29 - Step 8 can test the address users are given
+
+- New optional `acceptance.gatewayUrl` (`https://<host>/<apiPath>`, no trailing slash or `/v1`).
+  When set, staged Step 8 sends its gateway requests there, for example to a Front Door host, instead
+  of the APIM URL recorded by Step 5. The configuration is refused for http, a trailing slash or `/v1`.
+- `tests/Test-StagedStages.ps1` 467 checks (9 new); three mutants caught. Docs:
+  [deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) Step 8.
+
 ## 2026-10-29 - Stage 5 omits null optional admin gateway IDs
 
 - An omitted `admin.gatewayResourceIds` became `[null]` in the generated parameters because

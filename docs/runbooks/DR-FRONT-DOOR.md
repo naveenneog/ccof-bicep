@@ -134,7 +134,9 @@ pwsh -File $repo/infra/dr/Invoke-DrFrontDoor.ps1 -Phase Verify  -ConfigPath $cfg
 **Client gateway URL:** `https://<endpoint host>/<apim.apiPath>`, for example
 `https://<stem>-<hash>.z01.azurefd.net/anthropic`, with no trailing `/v1`. The endpoint host is printed
 by `Deploy -Apply` and stored as `endpointHostName` in `frontdoor-state.json`. The `gateway` route
-forwards the path unchanged to APIM.
+forwards the path unchanged to APIM. Staged Step 8 can test this address: set
+`acceptance.gatewayUrl` to `https://<endpoint host>/<apim.apiPath>` in region A's `staged.config.json`
+([Step 8](DEPLOY-STEP-BY-STEP.md#step-8-test-end-to-end)).
 
 **Adding region B later:** build region B ([DR standby region](DR-STANDBY-CLOUD-SHELL.md)), complete
 the full `dr.config.json`, then run `Deploy`, `Approve` and `Verify` from section 2 without

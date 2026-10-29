@@ -1100,6 +1100,12 @@ project and model in `acceptance.allowed` (expect 200) and for each pair in `acc
 (expect 401), checks the admin console, and looks for each successful request's `x-ccof-request-id`
 in the `ApiManagementGatewayLlmLog` table within 15 minutes. Allowed requests use a few Claude tokens.
 
+**Which address.** The requests go to the APIM gateway URL that Step 5 recorded. With the optional
+`acceptance.gatewayUrl` (`https://<host>/<apiPath>`, no trailing slash or `/v1`), they go to that
+address instead, for example a Front Door host given to users
+([Front Door](DR-FRONT-DOOR.md)). The resolver and admin checks are unchanged
+(`infra/staged/Staged.Application.ps1`, `Get-StgStage8GatewayUrl`).
+
 **Who runs it.** A member of each allowed project's group, with Azure CLI allowed as a client of the
 gateway app (`entra.allowAzureCliClient: true`), and Log Analytics Reader on the workspace.
 

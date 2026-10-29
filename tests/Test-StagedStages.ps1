@@ -285,6 +285,11 @@ $stage7Src = (Get-Command Invoke-Stage7).Definition
 $planAt = $stage7Src.IndexOf('Get-StgStage7SnapshotPlan'); $codeAt = $stage7Src.IndexOf('Invoke-QsCode'); $snapAt = $stage7Src.IndexOf('snapshot --credential azure-cli')
 $gatedSnapshot = [regex]::IsMatch($stage7Src, "if \(\`$snapshotPlan -ceq 'delegated'\) \{\s*\r?\n(?:(?!\} else \{).)*?snapshot --credential azure-cli", 'Singleline')
 Assert-Contract ($planAt -ge 0 -and $planAt -lt $codeAt -and $gatedSnapshot -and $snapAt -gt $planAt) 'Stage 7 must decide the snapshot plan before publishing code and run the delegated snapshot only for the delegated plan.'
+# Stage 8 calls acceptance.gatewayUrl when set (the address users are given), else Stage 5's APIM URL.
+Assert-Contract ((Get-StgStage8GatewayUrl -Cfg @{ acceptance = @{ allowed = @() } } -Stage5 @{ gatewayUrl = 'https://apim.example.net/claude' }) -ceq 'https://apim.example.net/claude') 'Stage 8 must default to the Stage 5 APIM gateway URL.'
+Assert-Contract ((Get-StgStage8GatewayUrl -Cfg @{ acceptance = @{ gatewayUrl = 'https://fd.example.net/claude' } } -Stage5 @{ gatewayUrl = 'https://apim.example.net/claude' }) -ceq 'https://fd.example.net/claude') 'Stage 8 must call acceptance.gatewayUrl when it is set.'
+$stage8Src = (Get-Command Invoke-Stage8).Definition
+Assert-Contract ($stage8Src -match 'Get-StgStage8GatewayUrl' -and $stage8Src -notmatch '-Url \$config\.gatewayUrl') 'Every Stage 8 gateway request must use Get-StgStage8GatewayUrl, not the Stage 5 URL directly.'
 # Stage 5 reads the APIM identity's client ID from Azure Resource Manager, not Microsoft Graph.
 $script:miArm = @(); $script:miReply = @{ properties = @{ principalId = 'p-apim'; clientId = '00000000-0000-4000-8000-0000000000aa' } }
 function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:miArm += "$Path|$ApiVersion"; $script:miReply }
@@ -357,6 +362,19 @@ try {
     $c.entra.Remove('browserSignIn')
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $read = Read-StgConfig $tmp
+    # acceptance.gatewayUrl: Stage 8 tests the address users are given (for example a Front Door host).
+    foreach ($badUrl in @('http://fd.example.net/claude', 'https://fd.example.net/claude/v1', 'https://fd.example.net/claude/', 'not a url', 5)) {
+        $c.acceptance.gatewayUrl = $badUrl
+        $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+        $bad = ''; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message }
+        Assert-Contract ($bad -match 'acceptance\.gatewayUrl') "acceptance.gatewayUrl '$badUrl' must be refused (https, no trailing slash, no /v1)."
+    }
+    $c.acceptance.gatewayUrl = 'https://ccof-fd.z01.azurefd.net/claude'
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.acceptance.gatewayUrl -ceq 'https://ccof-fd.z01.azurefd.net/claude') 'A valid acceptance.gatewayUrl must be accepted.'
+    $c.acceptance.Remove('gatewayUrl')
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $c.entra.manualVerification = @{ confirmedBy = ''; confirmedOn = '2026-10-29' }
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = ''; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message }
