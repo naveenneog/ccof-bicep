@@ -1,5 +1,12 @@
 # Change log
 
+## 2026-10-29 - Step 8 gatewayUrl must end with apim.apiPath
+
+- `acceptance.gatewayUrl` is refused unless it ends with `/<apim.apiPath>`. Case: a value missing the
+  slash between host and path (`https://<host>.azurefd.netanthropic`) passed the earlier check and
+  named a host that does not exist.
+- `tests/Test-StagedStages.ps1` 470 checks (3 new); the path check's mutant is caught.
+
 ## 2026-10-29 - Front Door with an existing APIM in a region
 
 - `infra/dr/Invoke-DrFrontDoor.ps1` works when a region uses an existing APIM. Stage 1 records

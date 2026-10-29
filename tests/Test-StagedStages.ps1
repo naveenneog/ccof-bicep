@@ -363,16 +363,18 @@ try {
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $read = Read-StgConfig $tmp
     # acceptance.gatewayUrl: Stage 8 tests the address users are given (for example a Front Door host).
-    foreach ($badUrl in @('http://fd.example.net/claude', 'https://fd.example.net/claude/v1', 'https://fd.example.net/claude/', 'not a url', 5)) {
+    foreach ($badUrl in @('http://fd.example.net/claude', 'https://fd.example.net/claude/v1', 'https://fd.example.net/claude/', 'not a url', 5,
+        "https://fd.example.net$($c.apim.apiPath.Trim('/'))", 'https://fd.example.net', 'https://fd.example.net/other-path')) {
         $c.acceptance.gatewayUrl = $badUrl
         $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
         $bad = ''; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message }
         Assert-Contract ($bad -match 'acceptance\.gatewayUrl') "acceptance.gatewayUrl '$badUrl' must be refused (https, no trailing slash, no /v1)."
     }
-    $c.acceptance.gatewayUrl = 'https://ccof-fd.z01.azurefd.net/claude'
+    $validUrl = "https://ccof-fd.z01.azurefd.net/$($c.apim.apiPath.Trim('/'))"
+    $c.acceptance.gatewayUrl = $validUrl
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $read = Read-StgConfig $tmp
-    Assert-Contract ($read.acceptance.gatewayUrl -ceq 'https://ccof-fd.z01.azurefd.net/claude') 'A valid acceptance.gatewayUrl must be accepted.'
+    Assert-Contract ($read.acceptance.gatewayUrl -ceq $validUrl) 'A valid acceptance.gatewayUrl (Front Door host plus apim.apiPath) must be accepted.'
     $c.acceptance.Remove('gatewayUrl')
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $c.entra.manualVerification = @{ confirmedBy = ''; confirmedOn = '2026-10-29' }
