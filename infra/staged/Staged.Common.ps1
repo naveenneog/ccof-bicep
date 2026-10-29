@@ -156,8 +156,11 @@ function Read-StgConfig {
     if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('browserSignIn') -and $c.entra.browserSignIn -isnot [bool]) { $problems.Add('entra.browserSignIn must be true or false') }
     if ($c.acceptance -is [Collections.IDictionary] -and $c.acceptance.Contains('gatewayUrl')) {
         $u = $c.acceptance.gatewayUrl
-        if (-not ($u -is [string] -and $u -cmatch '^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~-]+)*$' -and $u -notmatch '/v1$')) {
-            $problems.Add('acceptance.gatewayUrl must be https://<host>/<apiPath>, without a trailing slash or /v1 (the address users are given, for example a Front Door host)')
+        $apiPath = if ($c.apim -is [Collections.IDictionary] -and $c.apim.apiPath -is [string]) { $c.apim.apiPath.Trim('/') } else { '' }
+        # The path must be apim.apiPath: a missing slash ("...azurefd.netanthropic") makes a host that does not exist.
+        if (-not ($u -is [string] -and $u -cmatch '^https://[A-Za-z0-9.-]+\.[A-Za-z0-9-]+(/[A-Za-z0-9._~-]+)+$' -and $u -notmatch '/v1$' -and
+            $apiPath -and $u.EndsWith("/$apiPath", [StringComparison]::Ordinal))) {
+            $problems.Add("acceptance.gatewayUrl must be https://<host>/$apiPath (apim.apiPath), without a trailing slash or /v1 (the address users are given, for example a Front Door host)")
         }
     }
     if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('manualVerification')) { foreach ($m in @(Get-StgManualEntraProblems $c)) { $problems.Add($m) } }
