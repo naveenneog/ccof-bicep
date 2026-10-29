@@ -102,16 +102,31 @@ function Publish-StgAdminPackage {
     return [ordered]@{ app = $App; sha256 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash }
 }
 
+function Get-StgStage7SnapshotPlan {
+    # 'delegated': Stage 7 reads group membership with the operator's own Graph token and applies it.
+    # 'sync-timer': entra.manualVerification means the operator has no Graph token (Conditional
+    # Access); the sync identity's application permission reads the groups on its timer instead.
+    param($Cfg)
+    $manual = $Cfg.entra -is [Collections.IDictionary] -and $Cfg.entra.Contains('manualVerification')
+    if (-not $manual) { return 'delegated' }
+    if ($Cfg.sync.mode -cne 'application-permission') {
+        throw "manual_verification_sync_mode: entra.manualVerification needs sync.mode application-permission; with $($Cfg.sync.mode) only the operator's Graph token could read the groups."
+    }
+    return 'sync-timer'
+}
+
 function Invoke-Stage7 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 6; $null = Get-StgStage $Cfg 5; $entra = Get-StgStage $Cfg 4
+    $snapshotPlan = Get-StgStage7SnapshotPlan $Cfg
     $ctx = New-StgQsContext $Cfg
     $ctx.PollSeconds = 15
     $docs = New-QsSeedDocuments -P $ctx.P -ClassificationGroupDisplayNames $ctx.State.completed['1'].outputs.classificationGroupDisplayNames
     if (-not $Apply) {
         Write-Host "preview: publish resolver, sync, reconciler$(if ($Cfg.stage1.includeAdmin) { ', admin' }) packages (OneDeploy), wait for their functions"
         Write-Host "preview: seed $(@($docs.projects).Count) projects and $(@($docs.backends).Count) backends through the sync app's registrySeed function"
-        Write-Host "preview: delegated snapshot of $(@($entra.groups.Values).Count) groups, applied through the sync app's snapshotApply function"
+        if ($snapshotPlan -ceq 'delegated') { Write-Host "preview: delegated snapshot of $(@($entra.groups.Values).Count) groups, applied through the sync app's snapshotApply function" }
+        else { Write-Host "preview: no delegated snapshot (entra.manualVerification); the sync timer reads $(@($entra.groups.Values).Count) groups with its Graph application permission" }
         Write-Host 'preview: write the client config.json for client.projectId/classification'
         return $null
     }
@@ -131,22 +146,27 @@ function Invoke-Stage7 {
     # Invoke-QsSeed validates each projects document against onboarding's schema first; with the runner
     # off it seeds through the sync app's registrySeed function.
     $result.seed = Invoke-QsSeed $ctx
-    # Delegated snapshot (docs/runbooks/CLOUD-SHELL-QUICKSTART.md section 5): the operator's own
-    # Graph read through Azure CLI; no application permission.
-    $groupsFile = Join-Path $ctx.GeneratedDir 'snapshot-groups.json'
-    @{ groupIds = @($entra.groups.Values | ForEach-Object { $_.id }) } | ConvertTo-Json | Set-Content -LiteralPath $groupsFile -Encoding utf8NoBOM
-    $settingsFile = Join-Path $ctx.GeneratedDir 'snapshot-settings.json'
-    @{ SYNC_TENANT_ID = $Cfg.tenantId; SYNC_GRAPH_MAX_RETRIES = '3'; SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS = '30'; SYNC_GRAPH_TIMEOUT_SECONDS = '30' } | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding utf8NoBOM
-    # The snapshot CLI never overwrites a file, so each run writes its own (Stage 7 can be rerun).
-    $snapshot = Join-Path $ctx.GeneratedDir ".env.sync-snapshot-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
-    $lines = @(& node (Join-Path $script:Repo 'dist/sync/cli.js') snapshot --credential azure-cli --groups $groupsFile --settings $settingsFile --out $snapshot 2>&1 | ForEach-Object { "$_" })
-    if ($LASTEXITCODE) { throw "snapshot_failed: $($lines -join ' ')" }
-    $sha = @($lines | ForEach-Object { [regex]::Matches($_, '\b[0-9a-f]{64}\b') } | ForEach-Object { $_.Value }) | Select-Object -Last 1
-    if (-not $sha) { throw "snapshot_hash_missing: the snapshot command printed no SHA-256: $($lines | Select-Object -Last 3)" }
-    & (Join-Path $script:Repo 'infra/sync/Invoke-SnapshotApplyThroughFunction.ps1') -Subscription $Cfg.subscriptionId -ResourceGroup $Cfg.resourceGroup `
-        -FunctionApp $s1.names.apps.sync.functionApp -AppInsights $s1.names.apps.sync.appInsights -SnapshotPath $snapshot -ExpectedSnapshotSha256 $sha | Out-Host
-    if ($LASTEXITCODE) { throw 'snapshot_apply_failed: infra/sync/Invoke-SnapshotApplyThroughFunction.ps1' }
-    $result.snapshot = @{ sha256 = $sha; groups = @($entra.groups.Keys) }
+    if ($snapshotPlan -ceq 'delegated') {
+        # Delegated snapshot (docs/runbooks/CLOUD-SHELL-QUICKSTART.md section 5): the operator's own
+        # Graph read through Azure CLI; no application permission.
+        $groupsFile = Join-Path $ctx.GeneratedDir 'snapshot-groups.json'
+        @{ groupIds = @($entra.groups.Values | ForEach-Object { $_.id }) } | ConvertTo-Json | Set-Content -LiteralPath $groupsFile -Encoding utf8NoBOM
+        $settingsFile = Join-Path $ctx.GeneratedDir 'snapshot-settings.json'
+        @{ SYNC_TENANT_ID = $Cfg.tenantId; SYNC_GRAPH_MAX_RETRIES = '3'; SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS = '30'; SYNC_GRAPH_TIMEOUT_SECONDS = '30' } | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding utf8NoBOM
+        # The snapshot CLI never overwrites a file, so each run writes its own (Stage 7 can be rerun).
+        $snapshot = Join-Path $ctx.GeneratedDir ".env.sync-snapshot-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
+        $lines = @(& node (Join-Path $script:Repo 'dist/sync/cli.js') snapshot --credential azure-cli --groups $groupsFile --settings $settingsFile --out $snapshot 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE) { throw "snapshot_failed: $($lines -join ' ')" }
+        $sha = @($lines | ForEach-Object { [regex]::Matches($_, '\b[0-9a-f]{64}\b') } | ForEach-Object { $_.Value }) | Select-Object -Last 1
+        if (-not $sha) { throw "snapshot_hash_missing: the snapshot command printed no SHA-256: $($lines | Select-Object -Last 3)" }
+        & (Join-Path $script:Repo 'infra/sync/Invoke-SnapshotApplyThroughFunction.ps1') -Subscription $Cfg.subscriptionId -ResourceGroup $Cfg.resourceGroup `
+            -FunctionApp $s1.names.apps.sync.functionApp -AppInsights $s1.names.apps.sync.appInsights -SnapshotPath $snapshot -ExpectedSnapshotSha256 $sha | Out-Host
+        if ($LASTEXITCODE) { throw 'snapshot_apply_failed: infra/sync/Invoke-SnapshotApplyThroughFunction.ps1' }
+        $result.snapshot = @{ sha256 = $sha; groups = @($entra.groups.Keys) }
+    } else {
+        Write-Host 'no delegated snapshot (entra.manualVerification): the sync timer reads group membership with its Graph application permission'
+        $result.snapshot = @{ skipped = 'entra.manualVerification; sync timer (application-permission)'; groups = @($entra.groups.Keys) }
+    }
     $client = Invoke-QsClient $ctx
     $null = & node (Join-Path $script:Repo 'client/bin/validate-config.mjs') $client.clientConfig
     Assert-Stg ($LASTEXITCODE -eq 0) 'client config failed the client validator'
