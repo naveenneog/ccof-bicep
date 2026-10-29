@@ -8,7 +8,7 @@ function New-StgQsContext {
     $p = Get-StgQuickstartParameters $Cfg; $s1 = Get-StgStage $Cfg 1; $entra = Get-StgStage $Cfg 4
     $apim = Get-StgApimIdentity $Cfg
     $gen = Join-Path $script:StateDir 'generated'; New-Item -ItemType Directory -Force -Path $gen | Out-Null
-    $displayNames = @{}; foreach ($g in $entra.groups.Values) { $displayNames[$g.id] = $g.displayName }
+    $displayNames = @{}; foreach ($g in $entra.groups.Values) { if ($g.displayName) { $displayNames[$g.id] = $g.displayName } }
     $gatewayUrl = "$($apim.gatewayUrl)/$($Cfg.apim.apiPath)"
     $state = @{ completed = @{
         '1' = @{ outputs = @{ apimId = $apim.id; apimPrincipalId = $apim.principalId; gatewayBaseUrl = $apim.gatewayUrl; gatewayIdentifierUri = $entra.gatewayIdentifierUri; classificationGroupDisplayNames = $displayNames } }
@@ -20,7 +20,7 @@ function Invoke-Stage5 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 3; $entra = Get-StgStage $Cfg 4
     $ctx = New-StgQsContext $Cfg
-    $apimSp = Get-StgGraph "servicePrincipals/$($ctx.Apim.principalId)?`$select=appId"
+    $apimSp = @{ appId = (Get-StgManagedIdentityClientId -ResourceId $ctx.Apim.id -PrincipalId $ctx.Apim.principalId) }
     # Gateway policy (infra/gateway/render.ts) and workbook (analytics/workbooks/chargeback.ts).
     Push-Location $script:Repo
     try { npx tsc -p tsconfig.json | Out-Host; if ($LASTEXITCODE) { throw 'build_failed: npx tsc -p tsconfig.json' } } finally { Pop-Location }
@@ -36,7 +36,12 @@ function Invoke-Stage5 {
     $usagePolicy = if (Test-Path -LiteralPath $usagePolicyPath) { Get-Content -LiteralPath $usagePolicyPath -Raw } else { '' }
     $answers = New-QsWorkbookAnswers -P $ctx.P -ApimId $ctx.Apim.id -Directory $ctx.GeneratedDir
     $groupsPath = Join-Path $ctx.GeneratedDir 'workbook.groups.json'
-    @(Get-QsWorkbookGroups -P $ctx.P) | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath $groupsPath -Encoding utf8NoBOM
+    # Directory names come from Graph when readable; otherwise from the Stage 4 record (entra.manualVerification).
+    $wbGroups = @(Get-QsWorkbookGroups -P $ctx.P | ForEach-Object {
+        $known = $entra.groups["$($_.projectId)/$($_.classification)"]
+        if (-not $_.displayName -and $known -and $known.displayName) { $_.displayName = $known.displayName }
+        $_ })
+    $wbGroups | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath $groupsPath -Encoding utf8NoBOM
     $wb = Invoke-QsWorkbookBuild -AnswersPath $answers -GroupsPath $groupsPath -Directory $ctx.GeneratedDir
     $report = (Get-Content -LiteralPath $wb.parametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
     $admin = @{ enabled = [bool]$Cfg.stage1.includeAdmin }
