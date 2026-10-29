@@ -60,9 +60,48 @@ function Set-StgScope { param($App, [string]$Value, [string]$Type, [string]$Text
     return @{ id = $id; scopes = @($others) + @(@{ id = $id; value = $Value; type = $Type; isEnabled = $true; adminConsentDisplayName = $Text; adminConsentDescription = $Text; userConsentDisplayName = $Text; userConsentDescription = $Text }) }
 }
 
+function Invoke-StgStage4Manual {
+    param($Cfg, $Stage1, [switch]$Apply)
+    $e = $Cfg.entra
+    $problems = @(Get-StgManualEntraProblems $Cfg)
+    if ($problems.Count) { throw "manual_verification: $($problems -join '; ')" }
+    $gwId = $e.existing.gatewayAppId; $resId = $e.existing.resolverAppId; $admId = $e.existing.adminAppId
+    $hostName = "$($Stage1.names.apps.admin.functionApp).azurewebsites.net"
+    $cli = $script:AzureCliClientId
+    $gwRedirects = @("ms-appx-web://microsoft.aad.brokerplugin/$gwId") + $(if ($e.browserSignIn -ne $false) { @('http://localhost') } else { @() })
+    $check = [Collections.Generic.List[string]]::new()
+    $check.Add("gateway app $gwId - Expose an API: Application ID URI api://$gwId; scope access_as_user enabled; authorized client applications $gwId" + $(if ($e.allowAzureCliClient) { " and $cli (Azure CLI)" } else { '' }) + ' for access_as_user')
+    $check.Add("gateway app $gwId - Authentication: Mobile and desktop redirect URIs $($gwRedirects -join ', '); Allow public client flows Yes. Manifest: requestedAccessTokenVersion 2")
+    $check.Add("resolver app $resId - Expose an API: Application ID URI api://$resId. Manifest: requestedAccessTokenVersion 2")
+    if ($Cfg.stage1.includeAdmin) {
+        $adminClients = @($admId) + @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
+        $check.Add("admin app $admId - Expose an API: Application ID URI api://$admId; scope Projects.Manage; authorized client applications $($adminClients -join ', ') for Projects.Manage")
+        $check.Add("admin app $admId - App roles CCOF.Projects.Read and CCOF.Projects.Write (Users/Groups). Authentication: Single-page application redirect URIs https://$hostName/api/console and https://$hostName/api/console-v3. Manifest: requestedAccessTokenVersion 2")
+        $check.Add("admin enterprise application $admId - Properties: Assignment required Yes; Users and groups: console editors CCOF project editor, readers CCOF project reader")
+    }
+    foreach ($g in $Cfg.groups) { $check.Add("group $($g.projectId)/$($g.classification) $($g.groupId) - security group exists; group owners manage its direct members") }
+    Write-Host "Stage 4 manual verification (no Microsoft Graph call). Confirmed by $($e.manualVerification.confirmedBy) on $($e.manualVerification.confirmedOn). Settings to confirm in the Entra admin center:"
+    foreach ($c in $check) { Write-Host "  - $c" }
+    if (-not $Apply) { return $null }
+    $groups = @{}
+    foreach ($g in $Cfg.groups) {
+        $groups["$($g.projectId)/$($g.classification)"] = @{ id = $g.groupId; displayName = $(if ($g.groupDisplayName) { $g.groupDisplayName } else { $null }); members = @() }
+    }
+    $admin = if ($Cfg.stage1.includeAdmin) { @{ appId = $admId; servicePrincipalId = $null; redirects = @("https://$hostName/api/console", "https://$hostName/api/console-v3") } } else { @{} }
+    $result = @{
+        registrations = @{ gatewayApi = @{ appId = $gwId; scope = 'access_as_user'; accessTokenVersion = 2 }; developerSignIn = @{ appId = $gwId }; resolverApi = @{ appId = $resId } }
+        gatewayIdentifierUri = "api://$gwId"; gatewayServicePrincipalId = $null; resolverServicePrincipalId = $null
+        admin = $admin; groups = $groups; azureCliClientAllowed = [bool]$e.allowAzureCliClient
+        verification = 'manual'; manualVerification = @{ confirmedBy = $e.manualVerification.confirmedBy; confirmedOn = $e.manualVerification.confirmedOn; checklist = @($check) }
+        graphApplicationPermission = 'not read (entra.manualVerification)' }
+    $null = Write-StgEvidence 'stage4.verify.json' $result
+    return $result
+}
+
 function Invoke-Stage4 {
     param($Cfg, [switch]$Apply)
     $e = $Cfg.entra; $s1 = Get-StgStage $Cfg 1
+    if ($e -is [Collections.IDictionary] -and $e.Contains('manualVerification')) { return Invoke-StgStage4Manual -Cfg $Cfg -Stage1 $s1 -Apply:$Apply }
     $me = Get-StgGraph 'me?$select=id'
     $resolve = { param($x) if ($x -ceq '@me') { $me.id } else { $x } }
     # Gateway API + developer sign-in (one application, ADR-0009 single-app contract).

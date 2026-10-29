@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-10-29 - Steps 4 and 5 for an operator without a Microsoft Graph token
+
+- New optional `entra.manualVerification` (`confirmedBy`, `confirmedOn`). With it, staged Step 4 makes no
+  Microsoft Graph call: the preview prints the Entra checklist with this deployment's IDs and admin host,
+  and `-Apply` records the configured application and group IDs (`verification: manual`). The
+  configuration is refused without every `entra.existing` ID and `groups[].groupId`, or with group members.
+  Case: a Conditional Access policy refused the operator's Graph token in Cloud Shell (`AADSTS53003`).
+- Step 5 reads the APIM identity's client ID from Azure Resource Manager (`identities/default`) instead of
+  Microsoft Graph; lab check: the same client ID as Graph's `appId`. Workbook group names fall back to
+  `groups[].groupDisplayName` when Graph is not readable.
+- `tests/Test-StagedStages.ps1` 453 checks (11 new); five mutants caught. Docs:
+  [deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) Step 4.
+
 ## 2026-10-28 - Azure CLI token route for Claude Code, VS Code and Desktop setup
 
 - `scripts/client/Set-ClaudeCodeGateway.ps1` and `Set-ClaudeDesktopGateway.ps1` accept

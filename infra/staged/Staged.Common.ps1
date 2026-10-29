@@ -154,6 +154,7 @@ function Read-StgConfig {
         $(if (-not $existingApps.adminAppId) { $c.entra.adminAppDisplayName })) + @($c.groups | Where-Object { -not $_.groupId } | ForEach-Object { $_.groupDisplayName })
     foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { if ($existingApps[$k] -and $existingApps[$k] -notmatch $script:Guid) { $problems.Add("entra.existing.$k must be a GUID") } }
     if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('browserSignIn') -and $c.entra.browserSignIn -isnot [bool]) { $problems.Add('entra.browserSignIn must be true or false') }
+    if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('manualVerification')) { foreach ($m in @(Get-StgManualEntraProblems $c)) { $problems.Add($m) } }
     foreach ($n in @($entraNames | Where-Object { $_ })) { if ($n -notmatch '^[A-Za-z0-9 ._-]{1,120}$') { $problems.Add("Entra display name '$n' may hold only letters, digits, space . _ -") } }
     $fd = $c.stage1.foundry
     if ($fd -and $fd.create) {
@@ -547,7 +548,37 @@ function Get-StgSite {
     }
 }
 
+function Get-StgManualEntraProblems {
+    # entra.manualVerification: the operator cannot read or write Entra through Microsoft Graph (for example a
+    # Conditional Access policy refuses the token, AADSTS53003); an Entra administrator confirmed the
+    # settings in the Portal. Stage 4 can then record only configured IDs, so every one must be present.
+    param($Cfg)
+    $p = [Collections.Generic.List[string]]::new()
+    $mv = $Cfg.entra.manualVerification
+    if ($mv -isnot [Collections.IDictionary]) { $p.Add('entra.manualVerification must be an object with confirmedBy and confirmedOn'); return $p.ToArray() }
+    if (-not ($mv.confirmedBy -is [string] -and $mv.confirmedBy.Trim().Length)) { $p.Add('entra.manualVerification.confirmedBy must name who confirmed the Entra settings') }
+    if (-not ($mv.confirmedOn -is [string] -and $mv.confirmedOn -match '^\d{4}-\d{2}-\d{2}$')) { $p.Add('entra.manualVerification.confirmedOn must be a yyyy-MM-dd date') }
+    $existing = $Cfg.entra.existing ?? @{}
+    $kinds = @('gatewayAppId', 'resolverAppId') + $(if ($Cfg.stage1.includeAdmin) { @('adminAppId') } else { @() })
+    foreach ($k in $kinds) { if (-not $existing[$k]) { $p.Add("entra.manualVerification requires entra.existing.$k") } }
+    foreach ($g in @($Cfg.groups)) {
+        if (-not $g.groupId) { $p.Add("entra.manualVerification requires groupId for group $($g.projectId)/$($g.classification)") }
+        if (@($g.members | Where-Object { $_ }).Count) { $p.Add("entra.manualVerification cannot add members to group $($g.projectId)/$($g.classification); group owners add them and members stays empty") }
+    }
+    return $p.ToArray()
+}
+
 function Get-StgArm { param([string]$Path, [string]$ApiVersion) Invoke-QsAz @('rest', '--method', 'get', '--url', "https://management.azure.com$Path`?api-version=$ApiVersion") }
+function Get-StgManagedIdentityClientId {
+    # A system-assigned identity's client ID through Azure Resource Manager (the identities/default
+    # extension resource), so operators without a Microsoft Graph token can read it.
+    param([string]$ResourceId, [string]$PrincipalId)
+    $mi = Get-StgArm "$ResourceId/providers/Microsoft.ManagedIdentity/identities/default" '2023-01-31'
+    $client = [string]$mi.properties.clientId
+    if ([string]$mi.properties.principalId -ine $PrincipalId) { throw "managed_identity_mismatch: $ResourceId identity principal $($mi.properties.principalId) is not $PrincipalId." }
+    if ($client -notmatch $script:Guid) { throw "managed_identity_client_id_missing: $ResourceId returned no client ID." }
+    return $client
+}
 function Get-StgGraph { param([string]$Path) Invoke-QsAz @('rest', '--method', 'get', '--url', "https://graph.microsoft.com/v1.0/$Path") }
 function Send-StgGraph {
     param([string]$Method, [string]$Path, $Body)

@@ -762,6 +762,28 @@ in a browser, signed in, after Step 1 (which creates the identity `<prefix>-<suf
 Grant before `syncTimerEnabled` is `true`: a managed identity's token is cached for about 24 hours, so
 a run before the grant keeps a token without the permissions ([SYNC.md](../SYNC.md#graph-permission-before-the-first-run)).
 
+**Operator without a Microsoft Graph token (`entra.manualVerification`).** When Conditional Access refuses
+the operator a Microsoft Graph token (`AADSTS53003`, for example from Cloud Shell), Step 4 cannot read the
+app registrations. With `entra.manualVerification` set, Step 4 makes no Microsoft Graph call: the preview
+prints the settings above as a checklist with this deployment's IDs and host name, and `-Apply` records the
+IDs from the configuration for Steps 5, 7 and 8 (`verification: manual` in `stage4.verify.json`).
+An Entra administrator confirms the checklist in the Entra admin center before `-Apply`.
+
+```json
+"entra": {
+  "existing": { "gatewayAppId": "<GUID>", "resolverAppId": "<GUID>", "adminAppId": "<GUID>" },
+  "manualVerification": { "confirmedBy": "<name or change ticket>", "confirmedOn": "2026-10-29" }
+}
+```
+
+The configuration is refused unless `confirmedBy`, a `yyyy-MM-dd` `confirmedOn`, every `entra.existing`
+application ID (admin only with `stage1.includeAdmin`) and every `groups[].groupId` are set, and every
+`groups[].members` is empty (group owners add members). Step 4 does not check the registrations in this
+mode; a missing setting appears later as a sign-in or token error (`AADSTS65001`, `AADSTS50011`, APIM 401).
+Step 5 reads the APIM identity's client ID from Azure Resource Manager
+(`<APIM resource ID>/providers/Microsoft.ManagedIdentity/identities/default`), not from Microsoft Graph, in
+both modes. The workbook group names come from `groups[].groupDisplayName` when Graph is not readable.
+
 ---
 
 ## Step 5: configure the apps and the gateway

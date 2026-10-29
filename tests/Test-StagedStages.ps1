@@ -252,6 +252,36 @@ Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage
 $script:s4 = New-S4World; $script:s4.apps.gw.publicClient.redirectUris = @('https://localhost')
 $s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgNoLoopback -Apply 6>$null } catch { $s4err = "$_" }
 Assert-Contract (@($script:s4.sends) -contains 'patch applications/o-gw') 'Stage 4 with entra.browserSignIn false must still require the Windows broker redirect.'
+# entra.manualVerification: the operator cannot get a Microsoft Graph token (Conditional Access, AADSTS53003)
+# and an Entra administrator confirmed the settings in the Portal. Stage 4 records the configured IDs, no Graph.
+$script:s4graph = [Collections.Generic.List[string]]::new()
+function Get-StgGraph { param([string]$Path) $script:s4graph.Add($Path); throw 'AADSTS53003: access blocked by Conditional Access (fake)' }
+$cfgManual = $cfg4.Clone(); $cfgManual.entra = $cfg4.entra.Clone()
+$cfgManual.entra.manualVerification = @{ confirmedBy = 'Entra admin, change 123'; confirmedOn = '2026-10-29' }
+$cfgManual.groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1'; groupDisplayName = 'CCOF P1 STD'; members = @() })
+$script:s4 = New-S4World
+$m = $null; $s4err = $null; try { $m = Invoke-Stage4 -Cfg $cfgManual -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($null -eq $s4err -and $script:s4graph.Count -eq 0 -and $script:s4.sends.Count -eq 0) "Stage 4 with entra.manualVerification must make no Microsoft Graph call. reads: $($script:s4graph -join '; ') error: $s4err"
+Assert-Contract ($m.registrations.gatewayApi.appId -ceq 'a-gw' -and $m.registrations.developerSignIn.appId -ceq 'a-gw' -and $m.registrations.resolverApi.appId -ceq 'a-res' -and
+    $m.gatewayIdentifierUri -ceq 'api://a-gw' -and $m.admin.appId -ceq 'a-adm' -and $m.groups['P1/STD'].id -ceq 'g-1' -and $m.groups['P1/STD'].displayName -ceq 'CCOF P1 STD' -and
+    $m.azureCliClientAllowed -eq $true -and $m.verification -ceq 'manual' -and $m.manualVerification.confirmedBy -ceq 'Entra admin, change 123') 'Stage 4 with entra.manualVerification must record the configured application and group IDs that Stages 5, 7 and 8 read.'
+$previewText = (Invoke-Stage4 -Cfg $cfgManual 6>&1 | Out-String)
+Assert-Contract ($script:s4graph.Count -eq 0 -and $previewText -match 'Expose an API' -and $previewText -match $cli -and $previewText -match 'https://lab-admin\.azurewebsites\.net/api/console-v3' -and $previewText -match 'g-1') 'Stage 4 preview with entra.manualVerification must print the Portal checklist, without Graph.'
+$cfgManualMembers = $cfgManual.Clone(); $cfgManualMembers.groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1'; members = @('u-1') })
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgManualMembers -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'members' -and $script:s4graph.Count -eq 0) 'Stage 4 with entra.manualVerification must refuse group members it cannot add without Graph.'
+$cfgManualNoIds = $cfgManual.Clone(); $cfgManualNoIds.entra = $cfgManual.entra.Clone(); $cfgManualNoIds.entra.existing = @{ gatewayAppId = 'a-gw'; adminAppId = 'a-adm' }
+$s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgManualNoIds -Apply 6>$null } catch { $s4err = "$_" }
+Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'resolverAppId') 'Stage 4 with entra.manualVerification must refuse a missing existing application ID.'
+# Stage 5 reads the APIM identity's client ID from Azure Resource Manager, not Microsoft Graph.
+$script:miArm = @(); $script:miReply = @{ properties = @{ principalId = 'p-apim'; clientId = '00000000-0000-4000-8000-0000000000aa' } }
+function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:miArm += "$Path|$ApiVersion"; $script:miReply }
+$miClient = Get-StgManagedIdentityClientId -ResourceId '/subscriptions/s/resourceGroups/g/providers/Microsoft.ApiManagement/service/apim' -PrincipalId 'p-apim'
+Assert-Contract ($miClient -ceq '00000000-0000-4000-8000-0000000000aa' -and $script:miArm[0] -ceq '/subscriptions/s/resourceGroups/g/providers/Microsoft.ApiManagement/service/apim/providers/Microsoft.ManagedIdentity/identities/default|2023-01-31') 'The APIM identity client ID must come from the ARM identities/default resource.'
+$miErr = $null; try { $null = Get-StgManagedIdentityClientId -ResourceId '/x' -PrincipalId 'p-other' } catch { $miErr = "$_" }
+Assert-Contract ($miErr -match 'managed_identity_mismatch') 'The ARM identity lookup must refuse a principal that is not the expected one.'
+$stage5Body = [regex]::Match((Get-Content -Raw (Join-Path $root 'infra\staged\Staged.Application.ps1')), '(?s)function Invoke-Stage5 \{.*?\n\}').Value
+Assert-Contract ($stage5Body.Length -gt 0 -and $stage5Body -notmatch 'Get-StgGraph' -and $stage5Body -match 'Get-StgManagedIdentityClientId') 'Stage 5 must not call Microsoft Graph (operators blocked by Conditional Access run it).'
 Remove-Item Function:\Get-StgArm
 Remove-Item Function:\Invoke-StgAzJson
 . $driverPath -DotSourceOnly
@@ -315,6 +345,19 @@ try {
     $c.entra.Remove('browserSignIn')
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $read = Read-StgConfig $tmp
+    $c.entra.manualVerification = @{ confirmedBy = ''; confirmedOn = '2026-10-29' }
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $bad = ''; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message }
+    Assert-Contract ($bad -match 'entra\.manualVerification\.confirmedBy' -and $bad -match 'entra\.existing\.gatewayAppId' -and $bad -match 'members') 'entra.manualVerification must be refused without a confirmer, existing application IDs and member-free groups.'
+    $c.entra.manualVerification = @{ confirmedBy = 'Entra admin'; confirmedOn = '2026-10-29' }
+    $c.entra.existing = @{ gatewayAppId = '00000000-0000-4000-8000-000000000011'; resolverAppId = '00000000-0000-4000-8000-000000000012'; adminAppId = '00000000-0000-4000-8000-000000000013' }
+    $savedGroups = $c.groups
+    $c.groups = @($c.groups | ForEach-Object { $g = $_.Clone(); $g.groupId = '00000000-0000-4000-8000-0000000000' + (20 + [array]::IndexOf($c.groups, $_)); $g.members = @(); $g })
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+    $read = Read-StgConfig $tmp
+    Assert-Contract ($read.entra.manualVerification.confirmedBy -ceq 'Entra admin') 'A complete entra.manualVerification must be accepted.'
+    $c.entra.Remove('manualVerification'); $c.entra.Remove('existing'); $c.groups = $savedGroups
+    $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $c.reconciler.continuityGate = 'on'
     $c | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
     $bad = $false; try { $null = Read-StgConfig $tmp } catch { $bad = $_.Exception.Message -match 'ledgerCoverageStartAt is required' }
