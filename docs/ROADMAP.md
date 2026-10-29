@@ -2,6 +2,10 @@
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
+| S5-NULL | Implemented; PR CI pending | Missing/null/blank optional admin gateway IDs never become `[null]`; valid IDs retain order; malformed retained IDs and required admin identity fail before settings writes |
+
+| Packet | Status | Observable acceptance |
+| --- | --- | --- |
 | S5-ARM | Implemented; full gate/PR CI pending | Stage 5 sends workbook JSON as a string across the nested ARM boundary; dropdown/bracket literals and content digests remain unchanged; legacy object callers still serialize normally |
 
 ## Disaster recovery feature branch

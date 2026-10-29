@@ -825,6 +825,31 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 5 -ConfigPath $cfg
 Only after reviewing a successful preview, rerun the Step 5 `-Apply` command above.
 There is no need to rerun Steps 1–4 or delete a workbook: the failed preview did not deploy it.
 
+**A failed Apply can leave partial changes.** If admin settings fail because `join()` received a
+null, older drivers may have generated `"gatewayResourceIds": [null]` for an omitted optional list.
+Update to the Stage 5 null-list fix; do not remove or blank required identity IDs. Do not rerun
+Apply yet: ARM does not roll back successful sibling deployments. First inspect operations
+(read-only, using your current Azure login):
+
+```powershell
+$c = Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json
+az deployment operation group list --subscription $c.subscriptionId --resource-group $c.resourceGroup `
+    --name stage5-config --query "[].{state:properties.provisioningState,target:properties.targetResource,status:properties.statusMessage}" -o json
+```
+
+`Succeeded` operations show completed targets. For a `Microsoft.Resources/deployments` target,
+inspect its operations too, using the exact `target.id` from the output (including any different
+resource group). This is also read-only:
+
+```powershell
+$deploymentId = Read-Host 'Nested deployment target.id from the operation output'
+az rest --method get --url "https://management.azure.com$deploymentId/operations?api-version=2022-09-01" `
+    --query "value[].{state:properties.provisioningState,target:properties.targetResource,status:properties.statusMessage}" -o json
+```
+
+Retain the operation evidence privately. A failed overall status does not mean nothing changed;
+review successful resource operations before deciding whether a new preview and Apply are safe.
+
 **Azure CLI.** The driver preview writes the rendered policy and the parameter file; the same
 deployment then runs with:
 
