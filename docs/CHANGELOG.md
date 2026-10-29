@@ -13,6 +13,15 @@
   [Recovery commands](runbooks/DEPLOY-STEP-BY-STEP.md#step-5-configure-the-apps-and-the-gateway).
   No Azure/customer command was executed.
 
+## 2026-10-29 - Step 7 for an operator without a Microsoft Graph token
+
+- With `entra.manualVerification`, staged Step 7 skips the delegated group snapshot, which needs the
+  operator's Graph token, and leaves group membership to the sync timer (Graph application permission).
+  Step 7 refuses `sync.mode` `delegated-snapshot` in this mode. Before: Step 7 failed with
+  `snapshot_failed` after publishing the code.
+- `tests/Test-StagedStages.ps1` 458 checks (5 new); four mutants caught. Docs:
+  [deployment guide](runbooks/DEPLOY-STEP-BY-STEP.md) Step 4.
+
 ## 2026-10-29 - Steps 4 and 5 for an operator without a Microsoft Graph token
 
 - New optional `entra.manualVerification` (`confirmedBy`, `confirmedOn`). With it, staged Step 4 makes no
