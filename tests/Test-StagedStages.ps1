@@ -273,6 +273,18 @@ Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'members
 $cfgManualNoIds = $cfgManual.Clone(); $cfgManualNoIds.entra = $cfgManual.entra.Clone(); $cfgManualNoIds.entra.existing = @{ gatewayAppId = 'a-gw'; adminAppId = 'a-adm' }
 $s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgManualNoIds -Apply 6>$null } catch { $s4err = "$_" }
 Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'resolverAppId') 'Stage 4 with entra.manualVerification must refuse a missing existing application ID.'
+# Stage 7 takes the delegated group snapshot with the operator's own Graph token. With
+# entra.manualVerification that token is unavailable, so Stage 7 leaves membership to the sync timer
+# (sync.mode application-permission) and refuses a mode in which nothing could read the groups.
+Assert-Contract ((Get-StgStage7SnapshotPlan @{ entra = @{}; sync = @{ mode = 'delegated-snapshot' } }) -ceq 'delegated') 'Stage 7 must keep the delegated snapshot by default.'
+Assert-Contract ((Get-StgStage7SnapshotPlan @{ entra = @{}; sync = @{ mode = 'application-permission' } }) -ceq 'delegated') 'Stage 7 must keep the delegated snapshot for application-permission when the operator can read Graph.'
+Assert-Contract ((Get-StgStage7SnapshotPlan @{ entra = @{ manualVerification = @{ confirmedBy = 'x'; confirmedOn = '2026-10-29' } }; sync = @{ mode = 'application-permission' } }) -ceq 'sync-timer') 'Stage 7 with entra.manualVerification must leave group membership to the sync timer.'
+$planErr = $null; try { $null = Get-StgStage7SnapshotPlan @{ entra = @{ manualVerification = @{ confirmedBy = 'x'; confirmedOn = '2026-10-29' } }; sync = @{ mode = 'delegated-snapshot' } } } catch { $planErr = "$_" }
+Assert-Contract ($planErr -match 'manual_verification_sync_mode' -and $planErr -match 'application-permission') 'Stage 7 with entra.manualVerification must refuse sync.mode delegated-snapshot, which needs the operator''s Graph token.'
+$stage7Src = (Get-Command Invoke-Stage7).Definition
+$planAt = $stage7Src.IndexOf('Get-StgStage7SnapshotPlan'); $codeAt = $stage7Src.IndexOf('Invoke-QsCode'); $snapAt = $stage7Src.IndexOf('snapshot --credential azure-cli')
+$gatedSnapshot = [regex]::IsMatch($stage7Src, "if \(\`$snapshotPlan -ceq 'delegated'\) \{\s*\r?\n(?:(?!\} else \{).)*?snapshot --credential azure-cli", 'Singleline')
+Assert-Contract ($planAt -ge 0 -and $planAt -lt $codeAt -and $gatedSnapshot -and $snapAt -gt $planAt) 'Stage 7 must decide the snapshot plan before publishing code and run the delegated snapshot only for the delegated plan.'
 # Stage 5 reads the APIM identity's client ID from Azure Resource Manager, not Microsoft Graph.
 $script:miArm = @(); $script:miReply = @{ properties = @{ principalId = 'p-apim'; clientId = '00000000-0000-4000-8000-0000000000aa' } }
 function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:miArm += "$Path|$ApiVersion"; $script:miReply }

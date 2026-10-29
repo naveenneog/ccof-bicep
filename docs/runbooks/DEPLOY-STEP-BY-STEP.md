@@ -783,6 +783,9 @@ mode; a missing setting appears later as a sign-in or token error (`AADSTS65001`
 Step 5 reads the APIM identity's client ID from Azure Resource Manager
 (`<APIM resource ID>/providers/Microsoft.ManagedIdentity/identities/default`), not from Microsoft Graph, in
 both modes. The workbook group names come from `groups[].groupDisplayName` when Graph is not readable.
+Step 7 skips the delegated group snapshot in this mode (that snapshot reads groups with the operator's
+Graph token); the sync timer reads group membership with the sync identity's Graph application permission,
+so the configuration needs `sync.mode` `application-permission` (Step 7 refuses `delegated-snapshot` here).
 
 ---
 
