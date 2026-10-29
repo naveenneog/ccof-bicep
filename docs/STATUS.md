@@ -1,5 +1,16 @@
 # Current work
 
+## Stage 5 null admin gateway IDs
+
+**Packet:** S5-NULL (2026-10-29). Fix only the generated optional admin gateway list, preserving
+required identity validation and all valid IDs. RED: actual Stage 5 generated `[null]` for an omitted
+property. GREEN: `tests/Test-Stage5AdminParameters.ps1`; existing staged contracts (458) and Stage 5
+Bicep build/lint pass. Full public CI is required before merge. No Azure execution is authorized.
+Council (self-review): ARCHITECT PASS (existing parameter contract); CODER PASS (filter at source);
+QA PASS (RED/GREEN, null/invalid/disabled cases); UX PASS (no Apply recovery advice before reviewing
+partial deployment); SECURITY PASS (required IDs rejected, no customer identifiers committed).
+This packet's commit is the Git change containing this status entry.
+
 ## Stage 5 workbook ARM literal transport
 
 **Packet:** S5-ARM (2026-10-29), implemented; full gate/PR CI pending. Given generated workbook strings beginning with `[`,

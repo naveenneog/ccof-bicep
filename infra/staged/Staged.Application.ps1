@@ -46,9 +46,16 @@ function Invoke-Stage5 {
     $report = (Get-Content -LiteralPath $wb.parametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
     $admin = @{ enabled = [bool]$Cfg.stage1.includeAdmin }
     if ($admin.enabled) {
+        if ($entra.admin.appId -notmatch $script:Guid) { throw 'stage5_admin_identity_invalid: Stage 4 admin.appId must be a GUID; verify the Stage 4 record before continuing.' }
         $admin += @{ uiClientId = $entra.admin.appId; editorIds = @(); readerIds = @(); v3Enabled = ($Cfg.admin.v3Enabled -ne $false); extraAllowedClientIds = @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
             clientId = $entra.registrations.developerSignIn.appId; gatewayUrl = $ctx.GatewayUrl; projectHeader = $Cfg.gateway.projectHeaderName }
-        if (@($Cfg.admin.gatewayResourceIds).Count) { $admin.gatewayResourceIds = @($Cfg.admin.gatewayResourceIds) }
+        $gatewayResourceIds = @($Cfg.admin.gatewayResourceIds | Where-Object { $_ -is [string] -and $_.Trim().Length })
+        foreach ($id in $gatewayResourceIds) {
+            if ($id -notmatch '^/subscriptions/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}/resourceGroups/[^/\s]+/providers/Microsoft.ApiManagement/service/[^/\s]+$') {
+                throw 'stage5_admin_gateway_invalid: admin.gatewayResourceIds must contain full APIM resource IDs.'
+            }
+        }
+        if ($gatewayResourceIds.Count) { $admin.gatewayResourceIds = $gatewayResourceIds }
     }
     $params = @{
         tenantId = $Cfg.tenantId; location = $Cfg.location; names = $ctx.P.names; cosmosEndpoint = $s1.cosmosEndpoint

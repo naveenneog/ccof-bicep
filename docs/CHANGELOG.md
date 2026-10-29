@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-10-29 - Stage 5 omits null optional admin gateway IDs
+
+- An omitted `admin.gatewayResourceIds` became `[null]` in the generated parameters because
+  PowerShell's `@($null).Count` is 1. ARM then refused `join(adminGatewayList, ',')` while writing
+  admin settings. Stage 5 now removes null/non-string/blank optional entries and omits an empty list.
+  Valid IDs and their order are unchanged; malformed nonblank APIM IDs are rejected, not hidden.
+- Stage 5 also refuses a missing/malformed required Stage 4 admin client ID before writing settings.
+  Offline actual-Stage-5 parameter regression fails on the original code and covers missing/null/mixed
+  lists, valid IDs, malformed IDs and disabled admin. No live Azure/customer deployment was performed.
+
 ## 2026-10-29 - Stage 5 workbook strings stay literal across ARM deployments
 
 - Stage 5 serializes workbook content before passing it to the nested workbook deployment.
