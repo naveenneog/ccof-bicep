@@ -154,6 +154,12 @@ function Read-StgConfig {
         $(if (-not $existingApps.adminAppId) { $c.entra.adminAppDisplayName })) + @($c.groups | Where-Object { -not $_.groupId } | ForEach-Object { $_.groupDisplayName })
     foreach ($k in 'gatewayAppId', 'resolverAppId', 'adminAppId') { if ($existingApps[$k] -and $existingApps[$k] -notmatch $script:Guid) { $problems.Add("entra.existing.$k must be a GUID") } }
     if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('browserSignIn') -and $c.entra.browserSignIn -isnot [bool]) { $problems.Add('entra.browserSignIn must be true or false') }
+    if ($c.acceptance -is [Collections.IDictionary] -and $c.acceptance.Contains('gatewayUrl')) {
+        $u = $c.acceptance.gatewayUrl
+        if (-not ($u -is [string] -and $u -cmatch '^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~-]+)*$' -and $u -notmatch '/v1$')) {
+            $problems.Add('acceptance.gatewayUrl must be https://<host>/<apiPath>, without a trailing slash or /v1 (the address users are given, for example a Front Door host)')
+        }
+    }
     if ($c.entra -is [Collections.IDictionary] -and $c.entra.Contains('manualVerification')) { foreach ($m in @(Get-StgManualEntraProblems $c)) { $problems.Add($m) } }
     foreach ($n in @($entraNames | Where-Object { $_ })) { if ($n -notmatch '^[A-Za-z0-9 ._-]{1,120}$') { $problems.Add("Entra display name '$n' may hold only letters, digits, space . _ -") } }
     $fd = $c.stage1.foundry

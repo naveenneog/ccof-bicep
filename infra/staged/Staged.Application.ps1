@@ -202,14 +202,23 @@ function Invoke-StgGateway {
     return [ordered]@{ status = [int]$r.StatusCode; project = $Project; model = $Model; result = $text; headers = $ccof }
 }
 
+function Get-StgStage8GatewayUrl {
+    # acceptance.gatewayUrl: the address users are given (for example a Front Door host); otherwise the
+    # APIM gateway URL Stage 5 recorded.
+    param($Cfg, $Stage5)
+    if ($Cfg.acceptance -is [Collections.IDictionary] -and $Cfg.acceptance.Contains('gatewayUrl') -and $Cfg.acceptance.gatewayUrl) { return [string]$Cfg.acceptance.gatewayUrl }
+    return [string]$Stage5.gatewayUrl
+}
+
 function Invoke-Stage8 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1; $config = Get-StgStage $Cfg 5; $entra = Get-StgStage $Cfg 4; $null = Get-StgStage $Cfg 7
     $t = $Cfg.acceptance
-    if (-not $Apply) { Write-Host "preview: gateway $($config.gatewayUrl): anonymous 401, $(@($t.allowed).Count) allowed and $(@($t.denied).Count) denied requests, resolver 401, admin console checks, telemetry query"; return $null }
+    $gatewayUrl = Get-StgStage8GatewayUrl -Cfg $Cfg -Stage5 $config
+    if (-not $Apply) { Write-Host "preview: gateway $($gatewayUrl): anonymous 401, $(@($t.allowed).Count) allowed and $(@($t.denied).Count) denied requests, resolver 401, admin console checks, telemetry query"; return $null }
     $checks = [ordered]@{}
     $probe = @(@($t.allowed) + @($t.denied))[0]
-    $checks.anonymous = Invoke-StgGateway -Url $config.gatewayUrl -Project $probe.project -Model $probe.model -ProjectHeader $Cfg.gateway.projectHeaderName
+    $checks.anonymous = Invoke-StgGateway -Url $gatewayUrl -Project $probe.project -Model $probe.model -ProjectHeader $Cfg.gateway.projectHeaderName
     Assert-Stg ($checks.anonymous.status -eq 401) "anonymous request answered $($checks.anonymous.status)"
     $resolverUrl = "https://$($s1.names.apps.resolver.functionApp).azurewebsites.net/api/resolve"
     $checks.resolverAnonymous = [int](Invoke-WebRequest -Uri $resolverUrl -Method Post -Body '{}' -ContentType 'application/json' -SkipHttpErrorCheck -TimeoutSec 60).StatusCode
@@ -219,12 +228,12 @@ function Invoke-Stage8 {
     $checks.allowed = @(); $checks.denied = @()
     foreach ($c in $t.allowed) {
         $r = $null
-        for ($i = 0; $i -lt 8; $i++) { $r = Invoke-StgGateway -Url $config.gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName; if ($r.status -eq 200) { break }; Start-Sleep 20 }
+        for ($i = 0; $i -lt 8; $i++) { $r = Invoke-StgGateway -Url $gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName; if ($r.status -eq 200) { break }; Start-Sleep 20 }
         $checks.allowed += $r
         Assert-Stg ($r.status -eq 200) "allowed request $($c.project)/$($c.model) answered $($r.status) $($r.result)"
     }
     foreach ($c in $t.denied) {
-        $r = Invoke-StgGateway -Url $config.gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName
+        $r = Invoke-StgGateway -Url $gatewayUrl -Token $token -Project $c.project -Model $c.model -ProjectHeader $Cfg.gateway.projectHeaderName
         $checks.denied += $r + @{ expected = $c.expectedStatus; reason = $c.reason }
         Assert-Stg ($r.status -eq [int]$c.expectedStatus) "denied request $($c.project)/$($c.model) answered $($r.status), expected $($c.expectedStatus)"
     }
