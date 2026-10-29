@@ -121,7 +121,10 @@ module workbookFull '../workbook/main.bicep' = if (!empty(workbookContent)) {
     workbookDisplayName: workbook.displayName
     location: location
     workspaceResourceId: workspace.id
-    workbookContent: workbookContent
+    // An object parameter is recursively evaluated at the nested ARM boundary. Keep JSON-array
+    // strings (for example the Period dropdown) opaque until they reach the workbook resource.
+    workbookContent: {}
+    workbookSerializedData: string(workbookContent)
     contentTags: workbookContentTags
   }
 }

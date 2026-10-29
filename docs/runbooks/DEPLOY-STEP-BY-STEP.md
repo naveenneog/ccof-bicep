@@ -809,6 +809,22 @@ pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 5 -ConfigPath $cfg -A
 The script renders the gateway policy from the configuration and checks it before deploying. Step 5
 writes each app's settings as a complete set, so settings added by hand are replaced on the next run.
 
+**Recover from a workbook `InvalidTemplate` preview.** If the error quotes the Period dropdown
+JSON (`[{"value":"month",...}]`) as an invalid language expression, update the source checkout
+to the version with the Stage 5 workbook ARM literal fix. Keep `$cfg` and `.staged-state` unchanged;
+do not add `[` characters to generated workbook strings or change Graph/RBAC permissions.
+From the existing source checkout, after the fix is merged:
+
+```powershell
+git fetch origin
+git switch main
+git pull --ff-only origin main
+pwsh -File infra\staged\Invoke-StagedDeployment.ps1 -Stage 5 -ConfigPath $cfg
+```
+
+Only after reviewing a successful preview, rerun the Step 5 `-Apply` command above.
+There is no need to rerun Steps 1–4 or delete a workbook: the failed preview did not deploy it.
+
 **Azure CLI.** The driver preview writes the rendered policy and the parameter file; the same
 deployment then runs with:
 

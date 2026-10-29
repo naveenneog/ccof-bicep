@@ -1,5 +1,22 @@
 # Current work
 
+## Stage 5 workbook ARM literal transport
+
+**Packet:** S5-ARM (2026-10-29), implemented; full gate/PR CI pending. Given generated workbook strings beginning with `[`,
+Stage 5 must transport them through its nested deployment without ARM expression evaluation or
+changed displayed strings/digests. Preserve existing configuration and standalone workbook callers.
+Offline compiled-template regression first; no live Azure/customer execution is authorized.
+
+Proof: `tests/Test-WorkbookArmTransport.ps1` failed before the patch with
+`workbook_arm_transport: serialize before the nested deployment`; now passes, including the unsafe
+object negative control, real chargeback dropdown/digest, empty opt-out and legacy fallback.
+`tests/workbook-build.test.ts`: 54 pass. `tests/Test-StagedStages.ps1`: 453 checks pass.
+Offline Bicep build/lint: Stage 5, workbook, quickstart and manual configuration pass.
+Council (self-review): ARCHITECT PASS (existing interface retained); CODER PASS (serialization at
+the boundary); QA PASS (RED/GREEN and negative control); UX PASS (unchanged labels and recovery
+instructions); SECURITY PASS (opaque transport, no credentials/customer identifiers).
+This packet's commit is the Git change containing this status entry; no live acceptance is claimed.
+
 ## Documentation for new readers
 
 Done 2026-10-24 and merged to `main`: README entry points, glossary, budgets page, historical
