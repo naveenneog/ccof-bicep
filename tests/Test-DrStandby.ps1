@@ -104,6 +104,54 @@ $threw = $false; try { $null = New-DrFrontDoorParameters -Stem 'Bad_Name' -Prima
 Check 'Front Door stem rejects uppercase and underscores before az' $threw
 Check 'Front Door parameters default to WAF detection' ($front.wafMode -ceq 'Detection' -and $front.probeIntervalSeconds -eq 30)
 
+# Primary-only Front Door (docs/runbooks/DR-FRONT-DOOR.md "Primary region first"): region A origins
+# now, region B origins later behind the same profile, endpoint and host.
+$fdSub = '/subscriptions/00000000-0000-4000-8000-000000000002/resourceGroups/rg/providers'
+$primaryOnlyArgs = @{ Stem = 'contoso-dr'; PrimaryApimId = "$fdSub/Microsoft.ApiManagement/service/apim-a"; PrimaryApimHost = 'apim-a.azure-api.net'; PrimaryApimLocation = 'eastus2'
+    PrimaryAdminSiteId = "$fdSub/Microsoft.Web/sites/admin-a"; PrimaryAdminHost = 'admin-a.azurewebsites.net'; PrimaryAdminLocation = 'eastus2' }
+$solo = New-DrFrontDoorParameters @primaryOnlyArgs -PrimaryOnly
+Check 'primary-only parameters: one APIM and one admin origin, region A, priority 1' ($solo.apimOrigins.Count -eq 1 -and $solo.adminOrigins.Count -eq 1 -and $solo.apimOrigins[0].priority -eq 1 -and $solo.adminOrigins[0].priority -eq 1 -and $solo.apimOrigins[0].apimId -match '/apim-a$' -and $solo.adminOrigins[0].siteId -match '/admin-a$')
+Check 'primary-only parameters carry no standby origin' (($solo | ConvertTo-Json -Depth 20) -notmatch 'standby|apim-b|admin-b')
+Check 'primary-only origin names and stem match the full deployment' ($solo.stem -ceq $front.stem -and $solo.apimOrigins[0].name -ceq $front.apimOrigins[0].name -and $solo.adminOrigins[0].name -ceq $front.adminOrigins[0].name)
+Check 'full parameters unchanged: four origins named primary/standby, priorities 1/2' ((@($front.apimOrigins.name) + @($front.adminOrigins.name)) -join ',' -ceq 'primary-gateway,standby-gateway,primary-admin,standby-admin' -and (@($front.apimOrigins.priority) + @($front.adminOrigins.priority)) -join ',' -ceq '1,2,1,2' -and (@($front.Keys | Sort-Object) -join ',') -ceq 'adminOrigins,apimOrigins,disablePrimaryAdminOrigins,disablePrimaryOrigins,probeIntervalSeconds,simulatePrimaryFailure,stem,tags,wafMode')
+$threw = $false; try { $null = New-DrFrontDoorParameters @primaryOnlyArgs } catch { $threw = "$_" -match 'frontdoor_standby_origin_missing' }
+Check 'full mode without region B origins is refused' $threw
+$threw = $false; try { $null = New-DrFrontDoorParameters @primaryOnlyArgs -PrimaryOnly -StandbyApimId "$fdSub/Microsoft.ApiManagement/service/apim-b" } catch { $threw = "$_" -match 'frontdoor_primary_only_standby_given' }
+Check 'primary-only mode refuses region B origin values' $threw
+Check 'template accepts one or two origins per group' ($fd.parameters.apimOrigins.minLength -eq 1 -and $fd.parameters.apimOrigins.maxLength -eq 2 -and $fd.parameters.adminOrigins.minLength -eq 1 -and $fd.parameters.adminOrigins.maxLength -eq 2)
+$fixedNames = @($fdAll | Where-Object { $_.type -cne 'Microsoft.Cdn/profiles/originGroups/origins' } | ForEach-Object { "$($_.name)" })
+Check 'profile, endpoint, origin groups, routes, WAF and security policy names depend on the stem only' ($fixedNames.Count -eq 8 -and @($fixedNames | Where-Object { $_ -match 'Origins|includeStandby|primaryOnly' }).Count -eq 0)
+Check 'expected private links: 2 primary-only, 4 full' ((Get-DrFrontDoorExpectedConnections -PrimaryOnly) -eq 2 -and (Get-DrFrontDoorExpectedConnections) -eq 4)
+foreach ($ph in 'Lockdown', 'DrainPrimary', 'RestorePrimary') {
+    Check "primary-only refuses $ph" ("$(Get-DrFrontDoorPhaseProblem -Phase $ph -PrimaryOnly -State $null)" -match '^frontdoor_primary_only_phase_refused')
+}
+foreach ($ph in 'Deploy', 'Approve', 'Verify') {
+    Check "primary-only allows $ph" ($null -eq (Get-DrFrontDoorPhaseProblem -Phase $ph -PrimaryOnly -State @{ mode = 'primaryOnly' }))
+}
+Check 'full Lockdown refused while state is primary-only' ("$(Get-DrFrontDoorPhaseProblem -Phase 'Lockdown' -State @{ mode = 'primaryOnly'; verifiedAt = 'x' })" -match '^frontdoor_standby_required')
+Check 'full Approve refused against primary-only state until full Deploy' ("$(Get-DrFrontDoorPhaseProblem -Phase 'Approve' -State @{ mode = 'primaryOnly' })" -match '^frontdoor_mode_mismatch')
+Check 'primary-only Verify refused against full state' ("$(Get-DrFrontDoorPhaseProblem -Phase 'Verify' -PrimaryOnly -State @{ mode = 'full' })" -match '^frontdoor_mode_mismatch')
+Check 'primary-only Deploy refused against full or legacy state (no silent downgrade)' ("$(Get-DrFrontDoorPhaseProblem -Phase 'Deploy' -PrimaryOnly -State @{ mode = 'full' })" -match '^frontdoor_mode_mismatch' -and "$(Get-DrFrontDoorPhaseProblem -Phase 'Deploy' -PrimaryOnly -State @{ deployedAt = 'x' })" -match '^frontdoor_mode_mismatch')
+Check 'legacy state without mode counts as full' ($null -eq (Get-DrFrontDoorPhaseProblem -Phase 'Lockdown' -State @{ verifiedAt = 'x' }) -and $null -eq (Get-DrFrontDoorPhaseProblem -Phase 'Deploy' -State @{ mode = 'primaryOnly' }))
+$moved = Set-DrFrontDoorStateMode -State @{ mode = 'primaryOnly'; approvedConnections = @('a', 'b'); approvedAt = 'x'; verifiedAt = 'y'; endpointHostName = 'h' } -Mode 'full'
+Check 'moving to full clears primary-only approval and verification' ($moved.mode -ceq 'full' -and -not $moved.Contains('approvedConnections') -and -not $moved.Contains('approvedAt') -and -not $moved.Contains('verifiedAt') -and $moved.endpointHostName -ceq 'h')
+$kept = Set-DrFrontDoorStateMode -State @{ mode = 'full'; approvedConnections = @('a', 'b', 'c', 'd'); verifiedAt = 'y' } -Mode 'full'
+Check 'redeploy in the same mode keeps approval and verification' (@($kept.approvedConnections).Count -eq 4 -and $kept.verifiedAt -ceq 'y')
+$minimal = [pscustomobject]@{ primary = [pscustomobject]@{ location = 'eastus2' }; tags = [pscustomobject]@{ workload = 'ccof' }
+    standby = [pscustomobject]@{ stagedConfigPath = 'staged.config.json'; stagedStateDirectory = '.staged-state'; stateDirectory = '.dr-standby-state' }
+    frontDoor = [pscustomobject]@{ stem = 'contoso-dr' } }
+Check 'primary-only config needs no secondary, tenant or standby APIM fields' (@(Get-DrFrontDoorPrimaryOnlyProblems $minimal).Count -eq 0)
+$noState = $minimal | ConvertTo-Json -Depth 5 | ConvertFrom-Json; $noState.standby.stateDirectory = 'REPLACE-path'; $noState.primary.location = 'East US'
+$noStateProblems = @(Get-DrFrontDoorPrimaryOnlyProblems $noState)
+Check 'primary-only config refuses placeholder state directory and invalid location' ($noStateProblems -contains 'standby.stateDirectory:placeholder' -and $noStateProblems -contains 'primary.location:invalid')
+$badFd = $minimal | ConvertTo-Json -Depth 5 | ConvertFrom-Json; $badFd.frontDoor.stem = 'Bad_Name'; $badFd.tags.workload = 'bad value'
+$badFdProblems = @(Get-DrFrontDoorPrimaryOnlyProblems $badFd)
+Check 'primary-only config checks stem and tags' ($badFdProblems -contains 'frontDoor.stem:lowercase_letters_digits_hyphens_3_to_40' -and $badFdProblems -contains 'tags:invalid_workload')
+$fdErr = Join-Path ([IO.Path]::GetTempPath()) "fd-primary-only-$PID.err"
+$null = & pwsh -NoProfile -File (Join-Path $repo 'infra/dr/Invoke-DrFrontDoor.ps1') -Phase Lockdown -ConfigPath 'missing.json' -PrimaryOnly 2>$fdErr
+$fdCode = $LASTEXITCODE; $fdText = Get-Content -LiteralPath $fdErr -Raw; Remove-Item -LiteralPath $fdErr -ErrorAction SilentlyContinue
+Check 'driver refuses -PrimaryOnly Lockdown before reading config or calling az' ($fdCode -eq 2 -and "$fdText" -match 'frontdoor_primary_only_phase_refused')
+
 # Region A's Stage 3 read-back counts only its own principals, so region B's grants on the shared
 # workspace and Cosmos account do not fail it.
 . (Join-Path $repo 'infra/staged/Invoke-StagedDeployment.ps1') -DotSourceOnly

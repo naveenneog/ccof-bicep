@@ -2,7 +2,8 @@
 // docs/DR-ACTIVE-PASSIVE.md "Edge"). Each origin reaches its APIM gateway over Private Link
 // (origin type API Management, sub-resource Gateway); each connection is then approved on the APIM
 // side (infra/dr/Invoke-DrFrontDoor.ps1). Priorities make the pair active/passive: Front Door sends
-// traffic to the primary while its health probe passes, and to the standby otherwise.
+// traffic to the primary while its health probe passes, and to the standby otherwise. Before region B
+// exists the same template deploys the primary origins only (Invoke-DrFrontDoor.ps1 -PrimaryOnly).
 // https://learn.microsoft.com/azure/frontdoor/standard-premium/how-to-enable-private-link-apim
 targetScope = 'resourceGroup'
 
@@ -13,13 +14,13 @@ param stem string
 
 param tags object = {}
 
-@description('APIM gateways, primary first: [{ name, apimId, hostName, location, priority }]. priority 1 = primary, 2 = standby.')
-@minLength(2)
+@description('APIM gateways, primary first: [{ name, apimId, hostName, location, priority }]. priority 1 = primary, 2 = standby. One entry (primary only) before region B exists; the profile, endpoint, origin group and route names do not change when the standby entry is added later.')
+@minLength(1)
 @maxLength(2)
 param apimOrigins array
 
-@description('Admin Function Apps, primary first: [{ name, siteId, hostName, location, priority }]. priority 1 = primary, 2 = standby.')
-@minLength(2)
+@description('Admin Function Apps, primary first: [{ name, siteId, hostName, location, priority }]. priority 1 = primary, 2 = standby. One entry (primary only) before region B exists.')
+@minLength(1)
 @maxLength(2)
 param adminOrigins array
 

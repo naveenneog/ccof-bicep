@@ -48,6 +48,12 @@ function Get-DrStandbyProblems {
     if ($null -ne $max -and (-not ("$max" -match '^\d+$') -or [int]$max -lt 1000 -or [int]$max % 1000)) { $p.Add('cosmos.autoscaleMaxThroughput:multiple_of_1000_from_1000') }
     $conv = Get-DrValue $Config 'cosmos.convertServerless'
     if ($null -ne $conv -and $conv -isnot [bool]) { $p.Add('cosmos.convertServerless:true_or_false') }
+    foreach ($problem in @(Get-DrFrontDoorSectionProblems $Config)) { $p.Add($problem) }
+    $p.ToArray()
+}
+
+function Get-DrFrontDoorSectionProblems { param($Config)
+    $p = [Collections.Generic.List[string]]::new()
     $fdStem = [string](Get-DrValue $Config 'frontDoor.stem')
     if ($fdStem -and $fdStem -cnotmatch '^[a-z][a-z0-9-]{2,39}$') { $p.Add('frontDoor.stem:lowercase_letters_digits_hyphens_3_to_40') }
     $fdMode = [string](Get-DrValue $Config 'frontDoor.wafMode')
@@ -55,6 +61,64 @@ function Get-DrStandbyProblems {
     $probe = Get-DrValue $Config 'frontDoor.probeIntervalSeconds'
     if ($null -ne $probe -and (-not ("$probe" -match '^\d+$') -or [int]$probe -lt 5 -or [int]$probe -gt 255)) { $p.Add('frontDoor.probeIntervalSeconds:5_to_255') }
     $p.ToArray()
+}
+
+# Problems for Invoke-DrFrontDoor.ps1 -PrimaryOnly: region A's staged config and state, where to keep
+# frontdoor-state.json, region A's location, tags and the frontDoor section. Region B fields
+# (secondary, standby.apim, nameSuffix) are not read in this mode.
+function Get-DrFrontDoorPrimaryOnlyProblems {
+    param([Parameter(Mandatory)] $Config)
+    $p = [Collections.Generic.List[string]]::new()
+    foreach ($f in 'standby.stagedConfigPath', 'standby.stagedStateDirectory', 'standby.stateDirectory') {
+        $v = Get-DrValue $Config $f
+        if ([string]::IsNullOrWhiteSpace([string]$v)) { $p.Add("${f}:required") } elseif ("$v" -match '^REPLACE') { $p.Add("${f}:placeholder") }
+    }
+    if ([string](Get-DrValue $Config 'primary.location') -cnotmatch $script:Region) { $p.Add('primary.location:invalid') }
+    $tags = Get-DrValue $Config 'tags'
+    if ($null -ne $tags) {
+        foreach ($tag in $tags.PSObject.Properties) {
+            if ($tag.Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$' -or "$($tag.Value)" -cnotmatch '^[A-Za-z0-9._:/-]{1,256}$') { $p.Add("tags:invalid_$($tag.Name)") }
+        }
+    }
+    foreach ($problem in @(Get-DrFrontDoorSectionProblems $Config)) { $p.Add($problem) }
+    $p.ToArray()
+}
+
+function Get-DrFrontDoorMode { param([switch]$PrimaryOnly) if ($PrimaryOnly) { 'primaryOnly' } else { 'full' } }
+
+# Private Link connections Approve and Verify require: an APIM and an admin app per region.
+function Get-DrFrontDoorExpectedConnections { param([switch]$PrimaryOnly) if ($PrimaryOnly) { 2 } else { 4 } }
+
+# Why -Phase cannot run in this mode against this frontdoor-state.json; $null when it can.
+# A state file without `mode` predates primary-only deployments and is a full deployment.
+function Get-DrFrontDoorPhaseProblem {
+    param([Parameter(Mandatory)] [string]$Phase, [switch]$PrimaryOnly, $State)
+    if ($PrimaryOnly -and $Phase -cnotin 'Deploy', 'Approve', 'Verify') {
+        return "frontdoor_primary_only_phase_refused: -Phase $Phase needs region B; with -PrimaryOnly only Deploy, Approve and Verify run. Build region B, then run Deploy, Approve and Verify without -PrimaryOnly."
+    }
+    if ($null -eq $State) { return $null }
+    $mode = Get-DrFrontDoorMode -PrimaryOnly:$PrimaryOnly
+    $stateMode = [string](Get-DrValue $State 'mode')
+    if (-not $stateMode) { $stateMode = 'full' }
+    if ($Phase -cin 'Lockdown', 'DrainPrimary', 'RestorePrimary' -and $stateMode -ceq 'primaryOnly') {
+        return "frontdoor_standby_required: frontdoor-state.json records a primary-only deployment; run Deploy, Approve and Verify without -PrimaryOnly before -Phase $Phase."
+    }
+    if ($PrimaryOnly -and $stateMode -ceq 'full') {
+        return 'frontdoor_mode_mismatch: frontdoor-state.json records a full (two-region) deployment; run the phases without -PrimaryOnly.'
+    }
+    if ($Phase -cin 'Approve', 'Verify' -and $stateMode -cne $mode) {
+        return "frontdoor_mode_mismatch: frontdoor-state.json records a $stateMode deployment; run -Phase Deploy -Apply$(if ($PrimaryOnly) { ' -PrimaryOnly' }) first."
+    }
+    return $null
+}
+
+# Records the deployment mode; a change of mode drops the approvals and verification of the other mode.
+function Set-DrFrontDoorStateMode {
+    param([Parameter(Mandatory)] [Collections.IDictionary]$State, [Parameter(Mandatory)] [ValidateSet('primaryOnly', 'full')] [string]$Mode)
+    $previous = if ($State.Contains('mode') -and $State['mode']) { [string]$State['mode'] } else { 'full' }
+    if ($previous -cne $Mode) { foreach ($k in 'approvedConnections', 'approvedAt', 'verifiedAt') { $State.Remove($k) } }
+    $State['mode'] = $Mode
+    return $State
 }
 
 # Region B names: the primary stem plus "-<suffix>"; storage <primary storage stem><suffix><app>.
@@ -151,44 +215,57 @@ function New-DrFrontDoorParameters {
         [Parameter(Mandatory)] [string]$PrimaryApimId,
         [Parameter(Mandatory)] [string]$PrimaryApimHost,
         [Parameter(Mandatory)] [string]$PrimaryApimLocation,
-        [Parameter(Mandatory)] [string]$StandbyApimId,
-        [Parameter(Mandatory)] [string]$StandbyApimHost,
-        [Parameter(Mandatory)] [string]$StandbyApimLocation,
+        [string]$StandbyApimId,
+        [string]$StandbyApimHost,
+        [string]$StandbyApimLocation,
         [Parameter(Mandatory)] [string]$PrimaryAdminSiteId,
         [Parameter(Mandatory)] [string]$PrimaryAdminHost,
         [Parameter(Mandatory)] [string]$PrimaryAdminLocation,
-        [Parameter(Mandatory)] [string]$StandbyAdminSiteId,
-        [Parameter(Mandatory)] [string]$StandbyAdminHost,
-        [Parameter(Mandatory)] [string]$StandbyAdminLocation,
+        [string]$StandbyAdminSiteId,
+        [string]$StandbyAdminHost,
+        [string]$StandbyAdminLocation,
         [string]$WafMode = 'Detection',
         [int]$ProbeIntervalSeconds = 30,
         [switch]$DisablePrimaryOrigins,
         [switch]$DisablePrimaryAdminOrigins,
         [switch]$SimulatePrimaryFailure,
+        [switch]$PrimaryOnly,
         [hashtable]$Tags = @{}
     )
     if ($Stem -cnotmatch '^[a-z][a-z0-9-]{2,39}$') { throw 'frontdoor_stem_invalid: lowercase letters, digits and hyphens, 3-40 chars; endpoint name must be globally unique.' }
     if ($WafMode -cnotin 'Detection', 'Prevention') { throw 'frontdoor_waf_mode_invalid: use Detection or Prevention.' }
     if ($ProbeIntervalSeconds -lt 5 -or $ProbeIntervalSeconds -gt 255) { throw 'frontdoor_probe_interval_invalid: use 5-255 seconds.' }
+    $standbyValues = @($StandbyApimId, $StandbyApimHost, $StandbyApimLocation, $StandbyAdminSiteId, $StandbyAdminHost, $StandbyAdminLocation)
+    if ($PrimaryOnly) {
+        if (@($standbyValues | Where-Object { $_ }).Count) { throw 'frontdoor_primary_only_standby_given: -PrimaryOnly deploys region A origins only; omit the Standby* values.' }
+    } elseif (@($standbyValues | Where-Object { -not $_ }).Count) {
+        throw 'frontdoor_standby_origin_missing: region B APIM and admin origin values are required; use -PrimaryOnly before region B exists.'
+    }
     $specs = @(
         @{ id = $PrimaryApimId; host = $PrimaryApimHost; loc = $PrimaryApimLocation; group = 'apim' },
-        @{ id = $StandbyApimId; host = $StandbyApimHost; loc = $StandbyApimLocation; group = 'apim' },
-        @{ id = $PrimaryAdminSiteId; host = $PrimaryAdminHost; loc = $PrimaryAdminLocation; group = 'admin' },
-        @{ id = $StandbyAdminSiteId; host = $StandbyAdminHost; loc = $StandbyAdminLocation; group = 'admin' }
+        @{ id = $PrimaryAdminSiteId; host = $PrimaryAdminHost; loc = $PrimaryAdminLocation; group = 'admin' }
     )
+    if (-not $PrimaryOnly) {
+        $specs += @{ id = $StandbyApimId; host = $StandbyApimHost; loc = $StandbyApimLocation; group = 'apim' }
+        $specs += @{ id = $StandbyAdminSiteId; host = $StandbyAdminHost; loc = $StandbyAdminLocation; group = 'admin' }
+    }
     foreach ($s in $specs) {
         if ($s.id -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.(ApiManagement/service|Web/sites)/[A-Za-z0-9-]{1,60}$') { throw "frontdoor_origin_id_invalid: $($s.id)" }
         if ($s.host -notmatch '^[A-Za-z0-9.-]{1,253}$' -or $s.host -notmatch '\.') { throw "frontdoor_origin_host_invalid: $($s.host)" }
         if ($s.loc -notmatch '^[a-z][a-z0-9]{2,30}$') { throw "frontdoor_origin_location_invalid: $($s.loc)" }
     }
+    # Origin names do not depend on the mode, so a later full deployment adds the standby origins
+    # next to the existing primary ones in the same origin groups.
     $apim = @(
         @{ name = 'primary-gateway'; apimId = $PrimaryApimId; hostName = $PrimaryApimHost; location = $PrimaryApimLocation; priority = 1 }
-        @{ name = 'standby-gateway'; apimId = $StandbyApimId; hostName = $StandbyApimHost; location = $StandbyApimLocation; priority = 2 }
     )
     $admin = @(
         @{ name = 'primary-admin'; siteId = $PrimaryAdminSiteId; hostName = $PrimaryAdminHost; location = $PrimaryAdminLocation; priority = 1 }
-        @{ name = 'standby-admin'; siteId = $StandbyAdminSiteId; hostName = $StandbyAdminHost; location = $StandbyAdminLocation; priority = 2 }
     )
+    if (-not $PrimaryOnly) {
+        $apim += @{ name = 'standby-gateway'; apimId = $StandbyApimId; hostName = $StandbyApimHost; location = $StandbyApimLocation; priority = 2 }
+        $admin += @{ name = 'standby-admin'; siteId = $StandbyAdminSiteId; hostName = $StandbyAdminHost; location = $StandbyAdminLocation; priority = 2 }
+    }
     return @{
         stem = $Stem; tags = $Tags; apimOrigins = $apim; adminOrigins = $admin
         disablePrimaryOrigins = [bool]$DisablePrimaryOrigins
@@ -215,4 +292,4 @@ function Get-DrCosmosSteps {
     $steps.ToArray()
 }
 
-Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps
+Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Set-DrFrontDoorStateMode
