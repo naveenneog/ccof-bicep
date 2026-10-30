@@ -267,6 +267,7 @@ Assert-Contract ($m.registrations.gatewayApi.appId -ceq 'a-gw' -and $m.registrat
     $m.azureCliClientAllowed -eq $true -and $m.verification -ceq 'manual' -and $m.manualVerification.confirmedBy -ceq 'Entra admin, change 123') 'Stage 4 with entra.manualVerification must record the configured application and group IDs that Stages 5, 7 and 8 read.'
 $previewText = (Invoke-Stage4 -Cfg $cfgManual 6>&1 | Out-String)
 Assert-Contract ($script:s4graph.Count -eq 0 -and $previewText -match 'Expose an API' -and $previewText -match $cli -and $previewText -match 'https://lab-admin\.azurewebsites\.net/api/console-v3' -and $previewText -match 'g-1') 'Stage 4 preview with entra.manualVerification must print the Portal checklist, without Graph.'
+Assert-Contract ($previewText -match 'Enterprise applications' -and $previewText -match 'a-res' -and $previewText -match 'a-gw' -and $previewText -match 'service principal') 'Stage 4 manual checklist must ask the Entra admin to confirm the gateway and resolver enterprise applications (service principals); APIM cannot get a resolver token without one.'
 $cfgManualMembers = $cfgManual.Clone(); $cfgManualMembers.groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1'; members = @('u-1') })
 $s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgManualMembers -Apply 6>$null } catch { $s4err = "$_" }
 Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'members' -and $script:s4graph.Count -eq 0) 'Stage 4 with entra.manualVerification must refuse group members it cannot add without Graph.'
