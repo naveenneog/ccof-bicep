@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+  "resourceGroup": "REPLACE-resource-group",
+  "stem": "REPLACE-prefix-uniquesuffix",
+  "emailReceivers": [
+    "REPLACE-ops@example.com"
+  ],
+  "tags": {
+    "workload": "claude-code-on-foundry"
+  },
+  "frontDoor": {
+    "host": "REPLACE-endpoint.z01.azurefd.net",
+    "profileId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-resource-group/providers/Microsoft.Cdn/profiles/REPLACE-stem-fd"
+  },
+  "foundryAccountIds": [
+    "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-foundry-rg/providers/Microsoft.CognitiveServices/accounts/REPLACE-foundry-account"
+  ],
+  "allowCrossSubscriptionFoundry": false,
+  "probes": {
+    "frontDoorGateway": "auto",
+    "frontDoorAdmin": "auto",
+    "apimDirect": "auto",
+    "adminDirect": "auto",
+    "resolverDirect": "auto"
+  },
+  "evaluationFrequencyMinutes": 5,
+  "rules": {
+    "reconcilerStale": { "enabled": true, "threshold": 30 },
+    "gatewayTelemetrySilent": { "severity": 3, "threshold": 1440 }
+  }
+}

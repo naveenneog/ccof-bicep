@@ -1,0 +1,6 @@
+let AppLogs =
+    union isfuzzy=true
+        (FunctionAppLogs | project TimeGenerated, Message, _ResourceId),
+        (AppTraces | project TimeGenerated, Message, _ResourceId)
+    | where TimeGenerated >= ago(_windowMinutes * 1m)
+    | where _ResourceId in~ (_resourceIds);

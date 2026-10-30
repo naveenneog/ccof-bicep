@@ -25,6 +25,9 @@ it is not evidence that the underlying account/user/budget is absent.
 
 Initial checks: `/api/v3/version` reports 3.3.0; Health shows the intended telemetry/resource
 scopes; the reader has no save/retire controls; the editor can perform a reviewed test edit.
+The Health page is read on demand; e-mail alerts on the same signals (endpoint probes, reconciler
+and telemetry freshness, Cosmos DB, Function App failures) are an add-on:
+[HEALTH-ALERTS.md](HEALTH-ALERTS.md).
 Names beside object IDs are current Entra labels, not historical accounting keys.
 `User.Read.All` on the **admin managed identity** and `ADMIN_USER_NAMES_ENABLED=true` enable them.
 

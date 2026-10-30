@@ -1,0 +1,5 @@
+AppLogs
+| where Message has "ccof.reconciler.run.v1"
+| extend d = parse_json(Message)
+| where tostring(d.schema) == "ccof.reconciler.run.v1" and tostring(d.outcome) in ("failed", "settings_invalid", "refused")
+| summarize value = dcount(tostring(d.runId)) by reason = tostring(d.reason)

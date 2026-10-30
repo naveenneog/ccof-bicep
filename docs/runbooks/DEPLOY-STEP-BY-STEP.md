@@ -1189,6 +1189,7 @@ telemetry query returns as many requests as there were 200 responses.
 | Add projects, people, models, limits and budgets | [Admin console operations](ADMIN-OPERATIONS.md) |
 | Set up developers' machines and Claude Code | [User onboarding](USER-ONBOARDING.md) |
 | Budget warnings at 80% and spend pacing | [Budgets and spend pacing](../BUDGETS.md) |
+| E-mail on outages and failed health checks (add-on; no change to Steps 1-8) | [Health and outage e-mail alerts](HEALTH-ALERTS.md) |
 
 ## When a step fails
 

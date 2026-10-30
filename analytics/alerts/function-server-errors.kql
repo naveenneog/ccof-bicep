@@ -1,0 +1,6 @@
+union isfuzzy=true
+    (AppRequests | where toint(ResultCode) >= 500 | project TimeGenerated, _ResourceId),
+    (AppExceptions | project TimeGenerated, _ResourceId)
+| where TimeGenerated >= ago(_windowMinutes * 1m)
+| where _ResourceId in~ (_resourceIds)
+| summarize value = count() by app = tostring(split(_ResourceId, "/")[-1])
