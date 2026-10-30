@@ -73,6 +73,9 @@ function Invoke-StgStage4Manual {
     $check.Add("gateway app $gwId - Expose an API: Application ID URI api://$gwId; scope access_as_user enabled; authorized client applications $gwId" + $(if ($e.allowAzureCliClient) { " and $cli (Azure CLI)" } else { '' }) + ' for access_as_user')
     $check.Add("gateway app $gwId - Authentication: Mobile and desktop redirect URIs $($gwRedirects -join ', '); Allow public client flows Yes. Manifest: requestedAccessTokenVersion 2")
     $check.Add("resolver app $resId - Expose an API: Application ID URI api://$resId. Manifest: requestedAccessTokenVersion 2")
+    # A registration created without its enterprise application has no service principal: user tokens for the
+    # gateway fail, and APIM's managed identity cannot get a resolver token (gateway 503 entitlement_unavailable).
+    $check.Add("Enterprise applications - a service principal exists for gateway $gwId and resolver $resId" + $(if ($Cfg.stage1.includeAdmin) { " and admin $admId" } else { '' }) + ' (search each application ID; create one with Graph POST /servicePrincipals {"appId":"<id>"} if missing)')
     if ($Cfg.stage1.includeAdmin) {
         $adminClients = @($admId) + @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
         $check.Add("admin app $admId - Expose an API: Application ID URI api://$admId; scope Projects.Manage; authorized client applications $($adminClients -join ', ') for Projects.Manage")

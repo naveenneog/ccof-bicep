@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-10-30 - Step 4 manual checklist names the enterprise applications
+
+- With `entra.manualVerification`, the Step 4 checklist asks the Entra administrator to confirm a
+  service principal (enterprise application) for the gateway and resolver (and admin) registrations.
+  Without the resolver's, APIM's managed identity cannot get a resolver token and the gateway answers
+  503 `entitlement_unavailable`; without the gateway's, user tokens fail.
+- `tests/Test-StagedStages.ps1` 471 checks (1 new); its mutant is caught.
+
 ## 2026-10-29 - Step 8 gatewayUrl must end with apim.apiPath
 
 - `acceptance.gatewayUrl` is refused unless it ends with `/<apim.apiPath>`. Case: a value missing the
