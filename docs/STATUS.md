@@ -1,5 +1,16 @@
 # Current work
 
+## Health and outage e-mail alerts
+
+**Active packet:** HA-1 (2026-10-30). Add-on over a finished deployment: `infra/monitoring/` creates
+an action group, availability tests and metric/log alerts for the admin Health page's signals, all
+named `<stem>-health-*` and tagged `ccof-component=health-alerts`. RED: `tests/Test-HealthAlerts.ps1`
+failed before `HealthAlerts.psm1` existed; GREEN: 92 checks; 6 of 6 mutants caught. Live lab:
+preview Create=23, apply created 23 owned resources (Azure then added its smart detection rule and
+shared action group); re-apply changed only owned rules; test notification accepted; availability
+results recorded with local authentication disabled; the sync failure alert fired on real
+`graph_permission_missing` runs. `-Remove -Apply` returned the lab resource group to its prior
+resource list (the add-on is not left deployed in the lab). No Stage 1-8 template, state or setting is touched; no Graph call.
 ## Stage 5 null admin gateway IDs
 
 **Packet:** S5-NULL (2026-10-29). Fix only the generated optional admin gateway list, preserving

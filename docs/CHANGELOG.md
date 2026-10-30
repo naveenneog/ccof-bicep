@@ -1,5 +1,21 @@
 # Change log
 
+## 2026-10-30 - Health and outage e-mail alerts (add-on)
+
+- New `infra/monitoring/Invoke-HealthAlerts.ps1` with `health-alerts.bicep`: an add-on applied after
+  Step 8 (with or without Front Door) that e-mails an action group when a service stops answering or
+  reports failures. It covers the admin Health page's signals: availability tests through Front Door
+  or directly (APIM status, admin console, resolver 401), APIM 5xx, backend 5xx and capacity, gateway
+  503 `entitlement_unavailable` rate, gateway telemetry silence, Function App 5xx and exceptions, sync
+  run failures, reconciler run failures (for example `ledger_continuity_gap`) and staleness, Cosmos DB
+  429, 5xx and availability, Foundry server errors and Front Door origin health and 5xx.
+- Preview runs what-if; any Delete, or any Create or Modify of a resource that is not
+  `<stem>-health-*` with the tag `ccof-component=health-alerts`, stops the run. `-TestNotification`
+  sends a test e-mail; `-Remove` deletes only the owned resources. Azure Resource Manager only, no
+  Microsoft Graph; Monitoring Contributor on the resource group. Runbook:
+  `docs/runbooks/HEALTH-ALERTS.md`.
+- `tests/Test-HealthAlerts.ps1`: 92 offline checks with a stub `az`; mutants of the what-if,
+  probe, ownership, receiver and tag guards are caught.
 ## 2026-10-30 - Step 4 manual checklist names the enterprise applications
 
 - With `entra.manualVerification`, the Step 4 checklist asks the Entra administrator to confirm a

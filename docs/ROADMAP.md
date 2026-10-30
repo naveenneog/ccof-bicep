@@ -35,11 +35,13 @@ Details and stage owners: [DR implementation](design/DR-IMPLEMENTATION.md).
 | Stage 1 resources-only proof | Complete | Compile and inspect templates, deploy new lab services, verify live properties, document permissions and evidence |
 | Later-stage separation | Complete | Stages 0-8 exercised in the existing Fabrikam lab/Contoso labs; prerequisite-first DR workflow remains separate |
 | Admin V3 Azure acceptance | Pending | Verify deployed root redirect, Entra sign-in, real telemetry and onboarding settings |
+| Health and outage e-mail alerts (HA-1) | Complete | Add-on over Steps 0-8: action group, availability tests, metric and log alerts for the admin Health page's signals; what-if refuses changes to resources it does not own; offline tests; lab apply verified |
 | Admin V3 scale/accessibility | Pending | Measure 10,000-project behavior and perform assistive-technology checks |
 
 Later stages are not implicitly executed by the Stage 1 proof.
 
 - [x] S1 — Verify and document the resource-only Stage 1 in Azure.
 - [x] S2 — Implement later-stage entry points with their permission boundaries.
+- [x] HA-1 — Health and outage e-mail alerts as an add-on (docs/runbooks/HEALTH-ALERTS.md).
 - [ ] V3-live — Complete Admin V3 Azure acceptance.
 - [ ] V3-scale — Measure scale and accessibility.
