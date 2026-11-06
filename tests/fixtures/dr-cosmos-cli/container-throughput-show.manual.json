@@ -1,0 +1,21 @@
+{
+  "id": "/subscriptions/00000000-0000-4000-8000-0000000000c1/resourceGroups/fixture-rg/providers/Microsoft.DocumentDB/databaseAccounts/fixture-cosmos/sqlDatabases/fixturedb/containers/container0/throughputSettings/default",
+  "identity": null,
+  "location": null,
+  "name": "Rk9q",
+  "resource": {
+    "autoscaleSettings": null,
+    "etag": null,
+    "instantMaximumThroughput": "10000",
+    "minimumThroughput": "400",
+    "offerReplacePending": null,
+    "rid": null,
+    "softAllowedMaximumThroughput": "100000",
+    "throughput": 400,
+    "ts": null
+  },
+  "resourceGroup": "fixture-rg",
+  "systemData": null,
+  "tags": null,
+  "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings"
+}

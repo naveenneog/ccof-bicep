@@ -83,21 +83,31 @@ if ($Child) {
                 ConvertTo-Json -Depth 20 -Compress
         }
         $dbId = "$($k.accountId)/sqlDatabases/$($k.db)"
-        if ($cmd -match '^cosmosdb sql database show ') { return (@{ name = $k.db; id = $dbId; resource = @{ id = $k.db }; options = @{ autoscaleSettings = @{ maxThroughput = 1000 } } } | ConvertTo-Json -Depth 10 -Compress) }
+        if ($cmd -match '^cosmosdb sql database show ') { return (@{ name = $k.db; id = $dbId; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases'; resource = @{ id = $k.db }; options = $null } | ConvertTo-Json -Depth 10 -Compress) }
         if ($cmd -match '^cosmosdb sql database throughput show ') {
-            return (@{ id = "$dbId/throughputSettings/default"; name = 'default'; resource = @{ throughput = 100; minimumThroughput = '1000'; offerReplacePending = 'false'; autoscaleSettings = @{ maxThroughput = 1000 } } } | ConvertTo-Json -Depth 10 -Compress)
+            # Real Azure CLI 2.92 shape (lab capture): name is the offer's internal resource ID, not 'default'.
+            return ([ordered]@{ id = "$dbId/throughputSettings/default"; identity = $null; location = $null; name = 'Tb7w'
+                resource = [ordered]@{ autoscaleSettings = @{ autoUpgradePolicy = $null; maxThroughput = 1000; targetMaxThroughput = $null }; etag = $null
+                    instantMaximumThroughput = '10000'; minimumThroughput = '1000'; offerReplacePending = $null; rid = $null
+                    softAllowedMaximumThroughput = '1000000'; throughput = 100; ts = $null }
+                resourceGroup = $k.rg; systemData = $null; tags = $null; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings' } |
+                ConvertTo-Json -Depth 10 -Compress)
         }
-        if ($cmd -match '^cosmosdb sql container list ') { return (ConvertTo-Json -InputObject @($k.containers | ForEach-Object { @{ name = $_ } }) -Compress) }
+        if ($cmd -match '^cosmosdb sql container list ') { return (ConvertTo-Json -InputObject @($k.containers | ForEach-Object { @{ name = $_; id = "$dbId/containers/$_"; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers'; resource = @{ id = $_ }; options = $null } }) -Compress) }
         if ($cmd -match '^cosmosdb sql container show ') {
             $name = & $arg '--name'
-            return (@{ name = $name; id = "$dbId/containers/$name"; resource = @{ id = $name } } | ConvertTo-Json -Depth 10 -Compress)
+            return (@{ name = $name; id = "$dbId/containers/$name"; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers'; resource = @{ id = $name }; options = $null } | ConvertTo-Json -Depth 10 -Compress)
         }
         if ($cmd -match '^cosmosdb sql container throughput show ') {
-            # Azure-core's multi-line NotFound for a container on shared database throughput.
-            $message = 'Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found, ActivityId: 6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b, RequestStartTime: 2026-11-06T10:00:00Z, StatusCode: 404, SubStatusCode: 0, TransportException: null, Microsoft.Azure.Documents.Common/2.14.0'
-            Write-Error "ERROR: (NotFound) $message" -ErrorAction Continue
-            Write-Error 'Code: NotFound' -ErrorAction Continue
-            Write-Error "Message: $message" -ErrorAction Continue
+            # Azure CLI 2.92 multi-line NotFound for a container on shared database throughput (lab capture, ActivityId replaced).
+            foreach ($line in @(
+                'ERROR: (NotFound) Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found',
+                'ActivityId: 6f1d2c3b-4a59-11f1-8a7b-9c0d1e2f3a4b, Microsoft.Azure.Documents.Common/2.14.0',
+                'Code: NotFound',
+                'Message: Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found',
+                'ActivityId: 6f1d2c3b-4a59-11f1-8a7b-9c0d1e2f3a4b, Microsoft.Azure.Documents.Common/2.14.0')) {
+                Write-Error $line -ErrorAction Continue
+            }
             $global:LASTEXITCODE = 3
             return
         }

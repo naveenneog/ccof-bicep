@@ -1,5 +1,21 @@
 # Current work
 
+## DR Cosmos offer name from real Azure
+
+**Packet:** DR-COSMOS-OFFER-NAME (2026-11-07), part of release/dr-infosys-resume. Lab resume run on
+8bc6251 stopped at Data preview against a real Cosmos account with `cosmos_throughput_invalid:
+database 'ccof' returned an unexpected throughput resource ID or name`. Real Azure (CLI 2.92.0 and
+REST) returns an internal offer ID such as `ieLG` as the throughput resource `name`, not `default`;
+the ARM ID and `type` are stable. The offline mocks had restated the `default` assumption. Read-only
+captures from the lab (database autoscale offer, dedicated container manual offer, shared-container
+NotFound) are now sanitized fixtures in `tests/fixtures/dr-cosmos-cli`, and every Cosmos mock in
+`Test-DrCosmosThroughput.ps1` and `Test-DrInfosysShape.ps1` uses that shape. The offer is now
+validated by ARM ID (parent database or container path) and `type`
+(`.../sqlDatabases[/containers]/throughputSettings`); a wrong parent, wrong type, missing type or a
+non-throughput ID still fails closed. RED at 8bc6251 with the real-shape mocks: Cosmos 18 passed / 47
+failed, customer shape 32 passed / 5 failed (the lab error). GREEN: Cosmos 65 passed, customer shape
+37 passed. Audit of other mock-derived shape assertions against real lab reads: see
+DR-BYO-21 and the release PR; no further mismatch found.
 ## DR customer-shape end-to-end regression
 
 **Packet:** DR-SHAPE-E2E (2026-11-06), part of release/dr-infosys-resume. `tests/Test-DrInfosysShape.ps1`

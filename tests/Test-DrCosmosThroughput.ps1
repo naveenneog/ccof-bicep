@@ -54,7 +54,7 @@ if ($Child) {
                 return
             }
             $databaseId = if ($env:DR_COSMOS_FAULT -eq 'database-id-case-mismatch') { $dbId.Replace('fixturedb', 'FIXTUREDB') } else { $dbId }
-            $database = @{ name = 'fixturedb'; id = $databaseId; resource = @{ id = 'fixturedb' } }
+            $database = @{ name = 'fixturedb'; id = $databaseId; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases'; resource = @{ id = 'fixturedb' }; options = $null }
             if ($env:DR_COSMOS_FAULT -eq 'database-offer-option') { $database.options = @{ throughput = 400 } }
             return ($database | ConvertTo-Json -Depth 20 -Compress)
         }
@@ -64,7 +64,7 @@ if ($Child) {
                 $global:LASTEXITCODE = 3
                 return
             }
-            return (@($s.containers | ForEach-Object { @{ name = $_.name; id = "$dbId/containers/$($_.name)" } }) | ConvertTo-Json -Depth 20 -Compress -AsArray)
+            return (@($s.containers | ForEach-Object { @{ name = $_.name; id = "$dbId/containers/$($_.name)"; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers'; resource = @{ id = $_.name }; options = $null } }) | ConvertTo-Json -Depth 20 -Compress -AsArray)
         }
         if ($command -match '^cosmosdb sql container show ') {
             $found = @($s.containers | Where-Object name -CEQ $name)
@@ -72,7 +72,7 @@ if ($Child) {
             if ($found.Count -eq 1) {
                 $containerId = "$dbId/containers/$name"
                 if ($env:DR_COSMOS_FAULT -eq 'container-id-case-mismatch') { $containerId = "$dbId/containers/$($name.ToUpperInvariant())" }
-                $container = @{ name = $name; id = $containerId; resource = @{ id = $name } }
+                $container = @{ name = $name; id = $containerId; type = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers'; resource = @{ id = $name }; options = $null }
                 if ($env:DR_COSMOS_FAULT -eq 'container-dedicated-option') { $container.options = @{ throughput = 400 } }
                 return ($container | ConvertTo-Json -Depth 20 -Compress)
             }
@@ -142,10 +142,18 @@ if ($Child) {
                 return
             }
             if ($operation -eq 'show' -and $kind -eq 'database' -and $env:DR_COSMOS_FAULT -eq 'database-malformed') {
-                return '{"name":"default","resource":{}}'
+                return '{"name":"Tb7w","resource":{}}'
             }
             if ($operation -eq 'show' -and (-not $offer -or $offer.mode -eq 'shared')) {
-                Write-Error 'ERROR: (NotFound) Entity with the specified id does not exist in the system' -ErrorAction Continue
+                # Azure CLI 2.92 stderr for an offer that does not exist (lab capture, ActivityId replaced).
+                foreach ($line in @(
+                    'ERROR: (NotFound) Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found',
+                    'ActivityId: 0a1b2c3d-0000-4000-8000-00000000c05d, Microsoft.Azure.Documents.Common/2.14.0',
+                    'Code: NotFound',
+                    'Message: Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found',
+                    'ActivityId: 0a1b2c3d-0000-4000-8000-00000000c05d, Microsoft.Azure.Documents.Common/2.14.0')) {
+                    Write-Error $line -ErrorAction Continue
+                }
                 $global:LASTEXITCODE = 3
                 return
             }
@@ -157,11 +165,29 @@ if ($Child) {
                 }
             }
             if ($operation -ne 'show') { $s | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $env:DR_COSMOS_FIXTURE }
-            $resource = if ($offer.mode -eq 'autoscale') {
-                @{ throughput = [int]($offer.max / 10); autoscaleSettings = @{ maxThroughput = [int]$offer.max } }
-            } else { @{ throughput = [int]$offer.manual } }
+            # Shape of real Azure CLI 2.92 throughput show output (lab captures): name is the offer's
+            # internal resource ID, not 'default'; numbers other than throughput are strings.
+            $resource = [ordered]@{
+                autoscaleSettings = $null; etag = $null; instantMaximumThroughput = '10000'
+                minimumThroughput = '400'; offerReplacePending = $null; rid = $null
+                softAllowedMaximumThroughput = '1000000'; throughput = [int]$offer.manual; ts = $null
+            }
+            if ($offer.mode -eq 'autoscale') {
+                $resource.throughput = [int]($offer.max / 10); $resource.minimumThroughput = '1000'
+                $resource.autoscaleSettings = [ordered]@{ autoUpgradePolicy = $null; maxThroughput = [int]$offer.max; targetMaxThroughput = $null }
+            }
             if ($env:DR_COSMOS_FAULT -eq 'pending' -and $operation -eq 'show') { $resource.offerReplacePending = 'true' }
             $offerId = if ($kind -eq 'database') { "$dbId/throughputSettings/default" } else { "$dbId/containers/$name/throughputSettings/default" }
+            $offerType = if ($kind -eq 'database') { 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings' } else { 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings' }
+            $offerName = if ($kind -eq 'database') { 'Tb7w' } else { "Rk$($name.Length)q" }
+            if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-type-database') {
+                $offerType = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings'
+            }
+            if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-type-missing') { $offerType = $null }
+            if ($kind -eq 'database' -and $env:DR_COSMOS_FAULT -eq 'offer-id-other-database') {
+                $offerId = $dbId.Replace('/sqlDatabases/fixturedb', '/sqlDatabases/otherdb') + '/throughputSettings/default'
+            }
+            if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-id-not-throughput') { $offerId = "$dbId/containers/$name" }
             if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-id-sqlcontainers') {
                 $offerId = "$dbId/sqlContainers/$name/throughputSettings/default"
             }
@@ -171,7 +197,10 @@ if ($Child) {
             if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-id-case-mismatch') {
                 $offerId = "$dbId/sqlContainers/$($name.ToUpperInvariant())/throughputSettings/default"
             }
-            return (@{ name = 'default'; id = $offerId; resource = $resource } | ConvertTo-Json -Depth 20 -Compress)
+            return ([ordered]@{
+                id = $offerId; identity = $null; location = $null; name = $offerName; resource = $resource
+                resourceGroup = 'fixture-rg'; systemData = $null; tags = $null; type = $offerType
+            } | ConvertTo-Json -Depth 20 -Compress)
         }
         throw "Unexpected az call in offline test: $command"
     }
@@ -348,6 +377,16 @@ try {
     $wrongOfferCase = Run-Data $false
     Check 'throughput response for a differently cased container fails closed' (
         $wrongOfferCase.code -ne 0 -and $wrongOfferCase.output -match 'cosmos_throughput_invalid' -and @(Get-Writes $wrongOfferCase).Count -eq 0)
+    foreach ($fault in 'offer-type-database', 'offer-type-missing', 'offer-id-not-throughput') {
+        Reset-Fixture $null @(@{ name = 'container0'; mode = 'autoscale'; max = 1000 }) 1000 $fault
+        $badOffer = Run-Data $false
+        Check "$fault container throughput response fails closed" (
+            $badOffer.code -ne 0 -and $badOffer.output -match 'cosmos_throughput_invalid' -and @(Get-Writes $badOffer).Count -eq 0)
+    }
+    Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 'offer-id-other-database'
+    $otherDatabaseOffer = Run-Data $false
+    Check 'database throughput response for another database fails closed' (
+        $otherDatabaseOffer.code -ne 0 -and $otherDatabaseOffer.output -match 'cosmos_throughput_invalid' -and @(Get-Writes $otherDatabaseOffer).Count -eq 0)
 
     Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 'known-notfound-suffix'
     $knownSuffix = Run-Data $false
@@ -519,6 +558,31 @@ try {
         } $wrapper $scratch $root
     } catch { $wrapperWorks = $false }
     Check 'Cloud Shell wrapper forwards explicit throughput reduction approval' $wrapperWorks
+
+    # Real Azure CLI 2.92 captures (identifiers replaced): offers are named by an internal ID, not 'default'.
+    $cli = Join-Path $PSScriptRoot 'fixtures\dr-cosmos-cli'
+    $cosmosModule = Import-Module (Join-Path $root 'infra\dr\DrCosmosThroughput.psm1') -Force -DisableNameChecking -PassThru
+    $captureContext = @{
+        subscription = '00000000-0000-4000-8000-0000000000c1'; resourceGroup = 'fixture-rg'; account = 'fixture-cosmos'; database = 'fixturedb'
+        accountId = '/subscriptions/00000000-0000-4000-8000-0000000000c1/resourceGroups/fixture-rg/providers/Microsoft.DocumentDB/databaseAccounts/fixture-cosmos'
+    }
+    $readCapture = { param($Kind, $Name, $File)
+        $json = Get-Content -LiteralPath (Join-Path $cli $File) -Raw
+        & $cosmosModule { param($c, $k, $n, $j) Get-DrCosmosOffer $c $k $n { $j | ConvertFrom-Json -AsHashtable -Depth 100 }.GetNewClosure() } $captureContext $Kind $Name $json
+    }
+    try { $realDatabase = & $readCapture 'database' 'fixturedb' 'database-throughput-show.autoscale.json' } catch { $realDatabase = $_.Exception.Message }
+    Check 'real CLI database offer (internal-ID name) reads as autoscale 1000 with minimum 1000' (
+        $realDatabase -is [Collections.IDictionary] -and $realDatabase.mode -ceq 'autoscale' -and $realDatabase.value -eq 1000 -and $realDatabase.minimum -eq 1000)
+    try { $realContainer = & $readCapture 'container' 'container0' 'container-throughput-show.manual.json' } catch { $realContainer = $_.Exception.Message }
+    Check 'real CLI dedicated container offer reads as manual 400' (
+        $realContainer -is [Collections.IDictionary] -and $realContainer.mode -ceq 'manual' -and $realContainer.value -eq 400 -and $realContainer.minimum -eq 400)
+    try { $null = & $readCapture 'container' 'container1' 'container-throughput-show.manual.json'; $otherParent = 'accepted' } catch { $otherParent = $_.Exception.Message }
+    Check 'real CLI container offer fails closed for a different container' ($otherParent -match 'cosmos_throughput_invalid')
+    try { $null = & $readCapture 'database' 'fixturedb' 'container-throughput-show.manual.json'; $wrongKind = 'accepted' } catch { $wrongKind = $_.Exception.Message }
+    Check 'real CLI container offer fails closed where a database offer is expected' ($wrongKind -match 'cosmos_throughput_invalid')
+    $realNotFound = Get-Content -LiteralPath (Join-Path $cli 'container-throughput-show.notfound.txt') -Raw
+    Check 'real CLI NotFound for a shared-throughput container is recognised as no dedicated offer' (
+        (& $cosmosModule { param($m) Test-DrCosmosMissingOffer $m } $realNotFound) -eq $true)
 
     Write-Host "DR Cosmos throughput: $script:passed passed, $script:failed failed."
     if ($script:failed) { exit 1 }

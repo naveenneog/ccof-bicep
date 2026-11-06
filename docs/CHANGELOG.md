@@ -1,5 +1,11 @@
 # Change log
 
+## 2026-11-07 - DR Cosmos offer name from real Azure
+
+- Data preview and apply accept real Cosmos throughput offers, whose `name` is an internal ID (for
+  example `ieLG`) rather than `default`. The offer is checked by its ARM ID and `type`; wrong parent,
+  wrong or missing type still fail closed with `cosmos_throughput_invalid`.
+- Tests now use sanitized real `az` captures (`tests/fixtures/dr-cosmos-cli`) instead of assumed shapes.
 ## 2026-11-06 - DR customer-shape end-to-end regression
 
 - New offline test `tests/Test-DrInfosysShape.ps1` with a synthetic customer-shaped fixture

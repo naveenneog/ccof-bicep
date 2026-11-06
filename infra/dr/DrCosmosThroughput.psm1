@@ -122,8 +122,13 @@ function Get-DrCosmosOffer {
             $parts[-5] -ceq $Context.database -and $parts[-3] -ceq $Name
         } else { $parts[-3] -ceq $Context.database }
     }
-    if (-not $identityOk -or [string](Get-DrValue $response 'name') -cne 'default') {
-        throw "cosmos_throughput_invalid: $Kind '$Name' returned an unexpected throughput resource ID or name."
+    # Azure returns the offer's internal resource ID (for example 'ieLG') as name, so identity comes
+    # from the ARM ID and type only.
+    $expectedType = if ($Kind -ceq 'container') {
+        'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings'
+    } else { 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings' }
+    if (-not $identityOk -or [string](Get-DrValue $response 'type') -ine $expectedType) {
+        throw "cosmos_throughput_invalid: $Kind '$Name' returned an unexpected throughput resource ID or type."
     }
     $pending = [string](Get-DrValue $response 'resource.offerReplacePending')
     if ($pending -in @('true', '1')) { throw "cosmos_throughput_pending: $Kind '$Name' has a throughput change in progress; wait, then preview again." }
