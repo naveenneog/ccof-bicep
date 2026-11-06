@@ -1,5 +1,27 @@
 # Change log
 
+## 2026-11-06 - DR Network Foundry DNS scope
+
+- Network checks Cosmos and blob zone links, but does not invent or read Foundry zones when it
+  manages no Foundry endpoint. It also tolerates unused Foundry IDs from older deployment outputs.
+  Both required Cosmos/blob IDs must be present and distinct. When a Foundry endpoint is managed,
+  three distinct zone IDs and successful link reads remain required. This does not verify
+  connectivity to an existing primary-region Foundry endpoint.
+- An offline partial-apply retry fixture covers matching endpoints and already-integrated Functions
+  and APIM; reconcile real resources and review a fresh preview before any approved retry.
+
+## 2026-11-06 - DR Cosmos throughput and existing primary APIM
+
+- Data previews database and dedicated-container offers, including mixed shared/dedicated throughput.
+  It recognizes the documented missing-offer error and Azure-core multiline form only with verified
+  resources and consistent diagnostics; unexpected errors stop. Throughput reductions and manual
+  migrations require explicit approval, and serverless conversion requires a fresh preview.
+- With a blank primary Stage 1 APIM ID, standby resolves a complete `apim.existing` reference using
+  the staged driver's logic. It prints the resolved ID for review, rejects missing, invalid or
+  conflicting references, and does not ask an operator to edit state.
+- Offline actual-driver tests cover both fixes, negative cases and mutation checks. Live response
+  behavior and the configured primary APIM still require owner verification.
+
 ## 2026-11-06 - DR existing-network and manual Entra safety
 
 - Standby can select an existing VNet in a separate resource group. Bootstrap validates its

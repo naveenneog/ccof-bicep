@@ -51,6 +51,9 @@ foreach ($path in $boundaries.Keys) {
     Test-StageBoundary $arms[$path] $boundaries[$path] $path
     $passed++
 }
+$networkArm = $arms['infra\staged\stage6-network.bicep']
+Assert-Contract ($networkArm.outputs.foundryPrivateDnsZoneIds.value -ceq "[variables('foundryZoneIds')]" -and
+    $networkArm.variables.foundryZoneIds -match "^\[if\(empty\(parameters\('foundryAccounts'\)\), createArray\(\),") 'Stage 6 must return no Foundry DNS zone IDs when no Foundry endpoints are requested.'
 
 # Negative control: the same check rejects a role assignment injected into the network stage.
 $mutated = $arms['infra\staged\stage6-network.bicep'] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100

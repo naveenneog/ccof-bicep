@@ -1,5 +1,25 @@
 # Current work
 
+## DR Network DNS verification
+
+**Packet:** DR-NET-DNS (2026-11-06), under review. When standby manages no Foundry endpoint, Network
+must verify only its Cosmos/blob DNS links, including when older outputs contain unused Foundry IDs.
+Missing or duplicate Cosmos/blob outputs must stop. Primary Stage 6 with a managed Foundry endpoint
+must still require three distinct zones and fail on missing or unreadable links. Offline retries must
+preserve matching existing endpoints and integrations; no live Azure operation is authorized.
+
+RED: the actual standby driver failed on a nonexistent Foundry zone after simulated incremental
+deployment and integration checks. Missing/duplicate Cosmos/blob and managed Foundry output cases
+also failed before their guards. GREEN: `tests/Test-DrNetworkDns.ps1` 17 cases;
+`tests/Test-StagedStages.ps1` 476 checks. Three loadable driver mutants and a compiling Bicep mutant
+were caught and restored.
+The full isolated packet gate and PR CI are required before this packet is release-ready.
+
+Council (self-review): ARCHITECT PASS (existing Stage 6 boundary, only managed targets); CODER PASS
+(stale outputs guarded, explicit incomplete-output error); QA PASS-WITH-NOTES (offline failure and
+matching-state retry, no live provider observation); UX PASS (fresh-preview/partial-apply guidance);
+SECURITY PASS-WITH-NOTES (approval unchanged, errors propagate, no Foundry connectivity claim).
+
 ## DR existing-network reuse
 
 **Active packet:** DR-BYO standby-only release (2026-11-06), in review. A standby deployment can reference an

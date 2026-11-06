@@ -128,11 +128,11 @@ resource foundryZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
   }
 }]
 
-var foundryZoneIds = createNetwork ? map(foundryZoneNames, z => resourceId('Microsoft.Network/privateDnsZones', z)) : [
+var foundryZoneIds = empty(foundryAccounts) ? [] : (createNetwork ? map(foundryZoneNames, z => resourceId('Microsoft.Network/privateDnsZones', z)) : [
   network.existing.?privateDnsZoneIds.?foundry.?cognitiveServices ?? ''
   network.existing.?privateDnsZoneIds.?foundry.?openAi ?? ''
   network.existing.?privateDnsZoneIds.?foundry.?aiServices ?? ''
-]
+])
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = [for f in foundryAccounts: {
   name: f
