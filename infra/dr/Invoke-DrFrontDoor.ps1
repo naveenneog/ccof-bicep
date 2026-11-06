@@ -56,8 +56,15 @@ function Save-FdChangedConfigState($Value, [string]$ExpectedHash) {
     try { Save-FdState $Value $ExpectedHash }
     catch {
         if ($_.Exception.Message -like 'frontdoor_state_changed:*') {
-            Clear-DrFrontDoorStateEvidence -StatePath $statePath -Fields @('verifiedAt')
-            throw "$($_.Exception.Message) Route verification recorded meanwhile was cleared; rerun -Phase $Phase."
+            $null = Clear-DrFrontDoorStateEvidence -StatePath $statePath -Fields @('verifiedAt')
+            $verify = "-Phase Verify$(if ($PrimaryOnly) { ' -PrimaryOnly' })"
+            # Each Next: sequence is runnable as given; DrainPrimary needs verification before it can rerun.
+            $next = switch ($Phase) {
+                'DrainPrimary' { "The primary may already be drained. Next: $verify; then -Phase DrainPrimary -Apply -ConfirmStandbyReady. To return traffic to the primary instead, run -Phase RestorePrimary -Apply." }
+                'RestorePrimary' { "The primary may already be restored. Next: -Phase RestorePrimary -Apply; then $verify." }
+                default { "Next: -Phase Deploy -Apply$(if ($PrimaryOnly) { ' -PrimaryOnly' } else { ' -ConfirmStandbyReady' }); then $verify." }
+            }
+            throw "$($_.Exception.Message) Route verification recorded meanwhile was cleared. $next"
         }
         throw
     }

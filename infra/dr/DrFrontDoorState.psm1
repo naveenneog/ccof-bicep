@@ -64,9 +64,15 @@ function Save-DrFrontDoorState([Parameter(Mandatory)] [string]$StatePath, [Param
 
 # Removes evidence fields from the current state regardless of concurrent changes (removing evidence fails
 # safe) and records verificationInvalidatedAt, which changes the file so in-flight runs cannot save over it.
-function Clear-DrFrontDoorStateEvidence([Parameter(Mandatory)] [string]$StatePath, [Parameter(Mandatory)] [string[]]$Fields) {
+# With ExpectedHash, this is a compare-and-clear: nothing is written while the file still matches it.
+# Returns $true when the file had changed (or no ExpectedHash was given) and was cleared.
+function Clear-DrFrontDoorStateEvidence([Parameter(Mandatory)] [string]$StatePath, [Parameter(Mandatory)] [string[]]$Fields,
+    [string]$ExpectedHash) {
+    $holder = @{ changed = $false }
     Invoke-DrFrontDoorStateLocked $StatePath {
         $current = Get-DrFrontDoorStateBytes $StatePath
+        if ($ExpectedHash -and (Get-DrFrontDoorStateHash $current) -ceq $ExpectedHash) { return }
+        $holder.changed = $true
         if ($null -eq $current) { return }
         $state = [Text.Encoding]::UTF8.GetString($current) | ConvertFrom-Json -AsHashtable -Depth 100
         if ($state -isnot [Collections.IDictionary]) { throw 'frontdoor_state_invalid: inspect and restore the Front Door state before continuing.' }
@@ -74,6 +80,7 @@ function Clear-DrFrontDoorStateEvidence([Parameter(Mandatory)] [string]$StatePat
         $state.verificationInvalidatedAt = [DateTime]::UtcNow.ToString('o')
         Write-DrFrontDoorStateBytes $StatePath ([Text.UTF8Encoding]::new($false).GetBytes(($state | ConvertTo-Json -Depth 100)))
     }
+    return $holder.changed
 }
 
 Export-ModuleMember -Function Read-DrFrontDoorState, Save-DrFrontDoorState, Clear-DrFrontDoorStateEvidence

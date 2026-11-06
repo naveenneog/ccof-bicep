@@ -650,6 +650,7 @@ try {
         $env:FD_TEST_CASE = 'concurrent-verify'
         $r = Run-Driver $changePhase $true $false ($changePhase -ne 'RestorePrimary')
         $env:FD_TEST_CASE = ''
+        $changeRun = $r
         $after = Read-Fixture $statePath
         $nested = @($r.calls | Where-Object { $_.kind -eq 'concurrent-verify' })
         Check "concurrent Verify really recorded verification during $changePhase" (
@@ -661,6 +662,21 @@ try {
         $r = Run-Driver 'Lockdown' $true $false $true
         Check "Lockdown refuses after the concurrent Verify during $changePhase" (
             $r.code -ne 0 -and $r.output -match 'frontdoor_verify_required' -and (Mutations $r).Count -eq 0) $r
+        # The failure message's Next: commands must be runnable exactly as given and complete the change.
+        $nextText = if ($changeRun.flat -match 'Next:([^.]*)\.') { $Matches[1] } else { '' }
+        $steps = @($nextText -split ';then' | Where-Object { $_ } | ForEach-Object {
+            $tokens = @($_ -split '-' | Where-Object { $_ })
+            @{ phase = ($tokens[0] -replace '^Phase', ''); flags = @($tokens | Select-Object -Skip 1) } })
+        $stepResults = @(foreach ($step in $steps) {
+            $unknown = @($step.flags | Where-Object { $_ -notin 'Apply', 'PrimaryOnly', 'ConfirmStandbyReady' })
+            if ($unknown.Count) { @{ code = 99; output = "unknown flags: $unknown" } } else {
+                Run-Driver $step.phase ($step.flags -contains 'Apply') ($step.flags -contains 'PrimaryOnly') ($step.flags -contains 'ConfirmStandbyReady') } })
+        $completed = Read-Fixture $statePath
+        $doneField = @{ Deploy = 'deployedAt'; DrainPrimary = 'primaryDrainedAt'; RestorePrimary = 'primaryRestoredAt' }[$changePhase]
+        Check "$changePhase failure message gives runnable next steps that complete the change" (
+            $steps.Count -eq 2 -and $steps[-1].phase -ceq $(if ($changePhase -eq 'DrainPrimary') { 'DrainPrimary' } else { 'Verify' }) -and
+            @($stepResults | Where-Object { $_.code -ne 0 }).Count -eq 0 -and $completed.Contains($doneField) -and
+            ($changePhase -eq 'DrainPrimary' -or $completed.Contains('verifiedAt'))) @{ output = "$nextText`n$(($stepResults | ForEach-Object { $_.output }) -join "`n")" }
     }
 
     Import-Module (Join-Path $root 'infra\dr\DrFrontDoorState.psm1') -Force
@@ -677,9 +693,16 @@ try {
     Check 'shared state save writes when unchanged and returns the hash of what it wrote' (
         $hash -ceq (Read-DrFrontDoorState -StatePath $unitPath).Hash -and -not (Read-Fixture $unitPath).Contains('verifiedAt'))
     $before = Get-Content -LiteralPath $unitPath -Raw
-    Clear-DrFrontDoorStateEvidence -StatePath $unitPath -Fields @('verifiedAt')
+    $null = Clear-DrFrontDoorStateEvidence -StatePath $unitPath -Fields @('verifiedAt')
     Check 'evidence clearing always changes the file so in-flight saves fail' (
         (Get-Content -LiteralPath $unitPath -Raw) -cne $before -and (Read-Fixture $unitPath).Contains('verificationInvalidatedAt'))
+    $read = Read-DrFrontDoorState -StatePath $unitPath; $before = Get-Content -LiteralPath $unitPath -Raw
+    $cleared = Clear-DrFrontDoorStateEvidence -StatePath $unitPath -Fields @('verifiedAt') -ExpectedHash $read.Hash
+    Check 'compare-and-clear writes nothing while the file is unchanged' ($cleared -eq $false -and (Get-Content -LiteralPath $unitPath -Raw) -ceq $before)
+    Write-Fixture $unitPath @{ verifiedAt = 'during-standby'; stem = 'fixture-edge' }
+    $cleared = Clear-DrFrontDoorStateEvidence -StatePath $unitPath -Fields @('verifiedAt') -ExpectedHash $read.Hash
+    Check 'compare-and-clear removes verification recorded after the expected state' (
+        $cleared -eq $true -and -not (Read-Fixture $unitPath).Contains('verifiedAt') -and (Read-Fixture $unitPath).Contains('verificationInvalidatedAt'))
     Check 'shared state helpers leave no temporary files' (@(Get-ChildItem -LiteralPath $scratch, $standbyDir -Filter '*.tmp').Count -eq 0)
 } finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

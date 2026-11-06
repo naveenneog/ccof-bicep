@@ -94,6 +94,9 @@ if ($StubChild) {
                 return (@(@{ name = 'fixture-b-apim'; id = "/subscriptions/$env:DR_STUB_SUB/resourceGroups/workload-rg/providers/Microsoft.ApiManagement/service/fixture-b-apim" }) | ConvertTo-Json -Compress -AsArray)
             }
             'rest --method' {
+                if ($env:DR_STUB_STANDBY_VERIFY -and ($arguments -join ' ') -match '/sites/([^/]+)/functions\?') {
+                    return (@{ value = @(@{ name = "$($Matches[1])/fixtureFunction" }) } | ConvertTo-Json -Depth 5 -Compress)
+                }
                 if ($arguments -join ' ' -match 'Microsoft\.Web/sites/fixture-b-resolver') {
                     $siteId = "/subscriptions/$env:DR_STUB_SUB/resourceGroups/workload-rg/providers/Microsoft.Web/sites/fixture-b-resolver"
                     $access = if ($env:DR_STUB_FUNCTION -eq 'unknown') { '' } else { $env:DR_STUB_FUNCTION }
@@ -112,6 +115,16 @@ if ($StubChild) {
                 if ($env:DR_STUB_FUNCTION -eq 'absent') { return '[]' }
                 return (@(@{ name = 'fixture-b-resolver'; id = "/subscriptions/$env:DR_STUB_SUB/resourceGroups/workload-rg/providers/Microsoft.Web/sites/fixture-b-resolver" }) | ConvertTo-Json -Compress -AsArray)
             }
+            'functionapp config' {
+                if (-not $env:DR_STUB_STANDBY_VERIFY) { throw "Unexpected az call in offline test: $($arguments -join ' ')" }
+                if ($env:DR_STUB_FD_VERIFY_DURING_DEPLOY) {
+                    # A Front Door Verify completing while standby Verify is reading region B.
+                    $fd = Get-Content -LiteralPath $env:DR_STUB_FD_VERIFY_DURING_DEPLOY -Raw | ConvertFrom-Json -AsHashtable
+                    $fd.verifiedAt = '2026-01-01T00:09:00Z'
+                    $fd | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $env:DR_STUB_FD_VERIFY_DURING_DEPLOY
+                }
+                return '[{"name":"AzureWebJobs.syncEntitlement.Disabled","value":"true"},{"name":"AzureWebJobs.reconcileBudgets.Disabled","value":"true"}]'
+            }
             'functionapp show' {
                 $index = [Array]::IndexOf($arguments, '--name')
                 $name = $arguments[$index + 1]
@@ -121,6 +134,12 @@ if ($StubChild) {
             'deployment group' {
                 if ($arguments -contains 'what-if') { return '{"changes":[]}' }
                 if ($StubStandby -or $StubFrontDoor) {
+                    if ($env:DR_STUB_FD_VERIFY_DURING_DEPLOY) {
+                        # A Front Door Verify completing while the standby deployment is running.
+                        $fd = Get-Content -LiteralPath $env:DR_STUB_FD_VERIFY_DURING_DEPLOY -Raw | ConvertFrom-Json -AsHashtable
+                        $fd.verifiedAt = '2026-01-01T00:09:00Z'
+                        $fd | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $env:DR_STUB_FD_VERIFY_DURING_DEPLOY
+                    }
                     Write-Error 'test_sentinel_reached_deployment: fake deployment not executed' -ErrorAction Continue
                     $global:LASTEXITCODE = 9
                     return
@@ -409,7 +428,15 @@ try {
     $failedShells = Run-Shells 'absent'
     $afterStandby = Get-Content -LiteralPath $standbyEvidencePath -Raw | ConvertFrom-Json -AsHashtable
     $afterFd = Get-Content -LiteralPath $fdEvidencePath -Raw | ConvertFrom-Json -AsHashtable
-    Check 'failed Shells apply removes dependent readiness before deployment' ($failedShells.output -match 'test_sentinel_reached_deployment' -and ($afterStandby.phases.Keys -join ',') -ceq 'Data' -and -not $afterFd.Contains('verifiedAt'))
+    Check 'failed Shells apply removes dependent readiness before deployment' ($failedShells.output -match 'test_sentinel_reached_deployment' -and $failedShells.output -notmatch 'frontdoor_state_changed' -and ($afterStandby.phases.Keys -join ',') -ceq 'Data' -and -not $afterFd.Contains('verifiedAt'))
+    (New-PhaseEvidence) | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $standbyEvidencePath
+    $fdEvidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $fdEvidencePath
+    $env:DR_STUB_FD_VERIFY_DURING_DEPLOY = $fdEvidencePath
+    try { $midRun = Run-Shells 'absent' } finally { $env:DR_STUB_FD_VERIFY_DURING_DEPLOY = '' }
+    $afterFd = Get-Content -LiteralPath $fdEvidencePath -Raw | ConvertFrom-Json -AsHashtable
+    Check 'standby clears Front Door verification recorded during its deployment and fails' (
+        $midRun.code -ne 0 -and $midRun.output -match 'test_sentinel_reached_deployment' -and $midRun.output -match 'frontdoor_state_changed' -and
+        -not $afterFd.Contains('verifiedAt') -and $afterFd.Contains('verificationInvalidatedAt'))
     (New-PhaseEvidence) | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $standbyEvidencePath
     $fdEvidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $fdEvidencePath
     $verifyFailure = & pwsh -NoProfile -File $PSCommandPath -StubChild -StubStandby -ConfigPath $cfgPath -Phase Verify 2>&1
@@ -425,6 +452,32 @@ try {
     try { $lockedVerify = & pwsh -NoProfile -File $PSCommandPath -StubChild -StubStandby -ConfigPath $cfgPath -Phase Verify 2>&1; $lockedCode = $LASTEXITCODE } finally { $fdLock.Dispose() }
     $lockedText = ($lockedVerify -join "`n") -replace '\x1b\[[0-9;]*m|[\s|]', ''
     Check 'standby uses the shared Front Door state lock and changes nothing while another run holds it' ($lockedCode -ne 0 -and $lockedText -match 'frontdoor_state_locked' -and (Get-Content -LiteralPath $fdEvidencePath -Raw) -ceq $beforeFd -and (Get-Content -LiteralPath $standbyEvidencePath -Raw) -ceq $beforeStandby)
+    # A standby Verify that succeeds: stage 1 outputs for region B and opt-in stubs for its reads.
+    $standbyStagePath = Join-Path $shellCfg.standby.stateDirectory 'state.json'
+    @{ schemaVersion = 1; stageLayout = 2; stages = @{ '1' = @{ completedAt = '2026-01-01T00:00:00Z'; outputs = @{ apimName = 'fixture-b-apim'
+        names = @{ apps = @{ sync = @{ functionApp = 'fixture-b-sync' }; reconciler = @{ functionApp = 'fixture-b-reconciler' } } } } } } } |
+        ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $standbyStagePath
+    $env:DR_STUB_STANDBY_VERIFY = '1'
+    try {
+        foreach ($concurrent in $false, $true) {
+            (New-PhaseEvidence) | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $standbyEvidencePath
+            $fdEvidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $fdEvidencePath
+            $env:DR_STUB_FD_VERIFY_DURING_DEPLOY = $(if ($concurrent) { $fdEvidencePath } else { '' })
+            $okVerify = & pwsh -NoProfile -File $PSCommandPath -StubChild -StubStandby -ConfigPath $cfgPath -Phase Verify 2>&1; $okCode = $LASTEXITCODE
+            $okText = ($okVerify -join "`n") -replace '\x1b\[[0-9;]*m|[\s|]', ''
+            $afterVerify = Get-Content -LiteralPath $standbyEvidencePath -Raw | ConvertFrom-Json -AsHashtable
+            $afterFd = Get-Content -LiteralPath $fdEvidencePath -Raw | ConvertFrom-Json -AsHashtable
+            if ($concurrent) {
+                Check 'successful standby Verify fails and clears Front Door verification recorded during it' (
+                    $okCode -ne 0 -and $okText -match 'frontdoor_state_changed' -and $afterVerify.phases.Contains('Verify') -and
+                    -not $afterFd.Contains('verifiedAt') -and $afterFd.Contains('verificationInvalidatedAt'))
+            } else {
+                Check 'successful standby Verify without concurrent Front Door changes passes' (
+                    $okCode -eq 0 -and $okText -notmatch 'frontdoor_state_changed' -and $afterVerify.phases.Contains('Verify') -and
+                    -not $afterFd.Contains('verifiedAt') -and -not $afterFd.Contains('verificationInvalidatedAt'))
+            }
+        }
+    } finally { $env:DR_STUB_STANDBY_VERIFY = ''; $env:DR_STUB_FD_VERIFY_DURING_DEPLOY = ''; Remove-Item -LiteralPath $standbyStagePath -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $standbyEvidencePath, $fdEvidencePath
     $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath
 

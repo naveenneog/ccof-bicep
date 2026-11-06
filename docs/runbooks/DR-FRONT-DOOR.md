@@ -95,9 +95,24 @@ concurrent change: it stops with `frontdoor_state_changed` and writes nothing. `
 `DrainPrimary` and `RestorePrimary` compare against the state read before their configuration
 change; if it changed meanwhile (for example a `Verify` recorded `verifiedAt` against the old or
 half-applied configuration), they remove `verifiedAt`, record `verificationInvalidatedAt` and stop
-with `frontdoor_state_changed`. Rerun that phase and then `Verify`. `frontdoor_state_locked` means
-another run held the lock for about five seconds. In either case, inspect the state and rerun the
-phase. This does not protect copies of the state directory on other machines.
+with `frontdoor_state_changed`. The configuration change may already be applied. Follow the
+`Next:` steps in the message:
+
+- `Deploy`: rerun `-Phase Deploy -Apply`, then `-Phase Verify`.
+- `DrainPrimary`: the primary may already be drained, but `primaryDrainedAt` was not recorded.
+  `DrainPrimary` needs fresh verification, so run `-Phase Verify` first, then rerun
+  `-Phase DrainPrimary -Apply -ConfirmStandbyReady`; or return traffic with
+  `-Phase RestorePrimary -Apply`.
+- `RestorePrimary`: the primary may already be restored. Rerun `-Phase RestorePrimary -Apply`,
+  then `-Phase Verify`.
+
+A standby phase compares `frontdoor-state.json` again after its work, whether it succeeded or
+failed. If Front Door verification was recorded meanwhile, it may describe a half-applied region
+B: the standby run removes it, records `verificationInvalidatedAt` and fails with
+`frontdoor_state_changed`. Finish the standby phases, then run the Front Door `Verify` again.
+`frontdoor_state_locked` means another run held the lock for about five seconds. In either case,
+inspect the state and rerun the phase. This does not protect copies of the state directory on other
+machines.
 
 ### Independent connection-owner review is mandatory
 
