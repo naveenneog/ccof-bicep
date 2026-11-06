@@ -43,8 +43,41 @@ function Invoke-DrAz([string[]]$Arguments, [switch]$AllowMissing) {
     if (-not $json) { return $null }
     return $json | ConvertFrom-Json -AsHashtable -Depth 100
 }
+$script:fdStateHash = $null
+# State reads and writes run under a short exclusive lock. A save succeeds only when the file still has the
+# content this run last read, so a long phase cannot write back a snapshot that another run has since changed.
+function Use-FdStateLock([scriptblock]$Action) {
+    $lockPath = Join-Path (Split-Path $statePath -Parent) 'frontdoor-state.lock'
+    $lock = $null
+    for ($attempt = 1; -not $lock; $attempt++) {
+        try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ($attempt -ge 50) { throw "frontdoor_state_locked: another Front Door run is using $statePath; retry after it finishes." }
+            [Threading.Thread]::Sleep(100)
+        }
+    }
+    try { & $Action } finally { $lock.Dispose() }
+}
+function Get-FdStateBytes {
+    if (-not (Test-Path -LiteralPath $statePath)) { return $null }
+    return [IO.File]::ReadAllBytes($statePath)
+}
+function Get-FdStateHash($Bytes) {
+    if ($null -eq $Bytes) { return 'absent' }
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$Bytes))
+}
 function Save-FdState($Value) {
-    $Value | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
+    $json = $Value | ConvertTo-Json -Depth 100
+    Use-FdStateLock {
+        if ((Get-FdStateHash (Get-FdStateBytes)) -cne $script:fdStateHash) {
+            throw "frontdoor_state_changed: $statePath changed after this run read it; no state was written. Rerun the phase."
+        }
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $temp = "$statePath.$PID.tmp"
+        [IO.File]::WriteAllBytes($temp, $bytes)
+        [IO.File]::Move($temp, $statePath, $true)
+        $script:fdStateHash = Get-FdStateHash $bytes
+    }
     Write-Host "Front Door state: $statePath"
 }
 # Stage 1 records apimId and apimGatewayUrl only when it created the APIM. For an existing APIM the ID
@@ -70,8 +103,23 @@ function Get-FdApim($Outputs, $Cfg, [string]$Region) {
     return @{ Id = $apimId; Host = $apimHost }
 }
 function Get-FdState {
-    if (-not (Test-Path -LiteralPath $statePath)) { return $null }
-    return Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    Use-FdStateLock { $script:fdStateBytes = Get-FdStateBytes }
+    $bytes = $script:fdStateBytes
+    $script:fdStateHash = Get-FdStateHash $bytes
+    if ($null -eq $bytes) { return $null }
+    return [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable -Depth 100
+}
+# Approvals saved before reviewed provenance existed were selected by request description and are not trusted.
+function Get-FdApprovalProblem($State, [int]$Expected) {
+    $approved = @(Get-DrValue $State 'approvedConnections' | Where-Object { $_ })
+    if ($approved.Count -lt $Expected) { return 'frontdoor_approval_missing: run -Phase Approve -Apply first.' }
+    $reviewedIds = @(Get-DrValue $State 'reviewedConnections' | Where-Object { $_ })
+    foreach ($id in $approved) {
+        if (-not @($reviewedIds | Where-Object { [string]$_ -ieq [string]$id }).Count) {
+            return "frontdoor_approval_unreviewed: $id was saved without reviewed provenance; rerun -Phase Approve -Apply with -ReviewedConnectionIds."
+        }
+    }
+    return $null
 }
 function Test-FdConnectionId([string]$Id, [string]$TargetId) {
     $prefix = "$TargetId/privateEndpointConnections/"
@@ -289,6 +337,8 @@ switch ($Phase) {
             if ($Phase -eq 'DrainPrimary') {
                 $state = Get-FdState
                 if (-not $state -or -not (Get-DrValue $state 'verifiedAt')) { Stop-Dr 'frontdoor_verify_required: verify both Front Door routes before draining the primary.' 3 }
+                $approvalProblem = Get-FdApprovalProblem $state $expectedConnections
+                if ($approvalProblem) { Stop-Dr $approvalProblem 3 }
                 if ($Apply) { $state.Remove('verifiedAt'); Save-FdState $state }
             }
         $parameterFile = Join-Path $standbyStateDir 'frontdoor.parameters.json'
@@ -443,6 +493,8 @@ switch ($Phase) {
         }
         $known = @(Get-DrValue $state 'approvedConnections' | Where-Object { $_ }) +
             @(Get-DrValue $state 'previousApprovedConnections' | Where-Object { $_ })
+        $provenance = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($id in @(Get-DrValue $state 'reviewedConnections' | Where-Object { $_ })) { $null = $provenance.Add([string]$id) }
         Write-Host "Profile for independent review: /subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Cdn/profiles/$profileStem-fd"
         $targets = [Collections.Generic.List[object]]::new()
         foreach ($group in $groups) {
@@ -493,21 +545,31 @@ switch ($Phase) {
             if ($saved.Count -gt 1) {
                 throw "frontdoor_saved_connection_duplicate: multiple saved IDs refer to $($target.originId)."
             }
-            if ($saved.Count) {
+            if ($saved.Count -and $provenance.Contains([string]$saved[0])) {
                 $id = [string]$saved[0]
                 $matches = @($target.connections | Where-Object { [string](Get-DrValue $_ 'id') -ieq $id })
                 if ($matches.Count -ne 1 -or [string](Get-DrValue $matches[0] 'properties.privateLinkServiceConnectionState.status') -cne 'Approved') {
                     throw "frontdoor_saved_connection_not_approved: the exact saved ID $id is absent, duplicated or no longer Approved; do not substitute a description match."
                 }
             } else {
+                $legacy = if ($saved.Count) { [string]$saved[0] } else { '' }
                 $forTarget = @($reviewed | Where-Object { Test-FdConnectionId $_ $target.originId })
                 if ($forTarget.Count -ne 1) {
-                    throw "frontdoor_review_ids_required: provide exactly one independently reviewed connection ID for $($target.originId)."
+                    $why = if ($legacy) { " The saved ID $legacy is legacy state without reviewed provenance; independently review it and supply it." } else { '' }
+                    throw "frontdoor_review_ids_required: provide exactly one independently reviewed connection ID for $($target.originId).$why"
                 }
                 $id = [string]$forTarget[0]
+                if ($legacy -and $id -ine $legacy) {
+                    throw "frontdoor_review_id_mismatch: $id differs from the legacy saved ID $legacy for $($target.originId); resolve the saved approval before retrying."
+                }
                 $matches = @($target.connections | Where-Object { [string](Get-DrValue $_ 'id') -ieq $id })
-                if ($matches.Count -ne 1 -or
-                    [string](Get-DrValue $matches[0] 'properties.privateLinkServiceConnectionState.description') -cne $target.request -or
+                # A re-reviewed legacy ID is already Approved and may carry the description its approver set.
+                $requestOk = if ($matches.Count -ne 1) { $false } elseif ($legacy) {
+                    [string](Get-DrValue $matches[0] 'properties.privateLinkServiceConnectionState.status') -ceq 'Approved'
+                } else {
+                    [string](Get-DrValue $matches[0] 'properties.privateLinkServiceConnectionState.description') -ceq $target.request
+                }
+                if (-not $requestOk -or
                     -not [string](Get-DrValue $matches[0] 'properties.privateEndpoint.id')) {
                     throw "frontdoor_review_id_mismatch: $id is absent, duplicated, lacks an endpoint, or does not match the expected request for $($target.originId)."
                 }
@@ -558,14 +620,15 @@ switch ($Phase) {
             }
             $approved.Add($item.id)
         }
-        $state.approvedConnections = $approved.ToArray(); $state.Remove('previousApprovedConnections')
+        $state.approvedConnections = $approved.ToArray(); $state.reviewedConnections = $approved.ToArray(); $state.Remove('previousApprovedConnections')
         $state.approvedAt = [DateTime]::UtcNow.ToString('o'); Save-FdState $state
         Write-Host "Approved $($approved.Count) Front Door private links."
     }
     'Verify' {
         $state = Get-FdState
         if (-not $state) { Stop-Dr 'frontdoor_state_missing: run -Phase Deploy -Apply first.' 3 }
-        if (@(Get-DrValue $state 'approvedConnections' | Where-Object { $_ }).Count -lt $expectedConnections) { Stop-Dr 'frontdoor_approval_missing: run -Phase Approve -Apply first.' 3 }
+        $approvalProblem = Get-FdApprovalProblem $state $expectedConnections
+        if ($approvalProblem) { Stop-Dr $approvalProblem 3 }
         $tests = @(
             @{ path = '/status-0123456789abcdef'; accepted = @(200); label = 'APIM gateway route' }
             @{ path = '/api/console'; accepted = @(200, 302); label = 'admin console route' }
@@ -591,6 +654,8 @@ switch ($Phase) {
     'Lockdown' {
         $state = Get-FdState
         if (-not $state -or -not (Get-DrValue $state 'verifiedAt')) { Stop-Dr 'frontdoor_verify_required: Verify both routes before disabling APIM public access.' 3 }
+        $approvalProblem = Get-FdApprovalProblem $state $expectedConnections
+        if ($approvalProblem) { Stop-Dr $approvalProblem 3 }
         if (-not $Apply) { Write-Host 'Preview only: set publicNetworkAccess Disabled on both APIM origins after Front Door private routes passed.'; return }
         $origins = @()
         foreach ($id in @($state.apimIds)) { $origins += @{ id = $id; apiVersion = '2024-05-01'; type = 'Microsoft.ApiManagement/service' } }

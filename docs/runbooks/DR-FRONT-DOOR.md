@@ -86,8 +86,14 @@ Run one command at a time and stop on failure. `-ConfirmStandbyReady` is require
 current saved standby phase records before any Azure change. Neither check independently verifies
 Entra approval, private publishing or live B traffic. Preserve the updated state and evidence
 securely after each phase. Do not run standby or Front Door phases concurrently in different
-sessions: the state files and readiness checks are not a distributed lock, and the owner must stop
-if the underlying deployment or readiness changes during the review.
+sessions: the standby state files and readiness checks are not a distributed lock, and the owner must
+stop if the underlying deployment or readiness changes during the review. On one machine, the Front
+Door driver reads and writes `frontdoor-state.json` under a short exclusive `frontdoor-state.lock`
+file and writes atomically. It writes only if the file still has the content it last read, so a
+long-running phase (for example `Verify` route polling) cannot overwrite a concurrent change:
+it stops with `frontdoor_state_changed` and writes nothing. `frontdoor_state_locked` means another
+run held the lock for about five seconds. In either case, inspect the state and rerun the phase. This
+does not protect copies of the state directory on other machines.
 
 ### Independent connection-owner review is mandatory
 
@@ -102,7 +108,7 @@ Pass `-ReviewedConnectionIds` as one comma-separated **string** through `pwsh -F
 one independently reviewed full target-side connection ID for each origin without a previously
 saved, revalidated approval. A fresh full deployment may need four IDs; the example above assumes
 the two A IDs were saved by primary-only approval and only B's two are new. Do not include
-previously saved IDs or additional candidates. Blank, repeated, wrong-target, wrong-request,
+previously saved IDs that have reviewed provenance, or additional candidates. Blank, repeated, wrong-target, wrong-request,
 unrelated and extra IDs are refused before approval. The driver requires a nonempty endpoint ID,
 the expected request description and an `Approved` or `Pending` status for a new ID, but those
 checks do **not** independently establish profile ownership.
@@ -112,8 +118,15 @@ a missing or changed saved ID cannot be replaced by a description match, even if
 supplied. Stop and investigate rather than editing state. New approvals retain the original request
 description. Immediately before each approval, the driver rechecks every selected exact ID, status,
 endpoint and description; each approval and the complete plan must then read back `Approved` with the
-same endpoint and description. Previously saved IDs may have been recorded by an older driver; their
-owner should independently review their provenance too.
+same endpoint and description. A successful approval records the approved IDs as
+`reviewedConnections`; only saved IDs with that provenance are reused without resupplying them.
+
+State written by an older driver has saved IDs selected by request description and no
+`reviewedConnections`. Those legacy IDs are **not** trusted: `Approve` stops with
+`frontdoor_review_ids_required` until the owner independently reviews each legacy ID and supplies it
+in `-ReviewedConnectionIds` (it must still be the exact saved ID and read back `Approved` with an
+endpoint; a different ID for that origin is refused with `frontdoor_review_id_mismatch`). Until then,
+`Verify`, `Lockdown` and `DrainPrimary` stop with `frontdoor_approval_unreviewed`.
 
 An actual `Verify`, or an apply of `Deploy`, `Approve`, `DrainPrimary` or `RestorePrimary`,
 invalidates earlier route verification before the relevant Azure operation; a later failure does not

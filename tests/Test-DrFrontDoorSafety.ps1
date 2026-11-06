@@ -111,6 +111,20 @@ if ($StubChild) {
         if ($Uri -like 'https://fixture-edge.test/*') {
             $saved = Get-Content -LiteralPath $env:FD_TEST_FD_STATE -Raw | ConvertFrom-Json -AsHashtable -Depth 30
             Write-FdFakeLog @{ kind = 'route'; uri = $Uri; verifiedAtPresent = $saved.Contains('verifiedAt') }
+            $marker = Join-Path $env:FD_TEST_SCRATCH 'concurrent-approve.done'
+            if ($env:FD_TEST_CASE -eq 'concurrent-approve' -and -not (Test-Path -LiteralPath $marker)) {
+                New-Item -ItemType File -Path $marker | Out-Null
+                $list = @(Get-Content -LiteralPath $env:FD_TEST_CONNECTIONS -Raw | ConvertFrom-Json -AsHashtable -Depth 30)
+                $list[1].properties.privateLinkServiceConnectionState.status = 'Pending'
+                ConvertTo-Json -InputObject $list -Depth 30 | Set-Content -LiteralPath $env:FD_TEST_CONNECTIONS -Encoding utf8NoBOM
+                $env:FD_TEST_CASE = ''
+                $nested = & pwsh -NoProfile -File $env:FD_TEST_SCRIPT -StubChild -Phase Approve -ConfigPath $env:FD_TEST_CFG -Apply -ConfirmStandbyReady 2>&1
+                $nestedCode = $LASTEXITCODE
+                $env:FD_TEST_CASE = 'concurrent-approve'
+                $between = Get-Content -LiteralPath $env:FD_TEST_FD_STATE -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+                Write-FdFakeLog @{ kind = 'concurrent-approve'; code = $nestedCode; output = ($nested -join "`n")
+                    approvedPresent = $between.Contains('approvedConnections'); verifiedAtPresent = $between.Contains('verifiedAt') }
+            }
             $status = if ($env:FD_TEST_CASE -eq 'route-failure') { 503 } elseif ($Uri -like '*/api/console') { 302 } else { 200 }
             return [pscustomobject]@{ StatusCode = $status; Headers = @{}; Content = '' }
         }
@@ -223,6 +237,8 @@ try {
     $evidencePath = Join-Path $standbyDir 'standby.state.json'
     $standbyStagePath = Join-Path $standbyDir 'state.json'
     $env:FD_TEST_FD_STATE = $statePath
+    $env:FD_TEST_CFG = $cfgPath
+    $env:FD_TEST_SCRIPT = $PSCommandPath
     $env:FD_TEST_LOG = Join-Path $scratch 'calls.jsonl'
     $env:FD_TEST_CONNECTIONS = Join-Path $scratch 'connections.json'
     $env:FD_TEST_ORIGINS = Join-Path $scratch 'origins.json'
@@ -272,7 +288,7 @@ try {
     $fdState = @{ mode = 'full'; stem = 'fixture-edge'; subscriptionId = $sub; resourceGroup = 'workload-rg'
         profileName = 'fixture-edge-fd'; profileId = $profile; endpointHostName = 'fixture-edge.test'
         apimIds = @($targets[0], $targets[1]); adminSiteIds = @($targets[2], $targets[3])
-        previousApprovedConnections = @($connectionIds[0], $connectionIds[2]); verifiedAt = 'old' }
+        previousApprovedConnections = @($connectionIds[0], $connectionIds[2]); reviewedConnections = @($connectionIds[0], $connectionIds[2]); verifiedAt = 'old' }
     $connections = @(for ($i = 0; $i -lt 4; $i++) {
         @{ id = $connectionIds[$i]; name = 'fixture'; properties = @{ privateEndpoint = @{ id = $endpointIds[$i] }
             privateLinkServiceConnectionState = @{ status = $(if ($i -in 0, 2) { 'Approved' } else { 'Pending' })
@@ -309,7 +325,8 @@ try {
         $calls = if (Test-Path -LiteralPath $env:FD_TEST_LOG) {
             @(Get-Content -LiteralPath $env:FD_TEST_LOG | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable -Depth 30 })
         } else { @() }
-        return @{ code = $code; output = ($output -join "`n"); calls = $calls }
+        $text = $output -join "`n"
+        return @{ code = $code; output = $text; flat = ($text -replace '\x1b\[[0-9;]*m|[\s|]', ''); calls = $calls }
     }
     function Mutations($Result) {
         @($Result.calls | Where-Object {
@@ -339,6 +356,8 @@ try {
     $r = Run-Driver 'Deploy' $true $false $true
     Check 'failed full Deploy leaves prior route verification invalidated' ($r.code -ne 0 -and $r.output -match 'frontdoor_deploy_failed' -and -not (Read-Fixture $statePath).Contains('verifiedAt')) $r
     Reset-Fixture
+    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.reviewedConnections = $connectionIds
+    $state.Remove('previousApprovedConnections'); Write-Fixture $statePath $state
     $r = Run-Driver 'DrainPrimary' $true $false $true
     $after = Read-Fixture $statePath; $observed = @($r.calls | Where-Object { $_.kind -eq 'deployment-observation' })
     Check 'DrainPrimary consumes prior verification and clears it before the drill deployment' (
@@ -461,7 +480,7 @@ try {
     Check 'approval stops before changing the next connection when first readback fails' (@(AzCalls $r '^network private-endpoint-connection approve ').Count -eq 1) $r
 
     Reset-Fixture
-    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.Remove('previousApprovedConnections'); Write-Fixture $statePath $state
+    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.reviewedConnections = $connectionIds; $state.Remove('previousApprovedConnections'); Write-Fixture $statePath $state
     $env:FD_TEST_CASE = 'route-failure'
     $r = Run-Driver 'Verify'
     $after = Read-Fixture $statePath
@@ -481,7 +500,7 @@ try {
     Check 'Verify invalidates old route evidence even when its approval precondition fails' (
         $r.code -ne 0 -and $r.output -match 'frontdoor_approval_missing' -and -not $after.Contains('verifiedAt')) $r
     Reset-Fixture
-    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; Write-Fixture $statePath $state
+    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.reviewedConnections = $connectionIds; Write-Fixture $statePath $state
     $env:FD_TEST_CASE = 'no-standby'
     $r = Run-Driver 'Verify'
     Check 'Verify invalidates old evidence before a prerequisite Azure read can fail' (
@@ -549,6 +568,64 @@ try {
     $env:FD_TEST_CASE = 'no-standby'
     $r = Run-Driver 'RestorePrimary' $true
     Check 'already-restored A origins are revalidated without any PATCH or B state' ($r.code -eq 0 -and (HttpPatches $r).Count -eq 0 -and (Read-Fixture $statePath).Contains('primaryRestoredAt')) $r
+
+    # Legacy state written by the base driver has saved IDs selected by description, with no review provenance.
+    Reset-Fixture
+    $state = Read-Fixture $statePath; $state.Remove('reviewedConnections'); Write-Fixture $statePath $state
+    $r = Run-Driver 'Approve' $true $false $true $reviewed
+    Check 'legacy saved IDs without review provenance are not trusted for approval' (
+        $r.code -ne 0 -and $r.flat -match 'frontdoor_review_ids_required' -and $r.flat -match 'legacy' -and
+        (Mutations $r).Count -eq 0 -and -not (Read-Fixture $statePath).Contains('approvedConnections')) $r
+    $r = Run-Driver 'Approve' $true $false $true ($connectionIds -join ',')
+    $after = Read-Fixture $statePath
+    Check 'legacy saved IDs are accepted after explicit re-review and gain provenance' (
+        $r.code -eq 0 -and @(AzCalls $r '^network private-endpoint-connection approve ').Count -eq 2 -and
+        @($after.approvedConnections).Count -eq 4 -and @($after.reviewedConnections).Count -eq 4) $r
+    $r = Run-Driver 'Approve' $true $false $true
+    Check 'reviewed approvals are idempotent without supplying IDs again' (
+        $r.code -eq 0 -and (Mutations $r).Count -eq 0 -and @((Read-Fixture $statePath).approvedConnections).Count -eq 4) $r
+    Reset-Fixture
+    $state = Read-Fixture $statePath; $state.Remove('reviewedConnections'); Write-Fixture $statePath $state
+    $list = Read-Fixture $env:FD_TEST_CONNECTIONS
+    $list += @{ id = "$($targets[0])/privateEndpointConnections/legacy-other"; name = 'legacy-other'; properties = @{
+        privateEndpoint = @{ id = "$($endpointIds[0])-other" }; privateLinkServiceConnectionState = @{ status = 'Approved'; description = $requests[0] } } }
+    Write-Fixture $env:FD_TEST_CONNECTIONS $list
+    $r = Run-Driver 'Approve' $true $false $true "$($targets[0])/privateEndpointConnections/legacy-other,$($connectionIds[1]),$($connectionIds[2]),$($connectionIds[3])"
+    Check 'a different reviewed ID never silently replaces a legacy saved ID' (
+        $r.code -ne 0 -and $r.flat -match 'frontdoor_review_id_mismatch' -and $r.flat -match 'legacysavedID' -and
+        (Mutations $r).Count -eq 0 -and -not (Read-Fixture $statePath).Contains('approvedConnections')) $r
+    foreach ($legacyPhase in 'Verify', 'Lockdown', 'DrainPrimary') {
+        Reset-Fixture
+        $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.Remove('previousApprovedConnections')
+        $state.Remove('reviewedConnections'); $state.verifiedAt = '2026-01-01T00:00:00Z'; Write-Fixture $statePath $state
+        $r = Run-Driver $legacyPhase $true $false $true
+        Check "$legacyPhase refuses legacy approvals that lack review provenance" (
+            $r.code -ne 0 -and $r.flat -match 'frontdoor_approval_unreviewed' -and (Mutations $r).Count -eq 0 -and
+            @($r.calls | Where-Object { $_.kind -eq 'route' }).Count -eq 0) $r
+    }
+
+    # A long Verify must not write back a stale snapshot after a concurrent Approve invalidated approvals.
+    Reset-Fixture
+    $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.reviewedConnections = $connectionIds
+    $state.Remove('previousApprovedConnections'); Write-Fixture $statePath $state
+    $env:FD_TEST_CASE = 'concurrent-approve'
+    $r = Run-Driver 'Verify'
+    $after = Read-Fixture $statePath
+    $nested = @($r.calls | Where-Object { $_.kind -eq 'concurrent-approve' })
+    Check 'concurrent Approve really ran during Verify and invalidated approval' (
+        $nested.Count -eq 1 -and $nested[0].code -ne 0 -and -not $nested[0].approvedPresent -and -not $nested[0].verifiedAtPresent) $r
+    Check 'stale Verify cannot restore evidence invalidated by a concurrent Approve' (
+        $r.code -ne 0 -and $r.flat -match 'frontdoor_state_changed' -and
+        -not $after.Contains('verifiedAt') -and -not $after.Contains('approvedConnections')) $r
+    Remove-Item -LiteralPath (Join-Path $scratch 'concurrent-approve.done') -ErrorAction SilentlyContinue
+
+    Reset-Fixture
+    $before = Get-Content -LiteralPath $statePath -Raw
+    $lock = [IO.File]::Open((Join-Path $standbyDir 'frontdoor-state.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try { $r = Run-Driver 'Approve' $true $false $true $reviewed } finally { $lock.Dispose() }
+    Check 'state writers refuse to proceed while another run holds the state lock' (
+        $r.code -ne 0 -and $r.flat -match 'frontdoor_state_locked' -and (Mutations $r).Count -eq 0 -and
+        (Get-Content -LiteralPath $statePath -Raw) -ceq $before) $r
 } finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }

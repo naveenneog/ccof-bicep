@@ -518,7 +518,7 @@ try {
     $fdState = @{ mode = 'full'; stem = 'fixture-fd'; subscriptionId = $sub; resourceGroup = 'workload-rg'
         profileName = 'fixture-fd-fd'; profileId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.Cdn/profiles/fixture-fd-fd"
         apimIds = @($aApimId, $bApimId); adminSiteIds = @($aAdminId, $bAdminId)
-        previousApprovedConnections = @($connectionIds[2]); verifiedAt = 'old' }
+        previousApprovedConnections = @($connectionIds[2]); reviewedConnections = @($connectionIds[0], $connectionIds[2]); verifiedAt = 'old' }
     $fdState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $statePath
     $reviewedB = "$($connectionIds[1]),$($connectionIds[3])"
     $fd = Run-FrontDoor 'Approve' $reviewedB
