@@ -1,0 +1,36 @@
+{
+  "stem": "synthst-fd",
+  "deployedAt": "2026-10-29T14:40:03.7149441Z",
+  "profileName": "synthst-fd-fd",
+  "adminSiteIds": [
+    "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Web/sites/synthst-q7m2x9kd4tpla-admin"
+  ],
+  "mode": "primaryOnly",
+  "outputs": {
+    "profileName": "synthst-fd-fd",
+    "endpointHostName": "synthst-fd-k3vq8wzmtr2yhd5n.z07.azurefd.net",
+    "wafPolicyId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/FrontDoorWebApplicationFirewallPolicies/synthstfdwaf",
+    "adminOriginGroupId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Cdn/profiles/synthst-fd-fd/originGroups/admin",
+    "originNames": [
+      "primary-gateway"
+    ],
+    "adminOriginNames": [
+      "primary-admin"
+    ],
+    "originGroupId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Cdn/profiles/synthst-fd-fd/originGroups/apim",
+    "profileId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Cdn/profiles/synthst-fd-fd"
+  },
+  "endpointHostName": "synthst-fd-k3vq8wzmtr2yhd5n.z07.azurefd.net",
+  "profileId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Cdn/profiles/synthst-fd-fd",
+  "subscriptionId": "0f051e58-220e-46be-83ba-cb7c98b140a8",
+  "apimIds": [
+    "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.ApiManagement/service/synthst-apim"
+  ],
+  "resourceGroup": "RG-CONTOSO201-STG",
+  "approvedConnections": [
+    "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.ApiManagement/service/synthst-apim/privateEndpointConnections/ddaca741-aab2-499d-89f7-facaee145ee3",
+    "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Web/sites/synthst-q7m2x9kd4tpla-admin/privateEndpointConnections/e20ff247-f31f-494b-8fe1-407c053efae5-a0fb4cf8-03f2-4d83-81b4-4b0d0288ef69"
+  ],
+  "approvedAt": "2026-10-29T14:50:21.413913Z",
+  "verifiedAt": "2026-10-29T15:02:22.8282451Z"
+}

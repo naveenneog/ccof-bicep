@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-11-06 - DR customer-shape end-to-end regression
+
+- New offline test `tests/Test-DrInfosysShape.ps1` with a synthetic customer-shaped fixture
+  (`tests/fixtures/dr-customer-shape`) runs every standby phase from Data to Verify and checks: all
+  primary stages load, the primary APIM comes from `apim.existing`, Network uses only the Cosmos and
+  blob DNS zones, no Microsoft Graph or Cosmos throughput write, Code takes the public path, and prior
+  Front Door verification is cleared. Each fixture shape trait is asserted so a regenerated fixture
+  cannot silently lose it.
 ## 2026-11-06 - DR Bootstrap preview what-if count
 
 - Existing-network Bootstrap preview no longer fails after printing the what-if with "The property

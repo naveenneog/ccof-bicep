@@ -1,0 +1,718 @@
+{
+  "stageLayout": 2,
+  "stages": {
+    "0": {
+      "completedAt": "2026-10-26T16:39:52.2857891Z",
+      "dependencyHashes": {},
+      "outputs": {
+        "subscription": {
+          "user": "pat.example@corp.contoso.example",
+          "name": "CONTOSO201",
+          "tenant": "85b66c86-d85a-4c21-83f2-85eb1697ed70",
+          "id": "0f051e58-220e-46be-83ba-cb7c98b140a8"
+        },
+        "resourceGroup": {
+          "name": "RG-CONTOSO201-STG",
+          "resourceCount": 2,
+          "exists": true
+        },
+        "providers": {
+          "Microsoft.Web": "Registered",
+          "Microsoft.DocumentDB": "Registered",
+          "Microsoft.Storage": "Registered",
+          "Microsoft.Network": "Registered",
+          "Microsoft.OperationalInsights": "Registered",
+          "Microsoft.Insights": "Registered",
+          "Microsoft.ManagedIdentity": "Registered",
+          "Microsoft.ApiManagement": "Registered",
+          "Microsoft.AlertsManagement": "Registered"
+        },
+        "flexConsumptionRegion": "eastus2",
+        "backends": [
+          {
+            "id": "fabrikam301",
+            "account": "fabrikam301",
+            "publicNetworkAccess": "Disabled",
+            "deployments": [
+              "claude-haiku-5-5",
+              "claude-sonnet-5-5",
+              "claude-opus-5-5"
+            ]
+          }
+        ],
+        "operator": {
+          "id": "53cf55dc-2f0b-4254-873c-5b5e3a6ac783",
+          "upn": "pat.example@corp.contoso.example"
+        },
+        "durationSeconds": 34
+      },
+      "configHash": "766ba1e304b769bd46f9834e11607059568ae001e86830a14c423d93fab979e8"
+    },
+    "1": {
+      "completedAt": "2026-10-26T16:50:21.6937615Z",
+      "dependencyHashes": {},
+      "outputs": {
+        "apimId": "",
+        "foundryAccountId": "",
+        "principals": {
+          "reconciler": "9f73149a-8835-44e3-83da-7a08e5947fd2",
+          "admin": "ab07861d-096f-4e25-8a9f-55cbb0784d27",
+          "resolver": "2f923758-c53d-4f05-8662-7a7b65e7c626",
+          "sync": "e37693f6-b176-4607-87b0-c1f3f18911db"
+        },
+        "apimGatewayUrl": "",
+        "names": {
+          "apps": {
+            "admin": {
+              "appInsights": "synthst-q7m2x9kd4tpla-admin-ai",
+              "deploymentContainer": "app-package",
+              "functionApp": "synthst-q7m2x9kd4tpla-admin",
+              "plan": "synthst-q7m2x9kd4tpla-admin-plan",
+              "storageAccount": "synthstq7m2x9kd4tplaadm"
+            },
+            "reconciler": {
+              "appInsights": "synthst-q7m2x9kd4tpla-reconciler-ai",
+              "deploymentContainer": "app-package",
+              "functionApp": "synthst-q7m2x9kd4tpla-reconciler",
+              "plan": "synthst-q7m2x9kd4tpla-reconciler-plan",
+              "storageAccount": "synthstq7m2x9kd4tplarec"
+            },
+            "resolver": {
+              "appInsights": "synthst-q7m2x9kd4tpla-resolver-ai",
+              "deploymentContainer": "app-package",
+              "functionApp": "synthst-q7m2x9kd4tpla-resolver",
+              "plan": "synthst-q7m2x9kd4tpla-resolver-plan",
+              "storageAccount": "synthstq7m2x9kd4tplares"
+            },
+            "sync": {
+              "appInsights": "synthst-q7m2x9kd4tpla-sync-ai",
+              "deploymentContainer": "app-package",
+              "functionApp": "synthst-q7m2x9kd4tpla-sync",
+              "plan": "synthst-q7m2x9kd4tpla-sync-plan",
+              "storageAccount": "synthstq7m2x9kd4tplasyn"
+            }
+          },
+          "cosmosAccount": "synthst-q7m2x9kd4tpla-cosmos",
+          "deploymentPrefix": "synthst",
+          "identities": {
+            "reconciler": "synthst-q7m2x9kd4tpla-reconciler-id",
+            "sync": "synthst-q7m2x9kd4tpla-sync-id"
+          },
+          "logAnalyticsWorkspace": "synthst-q7m2x9kd4tpla-law",
+          "resourceGroup": "RG-CONTOSO201-STG",
+          "subscriptionId": "0f051e58-220e-46be-83ba-cb7c98b140a8"
+        },
+        "verify": {
+          "apps": [
+            {
+              "app": "resolver",
+              "name": "synthst-q7m2x9kd4tpla-resolver",
+              "publicNetworkAccess": "Enabled",
+              "subnet": "",
+              "settings": 0,
+              "principalId": "2f923758-c53d-4f05-8662-7a7b65e7c626"
+            },
+            {
+              "app": "sync",
+              "name": "synthst-q7m2x9kd4tpla-sync",
+              "publicNetworkAccess": "Enabled",
+              "subnet": "",
+              "settings": 0,
+              "principalId": "e37693f6-b176-4607-87b0-c1f3f18911db"
+            },
+            {
+              "app": "reconciler",
+              "name": "synthst-q7m2x9kd4tpla-reconciler",
+              "publicNetworkAccess": "Enabled",
+              "subnet": "",
+              "settings": 0,
+              "principalId": "9f73149a-8835-44e3-83da-7a08e5947fd2"
+            },
+            {
+              "app": "admin",
+              "name": "synthst-q7m2x9kd4tpla-admin",
+              "publicNetworkAccess": "Enabled",
+              "subnet": "",
+              "settings": 0,
+              "principalId": "ab07861d-096f-4e25-8a9f-55cbb0784d27"
+            }
+          ],
+          "cosmos": {
+            "localAuthDisabled": true,
+            "publicNetworkAccess": "Disabled",
+            "name": "synthst-q7m2x9kd4tpla-cosmos"
+          },
+          "roleAssignmentsOnDeployedResources": 0,
+          "cosmosDataAssignments": 0,
+          "applicationInsights": [
+            {
+              "name": "synthst-q7m2x9kd4tpla-resolver-ai",
+              "localAuthDisabled": true,
+              "workspaceId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.OperationalInsights/workspaces/synthst-q7m2x9kd4tpla-law"
+            },
+            {
+              "name": "synthst-q7m2x9kd4tpla-sync-ai",
+              "localAuthDisabled": true,
+              "workspaceId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.OperationalInsights/workspaces/synthst-q7m2x9kd4tpla-law"
+            },
+            {
+              "name": "synthst-q7m2x9kd4tpla-reconciler-ai",
+              "localAuthDisabled": true,
+              "workspaceId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.OperationalInsights/workspaces/synthst-q7m2x9kd4tpla-law"
+            },
+            {
+              "name": "synthst-q7m2x9kd4tpla-admin-ai",
+              "localAuthDisabled": true,
+              "workspaceId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.OperationalInsights/workspaces/synthst-q7m2x9kd4tpla-law"
+            }
+          ],
+          "apimStatus": "deferred-no-public-bootstrap-approved"
+        },
+        "apimStatus": "deferred-no-public-bootstrap-approved",
+        "cosmosEndpoint": "https://synthst-q7m2x9kd4tpla-cosmos.documents.azure.com:443/",
+        "clientIds": {
+          "reconciler": "9d1cb4af-ea9b-4424-89fb-4a1e899b063c",
+          "admin": "",
+          "resolver": "",
+          "sync": "a8711f7d-0ba7-44d5-8917-e83d7047caa0"
+        },
+        "durationSeconds": 288,
+        "foundryAnthropicUrl": "",
+        "workspaceCustomerId": "cc630eb1-8510-4f97-83d7-ee80e1e0b2df",
+        "apimPrincipalId": "",
+        "workspaceId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.OperationalInsights/workspaces/synthst-q7m2x9kd4tpla-law",
+        "apimName": "",
+        "cosmosAccountId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.DocumentDB/databaseAccounts/synthst-q7m2x9kd4tpla-cosmos"
+      },
+      "configHash": "d61d82c4e6f3ada62e596c2936727085d5eaa147baa3012a85f7a8d9d733efb8"
+    },
+    "2": {
+      "completedAt": "2026-10-26T17:04:57.1348202Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806"
+      },
+      "outputs": {
+        "durationSeconds": 194,
+        "containers": [
+          {
+            "name": "entitlement",
+            "partitionKey": "/personId"
+          },
+          {
+            "name": "projects",
+            "partitionKey": "/projectId"
+          },
+          {
+            "name": "subscriptionIndex",
+            "partitionKey": "/subscriptionId"
+          },
+          {
+            "name": "budgetState",
+            "partitionKey": "/personId"
+          },
+          {
+            "name": "aggregateBudgetState",
+            "partitionKey": "/scopeId"
+          },
+          {
+            "name": "syncLease",
+            "partitionKey": "/id"
+          },
+          {
+            "name": "reconcilerLease",
+            "partitionKey": "/id"
+          },
+          {
+            "name": "backends",
+            "partitionKey": "/backendId"
+          },
+          {
+            "name": "adminConfig",
+            "partitionKey": "/scopeId"
+          }
+        ],
+        "databaseName": "ccof"
+      },
+      "configHash": "5f43ea6422636fcd00b3de7c6c7ef3a7d9ac79a51b756f422640a96f2d76b0bb"
+    },
+    "3": {
+      "completedAt": "2026-10-26T17:12:22.025073Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806",
+        "2": "c00df9479beaa5bb47abbe188e2ee20267633d7545db051b847a30fe3a0880f5"
+      },
+      "outputs": {
+        "apimPrincipalId": "1457f7aa-5279-4e9a-8b27-420712fc6445",
+        "verify": {
+          "azure": [
+            {
+              "principal": "admin",
+              "assignments": [
+                "Log Analytics Reader @ synthst-q7m2x9kd4tpla-law",
+                "Monitoring Metrics Publisher @ synthst-q7m2x9kd4tpla-admin-ai",
+                "Storage Blob Data Owner @ synthstq7m2x9kd4tplaadm"
+              ]
+            },
+            {
+              "principal": "reconciler",
+              "assignments": [
+                "Log Analytics Reader @ synthst-q7m2x9kd4tpla-law",
+                "Monitoring Metrics Publisher @ synthst-q7m2x9kd4tpla-reconciler-ai",
+                "Storage Blob Data Owner @ synthstq7m2x9kd4tplarec"
+              ]
+            },
+            {
+              "principal": "resolver",
+              "assignments": [
+                "Monitoring Metrics Publisher @ synthst-q7m2x9kd4tpla-resolver-ai",
+                "Storage Blob Data Owner @ synthstq7m2x9kd4tplares"
+              ]
+            },
+            {
+              "principal": "sync",
+              "assignments": [
+                "Monitoring Metrics Publisher @ synthst-q7m2x9kd4tpla-sync-ai",
+                "Storage Blob Data Owner @ synthstq7m2x9kd4tplasyn"
+              ]
+            }
+          ],
+          "cosmos": [
+            "admin -> dbs/ccof/colls/adminConfig",
+            "admin -> dbs/ccof/colls/projects",
+            "reconciler -> dbs/ccof/colls/aggregateBudgetState",
+            "reconciler -> dbs/ccof/colls/budgetState",
+            "reconciler -> dbs/ccof/colls/entitlement",
+            "reconciler -> dbs/ccof/colls/projects",
+            "reconciler -> dbs/ccof/colls/reconcilerLease",
+            "resolver -> dbs/ccof",
+            "sync -> dbs/ccof/colls/adminConfig",
+            "sync -> dbs/ccof/colls/backends",
+            "sync -> dbs/ccof/colls/entitlement",
+            "sync -> dbs/ccof/colls/projects",
+            "sync -> dbs/ccof/colls/projects",
+            "sync -> dbs/ccof/colls/syncLease"
+          ],
+          "foundry": [
+            "fabrikam301: Cognitive Services User"
+          ],
+          "rgScopedAssignments": 10
+        },
+        "cosmosAssignmentIds": [
+          "resolver-cosmos-data-reader",
+          "sync-entitlement-writer",
+          "sync-lease-writer",
+          "sync-projects-reader",
+          "reconciler-projects-reader",
+          "reconciler-entitlement-reader",
+          "reconciler-budget-state-writer",
+          "reconciler-aggregate-state-writer",
+          "reconciler-lease-writer",
+          "qs-sync-projects-writer",
+          "qs-sync-backends-writer",
+          "admin-projects-editor",
+          "admin-config-editor",
+          "sync-limits-reader"
+        ],
+        "durationSeconds": 385
+      },
+      "configHash": "f07a4faff9c54db241a215ac4a2a4d6b3cf2e8d4c8c4eca560a965214f7d1ee3"
+    },
+    "4": {
+      "completedAt": "2026-10-29T09:39:14.8110874Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806"
+      },
+      "outputs": {
+        "resolverServicePrincipalId": null,
+        "gatewayServicePrincipalId": null,
+        "manualVerification": {
+          "confirmedBy": "<Entra admin name or ticket>",
+          "confirmedOn": "2026-10-29",
+          "checklist": [
+            "gateway app b5ff18c8-c856-430f-82f1-7104c11750d2 - Expose an API: Application ID URI api://b5ff18c8-c856-430f-82f1-7104c11750d2; scope access_as_user enabled; authorized client applications b5ff18c8-c856-430f-82f1-7104c11750d2 and 23e26394-30c3-4aab-81c6-50fb64d80c87 (Azure CLI) for access_as_user",
+            "gateway app b5ff18c8-c856-430f-82f1-7104c11750d2 - Authentication: Mobile and desktop redirect URIs ms-appx-web://microsoft.aad.brokerplugin/b5ff18c8-c856-430f-82f1-7104c11750d2; Allow public client flows Yes. Manifest: requestedAccessTokenVersion 2",
+            "resolver app e1e20a72-757b-400e-80e8-1a06042209ca - Expose an API: Application ID URI api://e1e20a72-757b-400e-80e8-1a06042209ca. Manifest: requestedAccessTokenVersion 2",
+            "admin app 7e0c552a-6a58-45d1-8f55-c6f4cd659627 - Expose an API: Application ID URI api://7e0c552a-6a58-45d1-8f55-c6f4cd659627; scope Projects.Manage; authorized client applications 7e0c552a-6a58-45d1-8f55-c6f4cd659627 for Projects.Manage",
+            "admin app 7e0c552a-6a58-45d1-8f55-c6f4cd659627 - App roles CCOF.Projects.Read and CCOF.Projects.Write (Users/Groups). Authentication: Single-page application redirect URIs https://synthst-q7m2x9kd4tpla-admin.azurewebsites.net/api/console and https://synthst-q7m2x9kd4tpla-admin.azurewebsites.net/api/console-v3. Manifest: requestedAccessTokenVersion 2",
+            "admin enterprise application 7e0c552a-6a58-45d1-8f55-c6f4cd659627 - Properties: Assignment required Yes; Users and groups: console editors CCOF project editor, readers CCOF project reader",
+            "group FABRIKAM301/STD 2c6f3ebf-31ca-48b0-8cdf-4a19233a71ab - security group exists; group owners manage its direct members",
+            "group FABRIKAM301/PRM 14b9da02-7a10-4f67-88d8-124a1fc075d7 - security group exists; group owners manage its direct members",
+            "group FABRIKAM301/CYB 3a4b29ca-1f37-47f1-872c-8ec4a410ffea - security group exists; group owners manage its direct members"
+          ]
+        },
+        "durationSeconds": 0,
+        "groups": {
+          "FABRIKAM301/CYB": {
+            "id": "3a4b29ca-1f37-47f1-872c-8ec4a410ffea",
+            "members": [],
+            "displayName": null
+          },
+          "FABRIKAM301/PRM": {
+            "id": "14b9da02-7a10-4f67-88d8-124a1fc075d7",
+            "members": [],
+            "displayName": null
+          },
+          "FABRIKAM301/STD": {
+            "id": "2c6f3ebf-31ca-48b0-8cdf-4a19233a71ab",
+            "members": [],
+            "displayName": null
+          }
+        },
+        "verification": "manual",
+        "registrations": {
+          "gatewayApi": {
+            "accessTokenVersion": 2,
+            "appId": "b5ff18c8-c856-430f-82f1-7104c11750d2",
+            "scope": "access_as_user"
+          },
+          "resolverApi": {
+            "appId": "e1e20a72-757b-400e-80e8-1a06042209ca"
+          },
+          "developerSignIn": {
+            "appId": "b5ff18c8-c856-430f-82f1-7104c11750d2"
+          }
+        },
+        "graphApplicationPermission": "not read (entra.manualVerification)",
+        "admin": {
+          "redirects": [
+            "https://synthst-q7m2x9kd4tpla-admin.azurewebsites.net/api/console",
+            "https://synthst-q7m2x9kd4tpla-admin.azurewebsites.net/api/console-v3"
+          ],
+          "appId": "7e0c552a-6a58-45d1-8f55-c6f4cd659627",
+          "servicePrincipalId": null
+        },
+        "azureCliClientAllowed": true,
+        "gatewayIdentifierUri": "api://b5ff18c8-c856-430f-82f1-7104c11750d2"
+      },
+      "configHash": "cc781100a1e27e928ba31811d7e4941aa02dd34103c7bd95d7f0b012e74990e5"
+    },
+    "5": {
+      "completedAt": "2026-10-29T10:52:43.2994444Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806",
+        "3": "41a3df5b7fdf7dd780e96158375f4a011be94cd34cd42e11bb8d66a3654bc2c1",
+        "4": "ef294883a66edb1e8374807fc0ae7f91f6d97fdb3f597690fab00d1514e1e5b6"
+      },
+      "outputs": {
+        "verify": {
+          "settings": {
+            "admin": [
+              "ADMIN_ALLOWED_CLIENT_IDS",
+              "ADMIN_AUDIENCE",
+              "ADMIN_CLIENT_ID",
+              "ADMIN_CONFIG_CONTAINER",
+              "ADMIN_EDITOR_IDS",
+              "ADMIN_GATEWAY_RESOURCE_ID",
+              "ADMIN_GATEWAY_URL",
+              "ADMIN_LOG_RESOURCE_IDS",
+              "ADMIN_PROJECT_HEADER",
+              "ADMIN_PROJECTS_CONTAINER",
+              "ADMIN_READER_IDS",
+              "ADMIN_RECONCILER_INTERVAL_MINUTES",
+              "ADMIN_RECONCILER_RESOURCE_ID",
+              "ADMIN_SCOPE",
+              "ADMIN_TENANT_ID",
+              "ADMIN_UI_CLIENT_ID",
+              "ADMIN_UI_SCOPE",
+              "ADMIN_V3_ENABLED",
+              "ADMIN_WORKSPACE_ID",
+              "APPLICATIONINSIGHTS_AUTHENTICATION_STRING",
+              "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "AzureWebJobsStorage__accountName",
+              "AzureWebJobsStorage__credential",
+              "COSMOS_DATABASE",
+              "COSMOS_ENDPOINT"
+            ],
+            "reconciler": [
+              "APPLICATIONINSIGHTS_AUTHENTICATION_STRING",
+              "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "AzureWebJobs.reconcileBudgets.Disabled",
+              "AzureWebJobsStorage__accountName",
+              "AzureWebJobsStorage__clientId",
+              "AzureWebJobsStorage__credential",
+              "CCOF_APP_ROLE",
+              "COSMOS_DATABASE",
+              "COSMOS_ENDPOINT",
+              "RECONCILER_AGGREGATE_STATE_CONTAINER",
+              "RECONCILER_BUDGET_STATE_CONTAINER",
+              "RECONCILER_CONTINUITY_GATE",
+              "RECONCILER_ENTITLEMENT_CONTAINER",
+              "RECONCILER_LEASE_CONTAINER",
+              "RECONCILER_LEASE_SECONDS",
+              "RECONCILER_LEDGER_COVERAGE_START_AT",
+              "RECONCILER_LEDGER_GATEWAY_RESOURCE_ID",
+              "RECONCILER_LEDGER_MAX_ROWS",
+              "RECONCILER_LEDGER_TIMEOUT_SECONDS",
+              "RECONCILER_LOG_ANALYTICS_ENDPOINT",
+              "RECONCILER_LOG_ANALYTICS_WORKSPACE_ID",
+              "RECONCILER_MANAGED_IDENTITY_CLIENT_ID",
+              "RECONCILER_MAX_STATES",
+              "RECONCILER_PACING_WINDOW_MINUTES",
+              "RECONCILER_PROJECTS_CONTAINER",
+              "RECONCILER_SCHEDULE",
+              "RECONCILER_SOFT_LIMIT_PERCENT",
+              "RECONCILER_VALIDITY_SECONDS",
+              "RECONCILER_WRITE_CONCURRENCY"
+            ],
+            "resolver": [
+              "APPLICATIONINSIGHTS_AUTHENTICATION_STRING",
+              "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "AzureWebJobsStorage__accountName",
+              "AzureWebJobsStorage__credential",
+              "CCOF_APP_ROLE",
+              "COSMOS_DATABASE",
+              "COSMOS_ENDPOINT",
+              "RESOLVER_BUDGET_ENFORCEMENT",
+              "RESOLVER_COSMOS_REQUEST_TIMEOUT_MS",
+              "RESOLVER_COSMOS_RETRY_ATTEMPTS",
+              "RESOLVER_COSMOS_RETRY_MAX_WAIT_SECONDS",
+              "RESOLVER_REQUEST_DEADLINE_MS"
+            ],
+            "sync": [
+              "APPLICATIONINSIGHTS_AUTHENTICATION_STRING",
+              "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "AzureWebJobs.registrySeed.Disabled",
+              "AzureWebJobs.syncEntitlement.Disabled",
+              "AzureWebJobsStorage__accountName",
+              "AzureWebJobsStorage__clientId",
+              "AzureWebJobsStorage__credential",
+              "CCOF_APP_ROLE",
+              "COSMOS_DATABASE",
+              "COSMOS_ENDPOINT",
+              "SYNC_ENTITLEMENT_CONTAINER",
+              "SYNC_GRAPH_MAX_RETRIES",
+              "SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS",
+              "SYNC_GRAPH_TIMEOUT_SECONDS",
+              "SYNC_LEASE_CONTAINER",
+              "SYNC_LEASE_SECONDS",
+              "SYNC_LIMITS_CONTAINER",
+              "SYNC_MANAGED_IDENTITY_CLIENT_ID",
+              "SYNC_MAX_REMOVAL_FRACTION",
+              "SYNC_MAX_REMOVALS_PER_RUN",
+              "SYNC_MEMBER_TYPES",
+              "SYNC_PROJECTS_CONTAINER",
+              "SYNC_SCHEDULE",
+              "SYNC_TENANT_ID",
+              "SYNC_WRITE_MODE"
+            ]
+          },
+          "resolverAuth": {
+            "allowedApplications": [
+              "8d1b2bff-bdd6-4970-8a1c-0d020e8a8ebc"
+            ],
+            "enabled": true
+          },
+          "api": {
+            "id": "claude-messages",
+            "policySha256": "4A29EE7E372D38E222F570578A0F98871B35A21F99075F2C4693B17479D1959A",
+            "path": "anthropic"
+          },
+          "timers": {
+            "reconciler": true,
+            "sync": true
+          }
+        },
+        "settingsWritten": [
+          "resolver",
+          "sync",
+          "reconciler",
+          "resolver-auth",
+          "admin"
+        ],
+        "apimIdentityAppId": "8d1b2bff-bdd6-4970-8a1c-0d020e8a8ebc",
+        "gatewayUrl": "https://synthst-apim.azure-api.net/anthropic",
+        "workbookDeployed": true,
+        "durationSeconds": 69
+      },
+      "configHash": "2663ff2b87cd79e5d81a452ccf54c08118f0500e4388fd4af8c5093d7d019880"
+    },
+    "6": {
+      "completedAt": "2026-10-29T11:15:39.5418125Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806"
+      },
+      "outputs": {
+        "functionsSubnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG/subnets/FunctionApp",
+        "vnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG",
+        "functionApps": [
+          "synthst-q7m2x9kd4tpla-admin",
+          "synthst-q7m2x9kd4tpla-reconciler",
+          "synthst-q7m2x9kd4tpla-resolver",
+          "synthst-q7m2x9kd4tpla-sync"
+        ],
+        "storagePrivateEndpointIds": [
+          "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/privateEndpoints/synthstq7m2x9kd4tplaadm-blob-pe",
+          "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/privateEndpoints/synthstq7m2x9kd4tplarec-blob-pe",
+          "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/privateEndpoints/synthstq7m2x9kd4tplares-blob-pe",
+          "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/privateEndpoints/synthstq7m2x9kd4tplasyn-blob-pe"
+        ],
+        "privateDnsZoneIds": {
+          "blob": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net",
+          "cosmos": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com"
+        },
+        "verify": {
+          "privateEndpoints": [
+            {
+              "name": "synthstq7m2x9kd4tplaadm-blob-pe",
+              "connection": "Approved",
+              "dns": [
+                "synthstq7m2x9kd4tplaadm.privatelink.blob.core.windows.net=100.80.57.4"
+              ]
+            },
+            {
+              "name": "synthstq7m2x9kd4tplarec-blob-pe",
+              "connection": "Approved",
+              "dns": [
+                "synthstq7m2x9kd4tplarec.privatelink.blob.core.windows.net=100.80.57.8"
+              ]
+            },
+            {
+              "name": "synthstq7m2x9kd4tplares-blob-pe",
+              "connection": "Approved",
+              "dns": [
+                "synthstq7m2x9kd4tplares.privatelink.blob.core.windows.net=100.80.57.9"
+              ]
+            },
+            {
+              "name": "synthstq7m2x9kd4tplasyn-blob-pe",
+              "connection": "Approved",
+              "dns": [
+                "synthstq7m2x9kd4tplasyn.privatelink.blob.core.windows.net=100.80.57.7"
+              ]
+            },
+            {
+              "name": "synthst-q7m2x9kd4tpla-cosmos-sql-pe",
+              "connection": "Approved",
+              "dns": [
+                "synthst-q7m2x9kd4tpla-cosmos.privatelink.documents.azure.com=100.80.57.5",
+                "synthst-q7m2x9kd4tpla-cosmos-eastus2.privatelink.documents.azure.com=100.80.57.6"
+              ]
+            }
+          ],
+          "privateDnsLinks": [
+            {
+              "zoneId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com",
+              "vnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG",
+              "linkCount": 1
+            },
+            {
+              "zoneId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net",
+              "vnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG",
+              "linkCount": 1
+            }
+          ],
+          "apps": [
+            {
+              "app": "admin",
+              "subnet": "FunctionApp"
+            },
+            {
+              "app": "reconciler",
+              "subnet": "FunctionApp"
+            },
+            {
+              "app": "resolver",
+              "subnet": "FunctionApp"
+            },
+            {
+              "app": "sync",
+              "subnet": "FunctionApp"
+            }
+          ]
+        },
+        "foundryPrivateDnsZoneIds": [
+          "",
+          "",
+          ""
+        ],
+        "apimSubnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG/subnets/apim",
+        "durationSeconds": 123,
+        "cosmosPrivateEndpointId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-CONTOSO201-STG/providers/Microsoft.Network/privateEndpoints/synthst-q7m2x9kd4tpla-cosmos-sql-pe",
+        "privateEndpointSubnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG/subnets/privateEndpoints",
+        "foundryPrivateEndpointIds": []
+      },
+      "configHash": "e896e63889af63b23c3afaaf3e290de5213d6c22286691f40d13e029000ebd3f"
+    },
+    "7": {
+      "completedAt": "2026-10-29T11:29:26.8712484Z",
+      "dependencyHashes": {
+        "1": "0ec4fe6d2ab640fef1844afa61d03d76236b22a5ade09dc88d5dd2e818350806",
+        "4": "ef294883a66edb1e8374807fc0ae7f91f6d97fdb3f597690fab00d1514e1e5b6",
+        "5": "b32170f27d97307d9546cab423fcfaf4e02f8a6ac8958742f1336f4c5243c04b",
+        "6": "90ff9d3e0534e76095adf482790f998a4915416742b1f3b92ec40b1f564066ad"
+      },
+      "outputs": {
+        "seed": {
+          "documents": [
+            "backends/fabrikam301: created",
+            "projects/FABRIKAM301: created"
+          ],
+          "mechanism": "registrySeed",
+          "seedId": "971eaeb242f1441f8a0f90fa4fcd863b"
+        },
+        "client": {
+          "onboardingJson": "/home/patexample/ccof-private/.staged-state/generated/onboarding.json",
+          "clientConfig": "/home/patexample/ccof-private/.staged-state/generated/client-config.json"
+        },
+        "durationSeconds": 703,
+        "code": {
+          "digests": {
+            "resolver": "4c27f234198a2ee82c00a06030463c8cd516f2276dae5e7bf0add84ee27bddf0",
+            "sync": "14d927661172928cecf32ac4b0080d952363054e749dce7b0d11e30e5b56144c",
+            "reconciler": "73ac0c2b1310eb6ef8d3bbf79d05f0421882de4b890ea053a41f7824ab61be3a"
+          },
+          "deployed": [
+            "resolver",
+            "sync",
+            "reconciler"
+          ],
+          "functions": {
+            "resolver": [
+              "health",
+              "myUsage",
+              "resolve"
+            ],
+            "sync": [
+              "syncEntitlement"
+            ],
+            "reconciler": [
+              "reconcileBudgets"
+            ]
+          }
+        },
+        "snapshot": {
+          "skipped": "entra.manualVerification; sync timer (application-permission)",
+          "groups": [
+            "FABRIKAM301/CYB",
+            "FABRIKAM301/PRM",
+            "FABRIKAM301/STD"
+          ]
+        },
+        "admin": {
+          "app": "synthst-q7m2x9kd4tpla-admin",
+          "sha256": "2203AC1CC0C19FE90379EF6BA828276FB90B297B512A6B701109F5EE24D30D45",
+          "functions": [
+            "adminHealth",
+            "adminHome",
+            "adminUi",
+            "adminUiV3",
+            "adminV2",
+            "adminV3",
+            "classificationPolicy",
+            "project",
+            "projectRetire",
+            "projects",
+            "projectSettings"
+          ]
+        }
+      },
+      "configHash": "30349521e0def0e72c877c4604f1dc5a65da3812c64841d1652809f0e59c1501"
+    }
+  },
+  "target": {
+    "tenantId": "85b66c86-d85a-4c21-83f2-85eb1697ed70",
+    "subscriptionId": "0f051e58-220e-46be-83ba-cb7c98b140a8",
+    "resourceGroup": "rg-contoso201-stg"
+  },
+  "schemaVersion": 1
+}

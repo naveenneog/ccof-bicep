@@ -1,0 +1,90 @@
+{
+  "tenantId": "85b66c86-d85a-4c21-83f2-85eb1697ed70",
+  "subscriptionId": "0f051e58-220e-46be-83ba-cb7c98b140a8",
+  "tags": {
+    "workload": "ccof",
+    "stage": "dr"
+  },
+  "primary": {
+    "location": "eastus2",
+    "vnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-EUS2-STG",
+    "addressSpaces": [
+      "100.80.56.0/22"
+    ],
+    "peer": false
+  },
+  "secondary": {
+    "location": "centralus",
+    "resourceGroup": "RG-CONTOSO201-STG",
+    "allowResourceGroupInOtherRegion": true,
+    "vnetName": "Vnet-CONTOSO201-CUS-STG",
+    "networkMode": "existing",
+    "existingVnetId": "/subscriptions/0f051e58-220e-46be-83ba-cb7c98b140a8/resourceGroups/RG-SharedNet/providers/Microsoft.Network/virtualNetworks/Vnet-CONTOSO201-CUS-STG",
+    "addressSpace": "100.80.60.0/24",
+    "subnets": {
+      "apim": {
+        "name": "apim",
+        "prefix": "100.80.60.0/27"
+      },
+      "functions": {
+        "name": "FunctionApp",
+        "prefix": "100.80.60.32/27"
+      },
+      "privateEndpoints": {
+        "name": "privateEndpoints",
+        "prefix": "100.80.60.64/26"
+      }
+    }
+  },
+  "dnsZones": {
+    "subscriptionId": "0f051e58-220e-46be-83ba-cb7c98b140a8",
+    "resourceGroup": "RG-SharedNet",
+    "zoneNames": [
+      "privatelink.documents.azure.com",
+      "privatelink.blob.core.windows.net"
+    ]
+  },
+  "identityNames": [
+    "synthst-sync-id-b",
+    "synthst-reconciler-id-b"
+  ],
+  "foundryAccounts": [
+    {
+      "subscriptionId": "88cbf088-c6e7-4073-859e-b532567ceabc",
+      "resourceGroup": "RG-FABRIKAM301",
+      "name": "fabrikam301"
+    }
+  ],
+  "entra": {
+    "gatewayAppId": "b5ff18c8-c856-430f-82f1-7104c11750d2",
+    "resolverAppId": "e1e20a72-757b-400e-80e8-1a06042209ca",
+    "adminAppId": "7e0c552a-6a58-45d1-8f55-c6f4cd659627"
+  },
+  "standby": {
+    "stagedConfigPath": "staged.config.json",
+    "stagedStateDirectory": ".staged-state",
+    "stateDirectory": ".dr-state",
+    "nameSuffix": "b",
+    "functionsPublicNetworkAccess": "Enabled",
+    "storagePublicNetworkAccess": "Disabled",
+    "apim": {
+      "sku": "StandardV2",
+      "units": 1,
+      "zoneRedundant": false,
+      "publisherEmail": "pat.example@contoso.example",
+      "publisherName": "ContosoCCD"
+    }
+  },
+  "cosmos": {
+    "convertServerless": false,
+    "autoscaleMaxThroughput": 1000
+  },
+  "failover": {
+    "ledgerCoverageStartAt": "2026-10-26T16:57:39.275Z"
+  },
+  "frontDoor": {
+    "stem": "synthst-fd",
+    "wafMode": "Detection",
+    "probeIntervalSeconds": 30
+  }
+}

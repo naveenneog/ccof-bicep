@@ -1,5 +1,20 @@
 # Current work
 
+## DR customer-shape end-to-end regression
+
+**Packet:** DR-SHAPE-E2E (2026-11-06), part of release/dr-infosys-resume. `tests/Test-DrInfosysShape.ps1`
+drives `infra/dr/Invoke-DrStandby.ps1` Data (preview and apply), Shells, Grants, Config, Network,
+Code and Verify offline against `tests/fixtures/dr-customer-shape`, a synthetic customer-shaped
+deployment (every identifier fictional; stage hashes produced by the repo's own state functions):
+deferred primary APIM named only by `apim.existing`, manual Entra, shared database throughput with
+Azure-core multi-line NotFound per container, existing network in another resource group with only
+Cosmos and blob zones, Foundry in another subscription without a private endpoint, public standby
+Function Apps, and legacy Front Door approvals. Code stops deliberately at the package build (no
+`dist/` or `npm ci` offline) after its access checks. RED at c3c462b: 20 passed, 17 failed (Data
+NotFound; then `PrimaryApimId` empty for every later phase). With only the APIM fallback patched in
+(diagnostic), 31 passed and 6 failed, including Foundry DNS zones in the Network parameters. The
+Graph-write, throughput-write, public-Code and Front Door invalidation checks already held at
+c3c462b; they guard against regressions. GREEN: 37 passed.
 ## DR Bootstrap preview what-if count
 
 **Packet:** DR-PREREQ-COUNT (2026-11-06), part of release/dr-infosys-resume. Lab: existing-network
