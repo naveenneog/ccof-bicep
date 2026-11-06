@@ -130,8 +130,7 @@ $pS1 = Get-StgStage $primaryCfg 1; $pS2 = Get-StgStage $primaryCfg 2; $pS4 = Get
 $names = Get-DrStandbyNames $pS1.names $dr.standby.nameSuffix
 $vnetId = Get-DrSecondaryVnetId $dr
 $zone = { param($n) "/subscriptions/$($dr.dnsZones.subscriptionId)/resourceGroups/$($dr.dnsZones.resourceGroup)/providers/Microsoft.Network/privateDnsZones/$n" }
-$zoneIds = @{ cosmos = (& $zone 'privatelink.documents.azure.com'); blob = (& $zone 'privatelink.blob.core.windows.net')
-    foundry = @{ cognitiveServices = (& $zone 'privatelink.cognitiveservices.azure.com'); openAi = (& $zone 'privatelink.openai.azure.com'); aiServices = (& $zone 'privatelink.services.ai.azure.com') } }
+$zoneIds = @{ cosmos = (& $zone 'privatelink.documents.azure.com'); blob = (& $zone 'privatelink.blob.core.windows.net') }
 $standbyStageState = Join-Path $standbyStateDir 'state.json'
 $standbyApimId = ''
 if (Test-Path -LiteralPath $standbyStageState) {

@@ -493,6 +493,11 @@ the primary gateway from the primary staged configuration's `apim.existing.subsc
 Grants or Config. A missing, invalid or conflicting reference stops the driver; do not edit state by
 hand or rerun Stage 1 merely to populate an existing APIM ID.
 
+Standby Network manages no second Foundry endpoint: it verifies the Cosmos and blob private DNS
+zone links, not unused Foundry zones. This does not prove that the standby can resolve or reach the
+primary's existing Foundry endpoint; the network team must verify that path separately. Primary
+Stage 6 still requires and verifies all three Foundry zone links when it manages a Foundry endpoint.
+
 Obtain each approval before its apply. Run these commands in order, one at a time; the wrapper
 forwards the switches to [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1):
 
@@ -676,7 +681,7 @@ $rg = $c.secondary.resourceGroup
 | `Shells` | Inspect the deployment and the exact APIM's current public-access state | Wait for a running deployment | Rerun only if the existing APIM is confirmed `Enabled` and public bootstrap remains approved; use `-ApprovePublicApimBootstrap`. If `Disabled`, unknown or unreadable, **do not rerun**: recover the saved Shells state or escalate |
 | `Grants` | Portal: resource group > **Settings > Deployments**, the newest Stage 3 deployment for region B | `Running`: wait | Rerun: the template is idempotent and uses salted assignment names for region B |
 | `Config` | `az functionapp config appsettings list --subscription $sub -g $rg -n REPLACE-region-b-sync-app --query "[?name=='AzureWebJobs.syncEntitlement.Disabled'].value" -o tsv` must print `true` | Wait | In manual mode, rerunning prints the redirects; the Entra admin must confirm them separately |
-| `Network` | Inspect the expected private endpoints, zone groups and integrations | Wait | Review network approval and rerun with `-ApprovePrivateNetworkChanges` |
+| `Network` | Inspect the expected private endpoints and approvals, DNS zone groups/records and links, and Functions/APIM integrations | Wait | Review a fresh preview and network approval. Incremental deployment reuses matching resources but may update drift; apply with `-ApprovePrivateNetworkChanges` only after review |
 | `Code` | Inspect deployment results and the saved `Code` record; `Verify` only lists functions | Wait for any in-progress publish | From the private runner, rerun with `-PrivatePublisher`; it republishes all packages |
 
 What lives where after a timeout: state in `standby-state/` (clouddrive) survives; the log of the
@@ -730,6 +735,8 @@ The saved-record check does not verify actual Entra settings or traffic. Remaini
 | `apim_public_access_guard` | Existing APIM is disabled, unreadable, unknown or mismatched | Do not reopen it; inspect the APIM and recover valid state or escalate |
 | `function_public_access_guard` | A public-Function configuration would reopen an existing disabled, unknown or mismatched site | Do not reopen it; inspect the site and recover valid state or escalate |
 | `network_changes_approval_required` | Stage 6 would change endpoints, DNS and subnet integrations | Obtain network-team approval and use `-ApprovePrivateNetworkChanges` |
+| `network_dns_output_invalid` | Stage 6 returned missing or duplicate Cosmos/blob zone IDs | Stop; deployment/integrations may be partial. Reconcile both zones and resources, then review a fresh preview |
+| `network_foundry_dns_incomplete` | Managed Foundry endpoints have incomplete or duplicate zone IDs in Stage 6 output | Stop; deployment/integrations may be partial. Reconcile all three zone IDs and resources, then review a fresh preview |
 | `private_publisher_required` / `private_endpoint_not_verified` / `private_publisher_check_failed` | Private runner, approved app-specific endpoint, matching DNS or TCP check is missing | Keep public access disabled; resolve the private path with the network team, then use `-PrivatePublisher` |
 | `primary_names_unexpected` | The primary's apps are not named `...-resolver` with storage `...res` | The driver cannot derive region B names: stop and ask the repository owners |
 | `standby_storage_name_too_long` | Stem + suffix + app code exceeds 24 characters | A one-letter `standby.nameSuffix` (before `Shells`) |
