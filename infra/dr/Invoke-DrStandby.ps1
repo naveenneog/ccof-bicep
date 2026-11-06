@@ -101,8 +101,11 @@ function Write-DrStandbyJson([string]$Path, $Value) {
 }
 if ($Apply -or $Phase -ceq 'Verify') {
     $fdPath = Join-Path $standbyStateDir 'frontdoor-state.json'
+    Import-Module (Join-Path $here 'DrFrontDoorState.psm1') -Force
+    $fdStartHash = 'absent'
     if (Test-Path -LiteralPath $fdPath) {
-        $fdState = Get-Content -LiteralPath $fdPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+        $fdRead = try { Read-DrFrontDoorState -StatePath $fdPath } catch { Stop-Dr $_.Exception.Message 3 }
+        $fdState = $fdRead.State; $fdStartHash = $fdRead.Hash
         if ($fdState -isnot [Collections.IDictionary]) { Stop-Dr 'frontdoor_state_invalid: inspect and restore the Front Door state before continuing.' 3 }
         if ($fdState.Contains('verifiedAt')) {
             $stem = [string](Get-DrValue $dr 'frontDoor.stem')
@@ -110,7 +113,7 @@ if ($Apply -or $Phase -ceq 'Verify') {
             $targetProblem = Get-DrFrontDoorTargetProblem -State $fdState -Stem $stem -SubscriptionId $sub -ResourceGroup $rg
             if ($targetProblem) { Stop-Dr $targetProblem 3 }
             $fdState.Remove('verifiedAt')
-            Write-DrStandbyJson $fdPath $fdState
+            $fdStartHash = Save-DrFrontDoorState -StatePath $fdPath -Value $fdState -ExpectedHash $fdRead.Hash
             Write-Host 'Prior Front Door verification was cleared; verify the routes again after standby work.'
         }
     }
@@ -207,6 +210,10 @@ function Assert-DrCosmosPreview([string]$Path, [string]$Digest) {
     }
 }
 
+# Front Door verification recorded while this standby work ran may describe a half-applied region B:
+# afterwards (on success or failure) it is compare-and-cleared against the state this run last read or wrote.
+$fdWorkFailed = $false
+try {
 switch ($Phase) {
 'Data' {
     $previewPath = Join-Path $standbyStateDir 'cosmos-throughput-preview.json'
@@ -437,4 +444,12 @@ switch ($Phase) {
     $v | ConvertTo-Json -Depth 5 | Write-Host
     Save-DrPhase 'Verify' $v
 }
+}
+} catch { $fdWorkFailed = $true; throw }
+finally {
+    if ((Get-Variable fdStartHash -ValueOnly -ErrorAction SilentlyContinue) -and
+        (Clear-DrFrontDoorStateEvidence -StatePath $fdPath -Fields @('verifiedAt') -ExpectedHash $fdStartHash)) {
+        [Console]::Error.WriteLine("frontdoor_state_changed: $fdPath changed during standby -Phase $Phase; Front Door verification recorded meanwhile may describe a half-applied region B and was cleared. Finish the standby phases, then run the Front Door -Phase Verify again.")
+        if (-not $fdWorkFailed) { exit 3 }
+    }
 }
