@@ -424,6 +424,7 @@ switch ($Phase) {
         if ($admin.Contains('skipped')) { throw 'admin_publish_incomplete: admin package was not published; Code was not marked complete.' }
     }
     Save-DrPhase 'Code' @{ code = $code; admin = $admin; adminSha256 = $(if ($admin -and $admin.Contains('sha256')) { $admin.sha256 } else { $null }); commit = (git -C $repo rev-parse HEAD) }
+    try { if (Remove-DrBuildStaging -GeneratedDir $ctx.GeneratedDir) { Write-Host 'Removed Code build staging (.dr-state/generated/packages); package digests are recorded in standby.state.json.' } } catch { Write-Warning "build_staging_cleanup_failed: $($_.Exception.Message). Code is complete; delete $($ctx.GeneratedDir)/packages before Save-CcofDr to keep the archive small." }
 }
 'Verify' {
     $s1 = Get-StgStage $bCfg 1

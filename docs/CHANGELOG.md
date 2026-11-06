@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-07 - DR Code no longer leaves build staging in the saved state
+
+- After a successful Code phase the standby driver removes `.dr-state/generated/packages` (npm
+  trees and per-app zips); package digests stay in `standby.state.json`. Saved archives shrink from
+  about 82 MB / 41.7k files and save/restore no longer takes minutes.
 ## 2026-11-07 - DR Front Door cleanup error no longer hides the phase failure
 
 - If clearing Front Door verification after a standby phase fails (lock, invalid JSON, write error),

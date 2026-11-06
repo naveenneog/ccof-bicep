@@ -321,5 +321,18 @@ Check 'admin redirects: Graph apply keeps existing URIs and adds missing ones' (
 $script:patched = $null
 $r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'a' -Apply -GetApp { [pscustomobject]@{ id = 'o'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console', 'https://a/api/console-v3') } } } -PatchApp $patch 6>$null
 Check 'admin redirects: nothing patched when both URIs exist' ($null -eq $script:patched -and @($r.added).Count -eq 0)
+# Code build staging (packages/ with node_modules, about 40k files) is not needed after publish: the digests
+# are in standby.state.json, and nothing in Verify or Front Door reads it. Leaving it made each saved archive 80 MB.
+$gen = Join-Path $repo ".env.public-test-scratch/dr-staging-$PID"
+New-Item -ItemType Directory -Force -Path (Join-Path $gen 'packages/resolver/node_modules/x') | Out-Null
+'a' | Set-Content (Join-Path $gen 'packages/resolver/node_modules/x/i.js'); 'z' | Set-Content (Join-Path $gen 'packages/sync.zip')
+'k' | Set-Content (Join-Path $gen 'admin.zip'); '{}' | Set-Content (Join-Path $gen 'gateway-config.json')
+$hasCleaner = [bool](Get-Command Remove-DrBuildStaging -ErrorAction SilentlyContinue)
+$removed = if ($hasCleaner) { Remove-DrBuildStaging -GeneratedDir $gen } else { $null }
+Check 'build staging: packages removed, admin.zip and gateway config kept' ($removed -eq $true -and -not (Test-Path (Join-Path $gen 'packages')) -and (Test-Path (Join-Path $gen 'admin.zip')) -and (Test-Path (Join-Path $gen 'gateway-config.json')))
+Check 'build staging: absent staging is not an error' ($hasCleaner -and (Remove-DrBuildStaging -GeneratedDir $gen) -eq $false -and (Remove-DrBuildStaging -GeneratedDir (Join-Path $gen 'missing')) -eq $false)
+Remove-Item -LiteralPath $gen -Recurse -Force -ErrorAction SilentlyContinue
+$driverText = Get-Content -Raw (Join-Path $repo 'infra/dr/Invoke-DrStandby.ps1')
+Check 'Code removes build staging only after it records the phase' ($driverText -match "(?s)Save-DrPhase 'Code'[^\n]*\n[^\n]*Remove-DrBuildStaging -GeneratedDir \`$ctx\.GeneratedDir")
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 83) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 86) { exit 1 }

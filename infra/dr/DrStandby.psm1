@@ -453,4 +453,12 @@ function Invoke-DrAdminRedirects {
     Write-Host "admin app: added SPA redirects for $AdminHost"
     return [ordered]@{ mode = 'graph'; redirects = $want; added = $missing }
 }
-Export-ModuleMember -Function Get-DrValue, Get-DrPrivateAppEndpointAddresses, Invoke-DrAdminRedirects, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Get-DrFrontDoorTargetProblem, Get-DrFrontDoorReadinessProblem, Clear-DrStandbyPhaseEvidence, Set-DrFrontDoorStateMode
+function Remove-DrBuildStaging {
+    # Code build staging (npm ci trees and per-app zips) is only an input to publish; digests are kept in standby.state.json.
+    param([Parameter(Mandatory)][string]$GeneratedDir)
+    $packages = Join-Path $GeneratedDir 'packages'
+    if (-not (Test-Path -LiteralPath $packages -PathType Container)) { return $false }
+    Remove-Item -LiteralPath $packages -Recurse -Force -ErrorAction Stop
+    return $true
+}
+Export-ModuleMember -Function Remove-DrBuildStaging, Get-DrValue, Get-DrPrivateAppEndpointAddresses, Invoke-DrAdminRedirects, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Get-DrFrontDoorTargetProblem, Get-DrFrontDoorReadinessProblem, Clear-DrStandbyPhaseEvidence, Set-DrFrontDoorStateMode

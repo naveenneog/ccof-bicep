@@ -1,5 +1,19 @@
 # Current work
 
+## DR Code build staging out of the saved state
+
+**Packet:** DR-BUILD-STAGING (2026-11-07), lab finding on 94aeafa. After Code, `Save-CcofDr`
+archives were 82 MB / 41.7k files because `.dr-state/generated/packages` (per-app `npm ci` trees and
+zips built by `Invoke-QsCode`) was archived; save and restore took about 5 minutes each in Cloud
+Shell. Nothing under `generated/packages` is read by resume, Verify or Front Door: Verify reads ARM
+and app settings, package digests are recorded in `standby.state.json` by `Save-DrPhase 'Code'`, and
+the guide's restore list names no generated file. Code now calls `Remove-DrBuildStaging` right after
+recording the phase (cleanup failure is a warning, Code stays complete); `admin.zip`, gateway config
+and workbook files are kept. The Desktop guide `Save-CcofDr` tar also excludes
+`./.dr-state/generated/packages` and `./.staged-state/generated/packages` (checked with Windows
+bsdtar and GNU tar 1.35). RED: `tests/Test-DrStandby.ps1` 118 passed, 3 failed; guide harness 33
+passed, 1 failed (archive listed both staging trees). GREEN: 121 passed; customer shape 37 passed;
+guide harness 34 passed (the saved archive has no staging, restores, and Verify still runs).
 ## DR Front Door cleanup must not hide a phase failure
 
 **Packet:** DR-FD-CLEANUP-ERROR (2026-11-07), council finding on 8bc6251. In
