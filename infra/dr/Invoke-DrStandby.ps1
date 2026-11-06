@@ -381,7 +381,16 @@ switch ($Phase) {
     }
     if ($Apply) { Save-StgStage $bCfg 5 $o; Save-DrPhase 'Config' @{ gatewayUrl = $o.gatewayUrl; adminHost = $adminHost; timers = $o.verify.timers } }
 }
-'Network' { $null = Get-DrPhase 'Shells'; $o = Invoke-Stage6 $bCfg -Apply:$Apply; if ($Apply) { Save-StgStage $bCfg 6 $o; Save-DrPhase 'Network' @{ privateEndpoints = @($o.verify.privateEndpoints | ForEach-Object { $_.name }); apim = $o.verify.apim } } }
+'Network' {
+    $null = Get-DrPhase 'Shells'
+    $standbyApim = ''+(Get-DrValue (Get-StgStage $bCfg 1) 'apimName')
+    if (-not $standbyApim) { throw 'standby_apim_unknown: standby stage 1 has no apimName; rerun Shells before Network. Nothing was changed.' }
+    $standbySku = ''+(Get-DrValue (Get-StgArm "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$standbyApim" '2024-05-01') 'sku.name')
+    if ($standbySku -cnotin 'StandardV2', 'PremiumV2') {
+        throw "apim_sku_unsupported: standby APIM $standbyApim is $(if ($standbySku) { $standbySku } else { 'of unknown SKU' }); Network needs StandardV2 (or PremiumV2) for outbound VNet integration. Nothing was changed. With the platform owner, scale the standby APIM back to StandardV2 (portal: API Management > Scale, or az apim update --sku-name StandardV2), then rerun Network preview."
+    }
+    $o = Invoke-Stage6 $bCfg -Apply:$Apply; if ($Apply) { Save-StgStage $bCfg 6 $o; Save-DrPhase 'Network' @{ privateEndpoints = @($o.verify.privateEndpoints | ForEach-Object { $_.name }); apim = $o.verify.apim } }
+}
 'Code' {
     $null = Get-DrPhase 'Config'; $null = Get-DrPhase 'Network'
     $ctx = New-StgQsContext $bCfg; $ctx.PollSeconds = 15

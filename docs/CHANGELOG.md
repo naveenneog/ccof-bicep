@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
+
+- Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the
+  standby APIM is not StandardV2 (or PremiumV2), instead of failing midway with
+  `ManagingVirtualNetworkConfigurationNotSupported` after endpoints were created.
 ## 2026-11-07 - DR Code no longer leaves build staging in the saved state
 
 - After a successful Code phase the standby driver removes `.dr-state/generated/packages` (npm

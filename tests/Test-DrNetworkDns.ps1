@@ -198,10 +198,10 @@ try {
     Reset-Fixture $foundryZones $existingEndpoints
     $preview = Run-Network 'standby' $true
     $previewSafe = (
-        $preview.code -eq 0 -and @($preview.calls).Count -eq 1 -and @($preview.calls)[0] -match '^deployment group what-if ' -and
+        $preview.code -eq 0 -and @($preview.calls).Count -eq 2 -and @($preview.calls)[0] -match '^rest --method get --url \S+/providers/Microsoft\.ApiManagement/service/fixture-b-apim\?' -and @($preview.calls)[1] -match '^deployment group what-if ' -and
         $preview.fixture.deploymentCount -eq 0 -and $preview.fixture.createdEndpoints -eq 0)
     if (-not $previewSafe) { Write-Host "Preview diagnostic: $($preview.output)`nCalls: $($preview.calls -join "`n")" }
-    Check 'standby Network preview performs only what-if and no Azure writes' $previewSafe
+    Check 'standby Network preview reads the standby APIM SKU, then performs only what-if and no Azure writes' $previewSafe
     $first = Run-Network 'standby'
     if ($first.code -ne 0) { Write-Host "Standby Network diagnostic: $($first.output)" }
     $firstDns = @(Dns-Reads $first)

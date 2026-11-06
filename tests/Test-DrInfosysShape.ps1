@@ -171,7 +171,8 @@ if ($Child) {
             }
             if ($path -match '/Microsoft\.ApiManagement/service/[^/]+/apis/[^/]+$') { return (@{ properties = @{ path = $k.apiPath } } | ConvertTo-Json -Compress) }
             if ($path -match '/Microsoft\.ApiManagement/service/([^/]+)$') {
-                return (@{ id = $path; name = $Matches[1]; sku = @{ name = 'StandardV2' }
+                $sku = if ($Matches[1] -match '-b-apim$' -and $mock.standbyApimSku) { $mock.standbyApimSku } else { 'StandardV2' }
+                return (@{ id = $path; name = $Matches[1]; sku = @{ name = $sku }
                     identity = @{ type = 'SystemAssigned'; principalId = $k.apimPrincipal }
                     properties = @{ provisioningState = 'Succeeded'; gatewayUrl = "https://$($Matches[1]).azure-api.net"; publicNetworkAccess = 'Enabled'
                         virtualNetworkType = 'External'; virtualNetworkConfiguration = @{ subnetResourceId = $k.apimSubnetId } } } | ConvertTo-Json -Depth 10 -Compress)
@@ -293,6 +294,15 @@ try {
     Check-Run 'Config apply' $config
     Check 'Config uses manual Entra redirects' ($config.output -match 'manual Entra verification: .*No Microsoft Graph call')
 
+    $setStandbySku = { param($sku) $m = Get-Content -LiteralPath (Join-Path $scratch 'mock.json') -Raw | ConvertFrom-Json -AsHashtable; $m.standbyApimSku = $sku; $m | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'mock.json') }
+    & $setStandbySku 'BasicV2'
+    foreach ($skuRun in @(@{ name = 'preview'; run = (Invoke-Shape 'Network' -Preview) }, @{ name = 'apply'; run = (Invoke-Shape 'Network') })) {
+        $r = $skuRun.run
+        Check "Network $($skuRun.name) refuses a BasicV2 standby APIM" ($r.code -ne 0 -and $r.output -match 'apim_sku_unsupported: standby APIM \S+-b-apim is BasicV2' -and $r.output -match 'StandardV2') "(exit $($r.code)): $(($r.output -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -Last 3) -join ' | ')"
+        Check "Network $($skuRun.name) with BasicV2 stops before any deployment or write" (-not @($r.calls | Where-Object { $_ -match '^deployment group (create|what-if)|vnet-integration add|^rest --method (put|patch|post|delete) ' }).Count) "calls: $(@($r.calls | Where-Object { $_ -match 'deployment|vnet-integration|--method (put|patch|post|delete)' }) -join ' ; ')"
+    }
+    Check 'refused Network records no phase' (-not ((Get-Content -LiteralPath (Join-Path $standbyDir 'standby.state.json') -Raw | ConvertFrom-Json -AsHashtable -Depth 100).phases.Contains('Network')))
+    & $setStandbySku 'StandardV2'
     $network = Invoke-Shape 'Network'
     Check-Run 'Network apply' $network
     $dnsReads = @($network.calls | Where-Object { $_ -match '^rest --method get .*privateDnsZones/.*/virtualNetworkLinks' } | ForEach-Object { ([Uri]($_ -split ' ')[4]).AbsolutePath -replace '/virtualNetworkLinks$', '' })

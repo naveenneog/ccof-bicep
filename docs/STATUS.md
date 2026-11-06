@@ -1,5 +1,18 @@
 # Current work
 
+## DR Network preflights the standby APIM SKU
+
+**Packet:** DR-APIM-SKU-PREFLIGHT (2026-11-07), lab finding on 94aeafa. Network -Apply failed with
+`ManagingVirtualNetworkConfigurationNotSupported` after it had already deployed private endpoints
+and Functions VNet integration, because lab governance had scaled the standby APIM down to BasicV2;
+Stage 6 decides APIM integration from the configured SKU, not the live one. Network preview and
+apply now read the standby APIM first and throw `apim_sku_unsupported` (naming the SKU and the
+fix: scale back to StandardV2 with the platform owner, rerun preview) before any what-if or write
+unless the live SKU is StandardV2 or PremiumV2; a missing standby `apimName` throws
+`standby_apim_unknown`. RED (`tests/Test-DrInfosysShape.ps1`, standby APIM BasicV2): 37 passed, 5
+failed (preview ran what-if; apply deployed, integrated and recorded Network). GREEN: 42 passed.
+`tests/Test-DrNetworkDns.ps1` asserted the exact preview call list (one what-if); it now asserts the
+exact new list (GET standby APIM, then what-if), 17 passed. Runbook section updated.
 ## DR Code build staging out of the saved state
 
 **Packet:** DR-BUILD-STAGING (2026-11-07), lab finding on 94aeafa. After Code, `Save-CcofDr`

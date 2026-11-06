@@ -524,6 +524,11 @@ approval, 3 for a phase or readiness guard, 4 for
 `cosmos_serverless`, 5 `cosmos_capacity_change_running`, and 6
 `cosmos_conversion_repreview_required`; other failures throw.
 
+Network preview and apply first read the standby APIM and stop with `apim_sku_unsupported` before
+any what-if or write unless its SKU is StandardV2 (or PremiumV2): outbound VNet integration fails
+on BasicV2 with `ManagingVirtualNetworkConfigurationNotSupported`. If governance scaled it down,
+scale it back to StandardV2 with the platform owner, then rerun the Network preview.
+
 Before an apply, the driver clears that phase's prior completion record and dependent readiness
 records. A Verify attempt clears the prior Verify record even though it does not change Azure.
 The driver also clears any saved Front Door verification. Failed or interrupted work therefore
