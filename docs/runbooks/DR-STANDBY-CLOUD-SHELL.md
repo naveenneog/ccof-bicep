@@ -132,13 +132,14 @@ function Invoke-DrPhase {
     param(
         [Parameter(Mandatory)] [ValidateSet('Data','Shells','Grants','Config','Network','Code','Verify')] [string]$Phase,
         [switch]$Apply, [switch]$ApprovePublicApimBootstrap, [switch]$ApprovePublicFunctionAccess,
-        [switch]$ApprovePrivateNetworkChanges, [switch]$PrivatePublisher
+        [switch]$ApprovePrivateNetworkChanges, [switch]$ApproveCosmosThroughputReduction, [switch]$PrivatePublisher
     )
     $a = @()
     if ($Apply) { $a += '-Apply' }
     if ($ApprovePublicApimBootstrap) { $a += '-ApprovePublicApimBootstrap' }
     if ($ApprovePublicFunctionAccess) { $a += '-ApprovePublicFunctionAccess' }
     if ($ApprovePrivateNetworkChanges) { $a += '-ApprovePrivateNetworkChanges' }
+    if ($ApproveCosmosThroughputReduction) { $a += '-ApproveCosmosThroughputReduction' }
     if ($PrivatePublisher) { $a += '-PrivatePublisher' }
     $log = Join-Path $logs "standby-$Phase-$(Get-Date -Format yyyyMMddTHHmmss)-$(if ($Apply) {'apply'} else {'preview'}).log"
     $driver = [IO.Path]::Combine($repo, 'infra', 'dr', 'Invoke-DrStandby.ps1')
@@ -149,6 +150,9 @@ function Invoke-DrPhase {
 }
 '@ | Set-Content -Path "$base/session.ps1"
 ```
+
+If you already created `session.ps1` with an older runbook, rerun block 1 to update the wrapper,
+then reload it with block 2. This replaces the session file, not the configuration or state.
 
 **Block 2: every new or resumed session.**
 
@@ -167,13 +171,14 @@ git fetch --all --prune
 git checkout REPLACE-branch-or-commit
 git log -1 --oneline
 Test-Path infra/dr/Invoke-DrStandby.ps1
+Test-Path infra/dr/DrCosmosThroughput.psm1
 Test-Path infra/dr/dr-existing-identities.bicep
 Test-Path infra/dr/Invoke-DrFrontDoor.ps1
 az bicep install
 npm ci --ignore-scripts --include=dev
 ```
 
-**Expect:** the commit line, three `True` values, and `npm ci` without errors. These file checks do not
+**Expect:** the commit line, four `True` values, and `npm ci` without errors. These file checks do not
 prove that a checkout has the new guards: inspect the reviewed commit before proceeding.
 
 **Block 4: the primary's staged files on `clouddrive`.** The driver reads them; it never writes them.
@@ -285,7 +290,7 @@ A "name" below means `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`; a "region" means lower
 | `standby.apim.publisherEmail` | `platform-team@example.com` | Non-empty, not `REPLACE-` | APIM publisher contact (receives service notices). Use the primary's value from `az apim list` or a shared mailbox |
 | `standby.apim.publisherName` | `Contoso Platform Team` | Non-empty, not `REPLACE-` | Publisher organisation name; same source |
 | `cosmos.convertServerless` | `false` | `true` / `false` | **Separate explicit approval for an irreversible conversion.** Needed only when the account is serverless (section 6). `false` makes `Data -Apply` stop with `cosmos_serverless` before conversion |
-| `cosmos.autoscaleMaxThroughput` | `1000` | Integer, multiple of 1000, at least 1000 (default 1000) | Autoscale maximum RU/s **per container**, applied in every region. See section 6 for how to choose it |
+| `cosmos.autoscaleMaxThroughput` | `1000` | Integer, multiple of 1000, at least 1000 (default 1000) | Target autoscale maximum RU/s for the database's shared throughput offer, if present, and for each dedicated container offer. Shared containers do not get separate throughput. Applies in every region; see section 6 |
 | `failover.ledgerCoverageStartAt` | `2026-11-01T12:34:56.789Z` (fictional format example, not for use) | UTC with exactly three fractional digits and `Z` (`Test-DrCanonicalCoverage` in [`DrFailover.psm1`](../../infra/dr/DrFailover.psm1)); required by `Invoke-DrFailover.ps1 -Phase Promote` and `Failback` only | The independently verified start of complete gateway and LLM diagnostic coverage, before model traffic on both gateways (section 11.3, [ADR 0036](../adr/0036-continuity-coverage-baseline.md)). Corroborate both enabled categories and continuity with retained diagnostic and traffic evidence. An Activity Log write alone does not establish coverage. The driver writes the verified value to `RECONCILER_LEDGER_COVERAGE_START_AT` |
 
 ### 5.3 Complete valid example
@@ -380,32 +385,51 @@ Test-Path (Join-Path (Split-Path $cfg -Parent) $c.standby.stagedConfigPath)
 
 ## 6. Decide before any `-Apply`
 
-**Cosmos DB: serverless to provisioned is one-way and needs separate explicit approval.** A serverless account is single-region
-([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)), so `Data`
-converts it. The conversion cannot be undone ([Learn: change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)):
+**Cosmos costs and throughput require explicit review.** Adding a region affects the whole account,
+including any databases not managed by this driver, and throughput is billed in each region. Review
+all offers, capacity and regional costs with the owner. Autoscale can bill between 10% and 100% of
+its maximum, depending on usage ([Learn](https://learn.microsoft.com/azure/cosmos-db/provision-throughput-autoscale)).
+Prevent concurrent account, database and container changes while reviewing and applying this plan;
+the preview checks for drift but does not lock Azure resources.
 
-- Every container becomes manual throughput of **number of partitions x 5,000 RU/s**; no management
-  operation is possible on the account until it finishes, and there is no SLA on its duration.
-- The driver then moves each container to autoscale with `cosmos.autoscaleMaxThroughput` as the maximum
-  ([autoscale](https://learn.microsoft.com/azure/cosmos-db/provision-throughput-autoscale)). Autoscale
-  bills between 10% and 100% of the maximum, and throughput is billed **in each region**, so each added
-  region bills its own throughput. Pick the cap from the busiest container's real peak; if
-  Azure refuses a container's change as below its minimum, raise the cap and run `Data -Apply` again.
-- If your primary was already deployed with provisioned throughput, nothing is converted; the driver
-  only sets autoscale, adds the region and enables service-managed failover. In that case keep
-  `cosmos.convertServerless` `false`.
-- Keep `cosmos.convertServerless` `false` unless the owner has separately approved the conversion and
-  its costs; only then set it to `true`. Obtain approval for the other planned throughput, region and
-  failover changes too. Approval for networking or public APIM is not Cosmos conversion approval.
-
-Do the read-only look first (it is also the `Data` preview):
+Run the read-only Data preview:
 
 ```powershell
 Invoke-DrPhase -Phase Data
 ```
 
-**Expect:** `Cosmos <account>: capacity Serverless|Provisioned; regions ...; steps: ...`, then `preview: then each container autoscale with maximum N RU/s. Rerun with -Apply.` Steps can be `convert_to_provisioned`,
-`add_secondary_region`, `enable_service_managed_failover`, `wait_capacity_change` or `none`.
+**Expect:** the account capacity, regions and steps. For a provisioned account, the preview lists the
+database offer and every container as shared or dedicated, with each current and proposed throughput
+value. A database's shared offer and dedicated container offers can coexist; a shared container is
+never converted to a dedicated container and no data is moved
+([Learn](https://learn.microsoft.com/azure/cosmos-db/set-throughput)). Only the configured primary
+database is inventoried: assess any other databases separately before approving the region change.
+
+The target `cosmos.autoscaleMaxThroughput` applies to the shared database offer, if any, and to each
+dedicated offer. A lower autoscale maximum requires explicit approval. Every manual-to-autoscale
+migration also requires it: Azure chooses the initial maximum, and guaranteed throughput may
+temporarily fall even when the final target is higher. After reviewing and approving the exact plan,
+use `-ApproveCosmosThroughputReduction` with `-Apply` only if the preview requests it. Azure may
+choose an initial migration maximum above the target; the driver then stops for a fresh preview
+instead of lowering it silently. Storage or previous settings can raise the minimum permitted maximum;
+if Azure refuses a lower target, review the value and cost, change the configuration and preview again
+([autoscale FAQ](https://learn.microsoft.com/azure/cosmos-db/autoscale-faq)).
+
+**Serverless conversion is a separate, irreversible decision.** A serverless account is single-region
+([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)); changing
+it to provisioned cannot be undone
+([Learn](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)). Each container
+initially becomes manual throughput of **number of partitions x 5,000 RU/s**; no management operation
+is possible until conversion finishes, and there is no SLA on duration. Keep `cosmos.convertServerless`
+`false` unless the owner separately approves the conversion and costs. Conversion Apply intentionally
+stops with `cosmos_conversion_repreview_required` (exit 6) when finished. Inspect the new offers and
+run a fresh Data preview before separately approving any throughput or region changes. Networking or
+public APIM approval is not Cosmos approval.
+
+Steps can be `convert_to_provisioned`, `add_secondary_region`, `enable_service_managed_failover`,
+`wait_capacity_change` or `none`. The preview records a local digest; an Apply that would change
+throughput or regions requires the same current plan. If a read fails, output is ambiguous, or the
+account changes, stop and investigate rather than assuming a `NotFound` means shared throughput.
 
 **Log Analytics workspace failover is separate.** Workspace replication is enabled in
 [DR-CLOUD-SHELL.md Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace), not by this
@@ -455,13 +479,24 @@ unless separately approved with `-ApproveExistingVnetUpdate`
 
 | Phase | What it changes with `-Apply` | State recorded (`standby.state.json`) |
 | --- | --- | --- |
-| `Data` | Cosmos: convert only with separate explicit approval, set autoscale, add region B, enable service-managed failover | account, capacity mode, regions, write region, autoscale cap, containers |
+| `Data` | Cosmos: convert only with separate explicit approval; after preview and applicable reduction approval, set database/dedicated autoscale, add region B, enable service-managed failover | account, capacity mode, regions, write region, autoscale cap, database/container throughput |
 | `Shells` | Four private Function Apps and an initially **public** APIM; apply requires `-ApprovePublicApimBootstrap` | APIM ID and name, app names |
 | `Grants` | The primary's Stage 3 template for region B (Cosmos data roles, workspace roles) with salted assignment names | number of Cosmos assignments |
 | `Config` | Stage 5 settings with **both writers off**, resolver authentication and APIM policy. With primary Stage 4 manual, prints admin redirects instead of editing Entra; no resource-admin Graph call | gateway URL, admin host, timers |
 | `Network` | Stage 6 creates storage and Cosmos private endpoints and DNS zone groups/records, and attaches Functions and APIM to subnets for outbound integration. Apply requires `-ApprovePrivateNetworkChanges` | endpoints, APIM network state |
 | `Code` | Builds and publishes resolver, sync, reconciler and admin packages with `-PrivatePublisher`; no seed or snapshot | code hashes, commit |
 | `Verify` | Azure read-only: lists functions, checks both writers off and the APIM API. It writes local evidence and a phase record even without `-Apply` | `standby.verify.json` and `Verify` record |
+
+If the primary uses an existing APIM, Stage 1 may have no APIM ID. After Shells, the driver resolves
+the primary gateway from the primary staged configuration's `apim.existing.subscriptionId`,
+`resourceGroup` and `name`, and prints its resource ID. Have the owner confirm that ID before applying
+Grants or Config. A missing, invalid or conflicting reference stops the driver; do not edit state by
+hand or rerun Stage 1 merely to populate an existing APIM ID.
+
+Standby Network manages no second Foundry endpoint: it verifies the Cosmos and blob private DNS
+zone links, not unused Foundry zones. This does not prove that the standby can resolve or reach the
+primary's existing Foundry endpoint; the network team must verify that path separately. Primary
+Stage 6 still requires and verifies all three Foundry zone links when it manages a Foundry endpoint.
 
 Obtain each approval before its apply. Run these commands in order, one at a time; the wrapper
 forwards the switches to [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1):
@@ -470,7 +505,9 @@ forwards the switches to [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandb
 . "$HOME/clouddrive/ccof-dr/session.ps1"
 Use-DrSession
 Invoke-DrPhase -Phase Data                # preview (done in section 6)
-Invoke-DrPhase -Phase Data -Apply         # only after the separate Cosmos decision and approvals
+Invoke-DrPhase -Phase Data -Apply         # only after review and approvals; see the alternative below
+# If the preview requires reduction approval, use this INSTEAD after the owner explicitly approves:
+# Invoke-DrPhase -Phase Data -Apply -ApproveCosmosThroughputReduction
 Invoke-DrPhase -Phase Shells
 Invoke-DrPhase -Phase Shells -Apply -ApprovePublicApimBootstrap
 Invoke-DrPhase -Phase Grants
@@ -484,7 +521,8 @@ Invoke-DrPhase -Phase Network -Apply -ApprovePrivateNetworkChanges
 Wait for `exit code 0` and review each result before continuing. A successful apply also prints
 `phase <Name> completed and verified; state ...`. Exit codes include 2 for refused configuration or
 approval, 3 for a phase or readiness guard, 4 for
-`cosmos_serverless`, 5 `cosmos_capacity_change_running`; other failures throw.
+`cosmos_serverless`, 5 `cosmos_capacity_change_running`, and 6
+`cosmos_conversion_repreview_required`; other failures throw.
 
 Before an apply, the driver clears that phase's prior completion record and dependent readiness
 records. A Verify attempt clears the prior Verify record even though it does not change Azure.
@@ -492,7 +530,10 @@ The driver also clears any saved Front Door verification. Failed or interrupted 
 requires the missing phases and Front Door verification to be completed again. Previews leave
 these records unchanged; a local record does not establish that Azure changes finished.
 
-`Data -Apply` can run for hours; a timeout does not establish whether Azure finished. `Shells` creates
+`Data -Apply` can run for hours; a timeout or failure does not establish whether Azure finished.
+Before resuming, inspect the account, locations and all database/container offers read-only, wait for
+pending operations, and review a fresh Data preview. Earlier throughput or region changes may already
+have succeeded; never blindly rerun Apply. `Shells` creates
 APIM with public network access `Enabled`; the switch records the operator's approval, not approval
 to expose the Function Apps. The template would re-enable APIM public access on redeployment, so
 Shells **refuses** an existing APIM whose access is `Disabled`, unreadable or unknown, even with
@@ -640,7 +681,7 @@ $rg = $c.secondary.resourceGroup
 | `Shells` | Inspect the deployment and the exact APIM's current public-access state | Wait for a running deployment | Rerun only if the existing APIM is confirmed `Enabled` and public bootstrap remains approved; use `-ApprovePublicApimBootstrap`. If `Disabled`, unknown or unreadable, **do not rerun**: recover the saved Shells state or escalate |
 | `Grants` | Portal: resource group > **Settings > Deployments**, the newest Stage 3 deployment for region B | `Running`: wait | Rerun: the template is idempotent and uses salted assignment names for region B |
 | `Config` | `az functionapp config appsettings list --subscription $sub -g $rg -n REPLACE-region-b-sync-app --query "[?name=='AzureWebJobs.syncEntitlement.Disabled'].value" -o tsv` must print `true` | Wait | In manual mode, rerunning prints the redirects; the Entra admin must confirm them separately |
-| `Network` | Inspect the expected private endpoints, zone groups and integrations | Wait | Review network approval and rerun with `-ApprovePrivateNetworkChanges` |
+| `Network` | Inspect the expected private endpoints and approvals, DNS zone groups/records and links, and Functions/APIM integrations | Wait | Review a fresh preview and network approval. Incremental deployment reuses matching resources but may update drift; apply with `-ApprovePrivateNetworkChanges` only after review |
 | `Code` | Inspect deployment results and the saved `Code` record; `Verify` only lists functions | Wait for any in-progress publish | From the private runner, rerun with `-PrivatePublisher`; it republishes all packages |
 
 What lives where after a timeout: state in `standby-state/` (clouddrive) survives; the log of the
@@ -694,14 +735,23 @@ The saved-record check does not verify actual Entra settings or traffic. Remaini
 | `apim_public_access_guard` | Existing APIM is disabled, unreadable, unknown or mismatched | Do not reopen it; inspect the APIM and recover valid state or escalate |
 | `function_public_access_guard` | A public-Function configuration would reopen an existing disabled, unknown or mismatched site | Do not reopen it; inspect the site and recover valid state or escalate |
 | `network_changes_approval_required` | Stage 6 would change endpoints, DNS and subnet integrations | Obtain network-team approval and use `-ApprovePrivateNetworkChanges` |
+| `network_dns_output_invalid` | Stage 6 returned missing or duplicate Cosmos/blob zone IDs | Stop; deployment/integrations may be partial. Reconcile both zones and resources, then review a fresh preview |
+| `network_foundry_dns_incomplete` | Managed Foundry endpoints have incomplete or duplicate zone IDs in Stage 6 output | Stop; deployment/integrations may be partial. Reconcile all three zone IDs and resources, then review a fresh preview |
 | `private_publisher_required` / `private_endpoint_not_verified` / `private_publisher_check_failed` | Private runner, approved app-specific endpoint, matching DNS or TCP check is missing | Keep public access disabled; resolve the private path with the network team, then use `-PrivatePublisher` |
 | `primary_names_unexpected` | The primary's apps are not named `...-resolver` with storage `...res` | The driver cannot derive region B names: stop and ask the repository owners |
 | `standby_storage_name_too_long` | Stem + suffix + app code exceeds 24 characters | A one-letter `standby.nameSuffix` (before `Shells`) |
 | `identity_missing` / `standby_identity_mismatch` | `identityNames` lacks a `sync` or `reconciler` name, or the identity was not created by P1/P2 | Fix `identityNames`; rerun P1/P2 Bootstrap; both identities must exist in the shared group |
+| `primary_apim_configuration_missing` / `_invalid` / `_conflict` | The primary Stage 1 has no APIM ID and the existing-APIM reference is incomplete, invalid or disagrees with Stage 1 | Reconcile `apim.existing` with the APIM owner and its verified resource ID; do not edit state by hand. Run a fresh Grants preview before any Apply |
 | `standby_gateway_id_missing` / `_invalid` | The two APIM resource IDs are not both known | Recover the correct state; rerun Shells only if its public-access guard and approval permit it |
 | `cosmos_serverless` (exit 4) | The account is serverless and consent is `false` | Section 6; set `cosmos.convertServerless` to `true` only after separate explicit approval |
-| `cosmos_capacity_change_running` (exit 5) | The conversion is still running after 2 hours | Wait; check the account state; rerun |
-| `Cosmos still needs: ...` | A step finished but the account is not yet `Succeeded` | Wait; rerun `Data -Apply` |
+| `cosmos_capacity_change_running` (exit 5) | The conversion is still running after 2 hours | Wait; inspect the account read-only; once complete, preview again |
+| `cosmos_conversion_repreview_required` (exit 6) | The irreversible conversion completed; no throughput or region changes followed | Inspect the offers and costs, then run a fresh Data preview and seek the necessary approvals |
+| `cosmos_preview_required` / `cosmos_preview_stale` / `cosmos_account_changed` | Preview is missing, changed, or account drift was detected | Stop concurrent changes, inspect any partial results and review a fresh Data preview before an approved Apply |
+| `cosmos_throughput_reduction_approval_required` | A lower maximum or a manual migration may reduce throughput | Obtain explicit owner approval for the displayed plan before using `-ApproveCosmosThroughputReduction`; otherwise stop |
+| `cosmos_migration_repreview_required` / `cosmos_throughput_write_failed` / `cosmos_throughput_readback_failed` | Azure may have changed an offer; the remaining plan was not completed | Inspect all offers and account state read-only, then preview again and obtain any new approvals |
+| `cosmos_throughput_scope_unknown` / `cosmos_resource_unverified` / `cosmos_throughput_read_failed` / `cosmos_throughput_invalid` | A resource or offer cannot be verified, or an unexpected read error occurred | Stop; verify the exact account, database, container, permissions and connectivity. Do not treat arbitrary 404, 403, 429 or network errors as shared throughput. For 429, wait as instructed by Azure, then preview again |
+| `cosmos_throughput_pending` / `cosmos_target_below_minimum` | An offer is changing or its minimum exceeds the configured target | Wait for the operation or review a higher target and its costs, then preview again |
+| `Cosmos still needs: ...` | A step finished but the account is not yet `Succeeded` | Inspect and wait, then review a fresh Data preview; do not blindly rerun Apply |
 | `phase_order: run -Phase X -Apply first.` (exit 3) | A phase it depends on is not recorded | Run it with `-Apply` |
 | `state_target_mismatch` | A state folder belongs to another tenant, subscription or group | Use the right folders; each deployment has its own |
 | `...:read_denied` / `AuthorizationFailed` | Missing permission (section 3 row 4) | Grant the scope named in the error, rerun |
