@@ -8,7 +8,8 @@ param(
     [switch]$ApproveExistingVnetUpdate,
     [switch]$ApprovePublicFunctionAccess,
     [switch]$StubStandby,
-    [switch]$StubFrontDoor
+    [switch]$StubFrontDoor,
+    [string]$ReviewedConnectionIds
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,7 +131,9 @@ if ($StubChild) {
         }
     }
     if ($StubFrontDoor) {
-        & (Join-Path $root 'infra\dr\Invoke-DrFrontDoor.ps1') -Phase $Phase -ConfigPath $ConfigPath -Apply:$Apply -ConfirmStandbyReady
+        $reviewedArgs = @{}
+        if ($ReviewedConnectionIds) { $reviewedArgs.ReviewedConnectionIds = $ReviewedConnectionIds }
+        & (Join-Path $root 'infra\dr\Invoke-DrFrontDoor.ps1') -Phase $Phase -ConfigPath $ConfigPath -Apply:$Apply -ConfirmStandbyReady @reviewedArgs
     } elseif ($StubStandby) {
         & (Join-Path $root 'infra\dr\Invoke-DrStandby.ps1') -Phase $Phase -ConfigPath $ConfigPath -Apply:$Apply -ApprovePublicApimBootstrap -ApprovePublicFunctionAccess:$ApprovePublicFunctionAccess
     } else {
@@ -419,7 +422,11 @@ try {
 
     Import-Module (Join-Path $root 'infra\dr\DrPrerequisites.psm1') -Force
     Import-Module (Join-Path $root 'infra\dr\DrStandby.psm1') -Force
-    # Front Door driver integration cases are deferred to the separate safety release.
+    $frontDoor = Join-Path $root 'infra\dr\Invoke-DrFrontDoor.ps1'
+    foreach ($phase in @('Deploy', 'DrainPrimary')) {
+        $out = & pwsh -NoProfile -File $frontDoor -Phase $phase -ConfigPath 'missing.json' -Apply 2>&1
+        Check "$phase refuses full Front Door activation without explicit readiness confirmation" ($LASTEXITCODE -ne 0 -and "$out" -match 'frontdoor_standby_confirmation_required')
+    }
     $ready = @{ phases = @{
         Data = @{ completedAt = '2026-01-01T00:00:00Z' }; Shells = @{ completedAt = '2026-01-01T00:01:00Z' }
         Grants = @{ completedAt = '2026-01-01T00:02:00Z' }; Config = @{ completedAt = '2026-01-01T00:03:00Z' }
@@ -462,7 +469,94 @@ try {
     $previousApprovals = @('first-connection', 'second-connection')
     $movedState = Set-DrFrontDoorStateMode -State @{ mode = 'primaryOnly'; approvedConnections = $previousApprovals; verifiedAt = 'old' } -Mode 'full'
     Check 'Front Door mode change retains prior connection IDs only for rechecking' (@($movedState.previousApprovedConnections).Count -eq 2 -and -not $movedState.Contains('approvedConnections') -and -not $movedState.Contains('verifiedAt'))
-    # The full Front Door driver cases remain in the follow-up worktree.
+    $shellCfg.frontDoor = @{ stem = 'fixture-fd'; wafMode = 'Detection'; probeIntervalSeconds = 30 }
+    $shellCfg | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath
+    $bState = @{ stages = @{ '1' = @{ outputs = @{
+        apimId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.ApiManagement/service/fixture-b-apim"
+        apimGatewayUrl = 'https://fixture-b-apim.azure-api.net'; names = @{ apps = @{ admin = @{ functionApp = 'fixture-b-admin' } } }
+    } } } }
+    $bState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $shellCfg.standby.stateDirectory 'state.json')
+    function Run-FrontDoor([string]$DriverPhase = 'Deploy', [string]$Reviewed = '') {
+        if (Test-Path -LiteralPath $log) { Remove-Item -LiteralPath $log }
+        $reviewedArgs = if ($Reviewed) { @('-ReviewedConnectionIds', $Reviewed) } else { @() }
+        $text = & pwsh -NoProfile -File $PSCommandPath -StubChild -StubFrontDoor -ConfigPath $cfgPath -Phase $DriverPhase -Apply @reviewedArgs 2>&1
+        $code = $LASTEXITCODE
+        $calls = if (Test-Path -LiteralPath $log) { @(Get-Content -LiteralPath $log | ForEach-Object { ,($_ | ConvertFrom-Json) }) } else { @() }
+        return @{ code = $code; output = "$text"; flat = ("$text" -replace '\x1b\[[0-9;]*m|[\s|]', ''); calls = @($calls | ForEach-Object { $_ -join ' ' }) }
+    }
+    $fd = Run-FrontDoor
+    Check 'actual Front Door deployment refuses absent standby phase evidence' ($fd.code -ne 0 -and $fd.output -match 'frontdoor_standby_phase_missing.*Data' -and @($fd.calls | Where-Object { $_ -match '^deployment group create ' }).Count -eq 0)
+    $ready | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $shellCfg.standby.stateDirectory 'standby.state.json')
+    $statePath = Join-Path $shellCfg.standby.stateDirectory 'frontdoor-state.json'
+    @{ mode = 'primaryOnly'; stem = 'different'; profileName = 'different-fd'; subscriptionId = $sub; resourceGroup = 'workload-rg' } |
+        ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $statePath
+    $fd = Run-FrontDoor
+    Check 'actual Front Door deployment refuses a changed profile target before Azure calls' ($fd.code -ne 0 -and $fd.output -match 'frontdoor_target_mismatch' -and @($fd.calls).Count -eq 0)
+    @{ mode = 'primaryOnly'; stem = 'fixture-fd' } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $statePath
+    $fd = Run-FrontDoor
+    Check 'actual Front Door deployment refuses incomplete saved target before Azure calls' ($fd.code -ne 0 -and $fd.output -match 'frontdoor_target_unknown' -and @($fd.calls).Count -eq 0)
+    Remove-Item -LiteralPath $statePath
+    $fd = Run-FrontDoor
+    if ($fd.output -notmatch 'test_sentinel_reached_deployment') { Write-Host "Front Door ready diagnostic: $($fd.output)" }
+    Check 'actual Front Door deployment reaches the template only with complete evidence and confirmation' ($fd.output -match 'test_sentinel_reached_deployment' -and @($fd.calls | Where-Object { $_ -match '^deployment group create ' }).Count -eq 1)
+
+    $aApimId = $primaryS1.apimId
+    $bApimId = $bState.stages['1'].outputs.apimId
+    $aAdminId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.Web/sites/fixture-admin"
+    $bAdminId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.Web/sites/fixture-b-admin"
+    $fdIds = @($aApimId, $bApimId, $aAdminId, $bAdminId)
+    $connectionIds = @($fdIds | ForEach-Object { "$_/privateEndpointConnections/fixture" })
+    $requests = @('CCOF Front Door origin primary-gateway', 'CCOF Front Door origin standby-gateway',
+        'CCOF Front Door admin origin primary-admin', 'CCOF Front Door admin origin standby-admin')
+    $connections = @(for ($i = 0; $i -lt 4; $i++) {
+        @{ id = $connectionIds[$i]; name = 'fixture'; properties = @{ privateEndpoint = @{ id = "/privateEndpoints/$i" }
+            privateLinkServiceConnectionState = @{ status = $(if ($i -in 0, 2) { 'Approved' } else { 'Pending' })
+                description = $(if ($i -in 0, 2) { 'Approved CCOF Front Door origin' } else { $requests[$i] }) } } }
+    })
+    $env:DR_STUB_FD_CONNECTIONS = Join-Path $scratch 'fd-connections.json'
+    $connections | ConvertTo-Json -Depth 30 -AsArray | Set-Content -LiteralPath $env:DR_STUB_FD_CONNECTIONS
+    $fdState = @{ mode = 'full'; stem = 'fixture-fd'; subscriptionId = $sub; resourceGroup = 'workload-rg'
+        profileName = 'fixture-fd-fd'; profileId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.Cdn/profiles/fixture-fd-fd"
+        apimIds = @($aApimId, $bApimId); adminSiteIds = @($aAdminId, $bAdminId)
+        previousApprovedConnections = @($connectionIds[2]); verifiedAt = 'old' }
+    $fdState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $statePath
+    $reviewedB = "$($connectionIds[1]),$($connectionIds[3])"
+    $fd = Run-FrontDoor 'Approve' $reviewedB
+    Check 'Front Door refuses an unrecognized generic prior approval before approving anything' ($fd.code -ne 0 -and $fd.flat -match "frontdoor_review_ids_required:[^.]*$([regex]::Escape($aApimId))\." -and @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' }).Count -eq 0)
+    $fd = Run-FrontDoor 'Approve' "$($connectionIds[0]),$reviewedB"
+    Check 'Front Door refuses to adopt a generic prior approval as a reviewed request' ($fd.code -ne 0 -and $fd.flat -match "frontdoor_review_id_mismatch:$([regex]::Escape($connectionIds[0]))isabsent" -and @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' }).Count -eq 0)
+    $fdState.previousApprovedConnections = @($connectionIds[0], $connectionIds[2])
+    $fdState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $statePath
+    $fd = Run-FrontDoor 'Approve' $reviewedB
+    $fdAfter = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+    $approvalCalls = @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' })
+    if ($fd.code -ne 0) { Write-Host "Front Door approval diagnostic: $($fd.output)" }
+    Check 'full Front Door approval rechecks primary IDs and approves the two standby origins' ($fd.code -eq 0 -and @($fdAfter.approvedConnections).Count -eq 4 -and $approvalCalls.Count -eq 2)
+    Check 'Front Door approval invalidates prior route verification' ($fd.code -eq 0 -and -not $fdAfter.Contains('verifiedAt'))
+    $afterConnections = @(Get-Content -LiteralPath $env:DR_STUB_FD_CONNECTIONS -Raw | ConvertFrom-Json -AsHashtable -Depth 30)
+    Check 'new Front Door approvals preserve the original request descriptions' ($afterConnections[1].properties.privateLinkServiceConnectionState.status -ceq 'Approved' -and $afterConnections[1].properties.privateLinkServiceConnectionState.description -ceq $requests[1] -and $afterConnections[3].properties.privateLinkServiceConnectionState.status -ceq 'Approved' -and $afterConnections[3].properties.privateLinkServiceConnectionState.description -ceq $requests[3])
+    $fd = Run-FrontDoor 'Approve'
+    Check 'Front Door approval can be safely repeated without approving again' ($fd.code -eq 0 -and @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' }).Count -eq 0)
+    $duplicates = @($afterConnections)
+    $duplicates += @{ id = "$aApimId/privateEndpointConnections/other"; properties = @{ privateEndpoint = @{ id = '/privateEndpoints/other' }; privateLinkServiceConnectionState = @{ status = 'Approved'; description = $requests[0] } } }
+    $duplicates | ConvertTo-Json -Depth 30 -AsArray | Set-Content -LiteralPath $env:DR_STUB_FD_CONNECTIONS
+    $fd = Run-FrontDoor 'Approve'
+    $fdAfter = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+    Check 'Front Door keeps exact saved IDs and never adopts a same-description duplicate' ($fd.code -eq 0 -and @($fdAfter.approvedConnections).Count -eq 4 -and @($fdAfter.approvedConnections | Where-Object { $_ -match '/other$' }).Count -eq 0 -and @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' }).Count -eq 0)
+    $duplicates = @($connections)
+    $duplicates += @{ id = "$bApimId/privateEndpointConnections/other"; properties = @{ privateEndpoint = @{ id = '/privateEndpoints/other' }; privateLinkServiceConnectionState = @{ status = 'Pending'; description = $requests[1] } } }
+    $duplicates | ConvertTo-Json -Depth 30 -AsArray | Set-Content -LiteralPath $env:DR_STUB_FD_CONNECTIONS
+    $fdState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $statePath
+    $fd = Run-FrontDoor 'Approve' "$reviewedB,$bApimId/privateEndpointConnections/other"
+    Check 'Front Door refuses an ambiguous origin when all four origins exist' ($fd.code -ne 0 -and $fd.flat -match "frontdoor_review_ids_required:[^.]*$([regex]::Escape($bApimId))\." -and @($fd.calls | Where-Object { $_ -match '^network private-endpoint-connection approve ' }).Count -eq 0)
+    $connections | ConvertTo-Json -Depth 30 -AsArray | Set-Content -LiteralPath $env:DR_STUB_FD_CONNECTIONS
+    $fdState | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $statePath
+    $env:DR_STUB_FD_NO_APPROVE = '1'
+    $fd = Run-FrontDoor 'Approve' $reviewedB
+    $fdAfter = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+    Check 'Front Door refuses approval success until the target reads back Approved' ($fd.code -ne 0 -and $fd.output -match 'frontdoor_connection_not_approved' -and -not $fdAfter.Contains('approvedConnections'))
+    Remove-Item -LiteralPath Env:DR_STUB_FD_NO_APPROVE
+    $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath
 
     $c = $config | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $chosen = try { Get-DrSecondaryVnetId $c } catch { "ERROR: $($_.Exception.Message)" }
