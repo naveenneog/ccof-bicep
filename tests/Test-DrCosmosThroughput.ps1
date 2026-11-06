@@ -25,8 +25,9 @@ if ($Child) {
                 $s | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $env:DR_COSMOS_FIXTURE
             }
             $capacity = if ($s.capacity) { $s.capacity } else { 'Provisioned' }
+            $accountState = if ($env:DR_COSMOS_FAULT -eq 'account-pending') { 'Updating' } else { 'Succeeded' }
             $props = @{
-                capacityMode = $capacity; capabilities = @(); provisioningState = 'Succeeded'
+                capacityMode = $capacity; capabilities = @(); provisioningState = $accountState
                 locations = @($s.regions); writeLocations = @($s.regions[0])
                 enableAutomaticFailover = [bool]$s.failover
             }
@@ -53,7 +54,9 @@ if ($Child) {
                 return
             }
             $databaseId = if ($env:DR_COSMOS_FAULT -eq 'database-id-case-mismatch') { $dbId.Replace('fixturedb', 'FIXTUREDB') } else { $dbId }
-            return (@{ name = 'fixturedb'; id = $databaseId; resource = @{ id = 'fixturedb' } } | ConvertTo-Json -Depth 20 -Compress)
+            $database = @{ name = 'fixturedb'; id = $databaseId; resource = @{ id = 'fixturedb' } }
+            if ($env:DR_COSMOS_FAULT -eq 'database-offer-option') { $database.options = @{ throughput = 400 } }
+            return ($database | ConvertTo-Json -Depth 20 -Compress)
         }
         if ($command -match '^cosmosdb sql container list ') {
             if ($env:DR_COSMOS_FAULT -eq 'list-forbidden') {
@@ -303,6 +306,12 @@ try {
         $dedicatedPreview.code -eq 0 -and $dedicatedPreview.output -match '(?s)container0.*1000' -and
         $dedicated.code -eq 0 -and @($dedicated.calls | Where-Object { $_ -match '^cosmosdb sql database throughput (migrate|update) ' }).Count -eq 0)
 
+    Reset-Fixture $null @(@{ name = 'container0'; mode = 'autoscale'; max = 1000 }) 1000 'database-offer-option'
+    $contradictoryDatabase = Run-Data $false
+    Check 'database offer options contradicting a missing offer fail closed' (
+        $contradictoryDatabase.code -ne 0 -and $contradictoryDatabase.output -match 'cosmos_throughput_scope_unknown' -and
+        @(Get-Writes $contradictoryDatabase).Count -eq 0)
+
     Reset-Fixture $null @(@{ name = 'container0'; mode = 'autoscale'; max = 1000 }) 1000 'offer-id-sqlcontainers'
     $documentedOfferPreview = Run-Data $false
     $documentedOfferApply = Run-Data $true
@@ -438,6 +447,19 @@ try {
         $serverlessApply.output -match 'cosmos_conversion_repreview_required' -and
         @($serverlessApply.calls | Where-Object { $_ -match '^rest --method patch ' }).Count -eq 1 -and
         @($serverlessApply.calls | Where-Object { $_ -match '^cosmosdb sql .* throughput (migrate|update) |^cosmosdb update ' }).Count -eq 0)
+
+    Reset-Fixture $null @(@{ name = 'container0'; mode = 'manual'; manual = 5000 }) 1000 'account-pending'
+    $serverless = Get-Content -LiteralPath $env:DR_COSMOS_FIXTURE -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+    $serverless.capacity = 'Serverless'
+    $serverless | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $env:DR_COSMOS_FIXTURE
+    $config.cosmos.convertServerless = $true
+    $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath
+    $pendingPreview = Run-Data $false
+    $pendingApply = Run-Data $true
+    Check 'a non-succeeded serverless account cannot be converted' (
+        $pendingPreview.code -ne 0 -and $pendingPreview.output -match 'cosmos_account_pending' -and
+        $pendingApply.code -ne 0 -and $pendingApply.output -match 'cosmos_account_pending' -and
+        @(Get-Writes $pendingApply).Count -eq 0)
 
     $wrapperWorks = $false
     try {

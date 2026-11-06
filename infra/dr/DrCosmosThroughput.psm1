@@ -54,6 +54,12 @@ function ConvertTo-DrCosmosRu {
     return $number
 }
 
+function Test-DrCosmosOfferOptions {
+    param($Resource)
+    return $null -ne (Get-DrValue $Resource 'options.throughput') -or
+        $null -ne (Get-DrValue $Resource 'options.autoscaleSettings')
+}
+
 function Get-DrCosmosOffer {
     param($Context, [string]$Kind, [string]$Name, [scriptblock]$InvokeAz)
     $args = Get-DrCosmosOfferArguments $Context $Kind $Name 'show'
@@ -111,8 +117,11 @@ function Get-DrCosmosThroughputPlan {
         [Parameter(Mandatory)] [int]$Target,
         [Parameter(Mandatory)] [scriptblock]$InvokeAz
     )
-    $null = Assert-DrCosmosResource $Context 'database' $Context.database $InvokeAz
+    $databaseResource = Assert-DrCosmosResource $Context 'database' $Context.database $InvokeAz
     $database = Get-DrCosmosOffer $Context 'database' $Context.database $InvokeAz
+    if ($null -eq $database -and (Test-DrCosmosOfferOptions $databaseResource)) {
+        throw "cosmos_throughput_scope_unknown: database '$($Context.database)' reports throughput options but its offer is unreadable; inspect the database before retrying."
+    }
     $listArgs = @('cosmosdb', 'sql', 'container', 'list', '--subscription', $Context.subscription,
         '--resource-group', $Context.resourceGroup, '--account-name', $Context.account, '--database-name', $Context.database)
     try { $listed = @(& $InvokeAz $listArgs) }
@@ -130,8 +139,7 @@ function Get-DrCosmosThroughputPlan {
         $containerResource = Assert-DrCosmosResource $Context 'container' $name $InvokeAz
         $offer = Get-DrCosmosOffer $Context 'container' $name $InvokeAz
         if ($null -eq $offer) {
-            if ($null -ne (Get-DrValue $containerResource 'options.throughput') -or
-                $null -ne (Get-DrValue $containerResource 'options.autoscaleSettings')) {
+            if (Test-DrCosmosOfferOptions $containerResource) {
                 throw "cosmos_throughput_scope_unknown: container '$name' reports dedicated throughput options but its offer is unreadable; inspect the container before retrying."
             }
             if ($null -eq $database) {
@@ -142,8 +150,11 @@ function Get-DrCosmosThroughputPlan {
         $containers.Add($offer)
     }
     # A missing or changed database offer during discovery makes the shared classification unsafe.
-    $null = Assert-DrCosmosResource $Context 'database' $Context.database $InvokeAz
+    $databaseResourceAgain = Assert-DrCosmosResource $Context 'database' $Context.database $InvokeAz
     $again = Get-DrCosmosOffer $Context 'database' $Context.database $InvokeAz
+    if ($null -eq $again -and (Test-DrCosmosOfferOptions $databaseResourceAgain)) {
+        throw "cosmos_throughput_scope_unknown: database '$($Context.database)' reports throughput options but its offer is unreadable; inspect the database before retrying."
+    }
     if (($null -eq $database) -ne ($null -eq $again) -or
         ($null -ne $database -and ($database.mode -cne $again.mode -or $database.value -ne $again.value -or $database.minimum -ne $again.minimum))) {
         throw 'cosmos_inventory_changed: database throughput changed during inspection; preview again after it settles.'

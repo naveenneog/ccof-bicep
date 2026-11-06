@@ -207,6 +207,9 @@ switch ($Phase) {
         if ($steps -contains 'wait_capacity_change') { Stop-Dr 'cosmos_capacity_change_running: still in progress after 2 hours; run this phase again later.' 5 }
         Stop-Dr 'cosmos_conversion_repreview_required: conversion finished; preview Data again before any throughput or region changes.' 6
     }
+    if ([string]$acct.properties.provisioningState -ine 'Succeeded') {
+        throw "cosmos_account_pending: account state is '$($acct.properties.provisioningState)'; wait until Succeeded and preview again."
+    }
     if ($steps -contains 'convert_to_provisioned') {
         $digest = Get-DrCosmosPreviewDigest -Account $acct -Secondary $dr.secondary.location -Steps $steps -Target $max -Throughput $null
         if (-not $Apply) {
@@ -227,9 +230,6 @@ switch ($Phase) {
         }
         if ($steps -contains 'wait_capacity_change') { Stop-Dr 'cosmos_capacity_change_running: still in progress after 2 hours; run this phase again later.' 5 }
         Stop-Dr 'cosmos_conversion_repreview_required: conversion finished; preview Data again before any throughput or region changes.' 6
-    }
-    if ([string]$acct.properties.provisioningState -ine 'Succeeded') {
-        throw "cosmos_account_pending: account state is '$($acct.properties.provisioningState)'; wait until Succeeded and preview again."
     }
     # Autoscale before the second region: its throughput is billed in every region.
     $db = $primaryCfg.cosmos.databaseName
