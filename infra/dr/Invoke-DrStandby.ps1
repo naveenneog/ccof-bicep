@@ -180,13 +180,8 @@ switch ($Phase) {
     $s1 = Get-StgStage $bCfg 1
     $adminHost = if ($s1.names.apps.Contains('admin')) { (Get-StgSite $bCfg $s1.names.apps.admin.functionApp).defaultHostName } else { '' }
     if ($adminHost) {
-        $app = Get-StgAppById $pS4.admin.appId
-        $want = @("https://$adminHost/api/console", "https://$adminHost/api/console-v3")
-        $merged = Join-StgUnique $app.spa.redirectUris $want
-        if (@($want | Where-Object { @($app.spa.redirectUris) -notcontains $_ }).Count) {
-            if ($Apply) { Send-StgGraph 'PATCH' "applications/$($app.id)" @{ spa = @{ redirectUris = $merged } } | Out-Null; Write-Host "admin app: added SPA redirects for $adminHost" }
-            else { Write-Host "preview: admin app SPA redirects add $($want -join ', ')" }
-        }
+        $null = Invoke-DrAdminRedirects -Stage4 $pS4 -AdminHost $adminHost -Apply:$Apply -GetApp { Get-StgAppById $pS4.admin.appId } `
+            -PatchApp { param($app, $merged) Send-StgGraph 'PATCH' "applications/$($app.id)" @{ spa = @{ redirectUris = $merged } } | Out-Null }
     }
     if ($Apply) { Save-StgStage $bCfg 5 $o; Save-DrPhase 'Config' @{ gatewayUrl = $o.gatewayUrl; adminHost = $adminHost; timers = $o.verify.timers } }
 }

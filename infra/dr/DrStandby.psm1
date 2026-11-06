@@ -292,4 +292,25 @@ function Get-DrCosmosSteps {
     $steps.ToArray()
 }
 
-Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Set-DrFrontDoorStateMode
+# Admin app SPA redirect URIs for the standby admin host (Config phase). A Stage 4 record with
+# verification 'manual' (entra.manualVerification) means the operator has no Microsoft Graph access, so the
+# URIs are printed for the Entra admin to add in the Entra admin center and no Graph call is made.
+function Invoke-DrAdminRedirects {
+    param($Stage4, [string]$AdminHost, [switch]$Apply, [scriptblock]$GetApp, [scriptblock]$PatchApp)
+    $want = @("https://$AdminHost/api/console", "https://$AdminHost/api/console-v3")
+    if ("$(Get-DrValue $Stage4 'verification')" -ceq 'manual') {
+        $appId = Get-DrValue (Get-DrValue $Stage4 'admin') 'appId'
+        Write-Host "manual Entra verification: the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
+        return [ordered]@{ mode = 'manual'; redirects = $want }
+    }
+    $app = & $GetApp
+    $have = @($app.spa.redirectUris)
+    $missing = @($want | Where-Object { $have -notcontains $_ })
+    if (-not $missing.Count) { return [ordered]@{ mode = 'graph'; redirects = $want; added = @() } }
+    if (-not $Apply) { Write-Host "preview: admin app SPA redirects add $($missing -join ', ')"; return [ordered]@{ mode = 'graph'; redirects = $want; added = @() } }
+    $merged = @($have + $missing | Where-Object { $_ } | Select-Object -Unique)
+    & $PatchApp $app $merged
+    Write-Host "admin app: added SPA redirects for $AdminHost"
+    return [ordered]@{ mode = 'graph'; redirects = $want; added = $missing }
+}
+Export-ModuleMember -Function Get-DrValue, Invoke-DrAdminRedirects, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Set-DrFrontDoorStateMode

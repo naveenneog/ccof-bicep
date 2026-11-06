@@ -308,5 +308,18 @@ Check 'conversion in progress: wait only' ((@(Get-DrCosmosSteps (Acct @('EnableS
 Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosSteps (Acct @('EnableServerless') 'Provisioned' @('East US 2') $false 'Completed') 'centralus') -notcontains 'convert_to_provisioned')
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
+# Config phase admin redirects: a manual Stage 4 record (entra.manualVerification) makes no Graph call.
+$script:graphCalls = 0; $script:patched = $null
+$getApp = { $script:graphCalls++; [pscustomobject]@{ id = 'obj1'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console') } } }
+$patch = { param($app, $merged) $script:graphCalls++; $script:patched = $merged }
+$r = Invoke-DrAdminRedirects -Stage4 @{ verification = 'manual'; admin = @{ appId = 'adm' } } -AdminHost 'b' -Apply -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: manual Stage 4 makes no Graph call and lists both URIs' ($script:graphCalls -eq 0 -and $r.mode -ceq 'manual' -and (@($r.redirects) -join ',') -ceq 'https://b/api/console,https://b/api/console-v3')
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'b' -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: Graph preview reads but does not patch' ($script:graphCalls -eq 1 -and $null -eq $script:patched)
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'b' -Apply -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: Graph apply keeps existing URIs and adds missing ones' ((@($script:patched) -join ',') -ceq 'https://a/api/console,https://b/api/console,https://b/api/console-v3' -and @($r.added).Count -eq 2)
+$script:patched = $null
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'a' -Apply -GetApp { [pscustomobject]@{ id = 'o'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console', 'https://a/api/console-v3') } } } -PatchApp $patch 6>$null
+Check 'admin redirects: nothing patched when both URIs exist' ($null -eq $script:patched -and @($r.added).Count -eq 0)
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 79) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 83) { exit 1 }
