@@ -160,7 +160,8 @@ if ($Child) {
             if ($operation -eq 'migrate') { $offer.mode = 'autoscale'; $offer.max = if ($env:DR_COSMOS_FAULT -eq 'migration-high') { 4000 } else { 1000 } }
             if ($operation -eq 'update') {
                 $maxIndex = [Array]::IndexOf($arguments, '--max-throughput')
-                if ($env:DR_COSMOS_FAULT -ne 'update-not-applied') {
+                if ($env:DR_COSMOS_FAULT -eq 'update-not-applied-fd-corrupt') { Set-Content -LiteralPath $env:DR_COSMOS_FD_STATE -Value '{not json' }
+                if ($env:DR_COSMOS_FAULT -notin @('update-not-applied', 'update-not-applied-fd-corrupt')) {
                     $offer.mode = 'autoscale'; $offer.max = [int]$arguments[$maxIndex + 1]
                 }
             }
@@ -501,6 +502,19 @@ try {
     Check 'unverified throughput update stops before regional changes' (
         $unverified.code -ne 0 -and $unverified.output -match 'cosmos_throughput_readback_failed' -and
         @($unverified.calls | Where-Object { $_ -match '^rest --method patch |^cosmosdb update ' }).Count -eq 0)
+    # A Front Door state cleanup failure in the driver's finally must not hide the phase failure.
+    Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 2000 ''
+    $null = Run-Data $false
+    $env:DR_COSMOS_FD_STATE = Join-Path $standbyDir 'frontdoor-state.json'
+    Set-Content -LiteralPath $env:DR_COSMOS_FD_STATE -Value '{"approvedConnections":[]}'
+    $env:DR_COSMOS_FAULT = 'update-not-applied-fd-corrupt'
+    $bothFailed = Run-Data $true
+    Check 'a Front Door cleanup failure keeps the phase failure and reports both' (
+        $bothFailed.code -ne 0 -and $bothFailed.output -match 'cosmos_throughput_readback_failed' -and
+        $bothFailed.output -match 'frontdoor_state_cleanup_failed')
+    Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 2000 'update-not-applied'
+    $null = Run-Data $false
+    $null = Run-Data $true
     $env:DR_COSMOS_FAULT = ''
     $afterPartialApply = Run-Data $true
     Check 'a failed Apply cannot reuse its earlier preview for another mutation' (

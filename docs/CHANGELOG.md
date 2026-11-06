@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-07 - DR Front Door cleanup error no longer hides the phase failure
+
+- If clearing Front Door verification after a standby phase fails (lock, invalid JSON, write error),
+  the original phase error is kept and the cleanup error is appended as
+  `frontdoor_state_cleanup_failed`; the run still exits nonzero.
 ## 2026-11-07 - DR Cosmos offer name from real Azure
 
 - Data preview and apply accept real Cosmos throughput offers, whose `name` is an internal ID (for

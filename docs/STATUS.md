@@ -1,5 +1,18 @@
 # Current work
 
+## DR Front Door cleanup must not hide a phase failure
+
+**Packet:** DR-FD-CLEANUP-ERROR (2026-11-07), council finding on 8bc6251. In
+`infra/dr/Invoke-DrStandby.ps1` the `finally` block calls `Clear-DrFrontDoorStateEvidence`; an error
+there (state lock held, invalid JSON, write failure) replaced the phase exception, hiding for example
+a Cosmos partial-write `cosmos_throughput_readback_failed`. Cleanup errors are now caught separately:
+after a phase failure the driver rethrows the original message with `frontdoor_state_cleanup_failed:
+...` appended (nonzero exit); after a successful phase it reports the cleanup failure and exits 3.
+RED (`tests/Test-DrCosmosThroughput.ps1`, unverified throughput update plus corrupted
+`frontdoor-state.json`): 65 passed, 1 failed; the output held only the JSON parse error. GREEN: 66
+passed; Front Door safety 85 passed; customer shape 37 passed. Council: Architect PASS, Security
+PASS, UX PASS, Coder PASS; QA PASS-WITH-NOTES: the customer-shape Code phase stops at the package
+build sentinel offline, so a real publish is proven only by the lab run.
 ## DR Cosmos offer name from real Azure
 
 **Packet:** DR-COSMOS-OFFER-NAME (2026-11-07), part of release/dr-infosys-resume. Lab resume run on

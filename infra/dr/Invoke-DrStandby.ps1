@@ -445,11 +445,22 @@ switch ($Phase) {
     Save-DrPhase 'Verify' $v
 }
 }
-} catch { $fdWorkFailed = $true; throw }
+} catch { $fdWorkFailed = $true; $fdWorkError = $_; throw }
 finally {
-    if ((Get-Variable fdStartHash -ValueOnly -ErrorAction SilentlyContinue) -and
-        (Clear-DrFrontDoorStateEvidence -StatePath $fdPath -Fields @('verifiedAt') -ExpectedHash $fdStartHash)) {
+    $fdChanged = $false; $fdCleanupError = $null
+    if (Get-Variable fdStartHash -ValueOnly -ErrorAction SilentlyContinue) {
+        try { $fdChanged = Clear-DrFrontDoorStateEvidence -StatePath $fdPath -Fields @('verifiedAt') -ExpectedHash $fdStartHash }
+        catch { $fdCleanupError = $_ }
+    }
+    if ($fdChanged) {
         [Console]::Error.WriteLine("frontdoor_state_changed: $fdPath changed during standby -Phase $Phase; Front Door verification recorded meanwhile may describe a half-applied region B and was cleared. Finish the standby phases, then run the Front Door -Phase Verify again.")
         if (-not $fdWorkFailed) { exit 3 }
+    }
+    if ($fdCleanupError) {
+        $cleanupText = "frontdoor_state_cleanup_failed: could not check or clear Front Door verification in $fdPath after standby -Phase $Phase ($($fdCleanupError.Exception.Message)). Treat Front Door verification as invalid: fix the state file, then run the Front Door -Phase Verify again."
+        # Rethrow the phase failure with the cleanup failure appended; never let cleanup hide it.
+        if ($fdWorkFailed) { throw "$($fdWorkError.Exception.Message)`n$cleanupText" }
+        [Console]::Error.WriteLine($cleanupText)
+        exit 3
     }
 }
