@@ -132,7 +132,10 @@ if ($StubChild) {
                     properties = @{ defaultHostName = "$name.azurewebsites.net" } } | ConvertTo-Json -Depth 10 -Compress)
             }
             'deployment group' {
-                if ($arguments -contains 'what-if') { return '{"changes":[]}' }
+                if ($arguments -contains 'what-if') {
+                    if ($env:DR_STUB_WHATIF) { return (Get-Content -LiteralPath $env:DR_STUB_WHATIF -Raw) }
+                    return '{"changes":[]}'
+                }
                 if ($StubStandby -or $StubFrontDoor) {
                     if ($env:DR_STUB_FD_VERIFY_DURING_DEPLOY) {
                         # A Front Door Verify completing while the standby deployment is running.
@@ -250,6 +253,29 @@ try {
         $reason = switch ($case) { 'wrong-location' { 'location' } 'wrong-id' { 'id_mismatch' } 'missing-principal' { 'principal' } }
         Check "Bootstrap refuses $case identity before deployment" ($wrongIdentity.code -ne 0 -and $wrongIdentity.output -match "identity:.*:$reason" -and @($wrongIdentityCalls | Where-Object { $_ -match '^deployment group create ' }).Count -eq 0)
     }
+    # Bootstrap preview: what-if output with zero or exactly one change must not collapse to a
+    # scalar or $null under StrictMode (lab: "The property 'Count' cannot be found on this object").
+    $env:DR_STUB_IDENTITIES = 'one-missing'
+    $whatIfPath = Join-Path $scratch 'whatif.json'
+    $env:DR_STUB_WHATIF = $whatIfPath
+    $identityPrefix = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
+    $whatIfCases = @(
+        @{ name = 'zero'; changes = @(); code = 0; blocker = '' }
+        @{ name = 'one-owned'; changes = @(@{ resourceId = "$identityPrefix/ccof-reconciler-b"; changeType = 'Create' }); code = 0; blocker = '' }
+        @{ name = 'one-foreign'; changes = @(@{ resourceId = "/subscriptions/$sub/resourceGroups/workload-rg/providers/Microsoft.Web/sites/other"; changeType = 'Modify' }); code = 1; blocker = 'whatIf:changes_existing_1' }
+    )
+    foreach ($w in $whatIfCases) {
+        @{ changes = $w.changes } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $whatIfPath
+        $p = Run-Prerequisite "preview-whatif-$($w.name)" 'good' 'Bootstrap' $false
+        $pCalls = @($p.calls | ForEach-Object { $_ -join ' ' })
+        $ok = $p.code -eq $w.code -and $p.output -notmatch "property 'Count' cannot be found" -and
+            @($pCalls | Where-Object { $_ -match '^deployment group what-if ' }).Count -eq 1 -and
+            @($pCalls | Where-Object { $_ -match '^deployment group create ' }).Count -eq 0 -and
+            $(if ($w.blocker) { $p.output.Contains($w.blocker) -and $p.output -notmatch 'whatIf:changes_existing_(?!1\b)' } else { $p.output -match 'Bootstrap passed' })
+        if (-not $ok) { Write-Host "Preview what-if $($w.name) diagnostic: exit $($p.code); $($p.output)" }
+        Check "Bootstrap preview handles a what-if with $($w.name) change(s) under StrictMode" $ok
+    }
+    $env:DR_STUB_WHATIF = $null
     $env:DR_STUB_IDENTITIES = 'present'
     $verify = Run-Prerequisite 'verify' 'good' 'Verify' $false
     $verifyCalls = @($verify.calls | ForEach-Object { $_ -join ' ' })

@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-11-06 - DR Bootstrap preview what-if count
+
+- Existing-network Bootstrap preview no longer fails after printing the what-if with "The property
+  'Count' cannot be found on this object" when no what-if change is foreign (lab: only new identity
+  Creates). The foreign-change list is now always an array, so one foreign change is reported as
+  `whatIf:changes_existing_1` and no longer as the number of its keys. DNS link evidence is also
+  always an array. Offline tests cover what-if results with zero changes, one owned change and one
+  foreign change.
+- UNKNOWNS APIM-ZR-04 records why a one-unit Standard v2 standby APIM with `zoneRedundant: true`
+  shows an empty `zones` property; no code change.
 ## 2026-11-06 - DR Network Foundry DNS scope
 
 - Network checks Cosmos and blob zone links, but does not invent or read Foundry zones when it

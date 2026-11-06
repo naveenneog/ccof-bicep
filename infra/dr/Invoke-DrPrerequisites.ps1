@@ -177,7 +177,7 @@ switch ($Phase) {
             foreach ($z in @($cfg.dnsZones.zoneNames)) {
                 try {
                     $zone = Invoke-AzJson @('network', 'private-dns', 'zone', 'show', '--name', $z, '--resource-group', $cfg.dnsZones.resourceGroup, '--subscription', $cfg.dnsZones.subscriptionId) -AllowMissing
-                    $links = if ($zone) { @(Invoke-AzJson @('network', 'private-dns', 'link', 'vnet', 'list', '--zone-name', $z, '--resource-group', $cfg.dnsZones.resourceGroup, '--subscription', $cfg.dnsZones.subscriptionId) | ForEach-Object { $_.virtualNetwork.id }) } else { @() }
+                    $links = @(if ($zone) { Invoke-AzJson @('network', 'private-dns', 'link', 'vnet', 'list', '--zone-name', $z, '--resource-group', $cfg.dnsZones.resourceGroup, '--subscription', $cfg.dnsZones.subscriptionId) | ForEach-Object { $_.virtualNetwork.id } })
                     $zones[$z] = [ordered]@{ exists = $null -ne $zone; recordSets = if ($zone) { $zone.numberOfRecordSets } else { 0 }; linkedVnets = $links }
                     if (-not $zone) { $blockers.Add("dns:${z}:missing") }
                 } catch { $zones[$z] = [ordered]@{ error = $_.Exception.Message }; $blockers.Add("dns:${z}:read_denied") }
@@ -294,11 +294,13 @@ switch ($Phase) {
                     "/virtualNetworks/$(& $e $sec.vnetName)(/|$)|/networkSecurityGroups/$(& $e $sec.apimNsgName)$|/virtualNetworkLinks/$(& $e $sec.vnetName)-link$|/virtualNetworkPeerings/to-$(& $e $sec.vnetName)$" + $(if ($names) { "|/userAssignedIdentities/($($names -join '|'))$" } else { '' })
                 }
                 $owned = { param($id) $id -match $ownedPattern }
-                $destructive = if ($existingNetwork) {
-                    @($evidence.checks.whatIf | Where-Object { $_.changeType -notin 'Ignore', 'NoChange' -and -not (& $owned $_.resourceId) })
+                # @() outside the if: an empty pipeline result would otherwise become AutomationNull and
+                # a single change a scalar, and .Count fails or miscounts under StrictMode.
+                $destructive = @(if ($existingNetwork) {
+                    $evidence.checks.whatIf | Where-Object { $_.changeType -notin 'Ignore', 'NoChange' -and -not (& $owned $_.resourceId) }
                 } else {
-                    @($evidence.checks.whatIf | Where-Object { $_.changeType -in 'Delete', 'Modify' -and -not (& $owned $_.resourceId) })
-                }
+                    $evidence.checks.whatIf | Where-Object { $_.changeType -in 'Delete', 'Modify' -and -not (& $owned $_.resourceId) }
+                })
                 if ($destructive.Count) { $blockers.Add("whatIf:changes_existing_$($destructive.Count)") }
             }
         } else {

@@ -1,5 +1,15 @@
 # Current work
 
+## DR Bootstrap preview what-if count
+
+**Packet:** DR-PREREQ-COUNT (2026-11-06), part of release/dr-infosys-resume. Lab: existing-network
+Bootstrap preview printed the what-if (two owned identity Creates) and then failed with "The
+property 'Count' cannot be found on this object". The `if` statement result unrolled an empty
+array to AutomationNull, and a single foreign change to a dictionary whose `Count` is its key count.
+RED: `tests/Test-DrExistingNetwork.ps1` 102 passed and 3 failed (zero changes and one owned change
+crashed; one foreign change reported `changes_existing_2`). GREEN: 105 passed. Every other
+`.Count` in `infra/dr` already uses an `@()`-wrapped or typed collection; the DNS link list
+was wrapped in the same way. APIM-ZR-04 documents the empty `zones` on a zone-redundant v2 APIM.
 ## DR Network DNS verification
 
 **Packet:** DR-NET-DNS (2026-11-06), under review. When standby manages no Foundry endpoint, Network
