@@ -1,5 +1,13 @@
 # Current work
 
+## Standby Cosmos read region (decision only)
+
+**Packet:** DR-COSMOS-READ-REGION (2026-11-07), lab finding on 94aeafa: resolver B reads Cosmos from
+East US 2. Investigation (read-only): no Cosmos client sets `preferredLocations` and no region
+setting exists, so the SDK reads from the first readable location (East US 2). An app setting in DR
+Config alone would be a no-op; a fix needs a small source change in four clients plus Stage 5 and
+DR Config settings and a republish. Recorded as ADR 0039 (proposed: accept for this release,
+follow-up packet) and UNKNOWNS DR-BYO-24 (OPEN, owner decision). No code change.
 ## DR Network preflights the standby APIM SKU
 
 **Packet:** DR-APIM-SKU-PREFLIGHT (2026-11-07), lab finding on 94aeafa. Network -Apply failed with
