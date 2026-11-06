@@ -6,11 +6,11 @@
   Runs after the DR prerequisites (infra/dr/Invoke-DrPrerequisites.ps1, P0-P2) on the same dr.config.json,
   which adds a `standby` and a `cosmos` section. One phase per run; each phase previews without -Apply,
   changes Azure with -Apply, reads back what it changed and records it in standby.stateDirectory. Every
-  phase can be run again: it skips what is already in place, so a phase cut off (for example by a Cloud
-  Shell timeout) is resumed by running the same command again.
+  phase can be resumed after reconciling any partial work and reviewing a fresh preview; it skips what
+  is already in place.
 
   -Phase Data      Cosmos DB: change a serverless account to provisioned throughput (one-way, only with
-                   cosmos.convertServerless true), set each container to autoscale (cosmos.autoscaleMaxThroughput),
+                   cosmos.convertServerless true), preview database and dedicated-container autoscale,
                    add the standby region, turn on service-managed failover.
   -Phase Shells    infra/dr/standby.bicep: region B Function Apps (resolver, sync, reconciler, admin) and API
                    Management, logging to the primary workspace, sync/reconciler on the P1 identities.
@@ -38,6 +38,7 @@ param(
     [switch]$ApprovePrivateNetworkChanges,
     [switch]$ApprovePublicApimBootstrap,
     [switch]$ApprovePublicFunctionAccess,
+    [switch]$ApproveCosmosThroughputReduction,
     [switch]$PrivatePublisher
 )
 $ErrorActionPreference = 'Stop'
@@ -49,6 +50,7 @@ $drPath = (Resolve-Path -LiteralPath $ConfigPath).Path
 $dr = Get-Content -LiteralPath $drPath -Raw | ConvertFrom-Json
 Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
 Import-Module (Join-Path $here 'DrStandby.psm1') -Force
+Import-Module (Join-Path $here 'DrCosmosThroughput.psm1') -Force
 $problems = @(Get-DrConfigProblems $dr) + @(Get-DrStandbyProblems $dr)
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" 2 }
 if ($Phase -ceq 'Network' -and $Apply -and -not $ApprovePrivateNetworkChanges) {
@@ -158,37 +160,109 @@ function Get-DrPhase([string]$Name) {
     return $s.phases[$Name].outputs
 }
 
+function Get-DrCosmosPreviewDigest($Account, [string]$Secondary, [string[]]$Steps, [int]$Target, $Throughput) {
+    $locations = @($Account.properties.locations | Sort-Object failoverPriority | ForEach-Object {
+        [ordered]@{ locationName = [string]$_.locationName; failoverPriority = [int]$_.failoverPriority; isZoneRedundant = [bool]$_.isZoneRedundant }
+    })
+    $review = [ordered]@{
+        accountId = [string]$Account.id; capacityMode = [string]$Account.properties.capacityMode
+        locations = $locations; serviceManagedFailover = [bool]$Account.properties.enableAutomaticFailover
+        secondary = $Secondary; steps = @($Steps); target = $Target; throughput = $Throughput
+    }
+    $json = ConvertTo-Json -InputObject $review -Depth 40 -Compress
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
+}
+
+function Assert-DrCosmosPreview([string]$Path, [string]$Digest) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw 'cosmos_preview_required: run Data without -Apply and review the current account and throughput plan before applying.'
+    }
+    try { $preview = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -Depth 20 }
+    catch { throw 'cosmos_preview_stale: the saved throughput preview is unreadable; preview Data again.' }
+    if ($preview.schema -cne 'ccof.dr.cosmos.preview.v1' -or $preview.digest -cne $Digest) {
+        throw 'cosmos_preview_stale: account locations, failover, throughput or target changed since preview; review a fresh Data preview.'
+    }
+}
+
 switch ($Phase) {
 'Data' {
+    $previewPath = Join-Path $standbyStateDir 'cosmos-throughput-preview.json'
+    if (-not $Apply -and (Test-Path -LiteralPath $previewPath)) { Remove-Item -LiteralPath $previewPath -Force }
     $acctId = $pS1.cosmosAccountId
     $url = "https://management.azure.com$acctId`?api-version=2024-05-15-preview"
     $acct = Invoke-QsAz @('rest', '--method', 'get', '--url', $url)
     $steps = @(Get-DrCosmosSteps $acct $dr.secondary.location)
     Write-Host "Cosmos $($acct.name): capacity $($acct.properties.capacityMode); regions $(@($acct.properties.locations.locationName) -join ', '); steps: $(if ($steps.Count) { $steps -join ', ' } else { 'none' })"
     $max = if ($dr.cosmos.PSObject.Properties['autoscaleMaxThroughput']) { [int]$dr.cosmos.autoscaleMaxThroughput } else { 1000 }
-    if (-not $Apply) { Write-Host "preview: then each container autoscale with maximum $max RU/s. Rerun with -Apply."; return }
+    if ([string]$acct.id -ine [string]$acctId -or [string]$acct.name -ine (($acctId.TrimEnd('/') -split '/')[-1]) -or -not @($acct.properties.locations).Count) {
+        throw 'cosmos_resource_unverified: the Cosmos account ID, name or locations do not match the primary staged state.'
+    }
+    if ($steps -contains 'wait_capacity_change') {
+        if (-not $Apply) { Write-Host 'Capacity conversion is still running; wait until it completes, then preview Data again. No throughput plan is available yet.'; return }
+        if (Test-Path -LiteralPath $previewPath) { Remove-Item -LiteralPath $previewPath -Force }
+        for ($i = 0; $steps -contains 'wait_capacity_change' -and $i -lt 240; $i++) {
+            Start-Sleep 30; $acct = Invoke-QsAz @('rest', '--method', 'get', '--url', $url); $steps = @(Get-DrCosmosSteps $acct $dr.secondary.location)
+            if ($i % 4 -eq 0) { Write-Host "  waiting: $($acct.properties.capacityModeChangeTransitionState.capacityModeTransitionStatus)" }
+        }
+        if ($steps -contains 'wait_capacity_change') { Stop-Dr 'cosmos_capacity_change_running: still in progress after 2 hours; run this phase again later.' 5 }
+        Stop-Dr 'cosmos_conversion_repreview_required: conversion finished; preview Data again before any throughput or region changes.' 6
+    }
     if ($steps -contains 'convert_to_provisioned') {
+        $digest = Get-DrCosmosPreviewDigest -Account $acct -Secondary $dr.secondary.location -Steps $steps -Target $max -Throughput $null
+        if (-not $Apply) {
+            Write-Host 'preview: irreversible serverless conversion creates manual container throughput of 5000 RU/s per physical partition. After conversion, a new preview is required before throughput or region changes.'
+            Write-DrStandbyJson $previewPath @{ schema = 'ccof.dr.cosmos.preview.v1'; digest = $digest }
+            return
+        }
         if ($dr.cosmos.convertServerless -ne $true) { Stop-Dr 'cosmos_serverless: the account is serverless, which runs in one region only. The change to provisioned throughput cannot be undone; set cosmos.convertServerless to true to allow it.' 4 }
+        Assert-DrCosmosPreview $previewPath $digest
+        Remove-Item -LiteralPath $previewPath -Force
         Write-Host 'Changing the account to provisioned throughput (one-way; no management change is possible until it finishes).'
         $body = Join-Path $standbyStateDir 'cosmos-capacity.json'; '{"properties":{"capacityMode":"Provisioned"}}' | Set-Content -LiteralPath $body
         $null = Invoke-QsAz @('rest', '--method', 'patch', '--url', $url, '--headers', 'Content-Type=application/json', '--body', "@$body")
         $steps = @('wait_capacity_change')
+        for ($i = 0; $steps -contains 'wait_capacity_change' -and $i -lt 240; $i++) {
+            Start-Sleep 30; $acct = Invoke-QsAz @('rest', '--method', 'get', '--url', $url); $steps = @(Get-DrCosmosSteps $acct $dr.secondary.location)
+            if ($i % 4 -eq 0) { Write-Host "  waiting: $($acct.properties.capacityModeChangeTransitionState.capacityModeTransitionStatus)" }
+        }
+        if ($steps -contains 'wait_capacity_change') { Stop-Dr 'cosmos_capacity_change_running: still in progress after 2 hours; run this phase again later.' 5 }
+        Stop-Dr 'cosmos_conversion_repreview_required: conversion finished; preview Data again before any throughput or region changes.' 6
     }
-    for ($i = 0; $steps -contains 'wait_capacity_change' -and $i -lt 240; $i++) {
-        Start-Sleep 30; $acct = Invoke-QsAz @('rest', '--method', 'get', '--url', $url); $steps = @(Get-DrCosmosSteps $acct $dr.secondary.location)
-        if ($i % 4 -eq 0) { Write-Host "  waiting: $($acct.properties.capacityModeChangeTransitionState.capacityModeTransitionStatus)" }
+    if ([string]$acct.properties.provisioningState -ine 'Succeeded') {
+        throw "cosmos_account_pending: account state is '$($acct.properties.provisioningState)'; wait until Succeeded and preview again."
     }
-    if ($steps -contains 'wait_capacity_change') { Stop-Dr 'cosmos_capacity_change_running: still in progress after 2 hours; run this phase again later.' 5 }
     # Autoscale before the second region: its throughput is billed in every region.
     $db = $primaryCfg.cosmos.databaseName
-    $containers = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'container', 'list', '--subscription', $sub, '--resource-group', $rg, '--account-name', $acct.name, '--database-name', $db) | ForEach-Object { $_.name })
-    foreach ($c in $containers) {
-        $t = Invoke-StgAzJson @('cosmosdb', 'sql', 'container', 'throughput', 'show', '--subscription', $sub, '--resource-group', $rg, '--account-name', $acct.name, '--database-name', $db, '--name', $c)
-        $autoMax = Get-DrValue $t 'resource.autoscaleSettings.maxThroughput'; $auto = [bool]$autoMax
-        if ($auto -and [int]$autoMax -eq $max) { continue }
-        if (-not $auto) { $null = Invoke-StgAzJson @('cosmosdb', 'sql', 'container', 'throughput', 'migrate', '--subscription', $sub, '--resource-group', $rg, '--account-name', $acct.name, '--database-name', $db, '--name', $c, '--throughput-type', 'autoscale') }
-        $null = Invoke-StgAzJson @('cosmosdb', 'sql', 'container', 'throughput', 'update', '--subscription', $sub, '--resource-group', $rg, '--account-name', $acct.name, '--database-name', $db, '--name', $c, '--max-throughput', "$max")
-        Write-Host "  $c autoscale maximum $max RU/s"
+    $context = [ordered]@{ subscription = $sub; resourceGroup = $rg; account = [string]$acct.name; accountId = [string]$acctId; database = [string]$db }
+    $callAz = { param([string[]]$Arguments) Invoke-StgAzJson $Arguments }
+    $plan = Get-DrCosmosThroughputPlan -Context $context -Target $max -InvokeAz $callAz
+    Show-DrCosmosThroughputPlan $plan
+    Write-Host 'Adding a region affects the whole Cosmos account; review throughput costs in every region, including any other databases.'
+    $digest = Get-DrCosmosPreviewDigest -Account $acct -Secondary $dr.secondary.location -Steps $steps -Target $max -Throughput $plan
+    if (-not $Apply) {
+        Write-DrStandbyJson $previewPath @{ schema = 'ccof.dr.cosmos.preview.v1'; digest = $digest }
+        Write-Host 'preview only; review the plan and costs before -Apply.'
+        return
+    }
+    $needsPreview = (Test-DrCosmosPlanChanges $plan) -or $steps.Count -gt 0
+    if ($needsPreview) { Assert-DrCosmosPreview $previewPath $digest }
+    if ((Test-DrCosmosPlanReduction $plan) -and -not $ApproveCosmosThroughputReduction) {
+        throw 'cosmos_throughput_reduction_approval_required: the reviewed plan reduces an autoscale maximum or may reduce guaranteed throughput during or after manual migration. Obtain explicit owner approval, then use -ApproveCosmosThroughputReduction with -Apply.'
+    }
+    if ($needsPreview) { Remove-Item -LiteralPath $previewPath -Force }
+    Invoke-DrCosmosThroughputChanges -Context $context -Plan $plan -InvokeAz $callAz
+    try { $verifiedPlan = Get-DrCosmosThroughputPlan -Context $context -Target $max -InvokeAz $callAz }
+    catch { throw "cosmos_throughput_readback_failed: throughput changes may be partial; inspect and preview again before changing regions. $($_.Exception.Message)" }
+    Assert-DrCosmosThroughputApplied -Expected $plan -Actual $verifiedPlan
+    $containers = @($verifiedPlan.containers | ForEach-Object { $_.name })
+    if ($steps.Count) {
+        $latest = Invoke-QsAz @('rest', '--method', 'get', '--url', $url)
+        $latestSteps = @(Get-DrCosmosSteps $latest $dr.secondary.location)
+        $latestDigest = Get-DrCosmosPreviewDigest -Account $latest -Secondary $dr.secondary.location -Steps $latestSteps -Target $max -Throughput $plan
+        if ([string]$latest.id -ine [string]$acctId -or [string]$latest.properties.provisioningState -ine 'Succeeded' -or $latestDigest -cne $digest) {
+            throw 'cosmos_account_changed: account locations, failover or state changed during inspection. No region change was attempted; throughput changes may be partial. Review a fresh preview.'
+        }
+        $acct = $latest
     }
     if ($steps -contains 'add_secondary_region') {
         $locs = @($acct.properties.locations | Sort-Object failoverPriority | ForEach-Object { @{ locationName = $_.locationName; failoverPriority = [int]$_.failoverPriority; isZoneRedundant = [bool]$_.isZoneRedundant } })
@@ -205,7 +279,8 @@ switch ($Phase) {
     $left = @(Get-DrCosmosSteps $acct $dr.secondary.location)
     Assert-Stg ($left.Count -eq 0 -and $acct.properties.provisioningState -ceq 'Succeeded') "Cosmos still needs: $($left -join ', ') (state $($acct.properties.provisioningState))"
     $regions = @($acct.properties.locations | Sort-Object failoverPriority | ForEach-Object { "$($_.locationName)=$($_.failoverPriority)" })
-    Save-DrPhase 'Data' @{ account = $acct.name; capacityMode = $acct.properties.capacityMode; regions = $regions; writeRegion = @($acct.properties.writeLocations)[0].locationName; serviceManagedFailover = [bool]$acct.properties.enableAutomaticFailover; autoscaleMaxThroughput = $max; containers = $containers }
+    Save-DrPhase 'Data' @{ account = $acct.name; capacityMode = $acct.properties.capacityMode; regions = $regions; writeRegion = @($acct.properties.writeLocations)[0].locationName; serviceManagedFailover = [bool]$acct.properties.enableAutomaticFailover; autoscaleMaxThroughput = $max; containers = $containers
+        throughput = @{ database = $verifiedPlan.database; containers = $verifiedPlan.containers } }
 }
 'Shells' {
     if ($Apply) {
