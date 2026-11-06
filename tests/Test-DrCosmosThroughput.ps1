@@ -52,7 +52,8 @@ if ($Child) {
                 $global:LASTEXITCODE = 3
                 return
             }
-            return (@{ name = 'fixturedb'; id = $dbId; resource = @{ id = 'fixturedb' } } | ConvertTo-Json -Depth 20 -Compress)
+            $databaseId = if ($env:DR_COSMOS_FAULT -eq 'database-id-case-mismatch') { $dbId.Replace('fixturedb', 'FIXTUREDB') } else { $dbId }
+            return (@{ name = 'fixturedb'; id = $databaseId; resource = @{ id = 'fixturedb' } } | ConvertTo-Json -Depth 20 -Compress)
         }
         if ($command -match '^cosmosdb sql container list ') {
             if ($env:DR_COSMOS_FAULT -eq 'list-forbidden') {
@@ -66,7 +67,9 @@ if ($Child) {
             $found = @($s.containers | Where-Object name -CEQ $name)
             if ($env:DR_COSMOS_FAULT -eq 'container-disappeared' -and $name -ceq 'container0') { $found = @() }
             if ($found.Count -eq 1) {
-                $container = @{ name = $name; id = "$dbId/containers/$name"; resource = @{ id = $name } }
+                $containerId = "$dbId/containers/$name"
+                if ($env:DR_COSMOS_FAULT -eq 'container-id-case-mismatch') { $containerId = "$dbId/containers/$($name.ToUpperInvariant())" }
+                $container = @{ name = $name; id = $containerId; resource = @{ id = $name } }
                 if ($env:DR_COSMOS_FAULT -eq 'container-dedicated-option') { $container.options = @{ throughput = 400 } }
                 return ($container | ConvertTo-Json -Depth 20 -Compress)
             }
@@ -139,6 +142,9 @@ if ($Child) {
             }
             if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-id-other-container') {
                 $offerId = "$dbId/sqlContainers/other-container/throughputSettings/default"
+            }
+            if ($kind -eq 'container' -and $env:DR_COSMOS_FAULT -eq 'offer-id-case-mismatch') {
+                $offerId = "$dbId/sqlContainers/$($name.ToUpperInvariant())/throughputSettings/default"
             }
             return (@{ name = 'default'; id = $offerId; resource = $resource } | ConvertTo-Json -Depth 20 -Compress)
         }
@@ -307,13 +313,17 @@ try {
     $wrongOffer = Run-Data $false
     Check 'throughput response for a different container fails closed' (
         $wrongOffer.code -ne 0 -and $wrongOffer.output -match 'cosmos_throughput_invalid' -and @(Get-Writes $wrongOffer).Count -eq 0)
+    Reset-Fixture $null @(@{ name = 'container0'; mode = 'autoscale'; max = 1000 }) 1000 'offer-id-case-mismatch'
+    $wrongOfferCase = Run-Data $false
+    Check 'throughput response for a differently cased container fails closed' (
+        $wrongOfferCase.code -ne 0 -and $wrongOfferCase.output -match 'cosmos_throughput_invalid' -and @(Get-Writes $wrongOfferCase).Count -eq 0)
 
     Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 'known-notfound-suffix'
     $knownSuffix = Run-Data $false
     Check 'the documented NotFound help-link suffix is accepted only with a verified shared database' (
         $knownSuffix.code -eq 0 -and $knownSuffix.output -match '(?s)container0.*shared' -and @(Get-Writes $knownSuffix).Count -eq 0)
 
-    foreach ($fault in 'database-forbidden', 'list-forbidden', 'container-forbidden', 'container-network', 'container-throttled', 'other-notfound', 'notfound-with-forbidden', 'notfound-suffix-with-forbidden', 'database-malformed', 'database-missing', 'container-disappeared', 'container-dedicated-option', 'pending') {
+    foreach ($fault in 'database-forbidden', 'list-forbidden', 'container-forbidden', 'container-network', 'container-throttled', 'other-notfound', 'notfound-with-forbidden', 'notfound-suffix-with-forbidden', 'database-malformed', 'database-missing', 'database-id-case-mismatch', 'container-disappeared', 'container-id-case-mismatch', 'container-dedicated-option', 'pending') {
         Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 $fault
         $bad = Run-Data $false
         $expect = switch ($fault) {
@@ -327,7 +337,9 @@ try {
             'notfound-suffix-with-forbidden' { 'AuthorizationFailed' }
             'database-malformed' { 'cosmos_throughput_invalid' }
             'database-missing' { 'cosmos_resource_unverified' }
+            'database-id-case-mismatch' { 'cosmos_resource_unverified' }
             'container-disappeared' { 'cosmos_resource_unverified' }
+            'container-id-case-mismatch' { 'cosmos_resource_unverified' }
             'container-dedicated-option' { 'cosmos_throughput_scope_unknown' }
             'pending' { 'cosmos_throughput_pending' }
         }

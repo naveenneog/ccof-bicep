@@ -32,7 +32,14 @@ function Assert-DrCosmosResource {
     $resourceName = [string](Get-DrValue $resource 'name')
     $resourceId = [string](Get-DrValue $resource 'id')
     $cosmosId = [string](Get-DrValue $resource 'resource.id')
-    if ($resourceName -cne $Name -or $resourceId -ine $expectedId -or ($cosmosId -and $cosmosId -cne $Name)) {
+    $identityOk = $resourceId -ieq $expectedId
+    if ($identityOk) {
+        $parts = @($resourceId -split '/')
+        $identityOk = if ($Kind -ceq 'container') {
+            $parts[-3] -ceq $Context.database -and $parts[-1] -ceq $Name
+        } else { $parts[-1] -ceq $Context.database }
+    }
+    if ($resourceName -cne $Name -or -not $identityOk -or ($cosmosId -and $cosmosId -cne $Name)) {
         throw "cosmos_resource_unverified: $Kind '$Name' did not return the expected name and resource ID; inspect the configured account and database."
     }
     return $resource
@@ -70,7 +77,15 @@ function Get-DrCosmosOffer {
         # The ARM throughput response example uses sqlContainers, although its GET path uses containers.
         $validIds += "$($Context.accountId)/sqlDatabases/$($Context.database)/sqlContainers/$Name/throughputSettings/default"
     }
-    if ($validIds -inotcontains [string](Get-DrValue $response 'id') -or [string](Get-DrValue $response 'name') -cne 'default') {
+    $offerId = [string](Get-DrValue $response 'id')
+    $identityOk = $validIds -icontains $offerId
+    if ($identityOk) {
+        $parts = @($offerId -split '/')
+        $identityOk = if ($Kind -ceq 'container') {
+            $parts[-5] -ceq $Context.database -and $parts[-3] -ceq $Name
+        } else { $parts[-3] -ceq $Context.database }
+    }
+    if (-not $identityOk -or [string](Get-DrValue $response 'name') -cne 'default') {
         throw "cosmos_throughput_invalid: $Kind '$Name' returned an unexpected throughput resource ID or name."
     }
     $pending = [string](Get-DrValue $response 'resource.offerReplacePending')
