@@ -21,6 +21,18 @@ if ($StubChild) {
         New-Item -ItemType File -Path $path
     }
     function global:Start-Sleep { param([int]$Seconds) }
+    # Runs a real Verify once while a configuration change is in flight, as a concurrent operator session would.
+    function global:Invoke-FdConcurrentVerify {
+        $marker = Join-Path $env:FD_TEST_SCRATCH 'concurrent-verify.done'
+        if ($env:FD_TEST_CASE -ne 'concurrent-verify' -or (Test-Path -LiteralPath $marker)) { return }
+        New-Item -ItemType File -Path $marker | Out-Null
+        $env:FD_TEST_CASE = ''
+        $nested = & pwsh -NoProfile -File $env:FD_TEST_SCRIPT -StubChild -Phase Verify -ConfigPath $env:FD_TEST_CFG 2>&1
+        $nestedCode = $LASTEXITCODE
+        $env:FD_TEST_CASE = 'concurrent-verify'
+        $between = Get-Content -LiteralPath $env:FD_TEST_FD_STATE -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+        Write-FdFakeLog @{ kind = 'concurrent-verify'; code = $nestedCode; output = ($nested -join "`n"); verifiedAtPresent = $between.Contains('verifiedAt') }
+    }
     function global:az {
         $arguments = @($args)
         Write-FdFakeLog @{ kind = 'az'; args = $arguments }
@@ -73,6 +85,7 @@ if ($StubChild) {
                 if ($arguments -contains 'what-if') { return '{"changes":[]}' }
                 $saved = Get-Content -LiteralPath $env:FD_TEST_FD_STATE -Raw | ConvertFrom-Json -AsHashtable -Depth 30
                 Write-FdFakeLog @{ kind = 'deployment-observation'; verifiedAtPresent = $saved.Contains('verifiedAt') }
+                Invoke-FdConcurrentVerify
                 if ($env:FD_TEST_CASE -eq 'deployment-failure') { return '{"properties":{"provisioningState":"Failed"}}' }
                 return (@{ properties = @{ provisioningState = 'Succeeded'; outputs = @{
                     profileName = @{ value = 'fixture-edge-fd' }; profileId = @{ value = $env:FD_TEST_PROFILE_ID }
@@ -138,6 +151,7 @@ if ($StubChild) {
         $origins = Get-Content -LiteralPath $env:FD_TEST_ORIGINS -Raw | ConvertFrom-Json -AsHashtable -Depth 30
         if ($Method -ieq 'Patch') {
             if (-not $origins.Contains($path)) { throw "Unexpected fake origin: $path" }
+            Invoke-FdConcurrentVerify
             if ($env:FD_TEST_CASE -eq 'patch-failure') { return [pscustomobject]@{ StatusCode = 500; Headers = @{}; Content = '{}' } }
             $payload = $Body | ConvertFrom-Json -AsHashtable -Depth 20
             $pending = @{ path = $path; properties = $payload.properties; polls = 0 }
@@ -626,6 +640,47 @@ try {
     Check 'state writers refuse to proceed while another run holds the state lock' (
         $r.code -ne 0 -and $r.flat -match 'frontdoor_state_locked' -and (Mutations $r).Count -eq 0 -and
         (Get-Content -LiteralPath $statePath -Raw) -ceq $before) $r
+    # A Verify that completes while Deploy, DrainPrimary or RestorePrimary is changing the configuration must not
+    # leave route evidence behind for Lockdown or DrainPrimary to use.
+    foreach ($changePhase in 'Deploy', 'DrainPrimary', 'RestorePrimary') {
+        Reset-Fixture
+        $state = Read-Fixture $statePath; $state.approvedConnections = $connectionIds; $state.reviewedConnections = $connectionIds
+        $state.Remove('previousApprovedConnections'); Write-Fixture $statePath $state
+        Remove-Item -LiteralPath (Join-Path $scratch 'concurrent-verify.done') -ErrorAction SilentlyContinue
+        $env:FD_TEST_CASE = 'concurrent-verify'
+        $r = Run-Driver $changePhase $true $false ($changePhase -ne 'RestorePrimary')
+        $env:FD_TEST_CASE = ''
+        $after = Read-Fixture $statePath
+        $nested = @($r.calls | Where-Object { $_.kind -eq 'concurrent-verify' })
+        Check "concurrent Verify really recorded verification during $changePhase" (
+            $nested.Count -eq 1 -and $nested[0].code -eq 0 -and $nested[0].verifiedAtPresent) $r
+        Check "$changePhase fails and clears verification recorded during its configuration change" (
+            $r.code -ne 0 -and $r.flat -match 'frontdoor_state_changed' -and -not $after.Contains('verifiedAt') -and
+            $after.Contains('verificationInvalidatedAt') -and -not $after.Contains('primaryDrainedAt') -and
+            -not $after.Contains('primaryRestoredAt') -and -not $after.Contains('deployedAt')) $r
+        $r = Run-Driver 'Lockdown' $true $false $true
+        Check "Lockdown refuses after the concurrent Verify during $changePhase" (
+            $r.code -ne 0 -and $r.output -match 'frontdoor_verify_required' -and (Mutations $r).Count -eq 0) $r
+    }
+
+    Import-Module (Join-Path $root 'infra\dr\DrFrontDoorState.psm1') -Force
+    $unitPath = Join-Path $scratch 'unit-frontdoor-state.json'
+    Write-Fixture $unitPath @{ verifiedAt = 'old'; stem = 'fixture-edge' }
+    $read = Read-DrFrontDoorState -StatePath $unitPath
+    Write-Fixture $unitPath @{ verifiedAt = 'concurrent'; stem = 'fixture-edge' }
+    $changedBefore = Get-Content -LiteralPath $unitPath -Raw
+    $err = ''; try { $null = Save-DrFrontDoorState -StatePath $unitPath -Value $read.State -ExpectedHash $read.Hash } catch { $err = $_.Exception.Message }
+    Check 'shared state save refuses a file changed since it was read and writes nothing' (
+        $err -match '^frontdoor_state_changed' -and (Get-Content -LiteralPath $unitPath -Raw) -ceq $changedBefore)
+    $read = Read-DrFrontDoorState -StatePath $unitPath; $read.State.Remove('verifiedAt')
+    $hash = Save-DrFrontDoorState -StatePath $unitPath -Value $read.State -ExpectedHash $read.Hash
+    Check 'shared state save writes when unchanged and returns the hash of what it wrote' (
+        $hash -ceq (Read-DrFrontDoorState -StatePath $unitPath).Hash -and -not (Read-Fixture $unitPath).Contains('verifiedAt'))
+    $before = Get-Content -LiteralPath $unitPath -Raw
+    Clear-DrFrontDoorStateEvidence -StatePath $unitPath -Fields @('verifiedAt')
+    Check 'evidence clearing always changes the file so in-flight saves fail' (
+        (Get-Content -LiteralPath $unitPath -Raw) -cne $before -and (Read-Fixture $unitPath).Contains('verificationInvalidatedAt'))
+    Check 'shared state helpers leave no temporary files' (@(Get-ChildItem -LiteralPath $scratch, $standbyDir -Filter '*.tmp').Count -eq 0)
 } finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }

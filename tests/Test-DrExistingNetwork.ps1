@@ -417,6 +417,14 @@ try {
     $afterVerify = Get-Content -LiteralPath $standbyEvidencePath -Raw | ConvertFrom-Json -AsHashtable
     $afterFd = Get-Content -LiteralPath $fdEvidencePath -Raw | ConvertFrom-Json -AsHashtable
     Check 'failed standby Verify clears its old evidence and Front Door verification' ($verifyCode -ne 0 -and -not $afterVerify.phases.Contains('Verify') -and $afterVerify.phases.Contains('Code') -and -not $afterFd.Contains('verifiedAt') -and "$(Get-DrFrontDoorReadinessProblem $afterVerify)" -match 'frontdoor_standby_phase_missing: Verify')
+    (New-PhaseEvidence) | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $standbyEvidencePath
+    $fdEvidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $fdEvidencePath
+    $beforeStandby = Get-Content -LiteralPath $standbyEvidencePath -Raw
+    $beforeFd = Get-Content -LiteralPath $fdEvidencePath -Raw
+    $fdLock = [IO.File]::Open((Join-Path $shellCfg.standby.stateDirectory 'frontdoor-state.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try { $lockedVerify = & pwsh -NoProfile -File $PSCommandPath -StubChild -StubStandby -ConfigPath $cfgPath -Phase Verify 2>&1; $lockedCode = $LASTEXITCODE } finally { $fdLock.Dispose() }
+    $lockedText = ($lockedVerify -join "`n") -replace '\x1b\[[0-9;]*m|[\s|]', ''
+    Check 'standby uses the shared Front Door state lock and changes nothing while another run holds it' ($lockedCode -ne 0 -and $lockedText -match 'frontdoor_state_locked' -and (Get-Content -LiteralPath $fdEvidencePath -Raw) -ceq $beforeFd -and (Get-Content -LiteralPath $standbyEvidencePath -Raw) -ceq $beforeStandby)
     Remove-Item -LiteralPath $standbyEvidencePath, $fdEvidencePath
     $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath
 

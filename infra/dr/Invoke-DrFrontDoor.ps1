@@ -44,41 +44,23 @@ function Invoke-DrAz([string[]]$Arguments, [switch]$AllowMissing) {
     return $json | ConvertFrom-Json -AsHashtable -Depth 100
 }
 $script:fdStateHash = $null
-# State reads and writes run under a short exclusive lock. A save succeeds only when the file still has the
-# content this run last read, so a long phase cannot write back a snapshot that another run has since changed.
-function Use-FdStateLock([scriptblock]$Action) {
-    $lockPath = Join-Path (Split-Path $statePath -Parent) 'frontdoor-state.lock'
-    $lock = $null
-    for ($attempt = 1; -not $lock; $attempt++) {
-        try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
-        catch [IO.IOException] {
-            if ($attempt -ge 50) { throw "frontdoor_state_locked: another Front Door run is using $statePath; retry after it finishes." }
-            [Threading.Thread]::Sleep(100)
-        }
-    }
-    try { & $Action } finally { $lock.Dispose() }
-}
-function Get-FdStateBytes {
-    if (-not (Test-Path -LiteralPath $statePath)) { return $null }
-    return [IO.File]::ReadAllBytes($statePath)
-}
-function Get-FdStateHash($Bytes) {
-    if ($null -eq $Bytes) { return 'absent' }
-    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$Bytes))
-}
-function Save-FdState($Value) {
-    $json = $Value | ConvertTo-Json -Depth 100
-    Use-FdStateLock {
-        if ((Get-FdStateHash (Get-FdStateBytes)) -cne $script:fdStateHash) {
-            throw "frontdoor_state_changed: $statePath changed after this run read it; no state was written. Rerun the phase."
-        }
-        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
-        $temp = "$statePath.$PID.tmp"
-        [IO.File]::WriteAllBytes($temp, $bytes)
-        [IO.File]::Move($temp, $statePath, $true)
-        $script:fdStateHash = Get-FdStateHash $bytes
-    }
+# State access goes through DrFrontDoorState.psm1 (short exclusive lock, compare-before-write, atomic replace).
+# Save-FdState expects the file to be unchanged since the hash given (by default, this run's last read).
+function Save-FdState($Value, [string]$ExpectedHash = $script:fdStateHash) {
+    $script:fdStateHash = Save-DrFrontDoorState -StatePath $statePath -Value $Value -ExpectedHash $ExpectedHash
     Write-Host "Front Door state: $statePath"
+}
+# For phases that changed Front Door configuration: if the state changed concurrently, any verification
+# recorded meanwhile may describe the old or half-applied configuration, so it is cleared before failing.
+function Save-FdChangedConfigState($Value, [string]$ExpectedHash) {
+    try { Save-FdState $Value $ExpectedHash }
+    catch {
+        if ($_.Exception.Message -like 'frontdoor_state_changed:*') {
+            Clear-DrFrontDoorStateEvidence -StatePath $statePath -Fields @('verifiedAt')
+            throw "$($_.Exception.Message) Route verification recorded meanwhile was cleared; rerun -Phase $Phase."
+        }
+        throw
+    }
 }
 # Stage 1 records apimId and apimGatewayUrl only when it created the APIM. For an existing APIM the ID
 # comes from the staged config the same way as Get-StgApim (Staged.Common.ps1) and the URL from ARM.
@@ -103,11 +85,9 @@ function Get-FdApim($Outputs, $Cfg, [string]$Region) {
     return @{ Id = $apimId; Host = $apimHost }
 }
 function Get-FdState {
-    Use-FdStateLock { $script:fdStateBytes = Get-FdStateBytes }
-    $bytes = $script:fdStateBytes
-    $script:fdStateHash = Get-FdStateHash $bytes
-    if ($null -eq $bytes) { return $null }
-    return [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable -Depth 100
+    $read = Read-DrFrontDoorState -StatePath $statePath
+    $script:fdStateHash = $read.Hash
+    return $read.State
 }
 # Approvals saved before reviewed provenance existed were selected by request description and are not trusted.
 function Get-FdApprovalProblem($State, [int]$Expected) {
@@ -229,6 +209,7 @@ function Assert-FdRestorePreserved($Before, $After, $Spec) {
 
 Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
 Import-Module (Join-Path $here 'DrStandby.psm1') -Force
+Import-Module (Join-Path $here 'DrFrontDoorState.psm1') -Force
 if ($PrimaryOnly) {
     $phaseProblem = Get-DrFrontDoorPhaseProblem -Phase $Phase -PrimaryOnly -State $null
     if ($phaseProblem) { Stop-Dr $phaseProblem }
@@ -334,13 +315,17 @@ Write-Host "== Front Door $Phase ($mode, $fdMode), profile $profileStem, resourc
 
 switch ($Phase) {
         { $_ -in 'Deploy', 'DrainPrimary' } {
+            # The pre-deployment snapshot and its hash are kept across the long deployment and the result is
+            # saved against that hash. A concurrent change (for example a Verify recording verifiedAt against
+            # the old or half-applied configuration) makes the save fail instead of being preserved.
+            $state = Get-FdState
             if ($Phase -eq 'DrainPrimary') {
-                $state = Get-FdState
                 if (-not $state -or -not (Get-DrValue $state 'verifiedAt')) { Stop-Dr 'frontdoor_verify_required: verify both Front Door routes before draining the primary.' 3 }
                 $approvalProblem = Get-FdApprovalProblem $state $expectedConnections
                 if ($approvalProblem) { Stop-Dr $approvalProblem 3 }
-                if ($Apply) { $state.Remove('verifiedAt'); Save-FdState $state }
             }
+            if ($Apply -and $state) { $state.Remove('verifiedAt'); Save-FdState $state }
+            $deployStateHash = $script:fdStateHash
         $parameterFile = Join-Path $standbyStateDir 'frontdoor.parameters.json'
         $doc = [ordered]@{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = [ordered]@{} }
         foreach ($k in $parameters.Keys) { $doc.parameters[$k] = @{ value = $parameters[$k] } }
@@ -357,8 +342,8 @@ switch ($Phase) {
         $deployment = Invoke-DrAz (@('deployment', 'group', 'create', '--mode', 'Incremental') + $args)
         if ($deployment.properties.provisioningState -cne 'Succeeded') { throw "frontdoor_deploy_failed: $($deployment.properties.provisioningState)" }
         $out = @{}; foreach ($k in $deployment.properties.outputs.Keys) { $out[$k] = $deployment.properties.outputs[$k].value }
-        $state = Get-FdState
         if (-not $state) { $state = @{} }
+        $state.Remove('verifiedAt')
         $state = Set-DrFrontDoorStateMode -State $state -Mode $fdMode
         $state.stem = $profileStem; $state.subscriptionId = $sub; $state.resourceGroup = $rg
         $state.profileName = $out.profileName; $state.profileId = $out.profileId; $state.endpointHostName = $out.endpointHostName
@@ -366,13 +351,14 @@ switch ($Phase) {
         $state.deployedAt = [DateTime]::UtcNow.ToString('o'); $state.outputs = $out
         if ($activatingStandby) { $state.standbyReadinessConfirmedAt = [DateTime]::UtcNow.ToString('o') }
         if ($Phase -eq 'DrainPrimary') { $state.primaryDrainedAt = [DateTime]::UtcNow.ToString('o') }
-        Save-FdState $state
+        Save-FdChangedConfigState $state $deployStateHash
         Write-Host "Front Door deployed: https://$($out.endpointHostName)"
         if ($Phase -eq 'Deploy') { Write-Host 'Private Link requests are not yet approved. Run -Phase Approve after reviewing the pending origins.' }
         elseif ($Phase -eq 'DrainPrimary') { Write-Host 'The primary APIM and admin origin host headers are faulted; AFD probes should fail and select region B.' }
     }
     'RestorePrimary' {
         $state = Get-FdState
+        $restoreStateHash = $script:fdStateHash
         $profileId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Cdn/profiles/$profileStem-fd"
         $savedApims = @(Get-DrValue $state 'apimIds' | Where-Object { $_ })
         $savedSites = @(Get-DrValue $state 'adminSiteIds' | Where-Object { $_ })
@@ -468,8 +454,8 @@ switch ($Phase) {
                 throw "frontdoor_restore_final_readback_failed: $($spec.id) is no longer in the requested state; inspect both primary origins."
             }
         }
-        $state.primaryRestoredAt = [DateTime]::UtcNow.ToString('o')
-        Save-FdState $state
+        $state.primaryRestoredAt = [DateTime]::UtcNow.ToString('o'); $state.Remove('verifiedAt')
+        Save-FdChangedConfigState $state $restoreStateHash
         Write-Host 'Primary origin control-plane settings verified. Edge propagation and live traffic must still be checked; standby origins were not changed.'
     }
     'Approve' {

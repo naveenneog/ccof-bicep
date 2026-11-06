@@ -88,12 +88,16 @@ Entra approval, private publishing or live B traffic. Preserve the updated state
 securely after each phase. Do not run standby or Front Door phases concurrently in different
 sessions: the standby state files and readiness checks are not a distributed lock, and the owner must
 stop if the underlying deployment or readiness changes during the review. On one machine, the Front
-Door driver reads and writes `frontdoor-state.json` under a short exclusive `frontdoor-state.lock`
-file and writes atomically. It writes only if the file still has the content it last read, so a
-long-running phase (for example `Verify` route polling) cannot overwrite a concurrent change:
-it stops with `frontdoor_state_changed` and writes nothing. `frontdoor_state_locked` means another
-run held the lock for about five seconds. In either case, inspect the state and rerun the phase. This
-does not protect copies of the state directory on other machines.
+door driver and the standby driver read and write `frontdoor-state.json` under a short exclusive
+`frontdoor-state.lock` file and write atomically. They write only if the file still has the content
+they last read, so a long-running phase (for example `Verify` route polling) cannot overwrite a
+concurrent change: it stops with `frontdoor_state_changed` and writes nothing. `Deploy`,
+`DrainPrimary` and `RestorePrimary` compare against the state read before their configuration
+change; if it changed meanwhile (for example a `Verify` recorded `verifiedAt` against the old or
+half-applied configuration), they remove `verifiedAt`, record `verificationInvalidatedAt` and stop
+with `frontdoor_state_changed`. Rerun that phase and then `Verify`. `frontdoor_state_locked` means
+another run held the lock for about five seconds. In either case, inspect the state and rerun the
+phase. This does not protect copies of the state directory on other machines.
 
 ### Independent connection-owner review is mandatory
 
