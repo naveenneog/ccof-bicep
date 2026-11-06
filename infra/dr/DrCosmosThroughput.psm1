@@ -4,7 +4,38 @@ Import-Module (Join-Path $PSScriptRoot 'DrStandby.psm1') -DisableNameChecking
 
 function Test-DrCosmosMissingOffer {
     param([string]$Message)
-    return $Message -match '\Aaz cosmosdb sql failed:\s*ERROR:\s*\(NotFound\)\s*Entity with the specified id does not exist in the system\.?(?:\s+More info:\s*https://aka\.ms/cosmosdb-tsg-not-found\.?)?\s*\z'
+    $prefix = '\Aaz cosmosdb sql failed:\s*ERROR:\s*\(NotFound\)\s*Entity with the specified id does not exist in the system'
+    if ($Message -notmatch "$prefix(?=\.|,|\s|\z)") { return $false }
+    if ($Message -match '(?i)Forbidden|Unauthorized|AuthorizationFailed|AuthorizationFailure|AuthenticationFailed|AuthenticationFailure|AccessDenied|PermissionDenied|ClientAuthenticationError|ProxyAuthentication|NetworkError|NetworkException|ConnectionError|ConnectionFailed|ConnectionResetError|NameResolutionError|ServiceRequestError|RemoteDisconnected|CERTIFICATE_VERIFY_FAILED') { return $false }
+    if ($Message -match '(?i)\b(?:BadRequest|TooManyRequests|Throttled|ServiceUnavailable|InternalServerError|timed\s*out|timeout(?:exception)?|connection\s+(?:refused|reset|closed|failed|error)|network\s+(?:error|failure|unreachable)|(?:dns\s+)?name\s+resolution\s+(?:failed|failure|error)|socketexception)\b') { return $false }
+    if ($Message -match "$prefix\.?(?:\s+More info:\s*https://aka\.ms/cosmosdb-tsg-not-found\.?)?\s*\z") { return $true }
+
+    # Invoke-QsAz flattens Azure-core stderr; its code, message and diagnostic signals must agree.
+    $rest = $Message.Substring(([regex]::Match($Message, $prefix, 'IgnoreCase')).Length)
+    if ($rest -match '(?i)\bERROR\s*:') { return $false }
+    $codes = [regex]::Matches($Message, '(?i)(?<![A-Za-z0-9_])(?:(?:inner[\s_-]*)?(?:error[\s_-]*)?code|[A-Za-z][A-Za-z0-9_-]*code)["'']?\s*[:=]')
+    $errorCodes = 0
+    foreach ($code in $codes) {
+        if ($code.Value -match '(?i)\A(?:sub)?status[\s_-]*code\b') { continue }
+        if ($code.Value -match '(?i)\Acode\b' -and $Message.Substring(0, $code.Index) -match '(?i)(?:sub)?status[\s_-]+\z') { continue }
+        $errorCodes++
+        if ($Message.Substring($code.Index + $code.Length) -notmatch '\A\s*["'']?NotFound["'']?(?:\s|[,;}\]]|\z)') { return $false }
+    }
+    if (-not $errorCodes) { return $false }
+    $messages = [regex]::Matches($Message, '(?i)(?<![A-Za-z0-9_])message["'']?\s*[:=]')
+    if (-not $messages.Count) { return $false }
+    foreach ($entry in $messages) {
+        if ($Message.Substring($entry.Index + $entry.Length) -notmatch '\A\s*["'']?Entity with the specified id does not exist in the system(?=\.|,|\s|["'']|\z)') { return $false }
+    }
+    $statuses = [regex]::Matches($Message, '(?i)(?<![A-Za-z0-9_])(?:HTTP(?:/[0-9.]+)?(?:\s+status(?:\s+code)?)?|status[\s_-]*code)\b["'']?\s*[:=]?\s*')
+    foreach ($status in $statuses) {
+        if ($Message.Substring($status.Index + $status.Length) -notmatch '\A["'']?(?:404|NotFound)["'']?(?:\s|[,;}\]]|\z)') { return $false }
+    }
+    $transports = [regex]::Matches($Message, '(?i)(?<![A-Za-z0-9_])TransportException["'']?\s*[:=]')
+    foreach ($transport in $transports) {
+        if ($Message.Substring($transport.Index + $transport.Length) -notmatch '\A\s*["'']?null["'']?(?:\s|[,;}\]]|\z)') { return $false }
+    }
+    return $true
 }
 
 function Get-DrCosmosResourceArguments {

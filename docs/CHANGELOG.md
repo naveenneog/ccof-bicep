@@ -1,5 +1,17 @@
 # Change log
 
+## 2026-11-06 - DR Cosmos throughput and existing primary APIM
+
+- Data previews database and dedicated-container offers, including mixed shared/dedicated throughput.
+  It recognizes the documented missing-offer error and Azure-core multiline form only with verified
+  resources and consistent diagnostics; unexpected errors stop. Throughput reductions and manual
+  migrations require explicit approval, and serverless conversion requires a fresh preview.
+- With a blank primary Stage 1 APIM ID, standby resolves a complete `apim.existing` reference using
+  the staged driver's logic. It prints the resolved ID for review, rejects missing, invalid or
+  conflicting references, and does not ask an operator to edit state.
+- Offline actual-driver tests cover both fixes, negative cases and mutation checks. Live response
+  behavior and the configured primary APIM still require owner verification.
+
 ## 2026-11-06 - DR existing-network and manual Entra safety
 
 - Standby can select an existing VNet in a separate resource group. Bootstrap validates its

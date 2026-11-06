@@ -119,6 +119,28 @@ if ($Child) {
                 $global:LASTEXITCODE = 3
                 return
             }
+            if ($operation -eq 'show' -and $kind -eq 'container' -and $name -ceq 'container0' -and $env:DR_COSMOS_FAULT -like 'core-notfound-*') {
+                $message = 'Entity with the specified id does not exist in the system. More info: https://aka.ms/cosmosdb-tsg-not-found'
+                if ($env:DR_COSMOS_FAULT -in @('core-notfound-diagnostics', 'core-notfound-auth', 'core-notfound-network', 'core-notfound-status', 'core-notfound-transport')) {
+                    $status = if ($env:DR_COSMOS_FAULT -eq 'core-notfound-status') { 403 } else { 404 }
+                    $transport = if ($env:DR_COSMOS_FAULT -eq 'core-notfound-transport') { 'SocketException' } else { 'null' }
+                    $message += ", ActivityId: 00000000-0000-4000-8000-000000000001, RequestStartTime: 2026-01-01T00:00:00Z, StatusCode: $status, SubStatusCode: 0, TransportException: $transport, Microsoft.Azure.Documents.Common/2.14.0"
+                }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-auth') { $message += ', AuthorizationFailed' }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-auth-substring') { $message += ', AuthorizationFailedException' }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-network') { $message += ', connection timed out' }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-network-dns') { $message += ', DNS name resolution failed' }
+                Write-Error "ERROR: (NotFound) $message" -ErrorAction Continue
+                Write-Error 'Code: NotFound' -ErrorAction Continue
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-other-code') { Write-Error 'Code: BadRequest' -ErrorAction Continue }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-other-equals') { Write-Error 'ErrorCode=Conflict' -ErrorAction Continue }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-status-error-code') { Write-Error 'Status Error Code: Conflict' -ErrorAction Continue }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-prefixed-error-code') { Write-Error 'BackendErrorCode: Conflict' -ErrorAction Continue }
+                if ($env:DR_COSMOS_FAULT -eq 'core-notfound-other-message') { $message = 'Some other endpoint could not be found' }
+                Write-Error "Message: $message" -ErrorAction Continue
+                $global:LASTEXITCODE = 3
+                return
+            }
             if ($operation -eq 'show' -and $kind -eq 'database' -and $env:DR_COSMOS_FAULT -eq 'database-malformed') {
                 return '{"name":"default","resource":{}}'
             }
@@ -332,7 +354,17 @@ try {
     Check 'the documented NotFound help-link suffix is accepted only with a verified shared database' (
         $knownSuffix.code -eq 0 -and $knownSuffix.output -match '(?s)container0.*shared' -and @(Get-Writes $knownSuffix).Count -eq 0)
 
-    foreach ($fault in 'database-forbidden', 'list-forbidden', 'container-forbidden', 'container-network', 'container-throttled', 'other-notfound', 'notfound-with-forbidden', 'notfound-suffix-with-forbidden', 'database-malformed', 'database-missing', 'database-id-case-mismatch', 'container-disappeared', 'container-id-case-mismatch', 'container-dedicated-option', 'pending') {
+    foreach ($fault in 'core-notfound-basic', 'core-notfound-diagnostics') {
+        Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 $fault
+        $corePreview = Run-Data $false
+        $coreApply = Run-Data $true
+        Check "$fault previews and applies shared throughput without changing its offer" (
+            $corePreview.code -eq 0 -and $corePreview.output -match '(?s)container0.*shared' -and
+            @(Get-Writes $corePreview).Count -eq 0 -and $coreApply.code -eq 0 -and
+            @($coreApply.calls | Where-Object { $_ -match '^cosmosdb sql (database|container) throughput (migrate|update) ' }).Count -eq 0)
+    }
+
+    foreach ($fault in 'database-forbidden', 'list-forbidden', 'container-forbidden', 'container-network', 'container-throttled', 'other-notfound', 'notfound-with-forbidden', 'notfound-suffix-with-forbidden', 'core-notfound-auth', 'core-notfound-auth-substring', 'core-notfound-network', 'core-notfound-network-dns', 'core-notfound-status', 'core-notfound-transport', 'core-notfound-other-code', 'core-notfound-other-equals', 'core-notfound-status-error-code', 'core-notfound-prefixed-error-code', 'core-notfound-other-message', 'database-malformed', 'database-missing', 'database-id-case-mismatch', 'container-disappeared', 'container-id-case-mismatch', 'container-dedicated-option', 'pending') {
         Reset-Fixture @{ mode = 'autoscale'; max = 1000 } @(@{ name = 'container0'; mode = 'shared' }) 1000 $fault
         $bad = Run-Data $false
         $expect = switch ($fault) {
@@ -344,6 +376,17 @@ try {
             'other-notfound' { 'Some other endpoint' }
             'notfound-with-forbidden' { 'AuthorizationFailed' }
             'notfound-suffix-with-forbidden' { 'AuthorizationFailed' }
+            'core-notfound-auth' { 'AuthorizationFailed' }
+            'core-notfound-auth-substring' { 'AuthorizationFailedException' }
+            'core-notfound-network' { 'connection timed out' }
+            'core-notfound-network-dns' { 'DNS name resolution failed' }
+            'core-notfound-status' { 'StatusCode: 403' }
+            'core-notfound-transport' { 'TransportException: SocketException' }
+            'core-notfound-other-code' { 'BadRequest' }
+            'core-notfound-other-equals' { 'ErrorCode=Conflict' }
+            'core-notfound-status-error-code' { 'Status Error Code: Conflict' }
+            'core-notfound-prefixed-error-code' { 'BackendErrorCode: Conflict' }
+            'core-notfound-other-message' { 'Some other endpoint' }
             'database-malformed' { 'cosmos_throughput_invalid' }
             'database-missing' { 'cosmos_resource_unverified' }
             'database-id-case-mismatch' { 'cosmos_resource_unverified' }

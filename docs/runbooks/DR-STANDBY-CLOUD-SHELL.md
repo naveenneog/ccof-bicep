@@ -487,6 +487,12 @@ unless separately approved with `-ApproveExistingVnetUpdate`
 | `Code` | Builds and publishes resolver, sync, reconciler and admin packages with `-PrivatePublisher`; no seed or snapshot | code hashes, commit |
 | `Verify` | Azure read-only: lists functions, checks both writers off and the APIM API. It writes local evidence and a phase record even without `-Apply` | `standby.verify.json` and `Verify` record |
 
+If the primary uses an existing APIM, Stage 1 may have no APIM ID. After Shells, the driver resolves
+the primary gateway from the primary staged configuration's `apim.existing.subscriptionId`,
+`resourceGroup` and `name`, and prints its resource ID. Have the owner confirm that ID before applying
+Grants or Config. A missing, invalid or conflicting reference stops the driver; do not edit state by
+hand or rerun Stage 1 merely to populate an existing APIM ID.
+
 Obtain each approval before its apply. Run these commands in order, one at a time; the wrapper
 forwards the switches to [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1):
 
@@ -728,6 +734,7 @@ The saved-record check does not verify actual Entra settings or traffic. Remaini
 | `primary_names_unexpected` | The primary's apps are not named `...-resolver` with storage `...res` | The driver cannot derive region B names: stop and ask the repository owners |
 | `standby_storage_name_too_long` | Stem + suffix + app code exceeds 24 characters | A one-letter `standby.nameSuffix` (before `Shells`) |
 | `identity_missing` / `standby_identity_mismatch` | `identityNames` lacks a `sync` or `reconciler` name, or the identity was not created by P1/P2 | Fix `identityNames`; rerun P1/P2 Bootstrap; both identities must exist in the shared group |
+| `primary_apim_configuration_missing` / `_invalid` / `_conflict` | The primary Stage 1 has no APIM ID and the existing-APIM reference is incomplete, invalid or disagrees with Stage 1 | Reconcile `apim.existing` with the APIM owner and its verified resource ID; do not edit state by hand. Run a fresh Grants preview before any Apply |
 | `standby_gateway_id_missing` / `_invalid` | The two APIM resource IDs are not both known | Recover the correct state; rerun Shells only if its public-access guard and approval permit it |
 | `cosmos_serverless` (exit 4) | The account is serverless and consent is `false` | Section 6; set `cosmos.convertServerless` to `true` only after separate explicit approval |
 | `cosmos_capacity_change_running` (exit 5) | The conversion is still running after 2 hours | Wait; inspect the account read-only; once complete, preview again |

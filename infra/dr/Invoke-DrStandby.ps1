@@ -138,7 +138,31 @@ if (Test-Path -LiteralPath $standbyStageState) {
     $bState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
     if ($bState.stages['1']) { $standbyApimId = [string]$bState.stages['1'].outputs.apimId }
 }
-$gatewayIds = @(if ($standbyApimId) { Get-DrGatewayResourceIds -PrimaryApimId $pS1.apimId -StandbyApimId $standbyApimId })
+$gatewayIds = @()
+if ($standbyApimId) {
+    $primaryApimId = [string](Get-DrValue $pS1 'apimId')
+    $fromExisting = $false
+    if ([string]::IsNullOrWhiteSpace($primaryApimId)) {
+        $existingSub = [string](Get-DrValue $primaryCfg 'apim.existing.subscriptionId')
+        $existingRg = [string](Get-DrValue $primaryCfg 'apim.existing.resourceGroup')
+        $existingName = [string](Get-DrValue $primaryCfg 'apim.existing.name')
+        if ([string]::IsNullOrWhiteSpace($existingSub) -or [string]::IsNullOrWhiteSpace($existingRg) -or [string]::IsNullOrWhiteSpace($existingName)) {
+            Stop-Dr 'primary_apim_configuration_missing: primary Stage 1 has no APIM ID. Reconcile the primary APIM with its owner; an existing APIM requires apim.existing.subscriptionId, resourceGroup and name in the primary staged configuration.' 2
+        }
+        if ($existingSub -notmatch $script:Guid -or $existingRg -match '^REPLACE(?:-|$)' -or $existingName -match '^REPLACE(?:-|$)') {
+            Stop-Dr 'primary_apim_configuration_invalid: apim.existing must use a subscription GUID and real resource group and APIM names, not placeholders.' 2
+        }
+        # Staged resolution prefers a Stage 1 name; it must agree with the configured existing APIM.
+        $reference = Get-StgApim $primaryCfg
+        if ([string]$reference.subscriptionId -ine $existingSub -or [string]$reference.resourceGroup -ine $existingRg -or [string]$reference.name -ine $existingName) {
+            Stop-Dr 'primary_apim_configuration_conflict: primary Stage 1 and apim.existing identify different APIM services. Reconcile them before continuing.' 2
+        }
+        $primaryApimId = Get-StgExistingApimPath $primaryCfg
+        $fromExisting = $true
+    }
+    $gatewayIds = @(Get-DrGatewayResourceIds -PrimaryApimId $primaryApimId -StandbyApimId $standbyApimId)
+    if ($fromExisting) { Write-Host "Primary APIM resolved from apim.existing: $primaryApimId. Confirm this resource before Apply." }
+}
 $bCfg = New-DrStandbyStagedConfig -Primary $primaryCfg -Dr $dr -VnetId $vnetId -ZoneIds $zoneIds -GatewayResourceIds $gatewayIds
 $bCfg.__path = Join-Path $standbyStateDir 'standby.staged.config.json'
 $bCfg | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $bCfg.__path -Encoding utf8NoBOM
