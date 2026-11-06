@@ -383,7 +383,7 @@ Do not overwrite an existing VNet or its full subnet list.
 
 | Subnet | Required configuration |
 |---|---|
-| APIM outbound integration | Dedicated to one Standard v2/Premium v2 APIM; `Microsoft.Web/serverFarms` delegation; attached NSG; not the Functions subnet |
+| APIM outbound integration | Dedicated to one APIM; Standard v2 uses `Microsoft.Web/serverFarms` delegation and Premium v2 uses `Microsoft.ApiManagement/service`; attached NSG; not the Functions subnet ([Microsoft requirements](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound)) |
 | Functions integration | `Microsoft.App/environments` delegation; not used for private endpoints, Container Apps environments or another hosting plan |
 | Private endpoints | No service delegation; approved private endpoint network-policy setting |
 

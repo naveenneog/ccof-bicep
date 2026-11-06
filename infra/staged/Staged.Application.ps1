@@ -16,6 +16,25 @@ function New-StgQsContext {
     return @{ P = $p; GeneratedDir = $gen; State = $state; Apim = $apim; GatewayUrl = $gatewayUrl }
 }
 
+function Get-StgWorkbookGroups {
+    param([Parameter(Mandatory)] $P, [Parameter(Mandatory)] $Stage4)
+    if ($Stage4 -is [Collections.IDictionary] -and $Stage4.Contains('verification') -and $Stage4.verification -ceq 'manual') {
+        foreach ($g in $P.groups) {
+            $known = $Stage4.groups["$($g.projectId)/$($g.classification)"]
+            if (-not $known -or [string]$known.id -ine [string]$g.groupId) {
+                throw "stage5_group_identity_mismatch: Stage 4 does not contain the configured group for $($g.projectId)/$($g.classification)."
+            }
+            [ordered]@{ projectId = $g.projectId; classification = $g.classification; groupId = ([string]$g.groupId).ToLowerInvariant(); displayName = $known.displayName }
+        }
+        return
+    }
+    Get-QsWorkbookGroups -P $P | ForEach-Object {
+        $known = $Stage4.groups["$($_.projectId)/$($_.classification)"]
+        if (-not $_.displayName -and $known -and $known.displayName) { $_.displayName = $known.displayName }
+        $_
+    }
+}
+
 function Invoke-Stage5 {
     param($Cfg, [switch]$Apply)
     $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 3; $entra = Get-StgStage $Cfg 4
@@ -36,11 +55,7 @@ function Invoke-Stage5 {
     $usagePolicy = if (Test-Path -LiteralPath $usagePolicyPath) { Get-Content -LiteralPath $usagePolicyPath -Raw } else { '' }
     $answers = New-QsWorkbookAnswers -P $ctx.P -ApimId $ctx.Apim.id -Directory $ctx.GeneratedDir
     $groupsPath = Join-Path $ctx.GeneratedDir 'workbook.groups.json'
-    # Directory names come from Graph when readable; otherwise from the Stage 4 record (entra.manualVerification).
-    $wbGroups = @(Get-QsWorkbookGroups -P $ctx.P | ForEach-Object {
-        $known = $entra.groups["$($_.projectId)/$($_.classification)"]
-        if (-not $_.displayName -and $known -and $known.displayName) { $_.displayName = $known.displayName }
-        $_ })
+    $wbGroups = @(Get-StgWorkbookGroups -P $ctx.P -Stage4 $entra)
     $wbGroups | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath $groupsPath -Encoding utf8NoBOM
     $wb = Invoke-QsWorkbookBuild -AnswersPath $answers -GroupsPath $groupsPath -Directory $ctx.GeneratedDir
     $report = (Get-Content -LiteralPath $wb.parametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
@@ -93,13 +108,13 @@ function Invoke-Stage5 {
 
 # Front Door Lockdown (infra/dr/Invoke-DrFrontDoor.ps1) disables public network access on the admin
 # app, and OneDeploy from outside the VNet then returns HTTP 403. The admin package is published before
-# Lockdown; after it, publishing is skipped here and done from a VM inside the VNet (ADR 0037,
-# docs/runbooks/ADMIN-UPDATE-FROM-VM.md).
+# Lockdown; by default publishing is skipped. A DR caller that has checked the private publisher
+# path can explicitly publish without changing the app's public access.
 function Publish-StgAdminPackage {
     param([Parameter(Mandatory)] [string]$Subscription, [Parameter(Mandatory)] [string]$ResourceGroup, [Parameter(Mandatory)] [string]$App,
-        [Parameter(Mandatory)] [string]$ZipPath, [scriptblock]$Build)
+        [Parameter(Mandatory)] [string]$ZipPath, [scriptblock]$Build, [switch]$PrivatePublisher)
     $site = Get-StgArm "/subscriptions/$Subscription/resourceGroups/$ResourceGroup/providers/Microsoft.Web/sites/$App" '2024-04-01'
-    if ([string]$site.properties.publicNetworkAccess -ceq 'Disabled') {
+    if ([string]$site.properties.publicNetworkAccess -ceq 'Disabled' -and -not $PrivatePublisher) {
         Write-Warning "admin_public_access_disabled: $App has public network access Disabled (Front Door Lockdown); its package was not published. Publish it from a VM inside the VNet: docs/runbooks/ADMIN-UPDATE-FROM-VM.md."
         return [ordered]@{ app = $App; skipped = 'public_access_disabled'; runbook = 'docs/runbooks/ADMIN-UPDATE-FROM-VM.md' }
     }

@@ -43,6 +43,31 @@ deployment. Existing partner/lab resources are not automatically deployment-owne
 - Accounting must include both APIM resource IDs, the actual serving backend and full monthly
   ledger history. Incomplete history must not produce a lower persisted spend.
 
+## Amendment: existing standby network
+
+An explicitly selected existing-network mode uses the supplied VNet resource ID independently of
+the workload resource group. Bootstrap deploys only the named standby managed identities and reads
+the VNet, subnets, DNS links and peerings; it does not deploy those network resources. The network
+team owns any missing network prerequisites. Creating standby private endpoints and DNS zone
+groups, and attaching standby services to subnets, is a separate, explicitly approved action.
+An existing VNet is not considered approval for these changes. Private Function App publishing
+requires a verified private path and does not turn on public access. Existing create-network
+configurations retain create semantics but now require explicit Network and public Shells approval.
+The current standby Shells template creates APIM
+with public network access enabled; either network mode requires explicit approval for that
+bootstrap. This approval does not authorize public access for the Function Apps.
+When create-mode Bootstrap finds that its target VNet already exists, it refuses unless an operator
+explicitly approves updating that authoritative subnet list. This safety stop also applies to legacy
+configuration files without `networkMode`; create mode for a new VNet is unchanged.
+Shells must also stop if its existing APIM has public access disabled or its access state cannot be
+read: the creation template would otherwise reopen it. The initial creation remains public only
+with explicit approval. The standby-only release does **not** implement the separately reviewed
+Front Door driver changes: all Front Door operations remain STOP. Full deployment and approval
+must eventually require recorded standby phase completion, independent ownership review of exact
+connection IDs and explicit operator confirmation of manual Entra and end-to-end checks. Primary
+recovery must not require a healthy B or re-enable B. Saved identity and approval records are not a
+substitute for reviewing the live target and confirming end-to-end readiness.
+
 ## Rejected alternatives
 
 | Alternative | Reason |

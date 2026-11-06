@@ -1,5 +1,27 @@
 # Current work
 
+## DR existing-network reuse
+
+**Active packet:** DR-BYO standby-only release (2026-11-06), in review. A standby deployment can reference an
+existing VNet in a different resource group without deploying the VNet, subnets, NSG, DNS links
+or peerings. The existing-network Bootstrap creates only the named standby identities; network
+integration and private endpoint/DNS-record changes require explicit approval. The manual Entra
+path remains available. Private Function App publishing and standby readiness are customer-side
+gates that have not been verified here. No customer Azure changes are authorized by this packet.
+**All Front Door operations are STOP** pending a separate safety release; the Front Door driver
+integration tests are deferred to that release.
+
+Standby-only offline checks: existing-network 83, prerequisites 55, standby 118 and staged stages
+475 passed in the isolated checkout; ten separate readiness/approval mutants were caught and
+restored. PowerShell parsing and the relevant Bicep builds passed. Front Door driver integration
+cases are deferred, not passed. These checks are not customer acceptance.
+
+Council (self-review, standby scope): ARCHITECT PASS (existing network referenced, not deployed);
+CODER PASS (phase evidence and explicit approvals); QA PASS-WITH-NOTES (offline checks and negative
+controls only); UX PASS-WITH-NOTES (manual handoff and explicit stop points); SECURITY
+PASS-WITH-NOTES (private Function Apps, no automatic Graph grants, independent customer approvals).
+All Front Door and live customer work remains outside these verdicts.
+
 ## Health and outage e-mail alerts
 
 **Active packet:** HA-1 (2026-10-30). Add-on over a finished deployment: `infra/monitoring/` creates

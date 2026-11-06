@@ -1,5 +1,24 @@
 # Change log
 
+## 2026-11-06 - DR existing-network and manual Entra safety
+
+- Standby can select an existing VNet in a separate resource group. Bootstrap validates its
+  network and DNS prerequisites, reuses existing identities and deploys only missing identities.
+  Existing-network integration, private endpoint/DNS changes and initial public APIM creation
+  require separate operator approvals; private Function Apps are not opened for publishing.
+- Manual Stage 4 group metadata is used without a deployer Graph call. Private publishing checks
+  each app's approved endpoint and SCM DNS/TCP path; this preflight is not end-to-end readiness.
+- Standby apply and Verify attempts invalidate stale phase, dependent and Front Door verification
+  records before Azure work; previews leave them intact. Network and public-ingress approvals apply
+  in both network modes, and Shells refuses to reopen a private existing Function App. The standby
+  template supports StandardV2 and refuses PremiumV2 before deployment.
+- This is a standby-only release. The Front Door driver and its related runbook are not part of it:
+  **all Front Door operations remain STOP**, including primary recovery, until a later safety release.
+  The new readiness helper and state invalidation do not make the older Front Door driver safe.
+- Offline tests and negative controls cover standby guards. Front Door driver integration cases are
+  deferred to the follow-up release. No customer deployment or private publishing has been tested;
+  see the [standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md).
+
 ## 2026-10-30 - Health and outage e-mail alerts (add-on)
 
 - New `infra/monitoring/Invoke-HealthAlerts.ps1` with `health-alerts.bicep`: an add-on applied after

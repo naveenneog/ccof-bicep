@@ -23,7 +23,7 @@ function npx { $global:LASTEXITCODE = 0 }
 function node { $global:LASTEXITCODE = 0 }
 function New-QsGatewayConfig { return @{ entra = @{} } }
 function New-QsWorkbookAnswers { return 'fixture-answers' }
-function Get-QsWorkbookGroups { return @() }
+function Get-QsGraph { param([string]$Path) $script:graphCalls++; return @{ id = '00000000-0000-4000-8000-000000000005'; displayName = 'Live group' } }
 function Invoke-QsWorkbookBuild { return @{ parametersPath = (Join-Path $script:fakeContext.GeneratedDir 'workbook.parameters.json') } }
 function Get-StgApim { return @{} }
 function Invoke-StgExistingApimDiagnostics { $script:diagnosticsCalls++; return $null }
@@ -34,6 +34,22 @@ try {
     '<policies />' | Set-Content (Join-Path $scratch 'gateway\fixture.policy.xml')
     '{"parameters":{"workbookContent":{"value":{}},"contentTags":{"value":{}}}}' | Set-Content (Join-Path $scratch 'workbook.parameters.json')
     $cfg = @{ stage1 = @{ includeAdmin = $true }; admin = @{ extraAllowedClientIds = @() }; apim = @{ apiId = 'fixture' }; gateway = @{} }
+    $groupId = '00000000-0000-4000-8000-000000000005'
+    $script:fakeContext.P.groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = $groupId })
+    $script:fakeEntra.groups = @{ 'P1/STD' = @{ id = $groupId; displayName = 'Manually verified group' } }
+    $script:fakeEntra.verification = 'manual'; $script:graphCalls = 0
+    $null = Invoke-Stage5 -Cfg $cfg
+    $rows = @(Get-Content (Join-Path $scratch 'workbook.groups.json') -Raw | ConvertFrom-Json -AsHashtable)
+    if ($script:graphCalls -ne 0 -or $rows.Count -ne 1 -or $rows[0].displayName -cne 'Manually verified group') {
+        throw 'Actual Stage 5 must use manual Stage 4 group names without attempting Graph.'
+    }
+    $script:fakeEntra.Remove('verification'); $script:graphCalls = 0
+    $null = Invoke-Stage5 -Cfg $cfg
+    $rows = @(Get-Content (Join-Path $scratch 'workbook.groups.json') -Raw | ConvertFrom-Json -AsHashtable)
+    if ($script:graphCalls -ne 1 -or $rows.Count -ne 1 -or $rows[0].displayName -cne 'Live group') {
+        throw 'Actual Stage 5 must preserve the delegated Graph lookup outside manual mode.'
+    }
+    $script:fakeContext.P.groups = @(); $script:fakeEntra.groups = @{}
     $null = Invoke-Stage5 -Cfg $cfg
     $admin = ($script:captured | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100).admin
     if ($admin.ContainsKey('gatewayResourceIds')) { throw 'stage5_admin_null: omitted gatewayResourceIds must not generate an ARM array containing null.' }

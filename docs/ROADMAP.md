@@ -2,6 +2,11 @@
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
+| DR-BYO standby | Standby-only release in review; customer validation pending | An explicitly supplied standby VNet ID can name a different resource group; existing-network Bootstrap does not deploy or alter network resources; later private endpoint, DNS-record and VNet-integration changes require explicit approval; manual Entra and private publishing remain explicit and verifiable |
+| DR-BYO Front Door | BLOCK / separate release | Full approval requires current standby records and reviewed exact connection IDs with independently verified ownership; primary recovery never enables or depends on B; stale Verify is invalidated before a real attempt. All Front Door operations remain STOP pending review and tests. |
+
+| Packet | Status | Observable acceptance |
+| --- | --- | --- |
 | S5-NULL | Implemented; PR CI pending | Missing/null/blank optional admin gateway IDs never become `[null]`; valid IDs retain order; malformed retained IDs and required admin identity fail before settings writes |
 
 | Packet | Status | Observable acceptance |

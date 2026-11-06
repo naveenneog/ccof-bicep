@@ -34,7 +34,11 @@
 param(
     [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify')] [string]$Phase,
     [Parameter(Mandatory)] [string]$ConfigPath,
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$ApprovePrivateNetworkChanges,
+    [switch]$ApprovePublicApimBootstrap,
+    [switch]$ApprovePublicFunctionAccess,
+    [switch]$PrivatePublisher
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -47,6 +51,18 @@ Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
 Import-Module (Join-Path $here 'DrStandby.psm1') -Force
 $problems = @(Get-DrConfigProblems $dr) + @(Get-DrStandbyProblems $dr)
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" 2 }
+if ($Phase -ceq 'Network' -and $Apply -and -not $ApprovePrivateNetworkChanges) {
+    Stop-Dr 'network_changes_approval_required: Network creates private endpoints and DNS records and attaches services to subnets. Obtain network-team approval and rerun with -ApprovePrivateNetworkChanges.' 2
+}
+if ($Phase -ceq 'Shells') {
+    Write-Host 'Shells creates a new APIM with public network access Enabled. Function App access is configured separately.'
+    if ($Apply -and -not $ApprovePublicApimBootstrap) {
+        Stop-Dr 'public_apim_bootstrap_approval_required: the standby APIM is initially public. Obtain security approval and rerun with -ApprovePublicApimBootstrap, or stop.' 2
+    }
+    if ($Apply -and $dr.standby.functionsPublicNetworkAccess -ceq 'Enabled' -and -not $ApprovePublicFunctionAccess) {
+        Stop-Dr 'public_function_access_approval_required: Shells would enable public access for the standby Function Apps. Obtain security approval and rerun with -ApprovePublicFunctionAccess, or set Disabled.' 2
+    }
+}
 $azProfile = Resolve-DrAzureProfile -ConfigDir $env:AZURE_CONFIG_DIR -CloudShell $env:ACC_CLOUD -HomePath $HOME
 if (-not $azProfile.Ok) { Stop-Dr $azProfile.Message 2 }
 $env:AZURE_CONFIG_DIR = $azProfile.ConfigDir
@@ -64,14 +80,53 @@ $drApply = [bool]$Apply; $drPhase = $Phase  # the staged driver's param block re
 $Apply = [switch]$drApply; $Phase = $drPhase
 $ErrorActionPreference = 'Stop'
 $primaryCfg = Read-StgConfig $primaryConfigPath
-$script:StateDir = $primaryStateDir
-$pS1 = Get-StgStage $primaryCfg 1; $pS2 = Get-StgStage $primaryCfg 2; $pS4 = Get-StgStage $primaryCfg 4
+if ($dr.subscriptionId -ine $primaryCfg.subscriptionId -or $dr.tenantId -ine $primaryCfg.tenantId) {
+    Stop-Dr 'primary_account_mismatch: dr.config.json and the primary staged configuration must name the same tenant and subscription.' 2
+}
 if ($dr.secondary.resourceGroup -ine $primaryCfg.resourceGroup) {
     Stop-Dr "standby_resource_group: region B must use the primary's resource group ($($primaryCfg.resourceGroup)): the Stage 3, 5 and 6 templates reference the shared Cosmos account and workspace in their own group. Set secondary.resourceGroup to it and secondary.allowResourceGroupInOtherRegion to true." 2
 }
 $sub = $primaryCfg.subscriptionId; $rg = $primaryCfg.resourceGroup
+function Write-DrStandbyJson([string]$Path, $Value) {
+    $tmp = Join-Path (Split-Path $Path -Parent) (".$([IO.Path]::GetFileName($Path)).$([guid]::NewGuid().ToString('N')).tmp")
+    try {
+        $json = $Value | ConvertTo-Json -Depth 100
+        [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($tmp, $Path, $true)
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    }
+}
+if ($Apply -or $Phase -ceq 'Verify') {
+    $fdPath = Join-Path $standbyStateDir 'frontdoor-state.json'
+    if (Test-Path -LiteralPath $fdPath) {
+        $fdState = Get-Content -LiteralPath $fdPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+        if ($fdState -isnot [Collections.IDictionary]) { Stop-Dr 'frontdoor_state_invalid: inspect and restore the Front Door state before continuing.' 3 }
+        if ($fdState.Contains('verifiedAt')) {
+            $stem = [string](Get-DrValue $dr 'frontDoor.stem')
+            if (-not $stem) { Stop-Dr 'frontdoor_target_unknown: set the verified Front Door stem before changing standby readiness.' 3 }
+            $targetProblem = Get-DrFrontDoorTargetProblem -State $fdState -Stem $stem -SubscriptionId $sub -ResourceGroup $rg
+            if ($targetProblem) { Stop-Dr $targetProblem 3 }
+            $fdState.Remove('verifiedAt')
+            Write-DrStandbyJson $fdPath $fdState
+            Write-Host 'Prior Front Door verification was cleared; verify the routes again after standby work.'
+        }
+    }
+    $phasePath = Join-Path $standbyStateDir 'standby.state.json'
+    if (Test-Path -LiteralPath $phasePath) {
+        $phaseState = Get-Content -LiteralPath $phasePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+        if ($phaseState -isnot [Collections.IDictionary]) { Stop-Dr 'standby_phase_state_invalid: inspect and restore the standby state before continuing.' 3 }
+        $removed = @(Clear-DrStandbyPhaseEvidence -State $phaseState -Phase $Phase)
+        if ($removed.Count) {
+            Write-DrStandbyJson $phasePath $phaseState
+            Write-Host "Prior standby evidence cleared: $($removed -join ', ')."
+        }
+    }
+}
+$script:StateDir = $primaryStateDir
+$pS1 = Get-StgStage $primaryCfg 1; $pS2 = Get-StgStage $primaryCfg 2; $pS4 = Get-StgStage $primaryCfg 4
 $names = Get-DrStandbyNames $pS1.names $dr.standby.nameSuffix
-$vnetId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Network/virtualNetworks/$($dr.secondary.vnetName)"
+$vnetId = Get-DrSecondaryVnetId $dr
 $zone = { param($n) "/subscriptions/$($dr.dnsZones.subscriptionId)/resourceGroups/$($dr.dnsZones.resourceGroup)/providers/Microsoft.Network/privateDnsZones/$n" }
 $zoneIds = @{ cosmos = (& $zone 'privatelink.documents.azure.com'); blob = (& $zone 'privatelink.blob.core.windows.net')
     foundry = @{ cognitiveServices = (& $zone 'privatelink.cognitiveservices.azure.com'); openAi = (& $zone 'privatelink.openai.azure.com'); aiServices = (& $zone 'privatelink.services.ai.azure.com') } }
@@ -81,7 +136,7 @@ if (Test-Path -LiteralPath $standbyStageState) {
     $bState = Get-Content -LiteralPath $standbyStageState -Raw | ConvertFrom-Json -AsHashtable -Depth 100
     if ($bState.stages['1']) { $standbyApimId = [string]$bState.stages['1'].outputs.apimId }
 }
-$gatewayIds = if ($standbyApimId) { @(Get-DrGatewayResourceIds -PrimaryApimId $pS1.apimId -StandbyApimId $standbyApimId) } else { @() }
+$gatewayIds = @(if ($standbyApimId) { Get-DrGatewayResourceIds -PrimaryApimId $pS1.apimId -StandbyApimId $standbyApimId })
 $bCfg = New-DrStandbyStagedConfig -Primary $primaryCfg -Dr $dr -VnetId $vnetId -ZoneIds $zoneIds -GatewayResourceIds $gatewayIds
 $bCfg.__path = Join-Path $standbyStateDir 'standby.staged.config.json'
 $bCfg | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $bCfg.__path -Encoding utf8NoBOM
@@ -93,7 +148,7 @@ function Save-DrPhase([string]$Name, $Value) {
     $file = Join-Path $standbyStateDir 'standby.state.json'
     $s = if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable -Depth 100 } else { @{ schema = 'ccof.dr.standby.v1'; phases = @{} } }
     $s.phases[$Name] = @{ completedAt = [DateTime]::UtcNow.ToString('o'); outputs = $Value }
-    $s | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+    Write-DrStandbyJson $file $s
     Write-Host "phase $Name completed and verified; state $file" -ForegroundColor Green
 }
 function Get-DrPhase([string]$Name) {
@@ -153,6 +208,39 @@ switch ($Phase) {
     Save-DrPhase 'Data' @{ account = $acct.name; capacityMode = $acct.properties.capacityMode; regions = $regions; writeRegion = @($acct.properties.writeLocations)[0].locationName; serviceManagedFailover = [bool]$acct.properties.enableAutomaticFailover; autoscaleMaxThroughput = $max; containers = $containers }
 }
 'Shells' {
+    if ($Apply) {
+        $apimName = "$($names.stem)-apim"
+        $apimId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ApiManagement/service/$apimName"
+        $matches = @(Invoke-StgAzJson @('apim', 'list', '--subscription', $sub, '--resource-group', $rg) | Where-Object { $_.name -ieq $apimName })
+        if ($matches.Count -gt 1) { Stop-Dr "apim_inventory_ambiguous: multiple API Management services matched $apimName; inspect the resource group before applying Shells." 3 }
+        if ($matches.Count -eq 1) {
+            if ([string](Get-DrValue $matches[0] 'id') -ine $apimId) { Stop-Dr "apim_inventory_mismatch: the listed ID for $apimName differs from $apimId; stop and inspect the target." 3 }
+            $current = Get-StgArm $apimId '2024-05-01'
+            $access = [string](Get-DrValue $current 'properties.publicNetworkAccess')
+            if ([string](Get-DrValue $current 'id') -ine $apimId -or $access -ine 'Enabled') {
+                Stop-Dr "apim_public_access_guard: $apimName is already present with publicNetworkAccess '$access' or an unexpected ID. Shells would enable public access; do not rerun it. Inspect the APIM and use later phases without reopening it." 3
+            }
+        }
+        if ($dr.standby.functionsPublicNetworkAccess -ceq 'Enabled') {
+            $sites = @(Invoke-StgAzJson @('resource', 'list', '--subscription', $sub, '--resource-group', $rg, '--resource-type', 'Microsoft.Web/sites'))
+            $keys = @('resolver', 'sync', 'reconciler')
+            if ($primaryCfg.stage1.includeAdmin) { $keys += 'admin' }
+            foreach ($key in $keys) {
+                $siteName = "$($names.stem)-$key"
+                $siteId = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$siteName"
+                $found = @($sites | Where-Object { $_.name -ieq $siteName })
+                if ($found.Count -gt 1) { Stop-Dr "function_inventory_ambiguous: multiple sites matched $siteName; inspect the resource group before applying Shells." 3 }
+                if ($found.Count -eq 1) {
+                    if ([string](Get-DrValue $found[0] 'id') -ine $siteId) { Stop-Dr "function_public_access_guard: the listed ID for $siteName differs from $siteId; inspect the site." 3 }
+                    $current = Get-StgArm $siteId '2024-04-01'
+                    $access = [string](Get-DrValue $current 'properties.publicNetworkAccess')
+                    if ([string](Get-DrValue $current 'id') -ine $siteId -or $access -ine 'Enabled') {
+                        Stop-Dr "function_public_access_guard: $siteName already exists with publicNetworkAccess '$access' or an unexpected ID. Shells would enable public access; do not reopen it." 3
+                    }
+                }
+            }
+        }
+    }
     $ids = @{}
     foreach ($k in 'sync', 'reconciler') {
         $n = @($dr.identityNames | Where-Object { $_ -match "-$k-[a-z0-9]+$|$k" } | Where-Object { $_ -match $k })[0]
@@ -179,6 +267,9 @@ switch ($Phase) {
     $o = Invoke-Stage5 $bCfg -Apply:$Apply
     $s1 = Get-StgStage $bCfg 1
     $adminHost = if ($s1.names.apps.Contains('admin')) { (Get-StgSite $bCfg $s1.names.apps.admin.functionApp).defaultHostName } else { '' }
+    if ($s1.names.apps.Contains('admin') -and [string]::IsNullOrWhiteSpace([string]$adminHost)) {
+        Stop-Dr 'admin_hostname_missing: the standby admin app has no default hostname; read its App Service properties before continuing with the Entra redirect handoff.' 3
+    }
     if ($adminHost) {
         $null = Invoke-DrAdminRedirects -Stage4 $pS4 -AdminHost $adminHost -Apply:$Apply -GetApp { Get-StgAppById $pS4.admin.appId } `
             -PatchApp { param($app, $merged) Send-StgGraph 'PATCH' "applications/$($app.id)" @{ spa = @{ redirectUris = $merged } } | Out-Null }
@@ -189,13 +280,43 @@ switch ($Phase) {
 'Code' {
     $null = Get-DrPhase 'Config'; $null = Get-DrPhase 'Network'
     $ctx = New-StgQsContext $bCfg; $ctx.PollSeconds = 15
-    if (-not $Apply) { Write-Host 'preview: build and deploy resolver, sync, reconciler and admin packages (same commit as region A) to region B; no seed, no snapshot.'; return }
+    if (-not $Apply) { Write-Host 'preview: build and deploy resolver, sync, reconciler and admin packages (same commit as region A) to region B; no seed, no snapshot. Disabled public access requires -PrivatePublisher and a working private SCM path.'; return }
+    $s1 = Get-StgStage $bCfg 1
+    $sites = @()
+    foreach ($key in @($s1.names.apps.Keys | Sort-Object)) {
+        $name = $s1.names.apps[$key].functionApp
+        $site = Get-StgSite $bCfg $name
+        if ([string]$site.publicNetworkAccess -cnotin 'Enabled', 'Disabled') {
+            Stop-Dr "function_access_unknown: could not determine public network access for $name; read the app before publishing." 3
+        }
+        if ($site.publicNetworkAccess -ceq 'Disabled' -and -not $PrivatePublisher) {
+            Stop-Dr "private_publisher_required: $name has public network access Disabled. Use an approved private runner with -PrivatePublisher; do not enable public access as a workaround." 3
+        }
+        $sites += @{ name = $name; host = [string]$site.defaultHostName; id = "/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/sites/$name" }
+    }
+    if ($PrivatePublisher) {
+        $subnetId = "$vnetId/subnets/$($dr.secondary.subnets.privateEndpoints.name)"
+        $listConnections = {
+            param($siteId)
+            $result = Get-StgArm "$siteId/privateEndpointConnections" '2024-04-01'
+            if ($result -isnot [Collections.IDictionary] -or -not $result.Contains('value')) { throw "private_endpoint_list_invalid: $siteId" }
+            if ($result['nextLink']) { throw "private_endpoint_list_paginated: inspect all pages for $siteId before publishing." }
+            return $result['value']
+        }
+        $readNetworkResource = { param($id) Get-StgArm $id '2024-05-01' }
+        foreach ($site in $sites) {
+            $site.endpointAddresses = @(Get-DrPrivateAppEndpointAddresses -SiteId $site.id -SubnetId $subnetId -ListConnections $listConnections -ReadResource $readNetworkResource)
+        }
+        $privateProblems = @(Get-DrPrivatePublisherProblems -Apps $sites -EndpointSubnetPrefix $dr.secondary.subnets.privateEndpoints.prefix)
+        if ($privateProblems.Count) { Stop-Dr "private_publisher_check_failed: $($privateProblems -join ', ')" 3 }
+        Write-Host 'Private publisher: each SCM hostname resolved to its approved Function App private endpoint and accepted TCP 443.'
+    }
     Push-Location $repo; try { npx tsc -p tsconfig.json | Out-Host; if ($LASTEXITCODE) { throw 'build_failed' } } finally { Pop-Location }
     $code = Invoke-QsCode $ctx
-    $s1 = Get-StgStage $bCfg 1
     $admin = $null
     if ($s1.names.apps.Contains('admin')) {
-        $admin = Publish-StgAdminPackage -Subscription $sub -ResourceGroup $rg -App $s1.names.apps.admin.functionApp -ZipPath (Join-Path $ctx.GeneratedDir 'admin.zip')
+        $admin = Publish-StgAdminPackage -Subscription $sub -ResourceGroup $rg -App $s1.names.apps.admin.functionApp -ZipPath (Join-Path $ctx.GeneratedDir 'admin.zip') -PrivatePublisher:$PrivatePublisher
+        if ($admin.Contains('skipped')) { throw 'admin_publish_incomplete: admin package was not published; Code was not marked complete.' }
     }
     Save-DrPhase 'Code' @{ code = $code; admin = $admin; adminSha256 = $(if ($admin -and $admin.Contains('sha256')) { $admin.sha256 } else { $null }); commit = (git -C $repo rev-parse HEAD) }
 }

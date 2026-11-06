@@ -229,7 +229,7 @@ $x = Get-DrStandbyProblems (Get-Content (Join-Path $repo 'infra/dr/dr.config.exa
 Check 'example placeholders are refused by name' ($x -contains 'standby.stagedConfigPath:placeholder' -and $x -contains 'standby.apim.publisherEmail:placeholder')
 $c = New-DrCfg; $c.standby.nameSuffix = 'B-1'; Check 'name suffix must be 1-2 lowercase characters' (@(Get-DrStandbyProblems $c) -contains 'standby.nameSuffix:one_or_two_lowercase_letters_or_digits')
 $c = New-DrCfg; $c.secondary.location = $c.primary.location; Check 'standby in the primary location refused' (@(Get-DrStandbyProblems $c) -contains 'secondary.location:same_as_primary')
-$c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_or_PremiumV2')
+$c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_only')
 $c = New-DrCfg; Check 'example standby.apim.zoneRedundant is false' ($c.standby.apim.PSObject.Properties['zoneRedundant'] -and $c.standby.apim.zoneRedundant -is [bool] -and $c.standby.apim.zoneRedundant -eq $false)
 $c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant 'yes'; Check 'zoneRedundant must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.zoneRedundant:true_or_false')
 $c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant $true; $c.standby.apim.units = 1; $zrw = $null

@@ -547,6 +547,7 @@ function Get-StgSite {
     $pick = { param($k) if ($site.properties -and $null -ne $site.properties[$k]) { $site.properties[$k] } else { $site[$k] } }
     return @{
         name = $site.name
+        defaultHostName = (& $pick 'defaultHostName')
         publicNetworkAccess = (& $pick 'publicNetworkAccess')
         # A Flex app without VNet integration returns null; '' keeps the read-back's string comparisons valid.
         virtualNetworkSubnetId = "$(& $pick 'virtualNetworkSubnetId')"

@@ -206,8 +206,10 @@ set and Stage 5 is rerun. Nothing in this stage needs the network.
 [manual Portal guide](#6-check-the-customer-network) or their own landing-zone templates:
 
 - a VNet with an undelegated private-endpoint subnet, a Functions subnet delegated to
-  `Microsoft.App/environments`, and (for a new Standard v2/Premium v2 APIM) an APIM subnet
-  delegated to `Microsoft.Web/serverFarms` with an NSG;
+  `Microsoft.App/environments`, and an APIM subnet with an NSG. Standard v2 uses
+  `Microsoft.Web/serverFarms` delegation; Premium v2 uses `Microsoft.ApiManagement/service`
+  ([Microsoft requirements](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound)).
+  The staged template creates Standard v2, not Premium v2;
 - private endpoints for the Cosmos account (`Sql`), each app's storage account (`blob`) and each
   backend with `privateEndpoint: true` (`account`), each Approved with a DNS zone group;
 - `privatelink.documents.azure.com`, `privatelink.blob.core.windows.net` and, for private

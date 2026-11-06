@@ -7,9 +7,8 @@
                     secondary-region availability, the primary VNet address space against the proposed
                     secondary CIDRs, the private DNS zones to link, Foundry deployments of every listed
                     account and the Entra app registrations. Any denial or mismatch is a blocker.
-  -Phase Bootstrap  P1/P2: deploys infra/dr/dr-prerequisites.bicep (secondary VNet and subnets, links to
-                    the existing private DNS zones, optional peering, user-assigned identity shells).
-                    Without -Apply it runs what-if only.
+  -Phase Bootstrap  P1/P2: creates the network and identity shells in create mode, or checks an existing
+                    VNet and deploys only identity shells in existing mode. Without -Apply it runs what-if.
   -Phase Verify     Reads back what Bootstrap created and checks it against the configuration.
 
   Every phase writes evidence JSON to -EvidenceDirectory. Use an isolated AZURE_CONFIG_DIR signed in to
@@ -24,7 +23,8 @@ param(
     [Parameter(Mandatory)] [ValidateSet('Discover', 'Bootstrap', 'Verify')] [string]$Phase,
     [Parameter(Mandatory)] [string]$ConfigPath,
     [Parameter(Mandatory)] [string]$EvidenceDirectory,
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$ApproveExistingVnetUpdate
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -38,6 +38,7 @@ $problems = @(Get-DrConfigProblems $cfg)
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" 2 }
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $sec = $cfg.secondary
+$existingNetwork = $sec.PSObject.Properties['networkMode'] -and $sec.networkMode -ceq 'existing'
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $evidence = [ordered]@{ schema = 'ccof.dr.prerequisites.v1'; phase = $Phase; at = (Get-Date).ToUniversalTime().ToString('o'); azureConfigDir = [bool]$env:AZURE_CONFIG_DIR; checks = [ordered]@{}; blockers = @() }
 $blockers = [System.Collections.Generic.List[string]]::new()
@@ -61,6 +62,66 @@ function Save-Evidence {
     $path = Join-Path $EvidenceDirectory "dr-$($Phase.ToLowerInvariant())-$stamp.json"
     $evidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
     Write-Host "evidence: $path"
+}
+
+function Read-DrNetwork {
+    $vnet = if ($existingNetwork) {
+        Invoke-AzJson @('network', 'vnet', 'show', '--ids', (Get-DrSecondaryVnetId $cfg)) -AllowMissing
+    } else {
+        Invoke-AzJson (@('network', 'vnet', 'show', '--resource-group', $sec.resourceGroup, '--name', $sec.vnetName) + $sub) -AllowMissing
+    }
+    if (-not $vnet) { $blockers.Add('vnet:missing'); return }
+    if ($existingNetwork -and $vnet.id -ine (Get-DrSecondaryVnetId $cfg)) { $blockers.Add('vnet:id_mismatch') }
+    if ($vnet.location -ne $sec.location) { $blockers.Add("vnet:location_$($vnet.location)") }
+    if (@($vnet.addressSpace.addressPrefixes) -notcontains $sec.addressSpace) { $blockers.Add('vnet:address_space') }
+    $apimDelegation = 'Microsoft.Web/serverFarms'
+    if ($existingNetwork -and $cfg.PSObject.Properties['standby'] -and $cfg.standby -and
+        $cfg.standby.PSObject.Properties['apim'] -and $cfg.standby.apim -and
+        $cfg.standby.apim.PSObject.Properties['sku']) {
+        $sku = [string]$cfg.standby.apim.sku
+        if ($sku -ceq 'PremiumV2') { $apimDelegation = 'Microsoft.ApiManagement/service' }
+        elseif ($sku -and $sku -cne 'StandardV2') { $blockers.Add('subnet:apim:sku_invalid'); return }
+    }
+    $want = @{ apim = $apimDelegation; functions = 'Microsoft.App/environments'; privateEndpoints = $null }
+    $subnets = [ordered]@{}
+    foreach ($k in $want.Keys) {
+        $matches = @($vnet.subnets | Where-Object { $_.name -ceq $sec.subnets.$k.name })
+        if ($matches.Count -ne 1) { $blockers.Add("subnet:${k}:missing"); continue }
+        $sn = $matches[0]
+        $prefixes = @(@(
+            if ($sn.PSObject.Properties['addressPrefix'] -and $sn.addressPrefix) { [string]$sn.addressPrefix }
+            if ($sn.PSObject.Properties['addressPrefixes']) { $sn.addressPrefixes | Where-Object { $_ } | ForEach-Object { [string]$_ } }
+        ) | Sort-Object -Unique)
+        $del = @(if ($sn.PSObject.Properties['delegations'] -and $sn.delegations) { $sn.delegations | ForEach-Object serviceName })
+        $subnets[$k] = [ordered]@{ prefix = if ($prefixes.Count -eq 1) { $prefixes[0] } else { $null }; prefixes = $prefixes; delegations = $del; nsg = if ($sn.PSObject.Properties['networkSecurityGroup'] -and $sn.networkSecurityGroup) { $sn.networkSecurityGroup.id } else { $null } }
+        if ($prefixes.Count -ne 1 -or $prefixes[0] -ne $sec.subnets.$k.prefix) { $blockers.Add("subnet:${k}:prefix") }
+        if ($want[$k] -and $del -notcontains $want[$k]) { $blockers.Add("subnet:${k}:delegation") }
+        if (-not $want[$k] -and $del.Count) { $blockers.Add("subnet:${k}:unexpected_delegation") }
+        if ($k -eq 'apim' -and -not $subnets[$k].nsg) { $blockers.Add('subnet:apim:nsg_missing') }
+    }
+    $evidence.checks.vnet = [ordered]@{ id = $vnet.id; subnets = $subnets; peerings = @($vnet.virtualNetworkPeerings | ForEach-Object { [ordered]@{ name = $_.name; state = $_.peeringState; remote = $_.remoteVirtualNetwork.id } }) }
+    if ($cfg.primary.PSObject.Properties['peer'] -and $cfg.primary.peer) {
+        if (-not $cfg.primary.PSObject.Properties['vnetId'] -or -not $cfg.primary.vnetId) {
+            $blockers.Add('peering:primary_vnet_id_missing')
+        } else {
+            if (@($vnet.virtualNetworkPeerings | Where-Object { $_.remoteVirtualNetwork.id -eq $cfg.primary.vnetId -and $_.peeringState -eq 'Connected' }).Count -ne 1) { $blockers.Add('peering:not_connected') }
+            if ($existingNetwork) {
+                $primaryVnet = Invoke-AzJson @('network', 'vnet', 'show', '--ids', $cfg.primary.vnetId) -AllowMissing
+                if (-not $primaryVnet -or @($primaryVnet.virtualNetworkPeerings | Where-Object { $_.remoteVirtualNetwork.id -eq $vnet.id -and $_.peeringState -eq 'Connected' }).Count -ne 1) {
+                    $blockers.Add('peering:primary_not_connected')
+                }
+            }
+        }
+    }
+    $links = [ordered]@{}
+    if ($cfg.PSObject.Properties['dnsZones'] -and $cfg.dnsZones) {
+        foreach ($z in @($cfg.dnsZones.zoneNames)) {
+            $l = @(Invoke-AzJson @('network', 'private-dns', 'link', 'vnet', 'list', '--zone-name', $z, '--resource-group', $cfg.dnsZones.resourceGroup, '--subscription', $cfg.dnsZones.subscriptionId) | Where-Object { $_.virtualNetwork.id -eq $vnet.id })
+            $links[$z] = if ($l.Count) { $l[0].provisioningState } else { 'missing' }
+            if (-not $l.Count -or $l[0].provisioningState -ne 'Succeeded') { $blockers.Add("dns:${z}:link_missing") }
+        }
+    }
+    $evidence.checks.dnsLinks = $links
 }
 
 $azProfile = Resolve-DrAzureProfile -ConfigDir $env:AZURE_CONFIG_DIR -CloudShell $env:ACC_CLOUD -HomePath $HOME
@@ -150,20 +211,54 @@ switch ($Phase) {
             }
         }
         $evidence.checks.entra = $entra
+        if ($existingNetwork) { Read-DrNetwork }
     }
     'Bootstrap' {
-        $params = [ordered]@{
-            location = @{ value = $sec.location }; tags = @{ value = $cfg.tags }; vnetName = @{ value = $sec.vnetName }; addressSpace = @{ value = $sec.addressSpace }
-            apimNsgName = @{ value = $sec.apimNsgName }; subnets = @{ value = $sec.subnets }
-            dnsZones = @{ value = if ($cfg.PSObject.Properties['dnsZones'] -and $cfg.dnsZones) { $cfg.dnsZones } else { @{ subscriptionId = $cfg.subscriptionId; resourceGroup = $sec.resourceGroup; zoneNames = @() } } }
-            primaryVnetId = @{ value = if ($cfg.primary.PSObject.Properties['vnetId'] -and $cfg.primary.PSObject.Properties['peer'] -and $cfg.primary.peer) { $cfg.primary.vnetId } else { '' } }
-            identityNames = @{ value = @(if ($cfg.PSObject.Properties['identityNames']) { $cfg.identityNames }) }
+        if ($existingNetwork) {
+            Read-DrNetwork
+            if ($blockers.Count) { break }
+            $missingIdentities = [Collections.Generic.List[string]]::new()
+            $existingIdentities = [Collections.Generic.List[object]]::new()
+            foreach ($n in @(if ($cfg.PSObject.Properties['identityNames']) { $cfg.identityNames })) {
+                $mi = Invoke-AzJson (@('identity', 'show', '--resource-group', $sec.resourceGroup, '--name', $n) + $sub) -AllowMissing
+                if (-not $mi) { $missingIdentities.Add($n); continue }
+                $expectedId = "/subscriptions/$($cfg.subscriptionId)/resourceGroups/$($sec.resourceGroup)/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$n"
+                if (-not $mi.PSObject.Properties['id'] -or [string]$mi.id -ine $expectedId) { $blockers.Add("identity:${n}:id_mismatch") }
+                $identityLocation = if ($mi.PSObject.Properties['location']) { [string]$mi.location } else { '' }
+                if ($identityLocation -ine $sec.location) { $blockers.Add("identity:${n}:location_mismatch") }
+                $parsed = [guid]::Empty
+                if (-not $mi.PSObject.Properties['principalId'] -or -not [guid]::TryParse([string]$mi.principalId, [ref]$parsed) -or $parsed -eq [guid]::Empty) { $blockers.Add("identity:${n}:principal_invalid") }
+                $parsed = [guid]::Empty
+                if (-not $mi.PSObject.Properties['clientId'] -or -not [guid]::TryParse([string]$mi.clientId, [ref]$parsed) -or $parsed -eq [guid]::Empty) { $blockers.Add("identity:${n}:client_invalid") }
+                $existingIdentities.Add([ordered]@{ name = $n; id = $expectedId; location = $identityLocation })
+            }
+            $evidence.checks.identities = [ordered]@{ existing = $existingIdentities.ToArray(); missing = $missingIdentities.ToArray() }
+            if ($blockers.Count) { break }
+            $params = [ordered]@{ location = @{ value = $sec.location }; tags = @{ value = $cfg.tags }
+                identityNames = @{ value = $missingIdentities.ToArray() } }
+            $template = Join-Path $PSScriptRoot 'dr-existing-identities.bicep'
+        } else {
+            $vnet = Invoke-AzJson (@('network', 'vnet', 'show', '--resource-group', $sec.resourceGroup, '--name', $sec.vnetName) + $sub) -AllowMissing
+            $evidence.checks.createModeVnet = [ordered]@{ exists = [bool]$vnet; updateApproved = [bool]$ApproveExistingVnetUpdate }
+            if ($vnet -and -not $ApproveExistingVnetUpdate) {
+                $blockers.Add('network_create_existing_vnet: create mode would deploy an authoritative subnet list to an existing VNet. Use existing network mode, or obtain approval and explicitly use -ApproveExistingVnetUpdate.')
+                break
+            }
+            if ($vnet) { Write-Warning 'Create mode is approved to update an existing VNet and its subnet list.' }
+            $params = [ordered]@{
+                location = @{ value = $sec.location }; tags = @{ value = $cfg.tags }; vnetName = @{ value = $sec.vnetName }; addressSpace = @{ value = $sec.addressSpace }
+                apimNsgName = @{ value = $sec.apimNsgName }; subnets = @{ value = $sec.subnets }
+                dnsZones = @{ value = if ($cfg.PSObject.Properties['dnsZones'] -and $cfg.dnsZones) { $cfg.dnsZones } else { @{ subscriptionId = $cfg.subscriptionId; resourceGroup = $sec.resourceGroup; zoneNames = @() } } }
+                primaryVnetId = @{ value = if ($cfg.primary.PSObject.Properties['vnetId'] -and $cfg.primary.PSObject.Properties['peer'] -and $cfg.primary.peer) { $cfg.primary.vnetId } else { '' } }
+                identityNames = @{ value = @(if ($cfg.PSObject.Properties['identityNames']) { $cfg.identityNames }) }
+            }
+            $template = Join-Path $PSScriptRoot 'dr-prerequisites.bicep'
         }
         $paramFile = Join-Path $EvidenceDirectory "dr-bootstrap-$stamp.parameters.json"
         @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = $params } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $paramFile -Encoding utf8NoBOM
-        $template = Join-Path $PSScriptRoot 'dr-prerequisites.bicep'
         $rg = Invoke-AzJson (@('group', 'show', '--name', $sec.resourceGroup) + $sub) -AllowMissing
-        if (-not $rg) {
+        if (-not $rg -and $existingNetwork) { $blockers.Add('resourceGroup:missing_existing_network_mode') }
+        elseif (-not $rg) {
             if (-not $Apply) { Write-Host "preview: resource group $($sec.resourceGroup) ($($sec.location)) would be created; this needs Microsoft.Resources/subscriptions/resourceGroups/write on the subscription. Without it, set secondary.resourceGroup to an existing group (and secondary.allowResourceGroupInOtherRegion to true if it is in another region)."; $evidence.checks.resourceGroup = 'would_create' }
             else { $null = Invoke-AzJson (@('group', 'create', '--name', $sec.resourceGroup, '--location', $sec.location, '--tags') + @($cfg.tags.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) + $sub); $evidence.checks.resourceGroup = 'created' }
         } elseif ($rg.location -ne $sec.location) {
@@ -175,6 +270,11 @@ switch ($Phase) {
             else { $blockers.Add($rgBlocker) }
         }
         if ($blockers.Count) { break }
+        if ($existingNetwork -and $missingIdentities.Count -eq 0) {
+            $evidence.checks.deployment = 'skipped_no_missing_identities'
+            Write-Host 'All named identities already exist in the standby region; no identity deployment is needed.'
+            break
+        }
         $name = "ccof-dr-prereq-$stamp"
         if (-not $Apply) {
             if (-not $rg) { Write-Host 'preview: what-if needs the resource group; template and parameters were validated offline.'; $evidence.checks.whatIf = 'skipped_no_resource_group' }
@@ -188,9 +288,17 @@ switch ($Phase) {
                 # Delete of anything else is a blocker.
                 $names = @(if ($cfg.PSObject.Properties['identityNames']) { $cfg.identityNames }) | ForEach-Object { [regex]::Escape($_) }
                 $e = { param($s) [regex]::Escape($s) }
-                $ownedPattern = "/virtualNetworks/$(& $e $sec.vnetName)(/|$)|/networkSecurityGroups/$(& $e $sec.apimNsgName)$|/virtualNetworkLinks/$(& $e $sec.vnetName)-link$|/virtualNetworkPeerings/to-$(& $e $sec.vnetName)$" + $(if ($names) { "|/userAssignedIdentities/($($names -join '|'))$" } else { '' })
+                $ownedPattern = if ($existingNetwork) {
+                    if ($names) { "/userAssignedIdentities/($($names -join '|'))$" } else { '(?!)' }
+                } else {
+                    "/virtualNetworks/$(& $e $sec.vnetName)(/|$)|/networkSecurityGroups/$(& $e $sec.apimNsgName)$|/virtualNetworkLinks/$(& $e $sec.vnetName)-link$|/virtualNetworkPeerings/to-$(& $e $sec.vnetName)$" + $(if ($names) { "|/userAssignedIdentities/($($names -join '|'))$" } else { '' })
+                }
                 $owned = { param($id) $id -match $ownedPattern }
-                $destructive = @($evidence.checks.whatIf | Where-Object { $_.changeType -in 'Delete', 'Modify' -and -not (& $owned $_.resourceId) })
+                $destructive = if ($existingNetwork) {
+                    @($evidence.checks.whatIf | Where-Object { $_.changeType -notin 'Ignore', 'NoChange' -and -not (& $owned $_.resourceId) })
+                } else {
+                    @($evidence.checks.whatIf | Where-Object { $_.changeType -in 'Delete', 'Modify' -and -not (& $owned $_.resourceId) })
+                }
                 if ($destructive.Count) { $blockers.Add("whatIf:changes_existing_$($destructive.Count)") }
             }
         } else {
@@ -200,34 +308,7 @@ switch ($Phase) {
         }
     }
     'Verify' {
-        $vnet = Invoke-AzJson (@('network', 'vnet', 'show', '--resource-group', $sec.resourceGroup, '--name', $sec.vnetName) + $sub) -AllowMissing
-        if (-not $vnet) { $blockers.Add('vnet:missing') } else {
-            if ($vnet.location -ne $sec.location) { $blockers.Add("vnet:location_$($vnet.location)") }
-            if (@($vnet.addressSpace.addressPrefixes) -notcontains $sec.addressSpace) { $blockers.Add('vnet:address_space') }
-            $want = @{ apim = 'Microsoft.Web/serverFarms'; functions = 'Microsoft.App/environments'; privateEndpoints = $null }
-            $subnets = [ordered]@{}
-            foreach ($k in $want.Keys) {
-                $sn = @($vnet.subnets | Where-Object { $_.name -ceq $sec.subnets.$k.name })[0]
-                if (-not $sn) { $blockers.Add("subnet:${k}:missing"); continue }
-                $del = @($sn.delegations | ForEach-Object serviceName)
-                $subnets[$k] = [ordered]@{ prefix = $sn.addressPrefix; delegations = $del; nsg = if ($sn.PSObject.Properties['networkSecurityGroup'] -and $sn.networkSecurityGroup) { $sn.networkSecurityGroup.id } else { $null } }
-                if ($sn.addressPrefix -ne $sec.subnets.$k.prefix) { $blockers.Add("subnet:${k}:prefix") }
-                if ($want[$k] -and $del -notcontains $want[$k]) { $blockers.Add("subnet:${k}:delegation") }
-                if (-not $want[$k] -and $del.Count) { $blockers.Add("subnet:${k}:unexpected_delegation") }
-                if ($k -eq 'apim' -and -not $subnets[$k].nsg) { $blockers.Add('subnet:apim:nsg_missing') }
-            }
-            $evidence.checks.vnet = [ordered]@{ id = $vnet.id; subnets = $subnets; peerings = @($vnet.virtualNetworkPeerings | ForEach-Object { [ordered]@{ name = $_.name; state = $_.peeringState; remote = $_.remoteVirtualNetwork.id } }) }
-            if ($cfg.primary.PSObject.Properties['peer'] -and $cfg.primary.peer -and @($vnet.virtualNetworkPeerings | Where-Object { $_.remoteVirtualNetwork.id -eq $cfg.primary.vnetId -and $_.peeringState -eq 'Connected' }).Count -ne 1) { $blockers.Add('peering:not_connected') }
-            $links = [ordered]@{}
-            if ($cfg.PSObject.Properties['dnsZones'] -and $cfg.dnsZones) {
-                foreach ($z in @($cfg.dnsZones.zoneNames)) {
-                    $l = @(Invoke-AzJson @('network', 'private-dns', 'link', 'vnet', 'list', '--zone-name', $z, '--resource-group', $cfg.dnsZones.resourceGroup, '--subscription', $cfg.dnsZones.subscriptionId) | Where-Object { $_.virtualNetwork.id -eq $vnet.id })
-                    $links[$z] = if ($l.Count) { $l[0].provisioningState } else { 'missing' }
-                    if (-not $l.Count -or $l[0].provisioningState -ne 'Succeeded') { $blockers.Add("dns:${z}:link_missing") }
-                }
-            }
-            $evidence.checks.dnsLinks = $links
-        }
+        Read-DrNetwork
         $ids = @()
         foreach ($n in @(if ($cfg.PSObject.Properties['identityNames']) { $cfg.identityNames })) {
             $mi = Invoke-AzJson (@('identity', 'show', '--resource-group', $sec.resourceGroup, '--name', $n) + $sub) -AllowMissing
