@@ -51,6 +51,9 @@ foreach ($path in $boundaries.Keys) {
     Test-StageBoundary $arms[$path] $boundaries[$path] $path
     $passed++
 }
+$networkArm = $arms['infra\staged\stage6-network.bicep']
+Assert-Contract ($networkArm.outputs.foundryPrivateDnsZoneIds.value -ceq "[variables('foundryZoneIds')]" -and
+    $networkArm.variables.foundryZoneIds -match "^\[if\(empty\(parameters\('foundryAccounts'\)\), createArray\(\),") 'Stage 6 must return no Foundry DNS zone IDs when no Foundry endpoints are requested.'
 
 # Negative control: the same check rejects a role assignment injected into the network stage.
 $mutated = $arms['infra\staged\stage6-network.bicep'] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
@@ -163,9 +166,10 @@ $dnsTargets = Get-StgNetworkDnsTargets -Cfg $dnsConfig -Outputs $dnsOutputs -Has
 Assert-Contract ($dnsTargets.vnetId -ceq '/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet' -and $dnsTargets.zoneIds.Count -eq 5) 'Stage 6 must derive DNS targets when earlier deployment outputs lack VNet and Foundry zone IDs.'
 # Flex Consumption apps without VNet integration return virtualNetworkSubnetId null (seen live 2026-10-25);
 # the read-back compares it with '' for Stage 1, so Get-StgSite returns a string.
-function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true } } } }
+function Invoke-StgAzJson { param([string[]]$Arguments) if ($Arguments[1] -eq 'config') { @{ ftpsState = 'Disabled' } } else { @{ name = 'app'; properties = @{ publicNetworkAccess = 'Enabled'; virtualNetworkSubnetId = $null; httpsOnly = $true; defaultHostName = 'app.azurewebsites.net' } } } }
 $nullSubnetSite = Get-StgSite -Cfg @{ subscriptionId = 's'; resourceGroup = 'g' } -Name 'app'
 Assert-Contract ($nullSubnetSite.virtualNetworkSubnetId -ieq '') 'Get-StgSite must return an empty string, not null, for an app without VNet integration (Stage 1 read-back).'
+Assert-Contract ($nullSubnetSite.defaultHostName -ceq 'app.azurewebsites.net') 'Get-StgSite must return the actual hostname so DR Config can hand the redirect URIs to Entra.'
 # Stage 1 verify reads zone redundancy back with the preview API only when the configuration asks for it (UNKNOWNS APIM-ZR-02).
 $script:zrArmCalls = @()
 function Get-StgArm { param([string]$Path, [string]$ApiVersion) $script:zrArmCalls += "$ApiVersion"; @{ properties = @{ zoneRedundant = $script:zrArmValue } } }
@@ -186,9 +190,12 @@ $pubZip = Join-Path ([IO.Path]::GetTempPath()) "ccof-admin-test-$([guid]::NewGui
 $pubBuild = { param($zip) $script:pubBuilds++; [IO.File]::WriteAllText($zip, 'zip') }
 $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild 3>$null
 Assert-Contract ($pub.skipped -ceq 'public_access_disabled' -and $script:pubBuilds -eq 0 -and @($script:pubCalls | Where-Object { $_ -match 'config-zip' }).Count -eq 0 -and $pub.runbook -match 'ADMIN-UPDATE-FROM-VM') 'Admin publishing must be skipped, without build or deploy, when the admin app has public access Disabled (Front Door Lockdown).'
+$script:pubCalls = @()
+try { $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild -PrivatePublisher } finally { Remove-Item -LiteralPath $pubZip -ErrorAction SilentlyContinue }
+Assert-Contract ($script:pubBuilds -eq 1 -and @($script:pubCalls | Where-Object { $_ -match 'config-zip' }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'An explicitly checked private publisher must deploy the admin package without enabling public access.'
 $script:pubCalls = @(); $script:pubAccess = 'Enabled'
 try { $pub = Publish-StgAdminPackage -Subscription 's' -ResourceGroup 'g' -App 'adm' -ZipPath $pubZip -Build $pubBuild } finally { Remove-Item -LiteralPath $pubZip -ErrorAction SilentlyContinue }
-Assert-Contract ($script:pubBuilds -eq 1 -and @($script:pubCalls | Where-Object { $_ -match "^functionapp deployment source config-zip --subscription s --resource-group g --name adm --src " }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'Admin publishing with public access Enabled must build once and deploy once with config-zip.'
+Assert-Contract ($script:pubBuilds -eq 2 -and @($script:pubCalls | Where-Object { $_ -match "^functionapp deployment source config-zip --subscription s --resource-group g --name adm --src " }).Count -eq 1 -and $pub.sha256 -match '^[0-9A-F]{64}$') 'Admin publishing with public access Enabled must build once and deploy once with config-zip.'
 $stage7Text = Get-Content -Raw (Join-Path $root 'infra\staged\Staged.Application.ps1'); $drText = Get-Content -Raw (Join-Path $root 'infra\dr\Invoke-DrStandby.ps1')
 Assert-Contract (([regex]::Matches($stage7Text + $drText, "'config-zip'")).Count -eq 1 -and ([regex]::Matches($stage7Text + $drText, 'Publish-StgAdminPackage ')).Count -ge 2) 'Stage 7 and the DR Code phase must publish the admin package only through Publish-StgAdminPackage.'
 # Stage 4 with existing registrations already configured by an Entra administrator (for example by hand
@@ -268,6 +275,14 @@ Assert-Contract ($m.registrations.gatewayApi.appId -ceq 'a-gw' -and $m.registrat
 $previewText = (Invoke-Stage4 -Cfg $cfgManual 6>&1 | Out-String)
 Assert-Contract ($script:s4graph.Count -eq 0 -and $previewText -match 'Expose an API' -and $previewText -match $cli -and $previewText -match 'https://lab-admin\.azurewebsites\.net/api/console-v3' -and $previewText -match 'g-1') 'Stage 4 preview with entra.manualVerification must print the Portal checklist, without Graph.'
 Assert-Contract ($previewText -match 'Enterprise applications' -and $previewText -match 'a-res' -and $previewText -match 'a-gw' -and $previewText -match 'service principal') 'Stage 4 manual checklist must ask the Entra admin to confirm the gateway and resolver enterprise applications (service principals); APIM cannot get a resolver token without one.'
+# Stage 5 workbook names must also respect manual Stage 4: a failed Graph lookup is still a Graph call.
+$script:workbookGraphCalls = 0
+function Get-QsGraph { param([string]$Path) $script:workbookGraphCalls++; @{ id = 'g-1'; displayName = 'Live name' } }
+$workbookParams = @{ groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1' }) }
+$manualRows = @(Get-StgWorkbookGroups -P $workbookParams -Stage4 $m)
+Assert-Contract ($script:workbookGraphCalls -eq 0 -and $manualRows.Count -eq 1 -and $manualRows[0].displayName -ceq 'CCOF P1 STD') 'Stage 5 with manual Stage 4 must use the recorded group name without any Graph call.'
+$delegatedRows = @(Get-StgWorkbookGroups -P $workbookParams -Stage4 @{ groups = @{ 'P1/STD' = @{ id = 'g-1'; displayName = 'Saved name' } } })
+Assert-Contract ($script:workbookGraphCalls -eq 1 -and $delegatedRows[0].displayName -ceq 'Live name') 'Stage 5 without manual verification must keep the existing Graph lookup.'
 $cfgManualMembers = $cfgManual.Clone(); $cfgManualMembers.groups = @(@{ projectId = 'P1'; classification = 'STD'; groupId = 'g-1'; members = @('u-1') })
 $s4err = $null; try { $null = Invoke-Stage4 -Cfg $cfgManualMembers -Apply 6>$null } catch { $s4err = "$_" }
 Assert-Contract ($s4err -match 'manual_verification' -and $s4err -match 'members' -and $script:s4graph.Count -eq 0) 'Stage 4 with entra.manualVerification must refuse group members it cannot add without Graph.'

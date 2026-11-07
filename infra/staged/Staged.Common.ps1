@@ -332,7 +332,13 @@ function Get-StgNetworkDnsTargets {
     if ($vnetId -notmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Network/virtualNetworks/[^/]+$') {
         throw 'network_vnet_output: cannot determine a valid VNet ID from the Stage 6 outputs.'
     }
-    $foundryZones = @($Outputs.foundryPrivateDnsZoneIds | Where-Object { $_ })
+    $cosmosZone = [string]$Outputs.privateDnsZoneIds.cosmos
+    $blobZone = [string]$Outputs.privateDnsZoneIds.blob
+    if ([string]::IsNullOrWhiteSpace($cosmosZone) -or [string]::IsNullOrWhiteSpace($blobZone) -or $cosmosZone -ieq $blobZone) {
+        throw 'network_dns_output_invalid: Stage 6 must return distinct Cosmos and blob Private DNS zone IDs. The network deployment or integrations may already be partial; reconcile them and review a fresh preview.'
+    }
+    $foundryZones = @()
+    if ($HasFoundry) { $foundryZones = @($Outputs.foundryPrivateDnsZoneIds | Where-Object { $_ }) }
     if ($HasFoundry -and -not $foundryZones.Count) {
         if ($Cfg.network.mode -eq 'create') {
             $foundryZoneNames = @('privatelink.cognitiveservices.azure.com', 'privatelink.openai.azure.com', 'privatelink.services.ai.azure.com')
@@ -343,7 +349,10 @@ function Get-StgNetworkDnsTargets {
             $foundryZones = @($Cfg.network.existing.privateDnsZoneIds.foundry.Values | Where-Object { $_ })
         }
     }
-    $zoneIds = @($Outputs.privateDnsZoneIds.cosmos, $Outputs.privateDnsZoneIds.blob) + $foundryZones
+    if ($HasFoundry -and ($foundryZones.Count -ne 3 -or @($foundryZones | ForEach-Object { "$_".ToLowerInvariant() } | Select-Object -Unique).Count -ne 3)) {
+        throw 'network_foundry_dns_incomplete: expected three distinct Foundry Private DNS zone IDs for managed endpoints. The network deployment or integrations may already be partial; reconcile them and review a fresh preview.'
+    }
+    $zoneIds = @($cosmosZone, $blobZone) + $foundryZones
     return [ordered]@{ vnetId = $vnetId; zoneIds = @($zoneIds | Where-Object { $_ }) }
 }
 # Dependency hashes cover a stage's operational outputs only: `verify` (read-back snapshots, which
@@ -547,6 +556,7 @@ function Get-StgSite {
     $pick = { param($k) if ($site.properties -and $null -ne $site.properties[$k]) { $site.properties[$k] } else { $site[$k] } }
     return @{
         name = $site.name
+        defaultHostName = (& $pick 'defaultHostName')
         publicNetworkAccess = (& $pick 'publicNetworkAccess')
         # A Flex app without VNet integration returns null; '' keeps the read-back's string comparisons valid.
         virtualNetworkSubnetId = "$(& $pick 'virtualNetworkSubnetId')"

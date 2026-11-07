@@ -2,19 +2,23 @@
 
 **For:** an operator who finished the single-region deployment ([Deploy CCOF step by step](DEPLOY-STEP-BY-STEP.md))
 and wants to build the second-region ("region B") copy of the CCOF services with the staged DR driver.
-**Time:** one to two hours of commands, spread over several Cloud Shell sessions.
-**Result after sections 1-10:** a standby APIM and four Function Apps in the standby region, Cosmos DB
-with a second read region, region B grants, settings and private networking, the same code as region
-A, and a read-only check that both writers are off. These build steps do not change Front Door routing
-or promote a writer. Section 11 records the live failover and failback drill; section 12 scripts its
-promotion and failback steps.
+**Time:** depends on approvals, network preparation, and Azure operations.
+**Result after sections 1-10, if all checks pass:** a fenced region B, with shared Cosmos DB, private
+Function Apps and published code. These steps do not add region B to Front Door or promote a writer.
+The network team must separately provide the Function Apps' inbound private endpoints and DNS.
 
-> **Drilled, not production-qualified.** On **2026-10-26** the lab ran the whole cycle: traffic to
-> region B, region B promoted as the only writer, Log Analytics workspace switchover, then failback of
-> the workspace, Cosmos DB, the writers and Front Door to region A (section 11). Three items remain open
-> and block a production claim: DR-15, DR-16 and DR-17 in [UNKNOWNS](../UNKNOWNS.md) (summary in 11.7).
+> **STOP: all Front Door operations are excluded from this standby-only release.** Do not run
+> `Deploy`, `Approve`, `Verify`, `Lockdown`, `DrainPrimary`, or `RestorePrimary` for Front Door,
+> including the historical examples below. Front Door readiness, ownership and recovery fixes
+> require a later independently reviewed release. Promotion and failback also require separate
+> authorization; this release approves neither.
+>
+> **Offline checks are not a live-connectivity claim.** The existing-network, manual-Entra and
+> private publisher path has not been exercised end to end in a lab or validated against a customer
+> network. The older drill in sections 11 and 12.3 is historical, not evidence for this path.
+> DR-15, DR-16 and DR-17 remain open in [UNKNOWNS](../UNKNOWNS.md).
 
-State of the work on **2026-10-26** (read this first):
+Historical state of the earlier lab work on **2026-10-26**:
 
 | Part | State | Source |
 | --- | --- | --- |
@@ -25,8 +29,8 @@ State of the work on **2026-10-26** (read this first):
 | Workspace switchover and failback | Done; while switched over, the ledger lacked history from before replication began and the gate refused (DR-17) | Sections 11.4, 11.5 |
 | Scripted promotion and failback (`Invoke-DrFailover.ps1`) | Implemented 2026-10-26 with offline tests (`tests/Test-DrFailover.ps1`); **not yet run against Azure** | Section 12 |
 | Live lab state after the drill | Front Door serves region A; Cosmos writes in East US 2; region A writers on with the gate `on`; region B writers fenced; workspace back in East US 2 | Section 11.6 |
-So after sections 1-10 the standby stack **exists and is fenced**, but the DR design as a whole is not
-finished. The standby Foundry fallback is a different mechanism (backends and project pools in
+The historical drill does not qualify the current build for production. The standby Foundry fallback
+is a different mechanism (backends and project pools in
 [DR-CLOUD-SHELL.md Step 6](DR-CLOUD-SHELL.md#step-6-per-project-backend-failover-admin-console-33)); it is
 not part of a region B app deployment. The design is in [DR design](../DR-ACTIVE-PASSIVE.md); the
 contracts are [ADR 0033](../adr/0033-dr-active-passive.md) and [ADR 0034](../adr/0034-dr-project-routing-and-prerequisites.md).
@@ -38,8 +42,8 @@ guide is its replacement.
 
 ```text
 dr.config.json  (one file, in Cloud Shell clouddrive)
-   |-- tenantId ... entra              -> Invoke-DrPrerequisites.ps1   P0 Discover, P1/P2 Bootstrap, Verify
-   |-- secondary, dnsZones, identities -> (network, DNS links, identity shells in region B)
+   |-- tenantId, secondary, dnsZones   -> Invoke-DrPrerequisites.ps1   Discover, Bootstrap, Verify
+   |-- identities, optional entra     -> (existing-network checks; only missing identities are created)
    |-- standby, cosmos                 -> Invoke-DrStandby.ps1         Data, Shells, Grants, Config, Network, Code, Verify
    |-- standby.stagedConfigPath/...    -> READS the primary's staged.config.json and .staged-state (never writes them)
                                           WRITES region B state to standby.stateDirectory
@@ -48,16 +52,19 @@ dr.config.json  (one file, in Cloud Shell clouddrive)
 Facts from the code ([`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1),
 [`DrStandby.psm1`](../../infra/dr/DrStandby.psm1)):
 
-- One phase runs per command. Without `-Apply` a phase is a preview (no Azure change); with `-Apply` it
-  changes Azure, reads the result back and records it in `standby.stateDirectory`.
+- One phase runs per command. Changes require `-Apply`; `Verify` reads Azure and records local evidence
+  even without `-Apply`. A preview can also write local parameter or evidence files.
 - Region B shares region A's resource group, Cosmos account and Log Analytics workspace. The driver
   refuses to run when `secondary.resourceGroup` differs from the primary's resource group
-  (`standby_resource_group`).
+  (`standby_resource_group`). With `secondary.networkMode: "existing"`, the VNet may be in a
+  **different resource group** in the same subscription, identified by `secondary.existingVnetId`.
+- Existing-network Bootstrap reads the network and deploys only missing identities; it does not
+  deploy the VNet, subnets, NSG, DNS links or peerings. Existing identities are checked and reused.
+  Later network changes require separate approval (section 7).
 - Region B's names are the primary stem plus `-<nameSuffix>` (for example `...-resolver` becomes
   `...-resolver-b`); storage names add the suffix before the 3-letter app code.
 - Both writers (`syncEntitlement`, `reconcileBudgets`) are created disabled and timers off. `Verify`
-  fails when either is not disabled. Nothing in this repository promotes them: that is a deliberate,
-  separate step (DR-08, not built).
+  fails when either is not disabled. Promotion is a separate guarded operation (section 12).
 - Phase order enforced by the driver: `Grants` needs `Shells`; `Config` needs `Grants`; `Network`
   needs `Shells`; `Code` needs `Config` and `Network` (error `phase_order`). `Data` is not required by
   the others in code; run it first anyway, because the standby apps read the shared Cosmos account.
@@ -89,11 +96,11 @@ account ([persist files](https://learn.microsoft.com/azure/cloud-shell/persistin
 | --- | --- | --- |
 | 1 | A single-region deployment with Stages 1-7 applied; its `staged.config.json` and `.staged-state` folder (with `state.json`) | The state folder is `<folder of staged.config.json>/.staged-state` unless the driver ran with `-StateDirectory` ([`Invoke-StagedDeployment.ps1`](../../infra/staged/Invoke-StagedDeployment.ps1)). Stage 1 outputs must be in it |
 | 2 | The standby region offers APIM, Function Apps, Container Apps environments, Cosmos DB and Log Analytics | `Discover` checks resource providers per region. It does not check APIM v2 SKU availability or Flex Consumption: check Flex with `az functionapp list-flexconsumption-locations --query "value[].name" -o tsv` ([CLI reference](https://learn.microsoft.com/cli/azure/functionapp#az-functionapp-list-flexconsumption-locations)) and APIM v2 in the [region table](https://learn.microsoft.com/azure/api-management/api-management-region-availability) |
-| 3 | Cosmos DB decision recorded: the account is serverless today or already provisioned | Section 6, "Cosmos DB" |
-| 4 | Permissions: Contributor on the resource group; Network Contributor on the primary VNet (peering); Private DNS Zone Contributor on the zones' group; Reader on Foundry accounts; read in Entra for the 3 app registrations; the rights the staged Stages 3, 5 and 6 need, and permission to edit the admin app registration (the `Config` phase adds redirect URIs to it) | [Permissions table](DR-CLOUD-SHELL.md#before-you-start), [Stage 3-6 notes](STAGED-DEPLOYMENT-V2.md#stage-notes) |
-| 5 | The admin app preauthorizes Azure CLI (`entra.admin:azure_cli_not_preauthorized` otherwise in `Discover`) | [DR-CLOUD-SHELL.md Step 2.0](DR-CLOUD-SHELL.md#20-azure-cli-as-an-admin-client-workstation-n-17) |
-| 6 | A repository checkout that **contains** `infra/dr/Invoke-DrStandby.ps1` | As of 2026-10-25 the driver is on branch `feat/dr-standby`, not on `main` (`git branch --contains 7162dd3`). Use the branch or commit your team gives you; section 4 tests for the file |
-| 7 | Node.js and `npm` in Cloud Shell, for the `Code` phase (`npx tsc`, admin package build) | `node --version; npm --version`; install the dependencies with `npm ci` in the repository (section 4) |
+| 3 | Cosmos DB capacity and costs reviewed; **separate explicit approval** before a serverless-to-provisioned conversion | Section 6 |
+| 4 | Resource-admin permissions: Contributor on the workload group plus scoped role-assignment rights for `Grants`; read access to both VNets, configured DNS zones and Foundry accounts; the Stage 3, 5 and 6 rights, and approved subnet/DNS write and join permissions for `Network`. The private publisher also needs to read each app connection, endpoint and NIC and publish to the apps | [Stage notes](STAGED-DEPLOYMENT-V2.md#stage-notes), [`Invoke-DrPrerequisites.ps1`](../../infra/dr/Invoke-DrPrerequisites.ps1), [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1) |
+| 5 | For **manual Entra**, omit the DR config's entire `entra` section and verify that the primary Stage 4 output records `verification: manual`. `Discover` and `Config` then make no Graph call as the resource admin. The Entra team completes the one batch in section 7.3; runtime managed identities may still need separately approved read-only Graph permissions | [Manual Stage 4](DEPLOY-STEP-BY-STEP.md#step-4-register-the-apps-and-groups-in-entra-id), [`Staged.Application.ps1`](../../infra/staged/Staged.Application.ps1) |
+| 6 | Network-team approval for Stage 6 changes and separately for app-specific `sites` endpoints and DNS; security approval for initially public APIM. Keep all standby Function Apps private | Section 7; [ADR 0034](../adr/0034-dr-project-routing-and-prerequisites.md#amendment-existing-standby-network) |
+| 7 | A checkout containing the current existing-network and readiness guards, plus PowerShell 7, Azure CLI, Node.js and npm on the relevant hosts | Use the reviewed branch or commit your team supplies; section 4 checks the files. The private publisher needs the same approved checkout and dependencies |
 
 ## 4. Set up Cloud Shell
 
@@ -107,27 +114,45 @@ $base = "$HOME/clouddrive/ccof-dr"
 if (-not (Test-Path "$HOME/clouddrive")) { throw 'No clouddrive: this is an ephemeral session. Mount storage first (section 2).' }
 New-Item -ItemType Directory -Force -Path "$base/primary", "$base/standby-state", "$base/evidence", "$base/logs" | Out-Null
 @'
-$base     = "$HOME/clouddrive/ccof-dr"
-$cfg      = "$base/dr.config.json"
-$evidence = "$base/evidence"
-$logs     = "$base/logs"
-$repo     = "$HOME/ccof-bicep"
+$base     = if ($env:CCOF_DR_BASE) { $env:CCOF_DR_BASE } else { "$HOME/clouddrive/ccof-dr" }
+$cfg      = Join-Path $base 'dr.config.json'
+$evidence = Join-Path $base 'evidence'
+$logs     = Join-Path $base 'logs'
+$repo     = if ($env:CCOF_DR_REPO) { $env:CCOF_DR_REPO } else { "$HOME/ccof-bicep" }
 function Use-DrSession {
     if (-not (Test-Path $cfg)) { throw "No $cfg yet: finish section 5." }
     $c = Get-Content $cfg -Raw | ConvertFrom-Json
     az account set --subscription $c.subscriptionId
+    if ($LASTEXITCODE -ne 0) { throw 'Could not select the configured subscription.' }
     az account show --query "{tenant:tenantId, subscription:id, user:user.name}" -o table
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the selected account.' }
     Set-Location $repo
 }
 function Invoke-DrPhase {
-    param([Parameter(Mandatory)] [ValidateSet('Data','Shells','Grants','Config','Network','Code','Verify')] [string]$Phase, [switch]$Apply)
-    $a = @(); if ($Apply) { $a += '-Apply' }
-    $log = "$logs/standby-$Phase-$(Get-Date -Format yyyyMMddTHHmmss)-$(if ($Apply) {'apply'} else {'preview'}).log"
-    pwsh -NoProfile -File "$repo/infra/dr/Invoke-DrStandby.ps1" -Phase $Phase -ConfigPath $cfg @a 2>&1 | Tee-Object -FilePath $log
-    "exit code $LASTEXITCODE (log: $log)"
+    param(
+        [Parameter(Mandatory)] [ValidateSet('Data','Shells','Grants','Config','Network','Code','Verify')] [string]$Phase,
+        [switch]$Apply, [switch]$ApprovePublicApimBootstrap, [switch]$ApprovePublicFunctionAccess,
+        [switch]$ApprovePrivateNetworkChanges, [switch]$ApproveCosmosThroughputReduction, [switch]$PrivatePublisher
+    )
+    $a = @()
+    if ($Apply) { $a += '-Apply' }
+    if ($ApprovePublicApimBootstrap) { $a += '-ApprovePublicApimBootstrap' }
+    if ($ApprovePublicFunctionAccess) { $a += '-ApprovePublicFunctionAccess' }
+    if ($ApprovePrivateNetworkChanges) { $a += '-ApprovePrivateNetworkChanges' }
+    if ($ApproveCosmosThroughputReduction) { $a += '-ApproveCosmosThroughputReduction' }
+    if ($PrivatePublisher) { $a += '-PrivatePublisher' }
+    $log = Join-Path $logs "standby-$Phase-$(Get-Date -Format yyyyMMddTHHmmss)-$(if ($Apply) {'apply'} else {'preview'}).log"
+    $driver = [IO.Path]::Combine($repo, 'infra', 'dr', 'Invoke-DrStandby.ps1')
+    pwsh -NoProfile -File $driver -Phase $Phase -ConfigPath $cfg @a 2>&1 | Tee-Object -FilePath $log
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { throw "Phase $Phase failed with exit code $code (log: $log)." }
+    "exit code 0 (log: $log)"
 }
 '@ | Set-Content -Path "$base/session.ps1"
 ```
+
+If you already created `session.ps1` with an older runbook, rerun block 1 to update the wrapper,
+then reload it with block 2. This replaces the session file, not the configuration or state.
 
 **Block 2: every new or resumed session.**
 
@@ -136,8 +161,8 @@ function Invoke-DrPhase {
 ```
 
 **Block 3: the code.** `$repo` is outside `clouddrive` on purpose: building `node_modules` on an SMB share is
-slow. It is rebuilt cheaply after a recycle if storage is not mounted. Replace `REPLACE-branch-or-commit`
-with the branch or commit that contains the DR driver (section 3, row 6).
+slow. Replace `REPLACE-branch-or-commit` with the reviewed branch or commit that contains the current
+DR fixes. Record the commit and use the same approved code on the private publisher.
 
 ```powershell
 if (-not (Test-Path $repo)) { git clone https://github.com/naveenneog/ccof-bicep.git $repo }
@@ -146,12 +171,15 @@ git fetch --all --prune
 git checkout REPLACE-branch-or-commit
 git log -1 --oneline
 Test-Path infra/dr/Invoke-DrStandby.ps1
+Test-Path infra/dr/DrCosmosThroughput.psm1
+Test-Path infra/dr/dr-existing-identities.bicep
+Test-Path infra/dr/Invoke-DrFrontDoor.ps1
 az bicep install
 npm ci --ignore-scripts --include=dev
 ```
 
-**Expect:** the commit line, `True`, and `npm ci` without errors. `False` means the checkout does not
-have the DR driver.
+**Expect:** the commit line, four `True` values, and `npm ci` without errors. These file checks do not
+prove that a checkout has the new guards: inspect the reviewed commit before proceeding.
 
 **Block 4: the primary's staged files on `clouddrive`.** The driver reads them; it never writes them.
 Copy, do not move: the originals stay where the primary deployment is managed.
@@ -182,14 +210,20 @@ Copy-Item infra/dr/dr.config.example.json $cfg
 
 Edit `$cfg` (Cloud Shell has `code` for its built-in editor, or use the full JSON in section 5.3 and
 paste it with your values). Replace **every** `REPLACE-` value; the drivers refuse a placeholder in the
-`standby` section, and `Select-String` in section 5.4 finds any left.
+`standby` section, and `Select-String` in section 5.4 finds any left. The repository example defaults
+to **create** mode: for this existing-network procedure set `secondary.networkMode` and
+`secondary.existingVnetId` explicitly and remove the entire `entra` section. Do not apply the copied
+example unchanged.
 
 ### 5.1 Read the values (read-only commands)
 
 ```powershell
 $sub = 'REPLACE-subscription-id'
 $rg  = 'REPLACE-ccof-resource-group'
+$standbyVnetId = 'REPLACE-existing-standby-vnet-resource-id'
 $p   = Get-Content "$base/primary/staged.config.json" -Raw | ConvertFrom-Json
+$pState = Get-Content "$base/primary/.staged-state/state.json" -Raw | ConvertFrom-Json -AsHashtable
+if ($pState.stages['4'].outputs.verification -cne 'manual') { throw 'Manual DR requires a primary Stage 4 record with verification: manual.' }
 $p.tenantId; $p.subscriptionId; $p.resourceGroup; $p.location; $p.tags | ConvertTo-Json -Compress
 $p.stage1.apimSku; $p.stage1.apimUnits; $p.stage1.includeAdmin; $p.cosmos.databaseName
 $p.network.existing.functionsSubnetId
@@ -198,16 +232,17 @@ az cosmosdb list --subscription $sub -g $rg --query "[].{name:name, capacity:cap
 az apim list --subscription $sub -g $rg --query "[].{name:name, sku:sku.name, units:sku.capacity, email:publisherEmail, publisher:publisherName}" -o json
 az identity list --subscription $sub -g $rg --query "[].name" -o tsv
 az network vnet show --ids ($p.network.existing.functionsSubnetId -split '/subnets/')[0] --query "{id:id, spaces:addressSpace.addressPrefixes}" -o json
+az network vnet show --ids $standbyVnetId --query "{id:id, location:location, spaces:addressSpace.addressPrefixes, subnets:subnets[].{name:name, prefix:addressPrefix, delegations:delegations[].serviceName}}" -o json
 az network private-dns zone list --subscription $sub --query "[?starts_with(name,'privatelink.')].{name:name, rg:resourceGroup}" -o table
 az cognitiveservices account list --subscription $sub --query "[?kind=='AIServices'].{name:name, rg:resourceGroup}" -o table
-az ad app list --display-name CCOF --query "[].{name:displayName, appId:appId}" -o table
 ```
 
 If your primary has no `network.existing` (it was built in `create` mode), read `network.create` and the
-VNet it created. The detailed Step 2 queries (primary VNet, DNS links per VNet, Foundry and app lists) are in
-[DR-CLOUD-SHELL.md Step 2](DR-CLOUD-SHELL.md#step-2-fill-the-dr-configuration). The Cosmos
-account name and the APIM list also exist in `.staged-state/state.json` (Stage 1 outputs); do not paste
-IDs from the state file into documents or tickets.
+VNet it created instead of the primary `az network vnet show` command above. Ask the network team to
+confirm the existing standby VNet ID, subnet prefixes, delegations, DNS links and any requested
+peering. For the manual path, use the primary Stage 4 record and the Entra team's confirmation rather
+than `az ad` commands. The Cosmos account name and APIM list also exist in the Stage 1 state. Treat
+state and collected IDs as confidential and share them only through an approved handoff.
 
 ### 5.2 Field reference
 
@@ -223,46 +258,47 @@ A "name" below means `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`; a "region" means lower
 | `subscriptionId` | `22222222-2222-4222-8222-222222222222` | GUID | The subscription that holds the **resources** (it can be a different one from the tenant's default). Must equal the primary's `subscriptionId`: region B shares its resource group, so a different subscription cannot work |
 | `tags` | `{ "workload": "ccof", "stage": "dr-prerequisites" }` | Tag names are names; values `^[A-Za-z0-9._:/-]{1,256}$` | Tags for the P1/P2 resources and a created resource group. Follow your standard; no spaces or `@` |
 | `primary.location` | `eastus2` | Region; must differ from `secondary.location` | Region of the primary deployment: `az group show -n $rg --query location -o tsv` (or the primary's `location`) |
-| `primary.vnetId` | `/subscriptions/2222.../resourceGroups/rg-ccof-network/providers/Microsoft.Network/virtualNetworks/vnet-ccof-primary` | A VNet resource ID, or omit | The VNet that holds the primary's subnets: the part of `network.existing.functionsSubnetId` before `/subnets/`. Needed for the overlap check and peering. Region B reaches the primary's Foundry private endpoints over this peering ([`DrStandby.psm1`](../../infra/dr/DrStandby.psm1), comment on `New-DrStandbyStagedConfig`), so keep peering on |
+| `primary.vnetId` | `/subscriptions/2222.../resourceGroups/rg-ccof-network/providers/Microsoft.Network/virtualNetworks/vnet-ccof-primary` | A VNet resource ID, or omit | The primary VNet ID, needed for its overlap check and requested peering checks. Region B needs an approved path to the primary's Foundry private endpoints; the network team must verify it ([`DrStandby.psm1`](../../infra/dr/DrStandby.psm1)) |
 | `primary.addressSpaces` | `["10.64.0.0/16"]` | CIDRs | Every address prefix of that VNet (`az network vnet show --ids <id> --query addressSpace.addressPrefixes`) **and** of every network peered with it, which the tool cannot see. Used only for the overlap check |
-| `primary.peer` | `true` | `true` / `false` | `true`: the Bootstrap creates both peerings (needs Network Contributor on the primary VNet). `false`: only when your network team connects the VNets some other way (hub); then region B still needs a path to the primary's private endpoints |
+| `primary.peer` | `true` | `true` / `false` | In existing mode, `true` **checks**, but does not create, connected peering in both directions. `false` skips that peering check; the network team must verify any alternative path |
 | `secondary.location` | `centralus` | Region; not equal to `primary.location` | The standby region. Check services per region (section 3 row 2). Workspace replication has its own pairing rules ([Learn](https://learn.microsoft.com/azure/azure-monitor/logs/workspace-replication#supported-regions)) |
 | `secondary.resourceGroup` | `rg-ccof-prod` | A name | **Must be the primary's resource group** for the region B driver (`standby_resource_group`). Same value as the primary's `resourceGroup` |
 | `secondary.allowResourceGroupInOtherRegion` | `true` | `true` / `false` | `true` when the existing group is in the primary region: P1/P2 then reuse it and only the group's metadata stays in the primary region ([`Get-DrResourceGroupLocationBlocker`](../../infra/dr/DrPrerequisites.psm1)). Without it `resourceGroup:location_is_...` stops Bootstrap |
-| `secondary.vnetName` | `vnet-ccof-standby` | A name | New standby VNet name, created in the shared group. Your naming standard |
-| `secondary.apimNsgName` | `nsg-ccof-standby-apim` | A name | New NSG for the standby APIM subnet |
+| `secondary.networkMode` | `existing` | `existing` / `create` | Set `existing` for this procedure. An omitted value defaults to `create`, which can deploy an authoritative subnet list |
+| `secondary.existingVnetId` | `/subscriptions/2222.../resourceGroups/rg-ccof-network/providers/Microsoft.Network/virtualNetworks/vnet-ccof-standby` | Full VNet resource ID | Existing VNet may be in a different resource group from the workload, but must be in `subscriptionId`; its name must match `secondary.vnetName` |
+| `secondary.vnetName` | `vnet-ccof-standby` | A name | Name of the existing VNet, not a request to create it |
+| `secondary.apimNsgName` | omitted | Optional in existing mode | The existing APIM subnet must have an NSG; the check does not create or change it |
 | `secondary.addressSpace` | `10.80.0.0/22` | CIDR; no overlap with the primary or anything peered | Ask the network team. `/22` is the example's size. Overlap is `secondary.addressSpace:overlaps_primary_...` |
-| `secondary.subnets.apim.name` / `.prefix` | `snet-apim` / `10.80.0.0/27` | Name; CIDR inside `addressSpace`, at most `/27` (prefix number 27 or smaller) | APIM v2 integration subnet (delegated to `Microsoft.Web/serverFarms`). `too_small` if narrower than /27 |
+| `secondary.subnets.apim.name` / `.prefix` | `snet-apim` / `10.80.0.0/27` | Name; CIDR inside `addressSpace`, at most `/27` (prefix number 27 or smaller) | The supported Standard v2 standby requires `Microsoft.Web/serverFarms` delegation ([integration requirements](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound)). `too_small` if narrower than /27. Premium v2 has a different delegation and is not supported by this standby template (DR-BYO-17) |
 | `secondary.subnets.functions.name` / `.prefix` | `snet-functions` / `10.80.0.32/27` | Same rules, at most `/27` | Function Apps integration subnet (delegated to `Microsoft.App/environments`) |
-| `secondary.subnets.privateEndpoints.name` / `.prefix` | `snet-private-endpoints` / `10.80.1.0/26` | Same rules, at most `/28` | Region B's private endpoints (the Stage 6 template creates three, per [`tests/Test-DrStandby.ps1`](../../tests/Test-DrStandby.ps1)); leave room |
+| `secondary.subnets.privateEndpoints.name` / `.prefix` | `snet-private-endpoints` / `10.80.1.0/26` | Same rules, at most `/28` | Existing, non-delegated endpoint subnet. Allow capacity for Stage 6 endpoints and the four separately approved app-specific endpoints |
 | `dnsZones.subscriptionId` | `22222222-2222-4222-8222-222222222222` | GUID | Who **owns** the private DNS zones: often a platform subscription different from `subscriptionId` |
 | `dnsZones.resourceGroup` | `rg-ccof-network` | A name | Resource group of those zones: `az network private-dns zone list --subscription <id> --query "[].{n:name,rg:resourceGroup}"` |
-| `dnsZones.zoneNames` | the five names in section 5.3 | Only these six: `privatelink.services.ai.azure.com`, `.cognitiveservices.azure.com`, `.openai.azure.com`, `.documents.azure.com`, `.blob.core.windows.net`, `.azurewebsites.net` | The zones to link to the standby VNet. **For region B list all five of `documents`, `blob`, `services.ai`, `cognitiveservices` and `openai`**: `Invoke-DrStandby.ps1` points region B's private endpoints at these exact zone names in `dnsZones`. `azurewebsites` is allowed by P0-P2 but is not referenced by the region B driver |
-| `identityNames` | `["id-ccof-sync-b", "id-ccof-reconciler-b"]` | Names; one must contain `sync`, one `reconciler` | Two new user-assigned identities for region B's sync and reconciler apps. The `Shells` phase picks them by those words (`identity_missing` otherwise) and refuses an app that does not run as them (`standby_identity_mismatch`) |
+| `dnsZones.zoneNames` | the six names in section 5.3 | Only `privatelink.services.ai.azure.com`, `.cognitiveservices.azure.com`, `.openai.azure.com`, `.documents.azure.com`, `.blob.core.windows.net`, `.azurewebsites.net` | The example includes the five service zones and the App Service zone. Existing-mode checks require a **Succeeded direct VNet link for every listed zone**. The network team supplies App Service app and SCM DNS records; Stage 6 does not create them. A hub-only DNS design may work but this check refuses it |
+| `identityNames` | `["id-ccof-sync-b", "id-ccof-reconciler-b"]` | Names; one must contain `sync`, one `reconciler` | Two named user-assigned identities for region B's sync and reconciler apps. Bootstrap checks and reuses matching existing identities or creates the missing ones. `Shells` checks that the apps use them |
 | `foundryAccounts[].subscriptionId` / `.resourceGroup` / `.name` | `2222...` / `rg-ccof-foundry` / `foundry-ccof-prod` | GUID / name / name | Each Foundry account in the primary's `backends`. P0 only checks it has a Claude deployment; region B does not create Foundry resources. Read: `az cognitiveservices account list` |
-| `entra.gatewayAppId` | `33333333-3333-4333-8333-333333333333` | GUID | Application (client) ID of the gateway app registration: the primary's `.staged-state/state.json` Stage 4 outputs or `az ad app list --display-name <entra.gatewayAppDisplayName>` |
-| `entra.resolverAppId` | `44444444-4444-4444-8444-444444444444` | GUID | Same for the resolver app. Single-tenant (`AzureADMyOrg`) with `api://<appId>` identifier URI, else a blocker |
-| `entra.adminAppId` | `55555555-5555-4555-8555-555555555555` | GUID | Admin app. Needs scope `Projects.Manage`, roles `CCOF.Projects.Read` and `.Write`, and Azure CLI preauthorized |
+| `entra` | omitted | Optional object | Omit for manual DR. If supplied, `Discover` attempts Graph reads. The primary Stage 4 manual record supplies the application IDs for `Config`; the Entra admin verifies the settings and redirects |
 | `standby.stagedConfigPath` | `primary/staged.config.json` | File path (relative paths start at the folder of `dr.config.json`) | The primary's staged configuration, **copied to clouddrive** (section 4, block 4). Missing file: `Not found: ...` |
 | `standby.stagedStateDirectory` | `primary/.staged-state` | Folder with `state.json` | The primary's staged state, copied to clouddrive. Read only |
 | `standby.stateDirectory` | `standby-state` | Folder path; created if missing | Region B's own state, generated config and evidence. **Keep it on clouddrive**; it is how a resumed session knows what is done. Never point it at the primary's state folder |
 | `standby.nameSuffix` | `b` | 1-2 lowercase letters or digits | Region B names are the primary stem plus `-b`. One letter is safest: a storage account name has 24 characters and the stem plus suffix plus a 3-letter app code must fit (`standby_storage_name_too_long`). Cannot be changed after `Shells` |
-| `standby.functionsPublicNetworkAccess` | `Disabled` | `Enabled` / `Disabled` | `Disabled` matches the staged default and keeps the apps private. See the publishing note in section 7 before choosing |
+| `standby.functionsPublicNetworkAccess` | `Disabled` | `Enabled` / `Disabled` | Keep `Disabled` for this existing-network scenario; use the approved private publisher in section 7 |
 | `standby.storagePublicNetworkAccess` | `Disabled` | `Enabled` / `Disabled` | Same, for the apps' storage accounts |
-| `standby.apim.sku` | `StandardV2` | `StandardV2` / `PremiumV2` | Region B's gateway tier. Use the primary's tier unless you decided otherwise (`az apim list` above); it is not copied automatically. Check region availability |
+| `standby.apim.sku` | `StandardV2` | `StandardV2` | Region B's gateway tier. The standby template does not accept `PremiumV2`; the driver refuses it before deployment. Check regional availability and the approved capacity and cost |
 | `standby.apim.units` | `1` | Integer; default 1 | Capacity units; match the primary's `sku.capacity`. Not range-checked by the driver |
 | `standby.apim.zoneRedundant` | `false` | `true` / `false`; default `false` | Creates Region B's APIM as zone redundant. Chosen only when the instance is created; cannot be changed later. With fewer than two `standby.apim.units` the driver prints a warning; Microsoft recommends at least two units ([enable availability zones](https://learn.microsoft.com/azure/api-management/enable-availability-zone-support), [reliability in API Management](https://learn.microsoft.com/azure/reliability/reliability-api-management)). The Shells phase reads it back; not yet deployed live ([UNKNOWNS](../UNKNOWNS.md) APIM-ZR-01, APIM-ZR-02) |
 | `standby.apim.publisherEmail` | `platform-team@example.com` | Non-empty, not `REPLACE-` | APIM publisher contact (receives service notices). Use the primary's value from `az apim list` or a shared mailbox |
 | `standby.apim.publisherName` | `Contoso Platform Team` | Non-empty, not `REPLACE-` | Publisher organisation name; same source |
-| `cosmos.convertServerless` | `false` | `true` / `false` | **Consent for an irreversible change.** Needed only when the account is serverless (section 6). `false` makes `Data -Apply` stop with `cosmos_serverless` and change nothing |
-| `cosmos.autoscaleMaxThroughput` | `1000` | Integer, multiple of 1000, at least 1000 (default 1000) | Autoscale maximum RU/s **per container**, applied in every region. See section 6 for how to choose it |
-| `failover.ledgerCoverageStartAt` | `2026-10-20T15:41:34.000Z` | UTC with exactly three fractional digits and `Z` (`Test-DrCanonicalCoverage` in [`DrFailover.psm1`](../../infra/dr/DrFailover.psm1)); required by `Invoke-DrFailover.ps1 -Phase Promote` and `Failback` only | The verified time APIM gateway diagnostics began, earlier than any model traffic on either gateway (section 11.3, [ADR 0036](../adr/0036-continuity-coverage-baseline.md)). Read it from the resource group's activity log. The driver writes it to `RECONCILER_LEDGER_COVERAGE_START_AT`; App Service reads it back without `.000`, which the driver accepts |
+| `cosmos.convertServerless` | `false` | `true` / `false` | **Separate explicit approval for an irreversible conversion.** Needed only when the account is serverless (section 6). `false` makes `Data -Apply` stop with `cosmos_serverless` before conversion |
+| `cosmos.autoscaleMaxThroughput` | `1000` | Integer, multiple of 1000, at least 1000 (default 1000) | Target autoscale maximum RU/s for the database's shared throughput offer, if present, and for each dedicated container offer. Shared containers do not get separate throughput. Applies in every region; see section 6 |
+| `failover.ledgerCoverageStartAt` | `2026-11-01T12:34:56.789Z` (fictional format example, not for use) | UTC with exactly three fractional digits and `Z` (`Test-DrCanonicalCoverage` in [`DrFailover.psm1`](../../infra/dr/DrFailover.psm1)); required by `Invoke-DrFailover.ps1 -Phase Promote` and `Failback` only | The independently verified start of complete gateway and LLM diagnostic coverage, before model traffic on both gateways (section 11.3, [ADR 0036](../adr/0036-continuity-coverage-baseline.md)). Corroborate both enabled categories and continuity with retained diagnostic and traffic evidence. An Activity Log write alone does not establish coverage. The driver writes the verified value to `RECONCILER_LEDGER_COVERAGE_START_AT` |
 
 ### 5.3 Complete valid example
 
-Synthetic values only (GUIDs are made up, names are fictional). Replace each with the value read in
-5.1. This file passes
-`Get-DrConfigProblems` and `Get-DrStandbyProblems` (checked before this guide was committed).
+Synthetic values only (GUIDs are made up, names are fictional). Replace each with the independently
+confirmed value. The sample ledger timestamp is fictional and must not be used as evidence.
+This example selects the manual-Entra and existing-network path; it does not prove the network or
+permissions exist.
 
 ```json
 {
@@ -279,8 +315,9 @@ Synthetic values only (GUIDs are made up, names are fictional). Replace each wit
     "location": "centralus",
     "resourceGroup": "rg-ccof-prod",
     "allowResourceGroupInOtherRegion": true,
+    "networkMode": "existing",
+    "existingVnetId": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/rg-ccof-network/providers/Microsoft.Network/virtualNetworks/vnet-ccof-standby",
     "vnetName": "vnet-ccof-standby",
-    "apimNsgName": "nsg-ccof-standby-apim",
     "addressSpace": "10.80.0.0/22",
     "subnets": {
       "apim": { "name": "snet-apim", "prefix": "10.80.0.0/27" },
@@ -296,18 +333,14 @@ Synthetic values only (GUIDs are made up, names are fictional). Replace each wit
       "privatelink.blob.core.windows.net",
       "privatelink.services.ai.azure.com",
       "privatelink.cognitiveservices.azure.com",
-      "privatelink.openai.azure.com"
+      "privatelink.openai.azure.com",
+      "privatelink.azurewebsites.net"
     ]
   },
   "identityNames": [ "id-ccof-sync-b", "id-ccof-reconciler-b" ],
   "foundryAccounts": [
     { "subscriptionId": "22222222-2222-4222-8222-222222222222", "resourceGroup": "rg-ccof-foundry", "name": "foundry-ccof-prod" }
   ],
-  "entra": {
-    "gatewayAppId": "33333333-3333-4333-8333-333333333333",
-    "resolverAppId": "44444444-4444-4444-8444-444444444444",
-    "adminAppId": "55555555-5555-4555-8555-555555555555"
-  },
   "standby": {
     "stagedConfigPath": "primary/staged.config.json",
     "stagedStateDirectory": "primary/.staged-state",
@@ -322,14 +355,20 @@ Synthetic values only (GUIDs are made up, names are fictional). Replace each wit
     "autoscaleMaxThroughput": 1000
   },
   "failover": {
-    "ledgerCoverageStartAt": "2026-10-20T15:41:34.000Z"
+    "ledgerCoverageStartAt": "2026-11-01T12:34:56.789Z"
+  },
+  "frontDoor": {
+    "stem": "ccofexamplefd",
+    "wafMode": "Detection",
+    "probeIntervalSeconds": 30
   }
 }
 ```
 
-What changes from the repository example: `secondary.resourceGroup` and `allowResourceGroupInOtherRegion`
-(the shared group, section 5.2), the `standby` paths (relative, on clouddrive), `cosmos.convertServerless`
-(only after section 6), and every `REPLACE-` value. `example.com` addresses and `Contoso` are fictional.
+The workload and network resource groups are intentionally different. The Front Door stem is a
+fictional example, not a reservation; confirm the actual existing or globally unique value.
+`cosmos.convertServerless` stays `false` until separately approved. Relative `standby` paths are
+resolved from the directory containing the DR config.
 
 ### 5.4 Check the file offline (no Azure call)
 
@@ -346,30 +385,51 @@ Test-Path (Join-Path (Split-Path $cfg -Parent) $c.standby.stagedConfigPath)
 
 ## 6. Decide before any `-Apply`
 
-**Cosmos DB: serverless to provisioned is one-way.** A serverless account is single-region
-([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)), so `Data`
-converts it. The conversion cannot be undone ([Learn: change capacity mode](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)):
+**Cosmos costs and throughput require explicit review.** Adding a region affects the whole account,
+including any databases not managed by this driver, and throughput is billed in each region. Review
+all offers, capacity and regional costs with the owner. Autoscale can bill between 10% and 100% of
+its maximum, depending on usage ([Learn](https://learn.microsoft.com/azure/cosmos-db/provision-throughput-autoscale)).
+Prevent concurrent account, database and container changes while reviewing and applying this plan;
+the preview checks for drift but does not lock Azure resources.
 
-- Every container becomes manual throughput of **number of partitions x 5,000 RU/s**; no management
-  operation is possible on the account until it finishes, and there is no SLA on its duration.
-- The driver then moves each container to autoscale with `cosmos.autoscaleMaxThroughput` as the maximum
-  ([autoscale](https://learn.microsoft.com/azure/cosmos-db/provision-throughput-autoscale)). Autoscale
-  bills between 10% and 100% of the maximum, and throughput is billed **in each region**, so each added
-  region bills its own throughput. Pick the cap from the busiest container's real peak; if
-  Azure refuses a container's change as below its minimum, raise the cap and run `Data -Apply` again.
-- If your primary was already deployed with provisioned throughput, nothing is converted; the driver
-  only sets autoscale, adds the region and enables service-managed failover. In that case keep
-  `cosmos.convertServerless` `false`.
-- Write consent into the file only when you have decided: set `cosmos.convertServerless` to `true`.
-
-Do the read-only look first (it is also the `Data` preview):
+Run the read-only Data preview:
 
 ```powershell
 Invoke-DrPhase -Phase Data
 ```
 
-**Expect:** `Cosmos <account>: capacity Serverless|Provisioned; regions ...; steps: ...`, then `preview: then each container autoscale with maximum N RU/s. Rerun with -Apply.` Steps can be `convert_to_provisioned`,
-`add_secondary_region`, `enable_service_managed_failover`, `wait_capacity_change` or `none`.
+**Expect:** the account capacity, regions and steps. For a provisioned account, the preview lists the
+database offer and every container as shared or dedicated, with each current and proposed throughput
+value. A database's shared offer and dedicated container offers can coexist; a shared container is
+never converted to a dedicated container and no data is moved
+([Learn](https://learn.microsoft.com/azure/cosmos-db/set-throughput)). Only the configured primary
+database is inventoried: assess any other databases separately before approving the region change.
+
+The target `cosmos.autoscaleMaxThroughput` applies to the shared database offer, if any, and to each
+dedicated offer. A lower autoscale maximum requires explicit approval. Every manual-to-autoscale
+migration also requires it: Azure chooses the initial maximum, and guaranteed throughput may
+temporarily fall even when the final target is higher. After reviewing and approving the exact plan,
+use `-ApproveCosmosThroughputReduction` with `-Apply` only if the preview requests it. Azure may
+choose an initial migration maximum above the target; the driver then stops for a fresh preview
+instead of lowering it silently. Storage or previous settings can raise the minimum permitted maximum;
+if Azure refuses a lower target, review the value and cost, change the configuration and preview again
+([autoscale FAQ](https://learn.microsoft.com/azure/cosmos-db/autoscale-faq)).
+
+**Serverless conversion is a separate, irreversible decision.** A serverless account is single-region
+([Learn](https://learn.microsoft.com/azure/cosmos-db/serverless#use-serverless-resources)); changing
+it to provisioned cannot be undone
+([Learn](https://learn.microsoft.com/azure/cosmos-db/how-to-change-capacity-mode)). Each container
+initially becomes manual throughput of **number of partitions x 5,000 RU/s**; no management operation
+is possible until conversion finishes, and there is no SLA on duration. Keep `cosmos.convertServerless`
+`false` unless the owner separately approves the conversion and costs. Conversion Apply intentionally
+stops with `cosmos_conversion_repreview_required` (exit 6) when finished. Inspect the new offers and
+run a fresh Data preview before separately approving any throughput or region changes. Networking or
+public APIM approval is not Cosmos approval.
+
+Steps can be `convert_to_provisioned`, `add_secondary_region`, `enable_service_managed_failover`,
+`wait_capacity_change` or `none`. The preview records a local digest; an Apply that would change
+throughput or regions requires the same current plan. If a read fails, output is ambiguous, or the
+account changes, stop and investigate rather than assuming a `NotFound` means shared throughput.
 
 **Log Analytics workspace failover is separate.** Workspace replication is enabled in
 [DR-CLOUD-SHELL.md Step 5](DR-CLOUD-SHELL.md#step-5-replicate-the-log-analytics-workspace), not by this
@@ -382,108 +442,252 @@ Region B logs to the primary's workspace.
 Always preview, read the output, then apply the same command. Run only one command at a time and wait
 for it to finish before the next.
 
-### 7.1 P0-P2 (standby network and identities)
+### 7.1 P0-P2 (read the existing network; create missing identities)
 
 ```powershell
 . "$HOME/clouddrive/ccof-dr/session.ps1"
 Use-DrSession
 pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Discover  -ConfigPath $cfg -EvidenceDirectory $evidence
+if ($LASTEXITCODE -ne 0) { throw 'Discover failed; stop and inspect the evidence.' }
 pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Bootstrap -ConfigPath $cfg -EvidenceDirectory $evidence
+if ($LASTEXITCODE -ne 0) { throw 'Bootstrap preview failed; stop and inspect the evidence.' }
 ```
 
-**Expect:** `Discover passed.` and a `what-if: Create` list ending in `Bootstrap passed.` What-if
-`Modify` or `Delete` of anything the template does not own stops the run. Details and failures:
-[DR-CLOUD-SHELL.md Steps 3-4](DR-CLOUD-SHELL.md#step-3-discover-p0-read-only). With the shared group,
-`resourceGroup:location_is_...` is absent because `allowResourceGroupInOtherRegion` is `true`. Then:
+**Expect:** `Discover passed.` and `Bootstrap passed.` In existing mode, both read the selected VNet,
+subnet prefixes and delegations, APIM subnet NSG, direct DNS links and, when requested, two-way
+connected peering. Bootstrap checks identity IDs, locations, principal IDs and client IDs; its
+what-if lists only missing identities. If none are missing, it skips the deployment. Any blocker,
+read denial or unexpected what-if change means **stop**; the network team resolves missing
+prerequisites. A working hub-only DNS arrangement is not accepted by these direct-link checks.
+
+After review, apply the identities-only template and run the read-only verification:
 
 ```powershell
 pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Bootstrap -ConfigPath $cfg -EvidenceDirectory $evidence -Apply
+if ($LASTEXITCODE -ne 0) { throw 'Bootstrap apply failed; stop and inspect the evidence.' }
 pwsh -NoProfile -File infra/dr/Invoke-DrPrerequisites.ps1 -Phase Verify    -ConfigPath $cfg -EvidenceDirectory $evidence
+if ($LASTEXITCODE -ne 0) { throw 'Prerequisite verification failed; stop and inspect the evidence.' }
 ```
 
-**Expect:** `Bootstrap passed.` then `Verify passed.` (VNet, subnets, delegations, peering `Connected`,
-DNS links `Succeeded`, identities). Do not continue on `BLOCKERS`.
+**Expect:** `Bootstrap passed.` then `Verify passed.` No VNet, subnet, NSG, peering or DNS-link
+deployment occurs in this mode. Do not continue on `BLOCKERS`. Do not switch to create mode to
+bypass a failure: create mode can update an authoritative subnet list and stops on an existing VNet
+unless separately approved with `-ApproveExistingVnetUpdate`
+([driver](../../infra/dr/Invoke-DrPrerequisites.ps1)).
 
 ### 7.2 Region B phases
 
 | Phase | What it changes with `-Apply` | State recorded (`standby.state.json`) |
 | --- | --- | --- |
-| `Data` | Cosmos: convert to provisioned (only with consent), containers to autoscale, add region B, enable service-managed failover | account, capacity mode, regions, write region, autoscale cap, containers |
-| `Shells` | [`standby.bicep`](../../infra/dr/standby.bicep): four Function Apps and APIM in region B, logging to the primary workspace, sync and reconciler on the P1 identities | APIM ID and name, app names |
+| `Data` | Cosmos: convert only with separate explicit approval; after preview and applicable reduction approval, set database/dedicated autoscale, add region B, enable service-managed failover | account, capacity mode, regions, write region, autoscale cap, database/container throughput |
+| `Shells` | Four private Function Apps and an initially **public** APIM; apply requires `-ApprovePublicApimBootstrap` | APIM ID and name, app names |
 | `Grants` | The primary's Stage 3 template for region B (Cosmos data roles, workspace roles) with salted assignment names | number of Cosmos assignments |
-| `Config` | The primary's Stage 5: app settings with **both writers off**, resolver authentication, APIM API and policy for resolver B; adds region B's admin redirect URIs to the admin app registration | gateway URL, admin host, timers |
-| `Network` | The primary's Stage 6: private endpoints in the standby subnet, Function App and APIM outbound VNet integration | endpoints, APIM network state |
-| `Code` | `npx tsc` then publishes the same packages as region A (`config-zip`); no seed, no snapshot | code hashes, commit |
-| `Verify` | Nothing (read-only): functions listed, both writers disabled, APIM API present | `standby.verify.json` evidence |
+| `Config` | Stage 5 settings with **both writers off**, resolver authentication and APIM policy. With primary Stage 4 manual, prints admin redirects instead of editing Entra; no resource-admin Graph call | gateway URL, admin host, timers |
+| `Network` | Stage 6 creates storage and Cosmos private endpoints and DNS zone groups/records, and attaches Functions and APIM to subnets for outbound integration. Apply requires `-ApprovePrivateNetworkChanges` | endpoints, APIM network state |
+| `Code` | Builds and publishes resolver, sync, reconciler and admin packages with `-PrivatePublisher`; no seed or snapshot | code hashes, commit |
+| `Verify` | Azure read-only: lists functions, checks both writers off and the APIM API. It writes local evidence and a phase record even without `-Apply` | `standby.verify.json` and `Verify` record |
 
-The driver is documented in its [header](../../infra/dr/Invoke-DrStandby.ps1). Run in this order:
+If the primary uses an existing APIM, Stage 1 may have no APIM ID. After Shells, the driver resolves
+the primary gateway from the primary staged configuration's `apim.existing.subscriptionId`,
+`resourceGroup` and `name`, and prints its resource ID. Have the owner confirm that ID before applying
+Grants or Config. A missing, invalid or conflicting reference stops the driver; do not edit state by
+hand or rerun Stage 1 merely to populate an existing APIM ID.
+
+Standby Network manages no second Foundry endpoint: it verifies the Cosmos and blob private DNS
+zone links, not unused Foundry zones. This does not prove that the standby can resolve or reach the
+primary's existing Foundry endpoint; the network team must verify that path separately. Primary
+Stage 6 still requires and verifies all three Foundry zone links when it manages a Foundry endpoint.
+
+Obtain each approval before its apply. Run these commands in order, one at a time; the wrapper
+forwards the switches to [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1):
 
 ```powershell
 . "$HOME/clouddrive/ccof-dr/session.ps1"
 Use-DrSession
 Invoke-DrPhase -Phase Data                # preview (done in section 6)
-Invoke-DrPhase -Phase Data -Apply         # one-way step lives here when convertServerless is true
+Invoke-DrPhase -Phase Data -Apply         # only after review and approvals; see the alternative below
+# If the preview requires reduction approval, use this INSTEAD after the owner explicitly approves:
+# Invoke-DrPhase -Phase Data -Apply -ApproveCosmosThroughputReduction
 Invoke-DrPhase -Phase Shells
-Invoke-DrPhase -Phase Shells -Apply
+Invoke-DrPhase -Phase Shells -Apply -ApprovePublicApimBootstrap
 Invoke-DrPhase -Phase Grants
 Invoke-DrPhase -Phase Grants -Apply
 Invoke-DrPhase -Phase Config
 Invoke-DrPhase -Phase Config -Apply
 Invoke-DrPhase -Phase Network
-Invoke-DrPhase -Phase Network -Apply
+Invoke-DrPhase -Phase Network -Apply -ApprovePrivateNetworkChanges
+```
+
+Wait for `exit code 0` and review each result before continuing. A successful apply also prints
+`phase <Name> completed and verified; state ...`. Exit codes include 2 for refused configuration or
+approval, 3 for a phase or readiness guard, 4 for
+`cosmos_serverless`, 5 `cosmos_capacity_change_running`, and 6
+`cosmos_conversion_repreview_required`; other failures throw.
+
+Network preview and apply first read the standby APIM and stop with `apim_sku_unsupported` before
+any what-if or write unless its SKU is StandardV2 (or PremiumV2): outbound VNet integration fails
+on BasicV2 with `ManagingVirtualNetworkConfigurationNotSupported`. If governance scaled it down,
+scale it back to StandardV2 with the platform owner, then rerun the Network preview.
+
+Before an apply, the driver clears that phase's prior completion record and dependent readiness
+records. A Verify attempt clears the prior Verify record even though it does not change Azure.
+The driver also clears any saved Front Door verification. Failed or interrupted work therefore
+requires the missing phases and Front Door verification to be completed again. Previews leave
+these records unchanged; a local record does not establish that Azure changes finished.
+
+`Data -Apply` can run for hours; a timeout or failure does not establish whether Azure finished.
+Before resuming, inspect the account, locations and all database/container offers read-only, wait for
+pending operations, and review a fresh Data preview. Earlier throughput or region changes may already
+have succeeded; never blindly rerun Apply. `Shells` creates
+APIM with public network access `Enabled`; the switch records the operator's approval, not approval
+to expose the Function Apps. The template would re-enable APIM public access on redeployment, so
+Shells **refuses** an existing APIM whose access is `Disabled`, unreadable or unknown, even with
+the approval switch. Do not reopen it; restore valid saved state or escalate (section 8).
+For a separately approved `functionsPublicNetworkAccess: "Enabled"` configuration, apply also
+requires `-ApprovePublicFunctionAccess`. The operator needs resource-group read access to inventory
+all `Microsoft.Web/sites`; Shells refuses to reopen an existing site whose public access is
+disabled, unknown or unreadable. Run the reviewed deployment with one operator and no concurrent
+changes to these resources.
+
+### 7.3 One manual Entra batch
+
+After `Shells` and `Config`, collect the following from the saved state without calling Graph. The
+`Config` log also prints the two regional admin SPA redirects. Treat this output as confidential:
+
+```powershell
+$b = Get-Content "$base/standby-state/state.json" -Raw | ConvertFrom-Json -AsHashtable
+$s = Get-Content "$base/standby-state/standby.state.json" -Raw | ConvertFrom-Json -AsHashtable
+$adminHost = [string]$s.phases['Config'].outputs.adminHost
+if (-not $adminHost) { throw 'No standby admin host recorded; inspect Config before the handoff.' }
+[pscustomobject]@{
+    ResolverAppId = $b.stages['4'].outputs.registrations.resolverApi.appId
+    AdminAppId = $b.stages['4'].outputs.admin.appId
+    ApimResourceId = $b.stages['1'].outputs.apimId
+    ApimPrincipalId = $b.stages['1'].outputs.apimPrincipalId
+    ApimClientId = $b.stages['5'].outputs.apimIdentityAppId
+    SyncPrincipalId = $b.stages['1'].outputs.principals.sync
+    SyncClientId = $b.stages['1'].outputs.clientIds.sync
+    AdminPrincipalId = $b.stages['1'].outputs.principals.admin
+}
+"https://$adminHost/api/console"
+"https://$adminHost/api/console-v3"
+```
+
+Send **one** approved handoff to the Entra team and wait for its confirmation before declaring
+standby ready:
+
+- Confirm the shared gateway, resolver and admin registrations, enterprise applications, scopes,
+  user/group assignments and approved clients. Confirm that resolver enterprise-app policy permits
+  region B's APIM identity, including an assignment if the tenant requires one. Preserve existing
+  restrictions and assignments.
+- Add the two printed regional admin SPA redirects, preserving existing redirects. If clients will
+  use the Front Door admin hostname, include its approved `/api/console` and `/api/console-v3`
+  redirects in the same batch if the hostname is independently known. **Do not deploy Front Door**
+  to obtain it during this standby-only release. If a full profile already exists, treat B as
+  potentially live.
+- Confirm each saved B principal against its current ARM resource before requesting a grant.
+  For application-permission sync, the two baseline read-only roles are the **sync** identity's
+  `GroupMember.Read.All` and `User.Read.All`. `Application.Read.All` is an additional tenant-wide
+  option only when `SYNC_MEMBER_TYPES` includes `servicePrincipal` and the owner explicitly
+  approves reading disabled service-principal state; otherwise agree a safe leaver process.
+  Review disabled-member backlogs and removal limits before enabling this behavior.
+- Review actual B feature settings with the app owner. If group search is enabled and approved
+  (`ADMIN_GRAPH_ENABLED=true`), the **admin Function App managed identity** needs
+  `GroupMember.Read.All`; if V3 user labels are enabled and approved, it needs `User.Read.All`.
+  The admin and sync identities are distinct. These roles are tenant-wide and are not granted
+  automatically. A/B feature and permission parity is unknown until independently compared.
+  The Entra administrator uses the tenant's approved process; the resource admin needs no Graph
+  token. See [sync disabled-member policy](../SYNC.md#deleted-and-disabled-members-p-9),
+  [admin V2](../ADMIN-V2.md#optional-settings-and-least-scoped-permission-handoff), and
+  [admin V3](../ADMIN-V3.md#permissions).
+
+`Config` completing in manual mode prints the handoff and records the admin hostname; it does **not**
+prove the Entra team made the changes. Runtime managed identities may still call Graph after their
+approved grants.
+
+### 7.4 Private endpoints and code publication
+
+Stage 6 does **not** create inbound `sites` private endpoints for the four Function Apps. After
+separate network-team approval, have the team provide an approved, app-specific `sites` endpoint
+for **each** resolver, sync, reconciler and admin app in the configured private-endpoint subnet.
+Provide `privatelink.azurewebsites.net` DNS for both each app hostname and its SCM hostname; confirm
+that APIM B resolves and reaches the resolver privately. DNS zone groups, records, subnet
+attachments and any other network changes need explicit approval. See
+[`stage6-network.bicep`](../../infra/staged/stage6-network.bicep) and
+[App Service private endpoint DNS](https://learn.microsoft.com/azure/app-service/overview-private-endpoint#dns).
+
+Use an approved publisher **inside the network**, with PowerShell 7, Azure CLI, Node.js, npm, the
+same reviewed checkout and an authorized Azure profile. Cloud Shell is not assumed to be inside the
+VNet. Transfer the complete confidential `$base` folder, including `session.ps1`, the primary copy,
+DR config and standby state, to the private runner by an approved secure method. Do not run phases
+concurrently on the two copies. Install the same approved dependencies and select the approved code
+commit, checking it against region A's recorded code. On the runner, set the paths and run:
+
+```powershell
+$env:CCOF_DR_BASE = 'REPLACE-private-runner-base-folder'
+$env:CCOF_DR_REPO = 'REPLACE-private-runner-repository-folder'
+$env:AZURE_CONFIG_DIR = 'REPLACE-signed-in-azure-profile-folder'
+. (Join-Path $env:CCOF_DR_BASE 'session.ps1')
+Use-DrSession
 Invoke-DrPhase -Phase Code
-Invoke-DrPhase -Phase Code -Apply
+Invoke-DrPhase -Phase Code -Apply -PrivatePublisher
 Invoke-DrPhase -Phase Verify
 ```
 
-Do not paste the whole block at once: run one line, wait for `exit code 0`, read the output, then
-run the next. A sign of success for an apply is `phase <Name> completed and verified; state ...` in green
-and `exit code 0`. Exit codes: 2 refused configuration or missing input, 3 `phase_order`, 4
-`cosmos_serverless`, 5 `cosmos_capacity_change_running`; other failures throw.
+The private-publisher preflight checks an approved `sites` connection to each exact app in the
+configured subnet, reads its endpoint NIC addresses, checks that each SCM DNS answer is one of those
+addresses and in the subnet, and tests TCP 443. It is not a publish or application-readiness test.
+`Code` must publish **all four** packages; an admin skip is an error and does not complete the phase.
+Keep Function App public access `Disabled`; do not change it to make publishing work. Return the
+latest complete state and evidence to Cloud Shell securely before any subsequent phase.
 
-Notes per phase:
+The earlier [admin VM update runbook](ADMIN-UPDATE-FROM-VM.md) is a lab reference for one admin
+app, not proof of this four-app path or customer connectivity; its setup creates resources and needs
+separate approval. Its older statement that DR `Code` can complete with admin skipped does not apply
+to this driver.
 
-- **Data -Apply** takes the longest: the capacity change has no SLA, and adding a region copies the
-  data (the driver says "typically tens of minutes"). It polls for up to 2 hours. Expect Cloud Shell
-  to time out during it; see section 8. Keep the tab active and do not start another phase meanwhile.
-- **Shells -Apply** deploys a Bicep template. A failed apply records no state; the same command
-  is the retry.
-- **Code -Apply** publishes the resolver, sync and reconciler packages, and the admin package while
-  region B's admin app still has public access. After Front Door `Lockdown` it skips the admin package
-  with the warning `admin_public_access_disabled` and records `admin.skipped`; publish it with
-  [admin updates from a VM](ADMIN-UPDATE-FROM-VM.md) ([ADR 0037](../adr/0037-admin-publishing-after-front-door-lockdown.md)).
-- **Config -Apply** edits the admin app registration, so the account needs that right (section 3 row 4).
-- **Code -Apply** uses the same publishing path as Stage 7
-  ([Stage 7](STAGED-DEPLOYMENT-V2.md#stage-7-code-and-initial-data)). With
-  `functionsPublicNetworkAccess` `Disabled`, whether Cloud Shell, which is not inside your VNet by
-  default, can publish to a private Function App depends on your network. **This has not been exercised
-  for region B.** If the publish is refused for network reasons, stop and decide with your network team
-  between running `Code` from a machine that can reach the apps, or temporarily setting
-  `functionsPublicNetworkAccess` to `Enabled` and re-running `Shells` (a change to a public-ingress
-  setting needs your own security approval; this guide does not recommend it).
-- `Code` needs the same commit as region A. Check `git log -1` against the commit in the primary's state.
+### 7.5 Readiness before Front Door
+
+Before full Front Door deploy **or** primary drain, confirm the one Entra batch is complete, the
+private endpoints and DNS are approved and working, code publication succeeded, and both writers
+remain fenced. Read back `publicNetworkAccess` and confirm `Disabled` on each of the four standby
+Function Apps; neither a config value nor the private-publisher preflight proves their current access
+settings. From an approved client/path, test region B's authenticated gateway-to-resolver,
+Cosmos and Foundry path and the admin sign-in and application functions; use logs to confirm B
+served the tests. Test the approved gateway ingress, whether an explicitly approved public APIM
+endpoint or a separately approved private path. Record the results and owner approval.
+
+`Verify` and saved phase records do not prove these end-to-end checks or Entra changes. Region B is
+priority 2, **not isolated**: it can receive traffic when A becomes unhealthy. **STOP:** even after
+readiness is confirmed, do not use any Front Door command until a later safety release is reviewed.
 
 ## 8. Resume after the 20-minute timeout
 
-A phase is safe to run again: it reads the current Azure state and skips what is already in place
-(header of [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1)). The procedure is the same for
-every phase:
+Do not assume every phase can be rerun safely. Read the actual resource and saved state first,
+especially for Shells, whose template would make APIM public.
 
 1. Open Cloud Shell and select **PowerShell**. Confirm `Test-Path "$HOME/clouddrive"` is `True`.
 2. `. "$HOME/clouddrive/ccof-dr/session.ps1"` then `Use-DrSession` (restores variables and subscription).
    If `$repo` is gone, repeat section 4 block 3.
-3. Read what the interrupted phase left (commands below). Do **not** assume it failed or finished.
-4. Run the same phase **without** `-Apply` and read the plan.
-5. Run it **with** `-Apply`. The last green line `phase <Name> completed and verified` is the proof.
+3. Reload `$sub` and `$rg` from the configuration, then read the interrupted phase's Azure state
+   (table below). Do **not** assume it failed or finished.
+4. Preview again, review the plan, and apply only with the still-valid approvals and switches. A
+   phase completion record is not a substitute for the private and end-to-end checks in section 7.5.
+
+```powershell
+$c = Get-Content $cfg -Raw | ConvertFrom-Json
+$sub = $c.subscriptionId
+$rg = $c.secondary.resourceGroup
+```
 
 | Phase interrupted | Read the real state | If still running | If finished or partly done |
 | --- | --- | --- | --- |
-| `Data` | `az cosmosdb show --subscription $sub -g $rg -n <account> --query "{state:provisioningState, mode:capacityMode, regions:locations[].locationName, failover:enableAutomaticFailover}" -o json` (the account name is in the `Data` preview) | `state` not `Succeeded`, or a capacity transition running: wait, then rerun. The driver stops with `wait_capacity_change` / `cosmos_capacity_change_running` and changes nothing | Rerun: it lists the remaining steps (`add_secondary_region`, `enable_service_managed_failover`, autoscale per container) and does only those |
-| `Shells` | `az deployment group list --subscription $sub -g $rg --query "[?contains(name,'dr-standby-shells')].{name:name, state:properties.provisioningState}" -o table` | `Running`: wait | `Succeeded` but no `Shells` entry in `standby-state/standby.state.json`: rerun (it redeploys the same template and records the state). `Failed`: read the deployment operations, fix, rerun |
+| `Data` | `az cosmosdb show --subscription $sub -g $rg -n REPLACE-cosmos-account --query "{state:provisioningState, mode:capacityMode, regions:locations[].locationName, failover:enableAutomaticFailover}" -o json` | Wait for a running transition | Review remaining steps and conversion/cost approvals before rerunning |
+| `Shells` | Inspect the deployment and the exact APIM's current public-access state | Wait for a running deployment | Rerun only if the existing APIM is confirmed `Enabled` and public bootstrap remains approved; use `-ApprovePublicApimBootstrap`. If `Disabled`, unknown or unreadable, **do not rerun**: recover the saved Shells state or escalate |
 | `Grants` | Portal: resource group > **Settings > Deployments**, the newest Stage 3 deployment for region B | `Running`: wait | Rerun: the template is idempotent and uses salted assignment names for region B |
-| `Config` | `az functionapp config appsettings list --subscription $sub -g $rg -n REPLACE-region-b-sync-app --query "[?name=='AzureWebJobs.syncEntitlement.Disabled'].value" -o tsv` must print `true` | Wait | Rerun; the admin redirect URIs are added only when missing |
-| `Network` | `az network private-endpoint list --subscription $sub -g $rg --query "[?ends_with(name,'-b')].{n:name, s:provisioningState}" -o table` (suffix as configured) | Wait | Rerun |
-| `Code` | Run `Invoke-DrPhase -Phase Verify`: it lists the functions of each region B app (read-only) | A zip deployment may still be starting: wait a few minutes | Rerun `Code -Apply`: it rebuilds and publishes the packages again |
+| `Config` | `az functionapp config appsettings list --subscription $sub -g $rg -n REPLACE-region-b-sync-app --query "[?name=='AzureWebJobs.syncEntitlement.Disabled'].value" -o tsv` must print `true` | Wait | In manual mode, rerunning prints the redirects; the Entra admin must confirm them separately |
+| `Network` | Inspect the expected private endpoints and approvals, DNS zone groups/records and links, and Functions/APIM integrations | Wait | Review a fresh preview and network approval. Incremental deployment reuses matching resources but may update drift; apply with `-ApprovePrivateNetworkChanges` only after review |
+| `Code` | Inspect deployment results and the saved `Code` record; `Verify` only lists functions | Wait for any in-progress publish | From the private runner, rerun with `-PrivatePublisher`; it republishes all packages |
 
 What lives where after a timeout: state in `standby-state/` (clouddrive) survives; the log of the
 interrupted run is in `$logs` only up to the cut; the Azure operation is judged by the commands above.
@@ -492,11 +696,22 @@ shows. Do not edit `standby.state.json` by hand and do not delete `standby-state
 mid-way: it is region B's only record (the generated `standby.staged.config.json` is rewritten on every run).
 Never run two commands against the same `standby-state` at once.
 
+The readiness helper checks saved `Data`, `Shells`, `Grants`, `Config`, `Network`, `Code` and
+`Verify` records for valid, timezone-bearing timestamps and dependency order. This helper is not a
+Front Door authorization gate in the currently published driver. Reapplying an earlier phase
+invalidates dependent records. Rerun the affected dependent phases, with their approvals, then
+`Verify`; never edit timestamps. The Shells APIM guard still applies. All Front Door operations
+remain **STOP** pending the later safety release.
+
 ## 9. Post-checks
 
 ```powershell
 Invoke-DrPhase -Phase Verify
-(Get-Content "$base/standby-state/standby.state.json" -Raw | ConvertFrom-Json -AsHashtable).phases.Keys
+$standbyRecord = Get-Content "$base/standby-state/standby.state.json" -Raw | ConvertFrom-Json -AsHashtable
+$standbyRecord.phases.Keys
+Import-Module "$repo/infra/dr/DrStandby.psm1" -Force
+$readinessProblem = Get-DrFrontDoorReadinessProblem $standbyRecord
+if ($readinessProblem) { throw $readinessProblem }
 az cosmosdb show --subscription $sub -g $rg -n REPLACE-cosmos-account --query "{mode:capacityMode, failover:enableAutomaticFailover, regions:locations[].{r:locationName,p:failoverPriority}}" -o json
 ```
 
@@ -505,12 +720,11 @@ APIM API path; the state file lists `Data`, `Shells`, `Grants`, `Config`, `Netwo
 Cosmos shows two regions, the primary at priority 0 and `failover` `true`. In the Portal, region B's
 Function Apps show the timer functions disabled and APIM B shows the API.
 
-Remaining responsibilities after a green `Verify`:
+The saved-record check does not verify actual Entra settings or traffic. Remaining responsibilities:
 
-- Send one test call through APIM B on a private path and compare it with region A. Section 11.2
-  shows what the lab saw and how to read the gateway log.
+- Complete the Entra batch and the private and authenticated end-to-end checks in sections 7.3-7.5.
 - Keep both writers off until a failover. Nothing automatic promotes them; section 11.3 is the
-  promotion procedure and section 11.6 the failback.
+  historical promotion record and section 12 describes the guarded procedure.
 - Do not claim production DR until the open items in section 11.7 are closed. The continuity gate
   (`RECONCILER_CONTINUITY_GATE`) stays on for any promotion; never weaken it.
 
@@ -520,14 +734,29 @@ Remaining responsibilities after a green `Verify`:
 | --- | --- | --- |
 | `Configuration refused: field:reason` | A field is missing or invalid (section 5.2) | Fix it; section 5.4 prints the same list offline |
 | `Not found: ... (standby.stagedConfigPath / standby.stagedStateDirectory ...)` | The primary's files are not where the paths say | Section 4 block 4; relative paths start at the folder of `dr.config.json` |
-| `standby_resource_group: region B must use the primary's resource group` | `secondary.resourceGroup` differs | Set it to the primary's group and `allowResourceGroupInOtherRegion` to `true` |
+| `standby_resource_group: region B must use the primary's resource group` | `secondary.resourceGroup` differs | Use the primary workload group; the existing VNet may still be in another group via `secondary.existingVnetId` |
+| `network_create_existing_vnet` | Create mode would update an existing VNet | Stop; select and validate the existing-network path instead of bypassing the guard |
+| `public_apim_bootstrap_approval_required` | Shells would create APIM with public access | Obtain explicit security approval before using `-ApprovePublicApimBootstrap`, or stop |
+| `apim_public_access_guard` | Existing APIM is disabled, unreadable, unknown or mismatched | Do not reopen it; inspect the APIM and recover valid state or escalate |
+| `function_public_access_guard` | A public-Function configuration would reopen an existing disabled, unknown or mismatched site | Do not reopen it; inspect the site and recover valid state or escalate |
+| `network_changes_approval_required` | Stage 6 would change endpoints, DNS and subnet integrations | Obtain network-team approval and use `-ApprovePrivateNetworkChanges` |
+| `network_dns_output_invalid` | Stage 6 returned missing or duplicate Cosmos/blob zone IDs | Stop; deployment/integrations may be partial. Reconcile both zones and resources, then review a fresh preview |
+| `network_foundry_dns_incomplete` | Managed Foundry endpoints have incomplete or duplicate zone IDs in Stage 6 output | Stop; deployment/integrations may be partial. Reconcile all three zone IDs and resources, then review a fresh preview |
+| `private_publisher_required` / `private_endpoint_not_verified` / `private_publisher_check_failed` | Private runner, approved app-specific endpoint, matching DNS or TCP check is missing | Keep public access disabled; resolve the private path with the network team, then use `-PrivatePublisher` |
 | `primary_names_unexpected` | The primary's apps are not named `...-resolver` with storage `...res` | The driver cannot derive region B names: stop and ask the repository owners |
 | `standby_storage_name_too_long` | Stem + suffix + app code exceeds 24 characters | A one-letter `standby.nameSuffix` (before `Shells`) |
 | `identity_missing` / `standby_identity_mismatch` | `identityNames` lacks a `sync` or `reconciler` name, or the identity was not created by P1/P2 | Fix `identityNames`; rerun P1/P2 Bootstrap; both identities must exist in the shared group |
-| `standby_gateway_id_missing` / `_invalid` | The two APIM resource IDs are not both known | Run `Shells -Apply` first, then continue |
-| `cosmos_serverless` (exit 4) | The account is serverless and consent is `false` | Section 6; set `cosmos.convertServerless` to `true` only on purpose |
-| `cosmos_capacity_change_running` (exit 5) | The conversion is still running after 2 hours | Wait; check the account state; rerun |
-| `Cosmos still needs: ...` | A step finished but the account is not yet `Succeeded` | Wait; rerun `Data -Apply` |
+| `primary_apim_configuration_missing` / `_invalid` / `_conflict` | The primary Stage 1 has no APIM ID and the existing-APIM reference is incomplete, invalid or disagrees with Stage 1 | Reconcile `apim.existing` with the APIM owner and its verified resource ID; do not edit state by hand. Run a fresh Grants preview before any Apply |
+| `standby_gateway_id_missing` / `_invalid` | The two APIM resource IDs are not both known | Recover the correct state; rerun Shells only if its public-access guard and approval permit it |
+| `cosmos_serverless` (exit 4) | The account is serverless and consent is `false` | Section 6; set `cosmos.convertServerless` to `true` only after separate explicit approval |
+| `cosmos_capacity_change_running` (exit 5) | The conversion is still running after 2 hours | Wait; inspect the account read-only; once complete, preview again |
+| `cosmos_conversion_repreview_required` (exit 6) | The irreversible conversion completed; no throughput or region changes followed | Inspect the offers and costs, then run a fresh Data preview and seek the necessary approvals |
+| `cosmos_preview_required` / `cosmos_preview_stale` / `cosmos_account_changed` | Preview is missing, changed, or account drift was detected | Stop concurrent changes, inspect any partial results and review a fresh Data preview before an approved Apply |
+| `cosmos_throughput_reduction_approval_required` | A lower maximum or a manual migration may reduce throughput | Obtain explicit owner approval for the displayed plan before using `-ApproveCosmosThroughputReduction`; otherwise stop |
+| `cosmos_migration_repreview_required` / `cosmos_throughput_write_failed` / `cosmos_throughput_readback_failed` | Azure may have changed an offer; the remaining plan was not completed | Inspect all offers and account state read-only, then preview again and obtain any new approvals |
+| `cosmos_throughput_scope_unknown` / `cosmos_resource_unverified` / `cosmos_throughput_read_failed` / `cosmos_throughput_invalid` | A resource or offer cannot be verified, or an unexpected read error occurred | Stop; verify the exact account, database, container, permissions and connectivity. Do not treat arbitrary 404, 403, 429 or network errors as shared throughput. For 429, wait as instructed by Azure, then preview again |
+| `cosmos_throughput_pending` / `cosmos_target_below_minimum` | An offer is changing or its minimum exceeds the configured target | Wait for the operation or review a higher target and its costs, then preview again |
+| `Cosmos still needs: ...` | A step finished but the account is not yet `Succeeded` | Inspect and wait, then review a fresh Data preview; do not blindly rerun Apply |
 | `phase_order: run -Phase X -Apply first.` (exit 3) | A phase it depends on is not recorded | Run it with `-Apply` |
 | `state_target_mismatch` | A state folder belongs to another tenant, subscription or group | Use the right folders; each deployment has its own |
 | `...:read_denied` / `AuthorizationFailed` | Missing permission (section 3 row 4) | Grant the scope named in the error, rerun |
@@ -536,6 +765,9 @@ No undo script exists for region B. The `Data` phase cannot be reversed for a co
 the other resources one by one in the Portal or with `az` only after reviewing what depends on them.
 
 ## 11. Live drill record, 2026-10-25/26
+
+**Historical record only:** these observations and commands used earlier code and a lab network.
+They are not acceptance evidence or current instructions for the existing-network path above.
 
 The lab ran region A in East US 2, region B in Central US, and a Central US Foundry account as the
 fallback pool member. This record contains no real resource names or IDs. No screenshot of the drill
@@ -606,21 +838,43 @@ the gate refused here for three reasons, each fixed and tested on `feat/dr-stand
 | `ledger_coverage_baseline_missing` | Budget states written with the gate off have no coverage marker | One-time `RECONCILER_LEDGER_BASELINE_ADOPT` (`cab64da`) |
 | `ledger_attribution_missing` | Timed-out calls carry no attribution trace | Failed calls with no token count no longer refuse (`d5e0108`) |
 
-Settings on region B's reconciler (`REPLACE-region-b-reconciler-app`). The coverage start is the time
-APIM gateway diagnostics were enabled, read from the resource group's activity log; the lab value is shown:
+Settings on region B's reconciler (`REPLACE-region-b-reconciler-app`). The coverage start must be
+independently verified for complete gateway and LLM diagnostics before model traffic, using the
+available diagnostic and traffic evidence. An Activity Log entry alone does not establish coverage.
+The value in section 5.3 is a fictional format example, not a value for this command.
 
 ```powershell
 $app = 'REPLACE-region-b-reconciler-app'
+$coverage = 'REPLACE-verified-coverage-start-UTC'
+if ($app -like 'REPLACE-*' -or $coverage -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') {
+  throw 'Set the app and independently verified coverage start before continuing.'
+}
 az functionapp config appsettings set --subscription $sub -g $rg -n $app -o none --settings `
   RECONCILER_CONTINUITY_GATE=on `
-  RECONCILER_LEDGER_COVERAGE_START_AT=2026-10-20T15:41:34.000Z `
-  RECONCILER_LEDGER_BASELINE_ADOPT=2026-10-20T15:41:34.000Z
-az functionapp config appsettings set --subscription $sub -g $rg -n $app -o none --settings 'AzureWebJobs.reconcileBudgets.Disabled=false'
+  "RECONCILER_LEDGER_COVERAGE_START_AT=$coverage"
+if ($LASTEXITCODE -ne 0) { throw 'Reconciler settings failed; do not enable the writer.' }
 ```
 
-App Service stores the timestamp as `2026-10-20T15:41:34Z`; the reconciler accepts both forms
-(`24a6686`). Set `RECONCILER_LEDGER_BASELINE_ADOPT` only with evidence that no model API existed on
-the gateway before the coverage start (UNKNOWNS DR-14 shows how the lab established it).
+`RECONCILER_LEDGER_BASELINE_ADOPT` is not a normal promotion step. Use it only with separate
+approval and evidence meeting [ADR 0036](../adr/0036-continuity-coverage-baseline.md#amendment-2026-10-26-one-time-baseline-adoption).
+The lab's evidence is recorded in UNKNOWNS DR-14; it is not evidence for another deployment.
+If adoption is approved, set it to the same verified `$coverage`:
+
+```powershell
+az functionapp config appsettings set --subscription $sub -g $rg -n $app -o none --settings `
+  "RECONCILER_LEDGER_BASELINE_ADOPT=$coverage"
+if ($LASTEXITCODE -ne 0) { throw 'Baseline adoption setting failed; do not enable the writer.' }
+```
+
+After confirming the prerequisites above, enable the region B writer:
+
+```powershell
+az functionapp config appsettings set --subscription $sub -g $rg -n $app -o none --settings 'AzureWebJobs.reconcileBudgets.Disabled=false'
+if ($LASTEXITCODE -ne 0) { throw 'Reconciler writer enablement failed.' }
+```
+
+App Service may omit zero milliseconds from the stored value; the reconciler accepts both forms
+(`24a6686`).
 
 Check the run lines (the reconciler runs every 2 minutes; wait 5 minutes):
 
@@ -634,8 +888,8 @@ AppTraces
     failedUnattributed = tostring(j.unattributedFailedRequests)
 ```
 
-**Expect:** `written` with `gate` `passed`. The first written run shows `adopted` greater than 0; later
-runs show 0. Then remove the adoption setting:
+**Expect:** `written` with `gate` `passed`. If the optional adoption was approved, the first written
+run can show `adopted` greater than 0; later runs show 0. Remove that setting after the passing run:
 
 ```powershell
 az functionapp config appsettings delete --subscription $sub -g $rg -n $app --setting-names RECONCILER_LEDGER_BASELINE_ADOPT -o none
@@ -711,9 +965,9 @@ az monitor metrics list --resource $fdProfileId --metric OriginHealthPercentage 
 [`infra/dr/Invoke-DrFailover.ps1`](../../infra/dr/Invoke-DrFailover.ps1) runs the writer, gate and
 Cosmos DB steps of 11.3 and 11.6 with guards. It reads the same `dr.config.json`, the primary's staged
 state and region B's state as `Invoke-DrStandby.ps1`. Promote and Failback also need
-`failover.ledgerCoverageStartAt` (section 5.2). The code is tested offline only
-([`tests/Test-DrFailover.ps1`](../../tests/Test-DrFailover.ps1), fake `az`); it has **not yet been run
-against Azure**. The 2026-10-26 drill (section 11) used the manual commands.
+`failover.ledgerCoverageStartAt` (section 5.2). Offline tests use fake `az`
+([`tests/Test-DrFailover.ps1`](../../tests/Test-DrFailover.ps1)). Section 11 records a manual drill;
+section 12.3 records an earlier scripted lab run. Neither validates the current existing-network path.
 
 Each phase except `Status` previews without `-Apply` and changes Azure only with `-Apply`. Every app
 setting change is read back before the next step (`readback_mismatch` otherwise). Every run writes
@@ -751,8 +1005,9 @@ $fo = "$repo/infra/dr/Invoke-DrFailover.ps1"
 pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
 ```
 
-1. **Traffic.** Front Door moves traffic to region B by health probes; in a drill, run
-   `Invoke-DrFrontDoor.ps1 -Phase DrainPrimary -Apply` (11.2).
+1. **Traffic. STOP:** do not drain or otherwise change Front Door in this release. Complete the
+   Entra, private-path and end-to-end checks in section 7.5, then await the separately reviewed
+   Front Door safety release and drill authorization.
 2. **Cosmos DB.** Confirm it writes in region B (`Status`), or move it after confirming the outage
    ([DR design](../DR-ACTIVE-PASSIVE.md#failover-runbook-region-a-lost) step 3). Promote prints the
    command when it refuses.
@@ -800,12 +1055,15 @@ pwsh -NoProfile -File $fo -Phase Status -ConfigPath $cfg
 
    **Expect:** region B `...Disabled=true` first, `Cosmos DB writes in East US 2 (region A)`, adoption
    `absent` or `deleted`, region A gate and coverage, region A `...Disabled=false`, `result: failed_back`.
-3. **Front Door:** `Invoke-DrFrontDoor.ps1 -Phase RestorePrimary -Apply`, then wait for region A origins at
-   100 % (11.6 rows 5-7).
+3. **Front Door. STOP:** this release does not establish a safe primary-only recovery operation.
+   Do not run `RestorePrimary`; await a separately reviewed Front Door safety release. In an
+   incident, follow the organization's existing approved recovery process.
 4. **Status** again: region A writing, region B fenced, no `split_brain`, primary host header not
    `dr-drill.invalid`.
 
 ### 12.3 Live run of the scripted phases, 2026-10-27
+
+**Historical record:** the following results do not validate the current branch or customer network.
 
 The lab (East US 2 region A, Central US region B, one resource group) ran the phases with the code at
 `main` fc53154. Front Door was not drained, so model traffic stayed on region A's APIM throughout; the

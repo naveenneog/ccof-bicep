@@ -8,6 +8,7 @@ $script:Guid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-
 $script:Name = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$'
 $script:Location = '^[a-z][a-z0-9]{2,30}$'
 $script:VnetId = '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.Network/virtualNetworks/[A-Za-z0-9._-]{1,64}$'
+$script:ExistingVnetId = '^/subscriptions/(?<subscription>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/resourceGroups/[A-Za-z0-9._-]{1,90}/providers/Microsoft\.Network/virtualNetworks/(?<name>[A-Za-z0-9._-]{1,64})$'
 $script:Zones = @(
     'privatelink.services.ai.azure.com', 'privatelink.cognitiveservices.azure.com', 'privatelink.openai.azure.com',
     'privatelink.documents.azure.com', 'privatelink.blob.core.windows.net', 'privatelink.azurewebsites.net'
@@ -52,7 +53,21 @@ function Get-DrConfigProblems {
     $s = & $get $Config 'secondary'
     if ($null -eq $s) { $p.Add('secondary:required'); return $p.ToArray() }
     if ("$(& $get $s 'location')" -cnotmatch $script:Location) { $p.Add('secondary.location:invalid') }
-    foreach ($k in 'resourceGroup', 'vnetName', 'apimNsgName') { if ("$(& $get $s $k)" -cnotmatch $script:Name) { $p.Add("secondary.${k}:invalid") } }
+    foreach ($k in 'resourceGroup', 'vnetName') { if ("$(& $get $s $k)" -cnotmatch $script:Name) { $p.Add("secondary.${k}:invalid") } }
+    $mode = [string](& $get $s 'networkMode')
+    if (-not $mode) { $mode = 'create' }
+    if ($mode -cnotin 'create', 'existing') { $p.Add('secondary.networkMode:invalid') }
+    $nsgName = [string](& $get $s 'apimNsgName')
+    if (($mode -cne 'existing' -or $nsgName) -and $nsgName -cnotmatch $script:Name) { $p.Add('secondary.apimNsgName:invalid') }
+    $existingId = [string](& $get $s 'existingVnetId')
+    if ($mode -ceq 'existing') {
+        $match = [regex]::Match($existingId, $script:ExistingVnetId, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $match.Success) { $p.Add('secondary.existingVnetId:invalid') }
+        else {
+            if ($match.Groups['subscription'].Value -ine [string](& $get $Config 'subscriptionId')) { $p.Add('secondary.existingVnetId:subscription_mismatch') }
+            if ($match.Groups['name'].Value -ine [string](& $get $s 'vnetName')) { $p.Add('secondary.existingVnetId:name_mismatch') }
+        }
+    } elseif ($existingId) { $p.Add('secondary.existingVnetId:requires_existing_mode') }
     $space = & $get $s 'addressSpace'
     $spaceOk = $null -ne (& $cidr $space)
     if (-not $spaceOk) { $p.Add('secondary.addressSpace:invalid') }
@@ -96,6 +111,65 @@ function Get-DrConfigProblems {
     $p.ToArray()
 }
 
+function Get-DrSecondaryVnetId {
+    param([Parameter(Mandatory)] $Config)
+    $secondary = $Config.secondary
+    if ($secondary.PSObject.Properties['networkMode'] -and $secondary.networkMode -ceq 'existing') {
+        return [string]$secondary.existingVnetId
+    }
+    "/subscriptions/$($Config.subscriptionId)/resourceGroups/$($secondary.resourceGroup)/providers/Microsoft.Network/virtualNetworks/$($secondary.vnetName)"
+}
+
+# Preflight only: successful DNS/TCP checks do not prove application readiness or publish success.
+function Get-DrPrivatePublisherProblems {
+    param(
+        [Parameter(Mandatory)] [object[]]$Apps,
+        [Parameter(Mandatory)] [string]$EndpointSubnetPrefix,
+        [scriptblock]$Resolve = { param($name) [Net.Dns]::GetHostAddresses($name) | ForEach-Object IPAddressToString },
+        [scriptblock]$Connect = {
+            param($name, $address)
+            $client = [Net.Sockets.TcpClient]::new()
+            try {
+                $task = $client.ConnectAsync($address, 443)
+                if (-not $task.Wait(5000)) { return $false }
+                $task.GetAwaiter().GetResult()
+                return $client.Connected
+            } finally { $client.Dispose() }
+        }
+    )
+    $problems = [Collections.Generic.List[string]]::new()
+    if ($null -eq (ConvertTo-CidrRange $EndpointSubnetPrefix)) { return @('private_publisher:endpoint_subnet_invalid') }
+    foreach ($app in $Apps) {
+        $siteHost = [string]$app.host
+        if ($siteHost -notmatch '^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$') {
+            $problems.Add("private_publisher:$($app.name):hostname_invalid")
+            continue
+        }
+        $expected = @()
+        if ($app -is [Collections.IDictionary] -and $app.Contains('endpointAddresses')) {
+            $expected = @($app['endpointAddresses'] | Where-Object { $_ })
+        } elseif ($app.PSObject.Properties['endpointAddresses']) {
+            $expected = @($app.endpointAddresses | Where-Object { $_ })
+        }
+        if (-not $expected.Count) { $problems.Add("private_publisher:$($app.name):endpoint_unverified"); continue }
+        $dot = $siteHost.IndexOf('.')
+        $scmHost = $siteHost.Substring(0, $dot) + '.scm' + $siteHost.Substring($dot)
+        try { $addresses = @(& $Resolve $scmHost) }
+        catch { $problems.Add("private_publisher:${scmHost}:dns_failed: $($_.Exception.Message)"); continue }
+        if (-not $addresses.Count) { $problems.Add("private_publisher:${scmHost}:dns_empty"); continue }
+        $outside = @($addresses | Where-Object { -not (Test-CidrWithin "$_/32" $EndpointSubnetPrefix) })
+        if ($outside.Count) { $problems.Add("private_publisher:${scmHost}:dns_outside_endpoint_subnet_$($outside -join '+')"); continue }
+        $unexpected = @($addresses | Where-Object { $expected -inotcontains $_ })
+        if ($unexpected.Count) { $problems.Add("private_publisher:${scmHost}:dns_endpoint_mismatch_$($unexpected -join '+')"); continue }
+        foreach ($address in $addresses) {
+            try {
+                if (-not (& $Connect $scmHost $address)) { $problems.Add("private_publisher:${scmHost}:scm_unreachable_$address") }
+            } catch { $problems.Add("private_publisher:${scmHost}:scm_unreachable_${address}: $($_.Exception.Message)") }
+        }
+    }
+    $problems.ToArray()
+}
+
 # Azure CLI profile for the driver: an explicit AZURE_CONFIG_DIR, or, in Azure Cloud Shell (ACC_CLOUD
 # set), Cloud Shell's own signed-in profile. Cloud Shell's az login uses device code, which Conditional
 # Access policies that require a managed device refuse (docs/DR-NOVICE-WALKTHROUGH-2026-10-25.md N-04).
@@ -135,4 +209,4 @@ function Get-EntraAppProblems {
     $p.ToArray()
 }
 
-Export-ModuleMember -Function ConvertTo-CidrRange, Test-CidrOverlap, Test-CidrWithin, Get-DrConfigProblems, Get-EntraAppProblems, Resolve-DrAzureProfile, Get-DrResourceGroupLocationBlocker
+Export-ModuleMember -Function ConvertTo-CidrRange, Test-CidrOverlap, Test-CidrWithin, Get-DrConfigProblems, Get-DrSecondaryVnetId, Get-DrPrivatePublisherProblems, Get-EntraAppProblems, Resolve-DrAzureProfile, Get-DrResourceGroupLocationBlocker

@@ -1,5 +1,85 @@
 # Change log
 
+## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
+
+- Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the
+  standby APIM is not StandardV2 (or PremiumV2), instead of failing midway with
+  `ManagingVirtualNetworkConfigurationNotSupported` after endpoints were created.
+## 2026-11-07 - DR Code no longer leaves build staging in the saved state
+
+- After a successful Code phase the standby driver removes `.dr-state/generated/packages` (npm
+  trees and per-app zips); package digests stay in `standby.state.json`. Saved archives shrink from
+  about 82 MB / 41.7k files and save/restore no longer takes minutes.
+## 2026-11-07 - DR Front Door cleanup error no longer hides the phase failure
+
+- If clearing Front Door verification after a standby phase fails (lock, invalid JSON, write error),
+  the original phase error is kept and the cleanup error is appended as
+  `frontdoor_state_cleanup_failed`; the run still exits nonzero.
+## 2026-11-07 - DR Cosmos offer name from real Azure
+
+- Data preview and apply accept real Cosmos throughput offers, whose `name` is an internal ID (for
+  example `ieLG`) rather than `default`. The offer is checked by its ARM ID and `type`; wrong parent,
+  wrong or missing type still fail closed with `cosmos_throughput_invalid`.
+- Tests now use sanitized real `az` captures (`tests/fixtures/dr-cosmos-cli`) instead of assumed shapes.
+## 2026-11-06 - DR customer-shape end-to-end regression
+
+- New offline test `tests/Test-DrInfosysShape.ps1` with a synthetic customer-shaped fixture
+  (`tests/fixtures/dr-customer-shape`) runs every standby phase from Data to Verify and checks: all
+  primary stages load, the primary APIM comes from `apim.existing`, Network uses only the Cosmos and
+  blob DNS zones, no Microsoft Graph or Cosmos throughput write, Code takes the public path, and prior
+  Front Door verification is cleared. Each fixture shape trait is asserted so a regenerated fixture
+  cannot silently lose it.
+## 2026-11-06 - DR Bootstrap preview what-if count
+
+- Existing-network Bootstrap preview no longer fails after printing the what-if with "The property
+  'Count' cannot be found on this object" when no what-if change is foreign (lab: only new identity
+  Creates). The foreign-change list is now always an array, so one foreign change is reported as
+  `whatIf:changes_existing_1` and no longer as the number of its keys. DNS link evidence is also
+  always an array. Offline tests cover what-if results with zero changes, one owned change and one
+  foreign change.
+- UNKNOWNS APIM-ZR-04 records why a one-unit Standard v2 standby APIM with `zoneRedundant: true`
+  shows an empty `zones` property; no code change.
+## 2026-11-06 - DR Network Foundry DNS scope
+
+- Network checks Cosmos and blob zone links, but does not invent or read Foundry zones when it
+  manages no Foundry endpoint. It also tolerates unused Foundry IDs from older deployment outputs.
+  Both required Cosmos/blob IDs must be present and distinct. When a Foundry endpoint is managed,
+  three distinct zone IDs and successful link reads remain required. This does not verify
+  connectivity to an existing primary-region Foundry endpoint.
+- An offline partial-apply retry fixture covers matching endpoints and already-integrated Functions
+  and APIM; reconcile real resources and review a fresh preview before any approved retry.
+
+## 2026-11-06 - DR Cosmos throughput and existing primary APIM
+
+- Data previews database and dedicated-container offers, including mixed shared/dedicated throughput.
+  It recognizes the documented missing-offer error and Azure-core multiline form only with verified
+  resources and consistent diagnostics; unexpected errors stop. Throughput reductions and manual
+  migrations require explicit approval, and serverless conversion requires a fresh preview.
+- With a blank primary Stage 1 APIM ID, standby resolves a complete `apim.existing` reference using
+  the staged driver's logic. It prints the resolved ID for review, rejects missing, invalid or
+  conflicting references, and does not ask an operator to edit state.
+- Offline actual-driver tests cover both fixes, negative cases and mutation checks. Live response
+  behavior and the configured primary APIM still require owner verification.
+
+## 2026-11-06 - DR existing-network and manual Entra safety
+
+- Standby can select an existing VNet in a separate resource group. Bootstrap validates its
+  network and DNS prerequisites, reuses existing identities and deploys only missing identities.
+  Existing-network integration, private endpoint/DNS changes and initial public APIM creation
+  require separate operator approvals; private Function Apps are not opened for publishing.
+- Manual Stage 4 group metadata is used without a deployer Graph call. Private publishing checks
+  each app's approved endpoint and SCM DNS/TCP path; this preflight is not end-to-end readiness.
+- Standby apply and Verify attempts invalidate stale phase, dependent and Front Door verification
+  records before Azure work; previews leave them intact. Network and public-ingress approvals apply
+  in both network modes, and Shells refuses to reopen a private existing Function App. The standby
+  template supports StandardV2 and refuses PremiumV2 before deployment.
+- This is a standby-only release. The Front Door driver and its related runbook are not part of it:
+  **all Front Door operations remain STOP**, including primary recovery, until a later safety release.
+  The new readiness helper and state invalidation do not make the older Front Door driver safe.
+- Offline tests and negative controls cover standby guards. Front Door driver integration cases are
+  deferred to the follow-up release. No customer deployment or private publishing has been tested;
+  see the [standby runbook](runbooks/DR-STANDBY-CLOUD-SHELL.md).
+
 ## 2026-10-30 - Health and outage e-mail alerts (add-on)
 
 - New `infra/monitoring/Invoke-HealthAlerts.ps1` with `health-alerts.bicep`: an add-on applied after

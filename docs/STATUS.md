@@ -1,5 +1,136 @@
 # Current work
 
+## Standby Cosmos read region (decision only)
+
+**Packet:** DR-COSMOS-READ-REGION (2026-11-07), lab finding on 94aeafa: resolver B reads Cosmos from
+East US 2. Investigation (read-only): no Cosmos client sets `preferredLocations` and no region
+setting exists, so the SDK reads from the first readable location (East US 2). An app setting in DR
+Config alone would be a no-op; a fix needs a small source change in four clients plus Stage 5 and
+DR Config settings and a republish. Recorded as ADR 0039 (proposed: accept for this release,
+follow-up packet) and UNKNOWNS DR-BYO-24 (OPEN, owner decision). No code change.
+## DR Network preflights the standby APIM SKU
+
+**Packet:** DR-APIM-SKU-PREFLIGHT (2026-11-07), lab finding on 94aeafa. Network -Apply failed with
+`ManagingVirtualNetworkConfigurationNotSupported` after it had already deployed private endpoints
+and Functions VNet integration, because lab governance had scaled the standby APIM down to BasicV2;
+Stage 6 decides APIM integration from the configured SKU, not the live one. Network preview and
+apply now read the standby APIM first and throw `apim_sku_unsupported` (naming the SKU and the
+fix: scale back to StandardV2 with the platform owner, rerun preview) before any what-if or write
+unless the live SKU is StandardV2 or PremiumV2; a missing standby `apimName` throws
+`standby_apim_unknown`. RED (`tests/Test-DrInfosysShape.ps1`, standby APIM BasicV2): 37 passed, 5
+failed (preview ran what-if; apply deployed, integrated and recorded Network). GREEN: 42 passed.
+`tests/Test-DrNetworkDns.ps1` asserted the exact preview call list (one what-if); it now asserts the
+exact new list (GET standby APIM, then what-if), 17 passed. Runbook section updated.
+## DR Code build staging out of the saved state
+
+**Packet:** DR-BUILD-STAGING (2026-11-07), lab finding on 94aeafa. After Code, `Save-CcofDr`
+archives were 82 MB / 41.7k files because `.dr-state/generated/packages` (per-app `npm ci` trees and
+zips built by `Invoke-QsCode`) was archived; save and restore took about 5 minutes each in Cloud
+Shell. Nothing under `generated/packages` is read by resume, Verify or Front Door: Verify reads ARM
+and app settings, package digests are recorded in `standby.state.json` by `Save-DrPhase 'Code'`, and
+the guide's restore list names no generated file. Code now calls `Remove-DrBuildStaging` right after
+recording the phase (cleanup failure is a warning, Code stays complete); `admin.zip`, gateway config
+and workbook files are kept. The Desktop guide `Save-CcofDr` tar also excludes
+`./.dr-state/generated/packages` and `./.staged-state/generated/packages` (checked with Windows
+bsdtar and GNU tar 1.35). RED: `tests/Test-DrStandby.ps1` 118 passed, 3 failed; guide harness 33
+passed, 1 failed (archive listed both staging trees). GREEN: 121 passed; customer shape 37 passed;
+guide harness 34 passed (the saved archive has no staging, restores, and Verify still runs).
+## DR Front Door cleanup must not hide a phase failure
+
+**Packet:** DR-FD-CLEANUP-ERROR (2026-11-07), council finding on 8bc6251. In
+`infra/dr/Invoke-DrStandby.ps1` the `finally` block calls `Clear-DrFrontDoorStateEvidence`; an error
+there (state lock held, invalid JSON, write failure) replaced the phase exception, hiding for example
+a Cosmos partial-write `cosmos_throughput_readback_failed`. Cleanup errors are now caught separately:
+after a phase failure the driver rethrows the original message with `frontdoor_state_cleanup_failed:
+...` appended (nonzero exit); after a successful phase it reports the cleanup failure and exits 3.
+RED (`tests/Test-DrCosmosThroughput.ps1`, unverified throughput update plus corrupted
+`frontdoor-state.json`): 65 passed, 1 failed; the output held only the JSON parse error. GREEN: 66
+passed; Front Door safety 85 passed; customer shape 37 passed. Council: Architect PASS, Security
+PASS, UX PASS, Coder PASS; QA PASS-WITH-NOTES: the customer-shape Code phase stops at the package
+build sentinel offline, so a real publish is proven only by the lab run.
+## DR Cosmos offer name from real Azure
+
+**Packet:** DR-COSMOS-OFFER-NAME (2026-11-07), part of release/dr-infosys-resume. Lab resume run on
+8bc6251 stopped at Data preview against a real Cosmos account with `cosmos_throughput_invalid:
+database 'ccof' returned an unexpected throughput resource ID or name`. Real Azure (CLI 2.92.0 and
+REST) returns an internal offer ID such as `ieLG` as the throughput resource `name`, not `default`;
+the ARM ID and `type` are stable. The offline mocks had restated the `default` assumption. Read-only
+captures from the lab (database autoscale offer, dedicated container manual offer, shared-container
+NotFound) are now sanitized fixtures in `tests/fixtures/dr-cosmos-cli`, and every Cosmos mock in
+`Test-DrCosmosThroughput.ps1` and `Test-DrInfosysShape.ps1` uses that shape. The offer is now
+validated by ARM ID (parent database or container path) and `type`
+(`.../sqlDatabases[/containers]/throughputSettings`); a wrong parent, wrong type, missing type or a
+non-throughput ID still fails closed. RED at 8bc6251 with the real-shape mocks: Cosmos 18 passed / 47
+failed, customer shape 32 passed / 5 failed (the lab error). GREEN: Cosmos 65 passed, customer shape
+37 passed. Audit of other mock-derived shape assertions against real lab reads: see
+DR-BYO-21 and the release PR; no further mismatch found.
+## DR customer-shape end-to-end regression
+
+**Packet:** DR-SHAPE-E2E (2026-11-06), part of release/dr-infosys-resume. `tests/Test-DrInfosysShape.ps1`
+drives `infra/dr/Invoke-DrStandby.ps1` Data (preview and apply), Shells, Grants, Config, Network,
+Code and Verify offline against `tests/fixtures/dr-customer-shape`, a synthetic customer-shaped
+deployment (every identifier fictional; stage hashes produced by the repo's own state functions):
+deferred primary APIM named only by `apim.existing`, manual Entra, shared database throughput with
+Azure-core multi-line NotFound per container, existing network in another resource group with only
+Cosmos and blob zones, Foundry in another subscription without a private endpoint, public standby
+Function Apps, and legacy Front Door approvals. Code stops deliberately at the package build (no
+`dist/` or `npm ci` offline) after its access checks. RED at c3c462b: 20 passed, 17 failed (Data
+NotFound; then `PrimaryApimId` empty for every later phase). With only the APIM fallback patched in
+(diagnostic), 31 passed and 6 failed, including Foundry DNS zones in the Network parameters. The
+Graph-write, throughput-write, public-Code and Front Door invalidation checks already held at
+c3c462b; they guard against regressions. GREEN: 37 passed.
+## DR Bootstrap preview what-if count
+
+**Packet:** DR-PREREQ-COUNT (2026-11-06), part of release/dr-infosys-resume. Lab: existing-network
+Bootstrap preview printed the what-if (two owned identity Creates) and then failed with "The
+property 'Count' cannot be found on this object". The `if` statement result unrolled an empty
+array to AutomationNull, and a single foreign change to a dictionary whose `Count` is its key count.
+RED: `tests/Test-DrExistingNetwork.ps1` 102 passed and 3 failed (zero changes and one owned change
+crashed; one foreign change reported `changes_existing_2`). GREEN: 105 passed. Every other
+`.Count` in `infra/dr` already uses an `@()`-wrapped or typed collection; the DNS link list
+was wrapped in the same way. APIM-ZR-04 documents the empty `zones` on a zone-redundant v2 APIM.
+## DR Network DNS verification
+
+**Packet:** DR-NET-DNS (2026-11-06), under review. When standby manages no Foundry endpoint, Network
+must verify only its Cosmos/blob DNS links, including when older outputs contain unused Foundry IDs.
+Missing or duplicate Cosmos/blob outputs must stop. Primary Stage 6 with a managed Foundry endpoint
+must still require three distinct zones and fail on missing or unreadable links. Offline retries must
+preserve matching existing endpoints and integrations; no live Azure operation is authorized.
+
+RED: the actual standby driver failed on a nonexistent Foundry zone after simulated incremental
+deployment and integration checks. Missing/duplicate Cosmos/blob and managed Foundry output cases
+also failed before their guards. GREEN: `tests/Test-DrNetworkDns.ps1` 17 cases;
+`tests/Test-StagedStages.ps1` 476 checks. Three loadable driver mutants and a compiling Bicep mutant
+were caught and restored.
+The full isolated packet gate and PR CI are required before this packet is release-ready.
+
+Council (self-review): ARCHITECT PASS (existing Stage 6 boundary, only managed targets); CODER PASS
+(stale outputs guarded, explicit incomplete-output error); QA PASS-WITH-NOTES (offline failure and
+matching-state retry, no live provider observation); UX PASS (fresh-preview/partial-apply guidance);
+SECURITY PASS-WITH-NOTES (approval unchanged, errors propagate, no Foundry connectivity claim).
+
+## DR existing-network reuse
+
+**Active packet:** DR-BYO standby-only release (2026-11-06), in review. A standby deployment can reference an
+existing VNet in a different resource group without deploying the VNet, subnets, NSG, DNS links
+or peerings. The existing-network Bootstrap creates only the named standby identities; network
+integration and private endpoint/DNS-record changes require explicit approval. The manual Entra
+path remains available. Private Function App publishing and standby readiness are customer-side
+gates that have not been verified here. No customer Azure changes are authorized by this packet.
+**All Front Door operations are STOP** pending a separate safety release; the Front Door driver
+integration tests are deferred to that release.
+
+Standby-only offline checks: existing-network 83, prerequisites 55, standby 118 and staged stages
+475 passed in the isolated checkout; ten separate readiness/approval mutants were caught and
+restored. PowerShell parsing and the relevant Bicep builds passed. Front Door driver integration
+cases are deferred, not passed. These checks are not customer acceptance.
+
+Council (self-review, standby scope): ARCHITECT PASS (existing network referenced, not deployed);
+CODER PASS (phase evidence and explicit approvals); QA PASS-WITH-NOTES (offline checks and negative
+controls only); UX PASS-WITH-NOTES (manual handoff and explicit stop points); SECURITY
+PASS-WITH-NOTES (private Function Apps, no automatic Graph grants, independent customer approvals).
+All Front Door and live customer work remains outside these verdicts.
+
 ## Health and outage e-mail alerts
 
 **Active packet:** HA-1 (2026-10-30). Add-on over a finished deployment: `infra/monitoring/` creates

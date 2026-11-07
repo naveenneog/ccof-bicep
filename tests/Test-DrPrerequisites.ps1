@@ -39,6 +39,20 @@ Check 'bad tenant' (Has { param($c) $c.tenantId = 'contoso' } 'tenantId:invalid'
 Check 'bad primary vnet id' (Has { param($c) $c.primary.vnetId = '/subscriptions/x/resourceGroups/a(b)/providers/Microsoft.Network/virtualNetworks/v' } 'primary.vnetId:invalid')
 Check 'bad identity name' (Has { param($c) $c.identityNames = @('sync b') } 'identityNames:invalid_sync b')
 
+# Existing-network mode uses a full VNet ID, independent of the workload resource group.
+function Set-ExistingNetwork($c) {
+    $c.secondary | Add-Member -NotePropertyName networkMode -NotePropertyValue 'existing' -Force
+    $c.secondary | Add-Member -NotePropertyName existingVnetId -NotePropertyValue "/subscriptions/$($c.subscriptionId)/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/$($c.secondary.vnetName)" -Force
+}
+$existing = New-Config; Set-ExistingNetwork $existing
+$existing.secondary.apimNsgName = ''
+Check 'existing VNet in a separate resource group is valid without an NSG name' (@(Get-DrConfigProblems $existing).Count -eq 0)
+Check 'existing mode requires a VNet ID' (Has { param($c) Set-ExistingNetwork $c; $c.secondary.existingVnetId = '' } 'secondary.existingVnetId:invalid')
+Check 'existing VNet ID must name the configured VNet' (Has { param($c) Set-ExistingNetwork $c; $c.secondary.existingVnetId = $c.secondary.existingVnetId -replace 'dr-vnet$', 'other-vnet' } 'secondary.existingVnetId:name_mismatch')
+Check 'existing VNet ID must use the configured subscription' (Has { param($c) Set-ExistingNetwork $c; $c.secondary.existingVnetId = $c.secondary.existingVnetId -replace $c.subscriptionId, '00000000-0000-4000-8000-00000000dd09' } 'secondary.existingVnetId:subscription_mismatch')
+Check 'VNet ID without existing mode is refused' (Has { param($c) Set-ExistingNetwork $c; $c.secondary.networkMode = 'create' } 'secondary.existingVnetId:requires_existing_mode')
+Check 'unknown network mode is refused' (Has { param($c) $c.secondary | Add-Member -NotePropertyName networkMode -NotePropertyValue 'reuse' } 'secondary.networkMode:invalid')
+
 # A partial configuration lists what is missing instead of failing on the first absent field.
 $partial = '{"tenantId":"00000000-0000-4000-8000-000000000001","subscriptionId":"00000000-0000-4000-8000-000000000002","secondary":{"location":"centralus"}}' | ConvertFrom-Json
 $got = @(); $threw = $null
@@ -100,13 +114,21 @@ Check 'missing config names the example (exit 2)' ($LASTEXITCODE -eq 2 -and "$ou
 Remove-Item $tmp
 
 # Templates build (az bicep build works signed out).
-foreach ($t in 'infra\dr\dr-prerequisites.bicep', 'infra\prereqs\network.bicep') {
+foreach ($t in 'infra\dr\dr-prerequisites.bicep', 'infra\dr\dr-existing-identities.bicep', 'infra\prereqs\network.bicep') {
     $json = & az bicep build --file (Join-Path $PSScriptRoot "..\$t") --stdout 2>$null
     Check "$t builds" ($LASTEXITCODE -eq 0 -and ($json -join '') -match '"\$schema"')
 }
 $arm = (& az bicep build --file (Join-Path $PSScriptRoot '..\infra\dr\dr-prerequisites.bicep') --stdout 2>$null) -join "`n"
 Check 'dr template never creates DNS zones in the secondary' ($arm -match '"createDnsZones":\s*\{\s*"value":\s*false')
 Check 'dr template creates no role assignment' ($arm -notmatch 'Microsoft.Authorization/roleAssignments')
+function Test-IdentityOnlyTemplate($Template) {
+    $resources = @(if ($Template.resources -is [Collections.IDictionary]) { $Template.resources.Values } else { $Template.resources })
+    return ($resources.Count -eq 1 -and $resources[0].type -ceq 'Microsoft.ManagedIdentity/userAssignedIdentities')
+}
+$identityArm = ((& az bicep build --file (Join-Path $PSScriptRoot '..\infra\dr\dr-existing-identities.bicep') --stdout 2>$null) -join "`n") | ConvertFrom-Json -AsHashtable -Depth 100
+Check 'existing-network bootstrap template contains identities only, not nested deployments or network resources' (Test-IdentityOnlyTemplate $identityArm)
+$identityArm.resources += @{ type = 'Microsoft.Network/virtualNetworks' }
+Check 'identity-only template check rejects an injected network resource' (-not (Test-IdentityOnlyTemplate $identityArm))
 
 Write-Host "Test-DrPrerequisites: $script:pass passed, $script:fail failed"
 if ($script:fail -gt 0 -or $script:pass -lt 30) { exit 1 }

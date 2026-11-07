@@ -15,6 +15,50 @@ function Get-DrValue { param($Object, [string]$Path)
     return $v
 }
 
+function Get-DrPrivateAppEndpointAddresses {
+    param(
+        [Parameter(Mandatory)] [string]$SiteId,
+        [Parameter(Mandatory)] [string]$SubnetId,
+        [Parameter(Mandatory)] [scriptblock]$ListConnections,
+        [Parameter(Mandatory)] [scriptblock]$ReadResource
+    )
+    $addresses = [Collections.Generic.List[string]]::new()
+    foreach ($connection in @(& $ListConnections $SiteId)) {
+        $status = [string](Get-DrValue $connection 'properties.privateLinkServiceConnectionState.status')
+        $endpointId = [string](Get-DrValue $connection 'properties.privateEndpoint.id')
+        if ($status -ine 'Approved' -or -not $endpointId) { continue }
+        $endpoint = & $ReadResource $endpointId
+        if ([string](Get-DrValue $endpoint 'id') -ine $endpointId -or
+            [string](Get-DrValue $endpoint 'properties.provisioningState') -ine 'Succeeded' -or
+            [string](Get-DrValue $endpoint 'properties.subnet.id') -ine $SubnetId) { continue }
+        $links = @(Get-DrValue $endpoint 'properties.privateLinkServiceConnections') +
+            @(Get-DrValue $endpoint 'properties.manualPrivateLinkServiceConnections')
+        $matching = @($links | Where-Object {
+            [string](Get-DrValue $_ 'properties.privateLinkServiceId') -ieq $SiteId -and
+            @(Get-DrValue $_ 'properties.groupIds') -icontains 'sites' -and
+            [string](Get-DrValue $_ 'properties.privateLinkServiceConnectionState.status') -ieq 'Approved'
+        })
+        if ($matching.Count -ne 1) { continue }
+        foreach ($ref in @(Get-DrValue $endpoint 'properties.networkInterfaces')) {
+            $nicId = [string](Get-DrValue $ref 'id')
+            if (-not $nicId) { continue }
+            $nic = & $ReadResource $nicId
+            if ([string](Get-DrValue $nic 'id') -ine $nicId) { continue }
+            foreach ($ipConfig in @(Get-DrValue $nic 'properties.ipConfigurations')) {
+                $parsed = $null
+                $ip = [string](Get-DrValue $ipConfig 'properties.privateIPAddress')
+                if ([Net.IPAddress]::TryParse($ip, [ref]$parsed) -and $parsed.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+                    $addresses.Add($parsed.ToString())
+                }
+            }
+        }
+    }
+    if (-not $addresses.Count) {
+        throw "private_endpoint_not_verified: no approved sites endpoint with a readable NIC address for $SiteId on $SubnetId."
+    }
+    return @($addresses | Sort-Object -Unique)
+}
+
 # Problems with the `standby` section of dr.config.json and the values it relies on; empty means usable.
 function Get-DrStandbyProblems {
     param([Parameter(Mandatory)] $Config)
@@ -33,7 +77,8 @@ function Get-DrStandbyProblems {
         if ($v -and $v -cnotin 'Enabled', 'Disabled') { $p.Add("standby.${f}:Enabled_or_Disabled") }
     }
     $sku = [string](Get-DrValue $Config 'standby.apim.sku')
-    if ($sku -and $sku -cnotin 'StandardV2', 'PremiumV2') { $p.Add('standby.apim.sku:StandardV2_or_PremiumV2') }
+    if ($sku -ceq 'PremiumV2') { $p.Add('standby.apim.sku:PremiumV2_not_supported_by_shells') }
+    elseif ($sku -and $sku -cne 'StandardV2') { $p.Add('standby.apim.sku:StandardV2_only') }
     # Zone redundancy is chosen only at creation; one unit is allowed, two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
     $zoneRedundant = Get-DrValue $Config 'standby.apim.zoneRedundant'
     if ($null -ne $zoneRedundant -and $zoneRedundant -isnot [bool]) { $p.Add('standby.apim.zoneRedundant:true_or_false') }
@@ -96,7 +141,10 @@ function Get-DrFrontDoorPhaseProblem {
     if ($PrimaryOnly -and $Phase -cnotin 'Deploy', 'Approve', 'Verify') {
         return "frontdoor_primary_only_phase_refused: -Phase $Phase needs region B; with -PrimaryOnly only Deploy, Approve and Verify run. Build region B, then run Deploy, Approve and Verify without -PrimaryOnly."
     }
-    if ($null -eq $State) { return $null }
+    if ($null -eq $State) {
+        if ($Phase -ceq 'RestorePrimary') { return 'frontdoor_deployment_required: restore needs the existing full Front Door state; restore the state archive before continuing.' }
+        return $null
+    }
     $mode = Get-DrFrontDoorMode -PrimaryOnly:$PrimaryOnly
     $stateMode = [string](Get-DrValue $State 'mode')
     if (-not $stateMode) { $stateMode = 'full' }
@@ -112,11 +160,103 @@ function Get-DrFrontDoorPhaseProblem {
     return $null
 }
 
-# Records the deployment mode; a change of mode drops the approvals and verification of the other mode.
+function Get-DrFrontDoorTargetProblem {
+    param($State, [string]$Stem, [string]$SubscriptionId, [string]$ResourceGroup)
+    if ($null -eq $State) { return $null }
+    $savedId = [string](Get-DrValue $State 'profileId')
+    $savedSubscription = [string](Get-DrValue $State 'subscriptionId')
+    $savedGroup = [string](Get-DrValue $State 'resourceGroup')
+    $savedName = [string](Get-DrValue $State 'profileName')
+    $savedStem = [string](Get-DrValue $State 'stem')
+    if (-not $savedId -and -not ($savedSubscription -and $savedGroup -and ($savedName -or $savedStem))) {
+        return 'frontdoor_target_unknown: saved Front Door state does not identify a profile, subscription and resource group; restore a complete state or inspect the existing profile before proceeding.'
+    }
+    $profileName = "$Stem-fd"
+    $expected = [ordered]@{
+        stem = $Stem; subscriptionId = $SubscriptionId; resourceGroup = $ResourceGroup
+        profileName = $profileName
+        profileId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Cdn/profiles/$profileName"
+    }
+    foreach ($field in $expected.Keys) {
+        $saved = [string](Get-DrValue $State $field)
+        if ($saved -and $saved -ine $expected[$field]) {
+            return "frontdoor_target_mismatch: saved $field '$saved' differs from configured '$($expected[$field])'; inspect the existing profile and state before proceeding."
+        }
+    }
+    return $null
+}
+
+function Get-DrStandbyPhaseDependencies {
+    return [ordered]@{
+        Grants = @('Shells'); Config = @('Grants'); Network = @('Shells')
+        Code = @('Config', 'Network'); Verify = @('Code', 'Data')
+    }
+}
+
+function Clear-DrStandbyPhaseEvidence {
+    param(
+        [Parameter(Mandatory)] [Collections.IDictionary]$State,
+        [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify')] [string]$Phase
+    )
+    if (-not $State.Contains('phases') -or $State['phases'] -isnot [Collections.IDictionary]) {
+        throw 'standby_phase_state_invalid: phases must be an object; inspect and restore the standby state before continuing.'
+    }
+    $dependencies = Get-DrStandbyPhaseDependencies
+    $affected = @{}; $affected[$Phase] = $true
+    do {
+        $changed = $false
+        foreach ($name in $dependencies.Keys) {
+            if ($affected.ContainsKey($name)) { continue }
+            foreach ($dependency in $dependencies[$name]) {
+                if ($affected.ContainsKey($dependency)) { $affected[$name] = $true; $changed = $true; break }
+            }
+        }
+    } while ($changed)
+    $removed = [Collections.Generic.List[string]]::new()
+    foreach ($name in $affected.Keys) {
+        if ($State['phases'].Contains($name)) { $State['phases'].Remove($name); $removed.Add($name) }
+    }
+    return $removed.ToArray()
+}
+
+function Get-DrFrontDoorReadinessProblem {
+    param($State)
+    $times = @{}
+    foreach ($phase in 'Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify') {
+        $timestamp = Get-DrValue $State "phases.$phase.completedAt"
+        if ($null -eq $timestamp -or [string]::IsNullOrWhiteSpace([string]$timestamp)) { return "frontdoor_standby_phase_missing: $phase has not been recorded as complete; run and verify the standby phases before activating region B." }
+        $parsed = [DateTimeOffset]::MinValue
+        $valid = if ($timestamp -is [DateTime]) {
+            if ($timestamp.Kind -ne [DateTimeKind]::Unspecified) { $parsed = [DateTimeOffset]$timestamp; $true } else { $false }
+        } elseif ($timestamp -is [DateTimeOffset]) { $parsed = $timestamp; $true }
+        else { [string]$timestamp -match '(Z|[+-]\d{2}:\d{2})$' -and [DateTimeOffset]::TryParse([string]$timestamp, [ref]$parsed) }
+        if (-not $valid) {
+            return "frontdoor_standby_phase_invalid: $phase has an invalid completion time; inspect the standby state."
+        }
+        $times[$phase] = $parsed
+    }
+    $dependencies = Get-DrStandbyPhaseDependencies
+    foreach ($phase in $dependencies.Keys) {
+        foreach ($dependency in $dependencies[$phase]) {
+            if ($times[$phase] -lt $times[$dependency]) {
+                return "frontdoor_standby_phase_stale: $phase was recorded before $dependency; rerun and verify the later standby phase."
+            }
+        }
+    }
+    return $null
+}
+
+# A mode change invalidates prior verification; prior connection IDs remain only for target-side rechecking.
 function Set-DrFrontDoorStateMode {
     param([Parameter(Mandatory)] [Collections.IDictionary]$State, [Parameter(Mandatory)] [ValidateSet('primaryOnly', 'full')] [string]$Mode)
     $previous = if ($State.Contains('mode') -and $State['mode']) { [string]$State['mode'] } else { 'full' }
-    if ($previous -cne $Mode) { foreach ($k in 'approvedConnections', 'approvedAt', 'verifiedAt') { $State.Remove($k) } }
+    if ($previous -cne $Mode) {
+        $known = @(Get-DrValue $State 'approvedConnections' | Where-Object { $_ })
+        if ($previous -ceq 'primaryOnly' -and $Mode -ceq 'full' -and $known.Count) {
+            $State['previousApprovedConnections'] = $known
+        } else { $State.Remove('previousApprovedConnections') }
+        foreach ($k in 'approvedConnections', 'approvedAt', 'verifiedAt') { $State.Remove($k) }
+    }
     $State['mode'] = $Mode
     return $State
 }
@@ -292,4 +432,33 @@ function Get-DrCosmosSteps {
     $steps.ToArray()
 }
 
-Export-ModuleMember -Function Get-DrValue, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Set-DrFrontDoorStateMode
+# Admin app SPA redirect URIs for the standby admin host (Config phase). A Stage 4 record with
+# verification 'manual' (entra.manualVerification) means the operator has no Microsoft Graph access, so the
+# URIs are printed for the Entra admin to add in the Entra admin center and no Graph call is made.
+function Invoke-DrAdminRedirects {
+    param($Stage4, [string]$AdminHost, [switch]$Apply, [scriptblock]$GetApp, [scriptblock]$PatchApp)
+    $want = @("https://$AdminHost/api/console", "https://$AdminHost/api/console-v3")
+    if ("$(Get-DrValue $Stage4 'verification')" -ceq 'manual') {
+        $appId = Get-DrValue (Get-DrValue $Stage4 'admin') 'appId'
+        Write-Host "manual Entra verification: the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
+        return [ordered]@{ mode = 'manual'; redirects = $want }
+    }
+    $app = & $GetApp
+    $have = @($app.spa.redirectUris)
+    $missing = @($want | Where-Object { $have -notcontains $_ })
+    if (-not $missing.Count) { return [ordered]@{ mode = 'graph'; redirects = $want; added = @() } }
+    if (-not $Apply) { Write-Host "preview: admin app SPA redirects add $($missing -join ', ')"; return [ordered]@{ mode = 'graph'; redirects = $want; added = @() } }
+    $merged = @($have + $missing | Where-Object { $_ } | Select-Object -Unique)
+    & $PatchApp $app $merged
+    Write-Host "admin app: added SPA redirects for $AdminHost"
+    return [ordered]@{ mode = 'graph'; redirects = $want; added = $missing }
+}
+function Remove-DrBuildStaging {
+    # Code build staging (npm ci trees and per-app zips) is only an input to publish; digests are kept in standby.state.json.
+    param([Parameter(Mandatory)][string]$GeneratedDir)
+    $packages = Join-Path $GeneratedDir 'packages'
+    if (-not (Test-Path -LiteralPath $packages -PathType Container)) { return $false }
+    Remove-Item -LiteralPath $packages -Recurse -Force -ErrorAction Stop
+    return $true
+}
+Export-ModuleMember -Function Remove-DrBuildStaging, Get-DrValue, Get-DrPrivateAppEndpointAddresses, Invoke-DrAdminRedirects, Get-DrStandbyProblems, Get-DrStandbyNames, New-DrStandbyStagedConfig, New-DrStandbyStage1Outputs, Get-DrGatewayResourceIds, New-DrFrontDoorParameters, Get-DrCosmosSteps, Get-DrFrontDoorPrimaryOnlyProblems, Get-DrFrontDoorMode, Get-DrFrontDoorExpectedConnections, Get-DrFrontDoorPhaseProblem, Get-DrFrontDoorTargetProblem, Get-DrFrontDoorReadinessProblem, Clear-DrStandbyPhaseEvidence, Set-DrFrontDoorStateMode

@@ -229,7 +229,7 @@ $x = Get-DrStandbyProblems (Get-Content (Join-Path $repo 'infra/dr/dr.config.exa
 Check 'example placeholders are refused by name' ($x -contains 'standby.stagedConfigPath:placeholder' -and $x -contains 'standby.apim.publisherEmail:placeholder')
 $c = New-DrCfg; $c.standby.nameSuffix = 'B-1'; Check 'name suffix must be 1-2 lowercase characters' (@(Get-DrStandbyProblems $c) -contains 'standby.nameSuffix:one_or_two_lowercase_letters_or_digits')
 $c = New-DrCfg; $c.secondary.location = $c.primary.location; Check 'standby in the primary location refused' (@(Get-DrStandbyProblems $c) -contains 'secondary.location:same_as_primary')
-$c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_or_PremiumV2')
+$c = New-DrCfg; $c.standby.apim.sku = 'BasicV2'; Check 'BasicV2 refused (no private outbound)' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.sku:StandardV2_only')
 $c = New-DrCfg; Check 'example standby.apim.zoneRedundant is false' ($c.standby.apim.PSObject.Properties['zoneRedundant'] -and $c.standby.apim.zoneRedundant -is [bool] -and $c.standby.apim.zoneRedundant -eq $false)
 $c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant 'yes'; Check 'zoneRedundant must be a boolean' (@(Get-DrStandbyProblems $c) -contains 'standby.apim.zoneRedundant:true_or_false')
 $c = New-DrCfg; $c.standby.apim | Add-Member -Force zoneRedundant $true; $c.standby.apim.units = 1; $zrw = $null
@@ -308,5 +308,31 @@ Check 'conversion in progress: wait only' ((@(Get-DrCosmosSteps (Acct @('EnableS
 Check 'converted (capability still listed): no conversion step' (@(Get-DrCosmosSteps (Acct @('EnableServerless') 'Provisioned' @('East US 2') $false 'Completed') 'centralus') -notcontains 'convert_to_provisioned')
 Check 'done: no steps' (@(Get-DrCosmosSteps (Acct @() 'Provisioned' @('East US 2', 'Central US') $true $null) 'centralus').Count -eq 0)
 
+# Config phase admin redirects: a manual Stage 4 record (entra.manualVerification) makes no Graph call.
+$script:graphCalls = 0; $script:patched = $null
+$getApp = { $script:graphCalls++; [pscustomobject]@{ id = 'obj1'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console') } } }
+$patch = { param($app, $merged) $script:graphCalls++; $script:patched = $merged }
+$r = Invoke-DrAdminRedirects -Stage4 @{ verification = 'manual'; admin = @{ appId = 'adm' } } -AdminHost 'b' -Apply -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: manual Stage 4 makes no Graph call and lists both URIs' ($script:graphCalls -eq 0 -and $r.mode -ceq 'manual' -and (@($r.redirects) -join ',') -ceq 'https://b/api/console,https://b/api/console-v3')
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'b' -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: Graph preview reads but does not patch' ($script:graphCalls -eq 1 -and $null -eq $script:patched)
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'b' -Apply -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: Graph apply keeps existing URIs and adds missing ones' ((@($script:patched) -join ',') -ceq 'https://a/api/console,https://b/api/console,https://b/api/console-v3' -and @($r.added).Count -eq 2)
+$script:patched = $null
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'a' -Apply -GetApp { [pscustomobject]@{ id = 'o'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console', 'https://a/api/console-v3') } } } -PatchApp $patch 6>$null
+Check 'admin redirects: nothing patched when both URIs exist' ($null -eq $script:patched -and @($r.added).Count -eq 0)
+# Code build staging (packages/ with node_modules, about 40k files) is not needed after publish: the digests
+# are in standby.state.json, and nothing in Verify or Front Door reads it. Leaving it made each saved archive 80 MB.
+$gen = Join-Path $repo ".env.public-test-scratch/dr-staging-$PID"
+New-Item -ItemType Directory -Force -Path (Join-Path $gen 'packages/resolver/node_modules/x') | Out-Null
+'a' | Set-Content (Join-Path $gen 'packages/resolver/node_modules/x/i.js'); 'z' | Set-Content (Join-Path $gen 'packages/sync.zip')
+'k' | Set-Content (Join-Path $gen 'admin.zip'); '{}' | Set-Content (Join-Path $gen 'gateway-config.json')
+$hasCleaner = [bool](Get-Command Remove-DrBuildStaging -ErrorAction SilentlyContinue)
+$removed = if ($hasCleaner) { Remove-DrBuildStaging -GeneratedDir $gen } else { $null }
+Check 'build staging: packages removed, admin.zip and gateway config kept' ($removed -eq $true -and -not (Test-Path (Join-Path $gen 'packages')) -and (Test-Path (Join-Path $gen 'admin.zip')) -and (Test-Path (Join-Path $gen 'gateway-config.json')))
+Check 'build staging: absent staging is not an error' ($hasCleaner -and (Remove-DrBuildStaging -GeneratedDir $gen) -eq $false -and (Remove-DrBuildStaging -GeneratedDir (Join-Path $gen 'missing')) -eq $false)
+Remove-Item -LiteralPath $gen -Recurse -Force -ErrorAction SilentlyContinue
+$driverText = Get-Content -Raw (Join-Path $repo 'infra/dr/Invoke-DrStandby.ps1')
+Check 'Code removes build staging only after it records the phase' ($driverText -match "(?s)Save-DrPhase 'Code'[^\n]*\n[^\n]*Remove-DrBuildStaging -GeneratedDir \`$ctx\.GeneratedDir")
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 79) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 86) { exit 1 }
