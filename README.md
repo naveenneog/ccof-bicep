@@ -114,7 +114,10 @@ npx tsc -p tsconfig.typecheck.json
 
 `npm test` runs every exported root Node and PowerShell suite, including the client
 suite through its root test. It forces live integration off and uses repository-local
-scratch. Private delivery-governance and portal-capture tooling are not part of this
+scratch. The PowerShell suites run in parallel, each in its own process with its own
+`TEMP` and Azure CLI profile (config and Bicep binary only, no tokens); set
+`CCOF_TEST_THROTTLE=1` to run them one at a time. Each suite's output is printed after it
+ends, in name order. Private delivery-governance and portal-capture tooling are not part of this
 public distribution; no private test assertion was weakened for export.
 
 For a bounded local-mock driver, see [load testing](docs/LOAD-TESTING.md).

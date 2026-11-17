@@ -293,6 +293,7 @@ in a dedicated `/27` subnet without public IP, workflow `.github/workflows/ccof-
 | RHEL 9.8 (`RedHat:RHEL:9-lvm-gen2`), SELinux enforcing, `/tmp` remounted `noexec` | Install succeeded; preflight first failed on disk (2 GB `rootlv`), passed after a 20 GB volume at `_work`; runner service in `unconfined_service_t`; runner user without sudo; Cosmos read, write denied, Bicep build passed. VM deleted after the test |
 | Foundry roles | Operator Owner with a condition: Role Based Access Control Administrator cannot be assigned; `foundryRolesBy: foundry-owner` used |
 | GitHub environments | Private repository on GitHub Free: protection rules rejected (HTTP 422); environments created without rules |
+| Windows Server 2022 (marketplace `2022-datacenter-azure-edition`, not hardened, FIPS off), preview identity | `Install-CcofRunner.ps1` install, register, status and check passed; the service runs only the runner recorded in `.service`. First job failed with `pwsh: command not found`: the Windows runner service ignores `.path`, so register now writes `PATH` to `.env` (`print-env` shows it). Then: hook accepted the `main` job, preflight 0 failures, Cosmos private address and HTTP 200, write `AuthorizationFailed`, deploy identity not found. A non-`main` ref was refused by the hook. `remove` unregistered the runner and deleted its service; VM deleted |
 
-Not tested: proxy and TLS inspection, FIPS mode, Windows Server 2022 bootstrap, a CIS-hardened image,
-an egress allow-list firewall.
+Not tested: proxy and TLS inspection, FIPS mode, a CIS-hardened Linux or Windows image, an egress
+allow-list firewall.
