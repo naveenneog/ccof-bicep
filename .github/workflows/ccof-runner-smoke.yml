@@ -1,6 +1,7 @@
 # Proves a CCOF runner pair (docs/runbooks/CICD-SETUP.md, section 6 step 6 and section 10): preflight, managed
 # identity sign-in, private DNS, a Cosmos DB data plane read from the preview runner, the denied write and
-# the unavailable deploy identity on the preview runner, and the deploy identity on the apply runner.
+# the unavailable deploy identity on the preview runner, and the deploy identity on the apply runner. Inputs windows
+# and fips run the preview checks on a Windows or FIPS-mode runner instead.
 # Manual only; it changes nothing in Azure. Needs the two runners, so it never runs on GitHub-hosted runners.
 name: ccof-runner-smoke
 on:
@@ -26,6 +27,10 @@ on:
         description: Only run the Windows preview checks (runner labels ccof-preview and ccof-windows)
         type: boolean
         default: false
+      fips:
+        description: Only run the preview checks on a FIPS-mode Linux runner (runner labels ccof-preview and ccof-fips)
+        type: boolean
+        default: false
       dns_private_host:
         description: Optional. An azurewebsites.net host with a private A record (checked against dns_private_ip)
         default: ""
@@ -44,7 +49,7 @@ concurrency:
 jobs:
   preview:
     if: ${{ !inputs.hook_negative && !inputs.windows }}
-    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    runs-on: ${{ inputs.fips && fromJSON('["self-hosted", "ccof-preview", "ccof-fips"]') || fromJSON('["self-hosted", "ccof-vnet", "ccof-preview"]') }}
     environment: ${{ inputs.environment }}-preview
     env:
       COSMOS: ${{ inputs.cosmos_account }}
@@ -60,6 +65,30 @@ jobs:
           expected-role: preview
       - name: Signed-in identity
         run: az account show --query "{subscription:id, tenant:tenantId, user:user}" -o json
+      # FIPS host only. Fails unless FIPS mode is on and the Azure CLI, Bicep, git and pwsh work; the MD5 lines
+      # record which tools use the system FIPS module (an official Node.js build bundles its own OpenSSL).
+      - name: FIPS mode and tools
+        if: ${{ inputs.fips }}
+        run: |
+          set -uo pipefail
+          fips=$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)
+          echo "fips_enabled=$fips; crypto policy: $(update-crypto-policies --show 2>/dev/null || echo n/a)"
+          [ "$fips" = 1 ] || { echo "::error::FIPS mode is not on"; exit 1; }
+          if openssl md5 /dev/null >/dev/null 2>&1; then echo "::error::system OpenSSL computed MD5 in FIPS mode"; exit 1; fi
+          echo "PASS system OpenSSL refuses MD5"
+          printf 'param name string = %s\noutput n string = name\n' "'fips'" > fips.bicep
+          bicep build fips.bicep --stdout | jq -e '.outputs.n' >/dev/null || { echo "::error::bicep build failed"; exit 1; }
+          echo "PASS bicep $(bicep --version | awk '{print $4}') build"
+          git ls-remote --heads "https://github.com/$GITHUB_REPOSITORY" >/dev/null 2>&1 && echo "PASS git HTTPS (token-less ls-remote may be refused on a private repository; checkout already used git)" || echo "RESULT git ls-remote without credentials refused (private repository); checkout step used git"
+          pwsh -NoProfile -Command '[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]](1,2,3)))' >/dev/null || { echo "::error::pwsh SHA-256 failed"; exit 1; }
+          echo "PASS pwsh SHA-256"
+          pwsh -NoProfile -Command '[Security.Cryptography.MD5]::HashData([byte[]](1))' >/dev/null 2>&1 && echo "RESULT pwsh (.NET) computes MD5" || echo "RESULT pwsh (.NET) refuses MD5 (uses the system OpenSSL FIPS provider)"
+          echo "node $(node --version), OpenSSL $(node -p 'process.versions.openssl'), crypto.getFips()=$(node -p 'require("crypto").getFips()')"
+          node -e 'require("crypto").createHash("md5").update("x").digest("hex")' 2>/dev/null && echo "RESULT node computes MD5: it does not use the system FIPS module" || echo "RESULT node refuses MD5"
+          azpy=$(head -n 5 "$(readlink -f "$(command -v az)")" | grep -o '/[^ "]*python[0-9.]*' | head -n 1)
+          [ -n "$azpy" ] && "$azpy" -c 'import hashlib; hashlib.md5(b"x")' 2>/dev/null && echo "RESULT az Python ($azpy) computes MD5" || echo "RESULT az Python ($azpy) refuses MD5"
+          az account get-access-token --query expiresOn -o tsv >/dev/null || { echo "::error::az token request failed"; exit 1; }
+          echo "PASS az $(az version --query '"azure-cli"' -o tsv) token in FIPS mode"
       - name: Cosmos DB data plane read over the private endpoint
         run: |
           set -euo pipefail
@@ -136,7 +165,7 @@ jobs:
           mode: logout
 
   apply:
-    if: ${{ !inputs.hook_negative && !inputs.windows }}
+    if: ${{ !inputs.hook_negative && !inputs.windows && !inputs.fips }}
     needs: preview
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
     environment: ${{ inputs.environment }}-apply
@@ -162,7 +191,7 @@ jobs:
           mode: logout
 
   hook-negative:
-    if: ${{ inputs.hook_negative && !inputs.windows }}
+    if: ${{ inputs.hook_negative && !inputs.windows && !inputs.fips }}
     strategy:
       fail-fast: false
       matrix:
