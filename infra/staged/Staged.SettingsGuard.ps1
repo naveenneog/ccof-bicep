@@ -129,8 +129,9 @@ $script:StgStage5ConditionalSettings = @(
     @{ app = 'reconciler'; keys = @('RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('ledgerGatewayResourceIds') } }
     @{ app = 'reconciler'; keys = @('RECONCILER_CONTINUITY_GATE'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('continuityGate') } }
     @{ app = 'reconciler'; keys = @('RECONCILER_LEDGER_COVERAGE_START_AT'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('ledgerCoverageStartAt') } }
-    @{ app = 'sync'; keys = @('SYNC_LIMITS_CONTAINER'); when = { param($c, $adminEnabled) $adminEnabled } }
-    @{ app = 'admin'; keys = @('ADMIN_GATEWAY_RESOURCE_IDS'); when = { param($c) $c.admin -is [Collections.IDictionary] -and @($c.admin.gatewayResourceIds | Where-Object { $_ }).Count -gt 0 } })
+    @{ app = 'sync'; keys = @('SYNC_LIMITS_CONTAINER'); when = { param($c, $adminEnabled) $adminEnabled } })
+# ADMIN_GATEWAY_RESOURCE_IDS: written only for the filtered list Stage 5 builds; Get-StgStage5ConfiguredOptionalSettings
+# adds it from that same admin hashtable, so it is not decided from the raw configuration here.
 
 # Setting names each Stage 5 template block writes whatever the configuration says: the object keys of
 # resolverSettings, syncSettings and reconcilerSettings (app-settings.bicep) and of the admin properties

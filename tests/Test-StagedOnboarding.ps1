@@ -180,6 +180,12 @@ Check 'no record: conditional names are kept when the configuration writes them'
 $cond.reconciler.Remove('pacingWindowMinutes')
 $r = Invoke-S5 $cond -Apply
 Check 'no record: the pacing pair needs both fields' ($r.error -match 'reconciler:RECONCILER_SOFT_LIMIT_PERCENT' -and $r.error -match 'reconciler:RECONCILER_PACING_WINDOW_MINUTES' -and $r.error -notmatch 'LEDGER_GATEWAY|CONTINUITY|BUDGET_STATE')
+$cond.reconciler.pacingWindowMinutes = 60
+$script:live['fx-admin'] = $adminBase + @('ADMIN_GATEWAY_RESOURCE_IDS')
+$r = Invoke-S5 (& { $c = $cond.Clone(); $c.admin = @{ extraAllowedClientIds = @(); gatewayResourceIds = @(' ') }; $c }) -Apply
+Check 'no record: a blank admin gateway list writes nothing, so the live list is a drop' ($r.error -match 'admin:ADMIN_GATEWAY_RESOURCE_IDS' -and -not $r.admin)
+$r = Invoke-S5 (& { $c = $cond.Clone(); $c.admin = @{ extraAllowedClientIds = @(); gatewayResourceIds = @('/subscriptions/00000000-0000-4000-8000-000000000009/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a') }; $c }) -Apply
+Check 'no record: a configured admin gateway list keeps the setting' (-not $r.error -and $r.admin)
 $script:stage1 = @{ names = @{ apps = $stage1Apps } }
 # Values: a defaulted setting whose live value differs would change silently (ADMIN_V3_ENABLED = admin.v3Enabled ?? true).
 $script:record = @{ outputs = @{ verify = @{ settings = @{ admin = $adminBase; resolver = @('A') } } } }
@@ -286,4 +292,4 @@ Check 'Backends phase clears prior evidence only after its scope and writer chec
 Check 'Backends phase does not touch admin redirects, network or code' ($body -and $body -notmatch 'Invoke-DrAdminRedirects|Invoke-Stage6|New-StgQsContext')
 
 Write-Host "Test-StagedOnboarding: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 94) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 96) { exit 1 }
