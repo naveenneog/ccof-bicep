@@ -19,9 +19,18 @@ on:
         description: Client ID of the deploy identity (must NOT be usable on the preview runner)
         required: true
       hook_negative:
-        description: Only run a job on ccof-apply without environment (run from a non-main branch; the job-started hook must refuse it)
+        description: Only run a probe job on each runner without environment (from main it is accepted; from any other branch the job-started hook must refuse it)
         type: boolean
         default: false
+      dns_private_host:
+        description: Optional. An azurewebsites.net host with a private A record (checked against dns_private_ip)
+        default: ""
+      dns_private_ip:
+        description: Optional. Expected private address of dns_private_host
+        default: ""
+      dns_public_host:
+        description: Optional. An azurewebsites.net host without a private record (must resolve to a public address through NxDomainRedirect fallback)
+        default: ""
 permissions:
   contents: read
 concurrency:
@@ -61,6 +70,24 @@ jobs:
           echo "GET /dbs/ccof/colls -> HTTP $code"
           [ "$code" = 200 ] || { cat colls.json; exit 1; }
           jq -r '"containers: " + ([.DocumentCollections[].id] | join(", "))' colls.json
+      - name: Private DNS zone with fallback (read-only)
+        if: ${{ inputs.dns_private_host != '' }}
+        env:
+          PRIV_HOST: ${{ inputs.dns_private_host }}
+          PRIV_IP: ${{ inputs.dns_private_ip }}
+          PUB_HOST: ${{ inputs.dns_public_host }}
+        run: |
+          set -euo pipefail
+          private() { case "$1" in 10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;; *) return 1 ;; esac; }
+          ip=$(getent hosts "$PRIV_HOST" | awk '{print $1; exit}')
+          echo "$PRIV_HOST -> $ip"
+          [ "$ip" = "$PRIV_IP" ] || { echo "::error::$PRIV_HOST resolved to '$ip', expected $PRIV_IP"; exit 1; }
+          if [ -n "$PUB_HOST" ]; then
+            pip=$(getent hosts "$PUB_HOST" | awk '{print $1; exit}')
+            echo "$PUB_HOST -> $pip"
+            [ -n "$pip" ] && ! private "$pip" || { echo "::error::$PUB_HOST did not fall back to a public address"; exit 1; }
+          fi
+          echo "PASS private record and public fallback"
       - name: Negative - the preview identity cannot write
         run: |
           set -uo pipefail
@@ -132,7 +159,12 @@ jobs:
 
   hook-negative:
     if: ${{ inputs.hook_negative }}
-    runs-on: [self-hosted, ccof-vnet, ccof-apply]
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [ccof-preview, ccof-apply]
+    runs-on: [self-hosted, ccof-vnet, "${{ matrix.role }}"]
     steps:
-      # Expected: the job fails at "Set up job" with "ccof-runner: job refused". A green job means the hook is not enforced.
-      - run: echo "::warning::the job-started hook did not refuse this job"
+      # From main: accepted (the hook prints the accepted context). From any other branch, event or workflow: the
+      # job fails at "Set up job" with "ccof-runner: job refused". A green job off main means the hook is not enforced.
+      - run: echo "::warning::accepted by the job-started hook ($GITHUB_EVENT_NAME on $GITHUB_REF)"
