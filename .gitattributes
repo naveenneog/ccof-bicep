@@ -1,10 +1,12 @@
 # Shell scripts run on Linux (Cloud Shell, Run Command); CRLF breaks bash.
 *.sh text eol=lf
-# Hash-bound diagram assets: the render manifests hash their CRLF bytes, so every checkout must
-# produce CRLF (tests/test_architecture_assets.py). The generators write CRLF on every platform.
-docs/diagrams/ccof-network-architecture.drawio text eol=crlf
-docs/diagrams/ccof-architecture-overview.svg text eol=crlf
-docs/diagrams/ccof-network-architecture.svg text eol=crlf
-docs/diagrams/dr-network-architecture.py text eol=crlf
-docs/images/dr/dr-active-passive.svg text eol=crlf
-docs/images/dr/dr-active-passive.excalidraw text eol=crlf
+# Hash-bound diagram assets: the render manifests hash their CRLF bytes. The blobs store those CRLF bytes
+# and '-text' stops any conversion, so Git checkouts (any core.autocrlf), git archive / GitHub source ZIPs
+# and the ZIP publisher all carry the hashed bytes (tests/test_architecture_assets.py). The generators
+# write CRLF on every platform.
+docs/diagrams/ccof-network-architecture.drawio -text
+docs/diagrams/ccof-architecture-overview.svg -text
+docs/diagrams/ccof-network-architecture.svg -text
+docs/diagrams/dr-network-architecture.py -text
+docs/images/dr/dr-active-passive.svg -text
+docs/images/dr/dr-active-passive.excalidraw -text

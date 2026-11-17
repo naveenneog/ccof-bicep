@@ -2,7 +2,9 @@ from pathlib import Path
 import base64
 import hashlib
 import json
+import shutil
 import struct
+import subprocess
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -109,7 +111,9 @@ for image in scene["files"].values():
     assert hashlib.sha256(base64.b64decode(image["dataURL"].split(",", 1)[1])).hexdigest() in hashes
 print("DR Azure icons, export hashes, private subnets and managed-service boundaries: PASS")
 
-# The hashes above are of CRLF bytes; every checkout must produce them, whatever core.autocrlf is.
+# The hashes above are of CRLF bytes. Every delivery path (Git checkout with any core.autocrlf,
+# git archive / GitHub source ZIP, the ZIP publisher's unfiltered commit) must carry those exact bytes,
+# so the blobs store CRLF and Git never converts them ('-text').
 attributes = {}
 for line in (root / ".gitattributes").read_text(encoding="utf-8").splitlines():
     fields = line.split()
@@ -119,5 +123,12 @@ hash_bound = [f"docs/diagrams/{name}" for name in rendered["files"] if not name.
 hash_bound += [dr_manifest["source"], "docs/images/dr/dr-active-passive.svg",
                "docs/images/dr/dr-active-passive.excalidraw"]
 for path in hash_bound:
-    assert {"text", "eol=crlf"} <= set(attributes.get(path, [])), f"Hash-bound asset needs 'text eol=crlf' in .gitattributes: {path}"
-print("Hash-bound text assets check out with the hashed line endings: PASS")
+    assert attributes.get(path) == ["-text"], f"Hash-bound asset needs exactly '-text' in .gitattributes: {path}"
+if (root / ".git").exists() and shutil.which("git"):
+    for path in hash_bound:
+        staged = subprocess.run(["git", "-C", str(root), "ls-files", "-s", "--", path],
+                                capture_output=True, text=True, check=True).stdout.split()
+        raw = subprocess.run(["git", "-C", str(root), "hash-object", "--no-filters", "--", path],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        assert staged and staged[1] == raw, f"Hash-bound asset blob differs from its checked-out bytes: {path}"
+print("Hash-bound text assets carry the hashed bytes in Git blobs and every checkout or archive: PASS")
