@@ -443,7 +443,8 @@ function Invoke-DrAdminRedirects {
     if ($ManualHandoff -or "$(Get-DrValue $Stage4 'verification')" -ceq 'manual') {
         $appId = Get-DrValue (Get-DrValue $Stage4 'admin') 'appId'
         $reason = if ($ManualHandoff) { 'pipeline' } else { 'stage4' }
-        Write-Host "manual Entra handoff ($reason): the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
+        $label = if ($ManualHandoff) { 'manual Entra handoff (pipeline)' } else { 'manual Entra verification' }
+        Write-Host "${label}: the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
         return [ordered]@{ mode = 'manual'; reason = $reason; redirects = $want }
     }
     $app = & $GetApp

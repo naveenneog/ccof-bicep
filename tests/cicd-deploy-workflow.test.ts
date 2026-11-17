@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const read = (name: string) => readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const deploy = () => read("deploy-environment.yml");
@@ -174,4 +174,23 @@ test("drift-check is read-only: previews only, no save, issue on drift", () => {
   // The report and issue steps have no always(); the preview loop must not end with a driver exit code.
   assert.match(text, /PREVIEW_FAILED=[^\n]*\n(\s*#[^\n]*\n)?\s+exit 0\n/);
   assert.doesNotMatch(step(), /CCOF_STATE_TOKEN/);
+});
+
+// Paths owned by A-runner (feat/cicd-runner-oidc); this branch depends on that branch merging first.
+const RUNNER_OWNED = new Set(["scripts/cicd/Test-RunnerHost.sh", "scripts/cicd/Test-RunnerHost.ps1", ".github/actions/azure-login-mi"]);
+
+test("every script and local action referenced by the CICD workflows exists (A-runner paths allowlisted)", () => {
+  const refs = new Set<string>();
+  for (const text of [deploy(), step(), drift()]) {
+    for (const line of text.split("\n")) {
+      if (/^\s*(#|paths:)/.test(line)) continue;
+      for (const m of line.matchAll(/(?:\.\/)?((?:scripts|infra)\/[A-Za-z0-9_./-]+\.(?:ps1|sh|psm1))/g)) refs.add(m[1]);
+      const u = /uses:\s*\.\/([A-Za-z0-9_./-]+)/.exec(line);
+      if (u) refs.add(u[1]);
+    }
+  }
+  assert.ok(refs.size >= 8, `found ${refs.size} references`);
+  const missing = [...refs].filter((r) => !RUNNER_OWNED.has(r) && !existsSync(new URL(`../${r}`, import.meta.url)));
+  assert.deepEqual(missing, [], `missing workflow references: ${missing.join(", ")}`);
+  for (const r of RUNNER_OWNED) assert.ok(refs.has(r), `allowlisted ${r} is still referenced`);
 });
