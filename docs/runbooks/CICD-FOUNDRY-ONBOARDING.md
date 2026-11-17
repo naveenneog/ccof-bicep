@@ -38,6 +38,9 @@ administrator selects it in the console (ADMIN-OPERATIONS section 7, step 6).
    `automation.backendWriterPrincipalIds` and apply Stage 3 once (see [Least privilege](#least-privilege)).
 5. **Settings preservation.** If the admin console uses Graph group search or user names, set
    `admin.graphEnabled` / `admin.userNamesEnabled` to `true` first (see [Stage 5 and live settings](#stage-5-and-live-settings)).
+6. **GitHub plan and environments.** Environments `<env>-preview`, `<env>-gate-privatelink` and
+   `<env>-apply`, the last two with required reviewers, all three limited to the branch `main`. A private
+   repository needs GitHub Enterprise for required reviewers (see [Approval check](#approval-check)).
 
 ## Run it
 
@@ -71,7 +74,7 @@ administrator selects it in the console (ADMIN-OPERATIONS section 7, step 6).
 4. Approve `<env>-apply`. The apply job runs, stopping at the first failure:
    validate with the private link required, Stage 3, Stage 5, Stage 6, region B `-Phase Backends`,
    region B `-Phase Verify`, Front Door `-Phase Verify` (when Front Door is deployed), descriptor create,
-   smoke (APIM backend entity and policy id in A and B, descriptor present).
+   smoke (see [Smoke test](#smoke-test)).
 5. Select the backend for a project in the admin console and run the acceptance tests in
    ADMIN-OPERATIONS section 7 C. A live request needs a user entitled to that project.
 
@@ -105,6 +108,33 @@ Steps: `validate`, `stage3`, `stage5`, `stage6`, `standby-backends`, `standby-ve
   branch protection and CODEOWNERS on `.github/workflows/**` and `deploy/**`; no forks. A runner
   registered to a user-owned repository cannot be limited to workflows, so use an organization repository
   for production ([GitHub: self-hosted runner security](https://docs.github.com/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners)).
+- The `if:` conditions in the workflow file are not the control, because a branch can change them. The
+  control is on the runner host: its job-started hook (runner infrastructure) must refuse every job that
+  is not `workflow_dispatch` on `refs/heads/main` of an allow-listed workflow, on both runners.
+- Each self-hosted job first runs the host preflight for its operating system:
+  `scripts/cicd/Test-RunnerHost.sh` on Linux, `scripts/cicd/Test-RunnerHost.ps1` on Windows (no Bash
+  needed). Any other operating system fails the job.
+
+## Approval check
+
+GitHub creates a missing environment without protection when a job names it, and administrators can
+bypass reviews. Before any Azure sign-in, the `gate-privatelink` and `apply` jobs run
+`scripts/cicd/Assert-CicdApproval.ps1` with the job token (`actions: read`). It reads the environment,
+its deployment branch policies and the run's approvals, and fails (exit 4) unless:
+
+- the environment exists and has required reviewers;
+- deployment branches are the selected branch `main` only;
+- this run has an `approved` review for that environment.
+
+The apply job checks `<env>-apply`, and also `<env>-gate-privatelink` when `validate` said the gate was
+needed. `Invoke-CicdOnboardingStep.ps1` refuses every `-Apply` in GitHub Actions without a verified record
+for the same run and attempt. The approvals API is per run, not per attempt, so a re-run (attempt 2 or
+later) is refused: start a new dispatch instead. Warnings (not failures): self-review allowed,
+administrators can bypass, approved by the run's own actor.
+
+Required reviewers on a **private** repository need GitHub Enterprise; on Free, Pro and Team they exist
+for public repositories only ([GitHub: required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)).
+Without them the apply always fails, so it never runs unreviewed.
 
 ## Merge order
 
@@ -134,9 +164,47 @@ live setting that the last apply did not leave and the configuration does not wr
 - `stage5.allowDroppedSettings` (`"KEY"` or `"<app>:KEY"`) acknowledges a removal.
 
 The guard covers all four apps (resolver, sync, reconciler, admin). Stage 7 can turn off the sync
-`snapshotApply` timer (`AzureWebJobs.snapshotApply.Disabled=true`, delegated snapshot mode). When that
-setting is live, Stage 5 writes it again as `true` instead of removing it; when it is absent, Stage 5
-parameters are unchanged.
+`snapshotApply` timer (`AzureWebJobs.snapshotApply.Disabled`). When that setting is live, Stage 5 writes
+it again with its exact live value (`true` or `false`); when it is absent, Stage 5 parameters are unchanged.
+
+The guard also compares values for settings that Stage 5 fills with a default when the configuration
+leaves the field out:
+
+| Setting | Configuration field | Default |
+| --- | --- | --- |
+| admin `ADMIN_V3_ENABLED` | `admin.v3Enabled` | `true` |
+| admin `ADMIN_PROJECT_HEADER` | `gateway.projectHeaderName` | `x-ccof-project` |
+| sync `AzureWebJobs.syncEntitlement.Disabled` | `syncTimerEnabled` | `true` |
+| reconciler `AzureWebJobs.reconcileBudgets.Disabled` | `reconciler.timerEnabled` | `true` |
+
+When the field is not set and the live value differs from the default (for example
+`ADMIN_V3_ENABLED=false` set by hand), a preview warns and an apply refuses
+(`stage5_settings_would_change`) before any write. Set the field, or acknowledge the change with
+`stage5.allowChangedSettings` (same format). Only these non-secret values are printed. Other settings
+come from configuration fields; the configuration is the source of truth, and a hand edit of them is
+overwritten.
+
+Without a previous Stage 5 record (`.staged-state`), the guard cannot know what Stage 5 last wrote. It
+then treats every live setting that is not a Stage 5 template name, and every known operator setting, as a
+removal on all four apps, so the apply refuses until each is configured or acknowledged.
+
+## Smoke test
+
+`scripts/cicd/Test-CicdBackendSmoke.ps1` reads ARM only (no model request) and fails closed in each
+region when:
+
+- the APIM backend entity is missing or its URL differs from the configuration;
+- the effective policy cannot be read. The script reads the API policy as raw XML, follows
+  `<include-fragment>` references (depth 5, cycles refused) and XML-decodes the text, so split policies
+  are checked like inline ones;
+- the policy does not admit the id. A backend is admitted by the static `ccofBackendAllowed` list
+  (credential backends) or by the registry clause (`ccofBackendAuthMode` not empty, the managed-identity
+  backends). The managed-identity route with `set-backend-service` must exist;
+- the descriptor is not `present` (missing, mismatched or unreadable), whether or not `-EvidencePath`
+  is given.
+
+A missing model geo entry is a warning. Registry admission also needs the active descriptor, so
+`-SkipDescriptor` is noted in the evidence.
 
 ## Least privilege
 
@@ -171,8 +239,9 @@ the driver then reports Stages 7 and 8 as stale. That is expected: do not rerun 
 ## Rollback
 
 On failure the apply job prints the completed steps and the undo list
-(`Get-CicdOnboardingRollback`). Every applied step is additive and safe to rerun, so the usual action is
-to fix the cause and rerun. To withdraw the backend:
+(`Get-CicdOnboardingRollback`). Every applied step is additive and safe to repeat, so the usual action is
+to fix the cause and dispatch a new run (a GitHub re-run of the same run is refused, see
+[Approval check](#approval-check)). To withdraw the backend:
 
 1. Revert the `backends[]` change by pull request.
 2. From a runner shell, rerun Stage 3 and Stage 5 for region A, and `Invoke-DrStandby.ps1 -Phase Grants`

@@ -37,6 +37,16 @@ Three problems blocked automation:
   identities, inside main-only GitHub environments (`<env>-preview`, `<env>-gate-privatelink`,
   `<env>-apply`). A private link created by another team is a manual gate. Driver state lives on the
   `cicd-state/<env>` branch; only the apply job saves it.
+- **Approval fails closed.** Workflow conditions and GitHub environments can be bypassed or auto-created
+  without protection, so the gate and apply jobs verify, with the job token, that the environment has
+  required reviewers, a `main`-only branch policy and an approval for this run before any Azure sign-in;
+  the step runner refuses `-Apply` without that record. A re-run is refused because the approvals API is
+  per run. The runner host's job hook is the real control against untrusted code.
+- **Settings values.** Stage 5 carries the exact live value of the Stage 7 `snapshotApply` flag and
+  refuses to change defaulted settings silently (`stage5_settings_would_change`); other written values
+  come from the configuration.
+- **Smoke.** The smoke test checks the effective policy (fragments followed, XML-decoded) for static or
+  registry admission plus the managed-identity route, not a text search for the id.
 
 ## Consequences
 
@@ -47,3 +57,5 @@ Three problems blocked automation:
   assignment right (or pre-assigned Cognitive Services User) for the apply identity on that account.
 - Runner-level isolation (runner groups limited to selected workflows) is still required: a workflow
   that targets the runner labels gets the runner's identity regardless of this workflow's guards.
+- A private repository needs GitHub Enterprise for required reviewers; on other plans the apply always fails.
+- A failed apply is repeated with a new dispatch, not a GitHub re-run.

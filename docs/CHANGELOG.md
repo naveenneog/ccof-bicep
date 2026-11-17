@@ -19,8 +19,17 @@
 - New scripts in `scripts/cicd/`: `Test-CicdBackendOnboarding.ps1` (validate), `Test-CicdBackendSmoke.ps1`,
   `Invoke-CicdOnboardingStep.ps1` (step runner used by the workflow). Validate refuses (`primary_scope`) when the region A
   Stage 3, 5 or 6 record differs from the configuration by more than the named backends.
-- Stage 5 writes the sync `AzureWebJobs.snapshotApply.Disabled=true` that Stage 7 sets in delegated snapshot
-  mode when it is live, instead of removing it.
+- Stage 5 writes the sync `AzureWebJobs.snapshotApply.Disabled` that Stage 7 sets with its exact live value
+  (`true` or `false`) instead of removing it. It also refuses (`stage5_settings_would_change`) when a
+  defaulted setting (`ADMIN_V3_ENABLED`, `ADMIN_PROJECT_HEADER`, sync and reconciler timer flags) has a live
+  value that differs from the default and the configuration does not set the field; `stage5.allowChangedSettings`
+  acknowledges it. Without a previous Stage 5 record, any live setting outside the Stage 5 template names counts as a removal.
+- Apply fails closed unless `scripts/cicd/Assert-CicdApproval.ps1` (job token, `actions: read`) proves the
+  environment has required reviewers, deployment branches `main` only and an approval for this run; reruns are
+  refused. Private repositories need GitHub Enterprise for required reviewers.
+- The smoke test follows policy fragments, XML-decodes them and accepts static or registry admission with the
+  managed-identity route; it reads ARM responses with or without a UTF-8 BOM and always checks the descriptor outcome.
+- Self-hosted jobs run the host preflight for the runner OS (`Test-RunnerHost.sh` on Linux, `.ps1` on Windows).
 - DR `-Phase Backends` compares configurations without a JSON round trip (date-like strings such as
   `reconciler.ledgerCoverageStartAt` no longer change the hash) and clears prior evidence only after its checks pass.
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything

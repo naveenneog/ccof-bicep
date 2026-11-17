@@ -264,7 +264,8 @@ For the supported staged configuration path:
 3. Stage 5 preview/apply renders and deploys the expanded APIM backend/policy/workbook metadata.
    It writes complete app settings. Set `admin.graphEnabled` / `admin.userNamesEnabled` in the
    staged JSON when those features are on; Stage 5 refuses an apply that would remove a live setting
-   it does not write (`stage5_settings_would_drop`; see
+   it does not write (`stage5_settings_would_drop`) or change a defaulted one such as `ADMIN_V3_ENABLED`
+   (`stage5_settings_would_change`; see
    [Stage 5 and live settings](CICD-FOUNDRY-ONBOARDING.md#stage-5-and-live-settings)).
    With a region B standby, also run `infra/dr/Invoke-DrStandby.ps1 -Phase Backends -BackendIds <id>` (preview,
    then `-Apply`), then `-Phase Verify`. Region B shares the Cosmos registry; the descriptor is written once.
