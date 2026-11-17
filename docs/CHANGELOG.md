@@ -28,6 +28,10 @@
   bypass. Anything unreadable fails, including bypass allowances the API does not return. `GITHUB_TOKEN` cannot read
   these settings and the workflows use no GitHub secret, so `resolve` stops (unresolved blocker; runbook section 5
   lists the options without a secret). The check is a detector; reviewed `main` must be enforced before runners connect.
+- `approvals` input: exact, case-sensitive names validated in `resolve` (`Resolve-CicdApprovals.ps1`); the workflow no longer
+  uses `contains()`, which matched `DO_NOT_APPROVE_PublicFunctionAccess` as an approval. Invalid input stops the run.
+- Front Door: an apply run without `fd_reviewed_ids` now fails at `fd-*-ids-required` after the Approve preview. Before,
+  the skipped approval let Verify, DR standby and health continue.
 - A selected branch rule without `type` fails. An organization plan other than exactly `enterprise` fails, and an
   unrecognised plan name is reported as unknown.
 - `ccof-step.yml` saves state only when the driver step started (`id: driver`, outcome success, failure or

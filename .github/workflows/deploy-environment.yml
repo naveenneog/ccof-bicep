@@ -86,6 +86,9 @@ jobs:
     outputs:
       fd_mode: ${{ steps.fdmode.outputs.mode }}
       health_b: ${{ steps.fdmode.outputs.health_b }}
+      approve_vnet: ${{ steps.approvals.outputs.approve_vnet }}
+      approve_cosmos: ${{ steps.approvals.outputs.approve_cosmos }}
+      approve_shells: ${{ steps.approvals.outputs.approve_shells }}
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
@@ -118,6 +121,13 @@ jobs:
             }
           }
           "Run: $e, scope $env:CCOF_SCOPE, apply $env:CCOF_APPLY" | Add-Content $env:GITHUB_STEP_SUMMARY
+      # Exact approval names only (contains() would match DO_NOT_APPROVE_PublicFunctionAccess); invalid input stops here.
+      - name: Extra approvals (exact names)
+        id: approvals
+        shell: pwsh
+        env:
+          CCOF_APPROVALS: ${{ inputs.approvals }}
+        run: ./scripts/cicd/Resolve-CicdApprovals.ps1 -Approvals $env:CCOF_APPROVALS
       - name: GitHub environment protections (branch policy, reviewers, plan)
         shell: pwsh
         env:
@@ -294,8 +304,20 @@ jobs:
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, primary_only: true, apply: true, reviewed_ids: '${{ inputs.fd_reviewed_ids }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-privatelink', save_state: true }
-  fd-primary-verify:
+  # Approve -Apply needs reviewed connection IDs. Without them an apply run stops here, visibly, after the Approve
+  # preview: a skipped approval would otherwise let Verify, DR and health continue (!failure() ignores skipped needs).
+  fd-primary-ids-required:
     needs: [resolve, fd-primary-approve-apply]
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.fd_reviewed_ids == '' && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Stop - reviewed connection IDs required
+        run: |
+          echo "::error::Front Door Approve needs fd_reviewed_ids. Review the pending connections in the Approve preview, then rerun with fd_reviewed_ids."
+          exit 1
+  fd-primary-verify:
+    needs: [resolve, fd-primary-ids-required]
     if: ${{ !cancelled() && !failure() && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
@@ -315,11 +337,11 @@ jobs:
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: drprereq-Bootstrap, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
   dr-bootstrap-apply:
-    needs: dr-bootstrap-preview
+    needs: [resolve, dr-bootstrap-preview]
     if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: drprereq-Bootstrap, apply: true, approve: "${{ contains(inputs.approvals, 'ExistingVnetUpdate') && 'ExistingVnetUpdate' || '' }}", runner: apply, gh_environment: '${{ inputs.environment }}-gate-network', save_state: true }
+    with: { environment: '${{ inputs.environment }}', step: drprereq-Bootstrap, apply: true, approve: '${{ needs.resolve.outputs.approve_vnet }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-network', save_state: true }
   dr-verify-prereqs:
     needs: dr-bootstrap-apply
     if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
@@ -334,11 +356,11 @@ jobs:
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: standby-Data, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
   standby-data-apply:
-    needs: standby-data-preview
+    needs: [resolve, standby-data-preview]
     if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: standby-Data, apply: true, approve: "${{ contains(inputs.approvals, 'CosmosThroughputReduction') && 'CosmosThroughputReduction' || '' }}", runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true, timeout: 360 }
+    with: { environment: '${{ inputs.environment }}', step: standby-Data, apply: true, approve: '${{ needs.resolve.outputs.approve_cosmos }}', runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true, timeout: 360 }
 
   standby-shells-preview:
     needs: standby-data-apply
@@ -347,11 +369,11 @@ jobs:
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: standby-Shells, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
   standby-shells-apply:
-    needs: standby-shells-preview
+    needs: [resolve, standby-shells-preview]
     if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: standby-Shells, apply: true, approve: "${{ contains(inputs.approvals, 'PublicFunctionAccess') && 'PublicApimBootstrap,PublicFunctionAccess' || 'PublicApimBootstrap' }}", runner: apply, gh_environment: '${{ inputs.environment }}-gate-security', save_state: true }
+    with: { environment: '${{ inputs.environment }}', step: standby-Shells, apply: true, approve: '${{ needs.resolve.outputs.approve_shells }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-security', save_state: true }
 
   standby-grants-preview:
     needs: standby-shells-apply
@@ -444,8 +466,18 @@ jobs:
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, apply: true, approve: StandbyReady, reviewed_ids: '${{ inputs.fd_reviewed_ids }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-privatelink', save_state: true }
-  fd-full-verify:
+  fd-full-ids-required:
     needs: fd-full-approve-apply
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.fd_reviewed_ids == '' && inputs.scope == 'frontdoor-full' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Stop - reviewed connection IDs required
+        run: |
+          echo "::error::Front Door Approve needs fd_reviewed_ids. Review the pending connections in the Approve preview, then rerun with fd_reviewed_ids."
+          exit 1
+  fd-full-verify:
+    needs: fd-full-ids-required
     if: ${{ !cancelled() && !failure() && inputs.scope == 'frontdoor-full' }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml

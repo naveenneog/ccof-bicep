@@ -383,3 +383,122 @@ test("every script and local action referenced by the CICD workflows exists (A-r
   assert.deepEqual(missing, [], `missing workflow references: ${missing.join(", ")}`);
   for (const r of RUNNER_OWNED) assert.ok(refs.has(r), `allowlisted ${r} is still referenced`);
 });
+// ---------------------------------------------------------------- approvals input and Front Door reviewed IDs
+// contains() on a string is a case-insensitive substring test: 'DO_NOT_APPROVE_PublicFunctionAccess' would approve.
+test("approvals input: exact names validated in resolve; no substring test derives an approval flag", () => {
+  const text = deploy();
+  const j = jobs(text);
+  assert.doesNotMatch(uncomment(text), /contains\([^)]*inputs\.approvals/i, "no contains() on the approvals string");
+  const uses = uncomment(text).match(/^.*inputs\.approvals.*$/gm) ?? [];
+  assert.deepEqual(uses.map((l) => l.trim()), ["CCOF_APPROVALS: ${{ inputs.approvals }}"], "the approvals input is read only through one environment variable");
+  const resolve = j.get("resolve") ?? "";
+  assert.match(resolve, /- name: [^\n]*\n\s+id: approvals\n\s+shell: pwsh\n\s+env:\n\s+CCOF_APPROVALS: \$\{\{ inputs\.approvals \}\}\n\s+run: \.\/scripts\/cicd\/Resolve-CicdApprovals\.ps1 -Approvals \$env:CCOF_APPROVALS\n/);
+  for (const k of ["approve_vnet", "approve_cosmos", "approve_shells"]) assert.match(resolve, new RegExp(`\\n\\s+${k}: \\$\\{\\{ steps\\.approvals\\.outputs\\.${k} \\}\\}\\n`));
+  const want: Record<string, [string, string]> = {
+    "dr-bootstrap-apply": ["approve_vnet", "-gate-network"],
+    "standby-data-apply": ["approve_cosmos", "-apply"],
+    "standby-shells-apply": ["approve_shells", "-gate-security"],
+  };
+  for (const [id, [k, env]] of Object.entries(want)) {
+    const b = j.get(id) ?? "";
+    assert.match(b, /^\s+needs: \[resolve, [a-z0-9-]+\]\n/, `${id} reads resolve outputs directly`);
+    assert.match(b, new RegExp(`approve: '\\$\\{\\{ needs\\.resolve\\.outputs\\.${k} \\}\\}'`), `${id} uses the validated flag`);
+    assert.ok(b.includes(`gh_environment: '\${{ inputs.environment }}${env}'`), `${id} keeps its environment ${env}`);
+  }
+  // Nothing else turns the approvals input into a driver approval.
+  for (const [id, b] of j) if (!(id in want) && id !== "resolve") assert.doesNotMatch(b, /inputs\.approvals|outputs\.approve_/, `${id} does not read approvals`);
+});
+
+// Job-graph simulation (GitHub semantics): status functions replace the implicit success(); failure() is true when any
+// ancestor failed; a job without a status function runs only if all needs succeeded. Jobs in FAILS fail when they run.
+type Sim = { inputs: Record<string, string | boolean>; outputs: Record<string, string> };
+function needsOf(body: string): string[] {
+  const m = /\n\s+needs: (?:\[([^\]]*)\]|([a-z0-9-]+))\n/.exec(`\n${body}`);
+  return m ? (m[1] ?? m[2]).split(",").map((s) => s.trim()).filter(Boolean) : [];
+}
+function simulate(text: string, sim: Sim, fails: Set<string>): Map<string, string> {
+  const j = jobs(text);
+  const result = new Map<string, string>();
+  const anc = new Map<string, Set<string>>();
+  for (const [id, body] of j) {
+    const needs = needsOf(body);
+    const a = new Set<string>(needs);
+    for (const n of needs) for (const x of anc.get(n) ?? []) a.add(x);
+    anc.set(id, a);
+    const raw = /\n\s+if: (?:\$\{\{ (.*) \}\}|(.*))\n/.exec(`\n${body}`);
+    const expr = raw ? (raw[1] ?? raw[2]) : "success()";
+    const anyFailed = [...a].some((x) => result.get(x) === "failure");
+    const allOk = needs.every((n) => result.get(n) === "success");
+    const status = /success\(\)|failure\(\)|cancelled\(\)|always\(\)/.test(expr);
+    const js = (status ? expr : `success() && (${expr})`)
+      .replace(/!cancelled\(\)/g, "true").replace(/always\(\)/g, "true")
+      .replace(/failure\(\)/g, String(anyFailed)).replace(/success\(\)/g, String(allOk))
+      .replace(/needs\.resolve\.outputs\.([a-z_]+)/g, (_, k: string) => JSON.stringify(sim.outputs[k] ?? ""))
+      .replace(/needs\.([a-z0-9-]+)\.result/g, (_, k: string) => JSON.stringify(result.get(k) ?? "skipped"))
+      .replace(/inputs\.([a-z_]+)/g, (_, k: string) => JSON.stringify(sim.inputs[k] ?? ""))
+      .replace(/github\.event_name/g, "'workflow_dispatch'")
+      .replace(/!=/g, "!==").replace(/([^!=])==(?!=)/g, "$1===");
+    if (!/^(?:\s|true|false|!|"[^"]*"|'[^']*'|===|!==|&&|\|\||\(|\))*$/.test(js)) throw new Error(`unsupported if in ${id}: ${expr}`);
+    const run = Boolean(new Function(`return (${js});`)());
+    result.set(id, !run ? "skipped" : fails.has(id) ? "failure" : "success");
+  }
+  return result;
+}
+const SIM = (inputs: Record<string, string | boolean>, fd_mode = "primary"): Sim => ({ inputs: { environment: "prod", scope: "all", apply: true, fd_reviewed_ids: "", approvals: "", health_test_notification: false, ...inputs }, outputs: { fd_mode, health_b: "true" } });
+const STOPS = new Set(["fd-primary-ids-required", "fd-full-ids-required"]);
+
+test("fd_reviewed_ids: an apply run without reviewed IDs stops visibly after the Approve preview; nothing downstream runs", () => {
+  const text = deploy();
+  const j = jobs(text);
+  for (const [stop, prev, next] of [["fd-primary-ids-required", "fd-primary-approve-apply", "fd-primary-verify"], ["fd-full-ids-required", "fd-full-approve-apply", "fd-full-verify"]]) {
+    const b = j.get(stop) ?? "";
+    assert.ok(b, `${stop} exists`);
+    assert.ok(needsOf(b).includes(prev), `${stop} after ${prev}`);
+    assert.ok(needsOf(j.get(next) ?? "").includes(stop), `${next} after ${stop}`);
+    assert.match(b, /runs-on: ubuntu-latest/, `${stop} is GitHub-hosted (no runner, no identity)`);
+    assert.match(b, /permissions: \{\}/, `${stop} has no token permissions`);
+    assert.match(b, /exit 1/, `${stop} fails the run`);
+    assert.doesNotMatch(b, /uses:|environment:/, `${stop} runs no step workflow or environment`);
+  }
+  const ran = (r: Map<string, string>, id: string) => r.get(id) === "success";
+  // Apply, IDs empty: preview runs, the stop job fails, Verify, DR, health and final do not run.
+  let r = simulate(text, SIM({}), STOPS);
+  assert.ok(ran(r, "fd-primary-approve-preview"));
+  assert.equal(r.get("fd-primary-approve-apply"), "skipped");
+  assert.equal(r.get("fd-primary-ids-required"), "failure");
+  for (const id of ["fd-primary-verify", "dr-discover", "standby-shells-apply", "health-a-apply", "final"]) assert.equal(r.get(id), "skipped", `${id} must not run without reviewed IDs`);
+  // Apply with IDs: approve, verify and the rest run; the stop job is skipped.
+  r = simulate(text, SIM({ fd_reviewed_ids: "/subscriptions/x/pec" }), STOPS);
+  for (const id of ["fd-primary-approve-apply", "fd-primary-verify", "dr-discover", "health-a-apply", "final"]) assert.ok(ran(r, id), `${id} runs with reviewed IDs`);
+  assert.equal(r.get("fd-primary-ids-required"), "skipped");
+  // A failed approval still stops everything after it.
+  r = simulate(text, SIM({ fd_reviewed_ids: "/subscriptions/x/pec" }), new Set([...STOPS, "fd-primary-approve-apply"]));
+  for (const id of ["fd-primary-verify", "dr-discover", "final"]) assert.equal(r.get(id), "skipped", `${id} after a failed approval`);
+  // Preview-only runs continue (no write is skipped silently; Verify is read-only).
+  r = simulate(text, SIM({ apply: false }), STOPS);
+  assert.equal(r.get("fd-primary-ids-required"), "skipped");
+  for (const id of ["fd-primary-verify", "dr-discover", "final"]) assert.ok(ran(r, id), `${id} runs in a preview run`);
+  // Front Door already full: primary-only jobs and their stop are skipped; the run continues.
+  r = simulate(text, SIM({}, "full"), STOPS);
+  assert.equal(r.get("fd-primary-ids-required"), "skipped");
+  assert.ok(ran(r, "dr-discover") && ran(r, "final"));
+  // Scope frontdoor-full.
+  r = simulate(text, SIM({ scope: "frontdoor-full" }), STOPS);
+  assert.equal(r.get("fd-full-ids-required"), "failure");
+  assert.equal(r.get("fd-full-verify"), "skipped");
+  assert.equal(r.get("final"), "skipped");
+  r = simulate(text, SIM({ scope: "frontdoor-full", fd_reviewed_ids: "/subscriptions/x/pec" }), STOPS);
+  assert.ok(ran(r, "fd-full-approve-apply") && ran(r, "fd-full-verify") && ran(r, "final"));
+  // Approvals do not change the graph.
+  r = simulate(text, SIM({ fd_reviewed_ids: "/subscriptions/x/pec", approvals: "DO_NOT_APPROVE_PublicFunctionAccess" }), STOPS);
+  assert.ok(ran(r, "standby-shells-apply"), "graph unchanged; the flag itself comes from resolve");
+});
+
+test("simulator negative controls: the current skip-and-continue graph is detected", () => {
+  // Removing the stop job from the Verify chain lets Verify, DR and health run without reviewed IDs.
+  const mutated = deploy().replace(/needs: \[resolve, fd-primary-ids-required\]/, "needs: [resolve, fd-primary-approve-apply]");
+  assert.notEqual(mutated, deploy(), "mutation applied");
+  const r = simulate(mutated, SIM({}), STOPS);
+  assert.equal(r.get("fd-primary-verify"), "success", "the simulator sees the old behaviour");
+  assert.equal(r.get("dr-discover"), "success");
+});

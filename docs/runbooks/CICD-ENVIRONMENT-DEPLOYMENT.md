@@ -217,8 +217,8 @@ Start a run with **Actions > deploy-environment > Run workflow**, from `main`. T
 | `environment` | Folder name under `deploy/` |
 | `apply` | If false, the run only previews |
 | `scope` | `all`, `primary`, `frontdoor-primary`, `standby`, `frontdoor-full` or `health` |
-| `fd_reviewed_ids` | Front Door private endpoint connection IDs reviewed by the resource owners. If empty, the run stops after the Approve preview |
-| `approvals` | Optional: `ExistingVnetUpdate`, `CosmosThroughputReduction`, `PublicFunctionAccess` |
+| `fd_reviewed_ids` | Front Door private endpoint connection IDs reviewed by the resource owners. If empty in an apply run, job `fd-primary-ids-required` (or `fd-full-ids-required`) fails after the Approve preview and nothing after it runs (Verify, DR, health); rerun with the IDs. Preview-only runs continue |
+| `approvals` | Optional, comma-separated exact names (case-sensitive): `ExistingVnetUpdate`, `CosmosThroughputReduction`, `PublicFunctionAccess`. `resolve` stops on anything else (unknown or prefixed names such as `DO_NOT_APPROVE_PublicFunctionAccess`, empty items, duplicates, other separators). Each approval still runs only in its own environment (`gate-network`, `apply`, `gate-security`) |
 | `health_test_notification` | Send the health alert test e-mail |
 
 The jobs run in this order. Each step previews, then waits for its gate, then applies. The times are lab apply
