@@ -7,11 +7,15 @@ $script:pass = 0; $script:fail = 0
 function Check([string]$Name, [bool]$Ok) { if ($Ok) { $script:pass++ } else { $script:fail++; Write-Host "FAIL $Name" -ForegroundColor Red } }
 function Throws([scriptblock]$Block, [string]$Pattern) { try { $null = & $Block; return $false } catch { return $_.Exception.Message -match $Pattern } }
 
-$scratch = Join-Path ([IO.Path]::GetTempPath()) ('ccof-cicd-state-' + [guid]::NewGuid().ToString('N'))
-$bare = Join-Path $scratch 'remote.git'
+# Short names: the runner's per-suite TEMP can be deep, and Git for Windows refuses a GIT_DIR near 260 characters ('$GIT_DIR' too big).
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('cs-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$bare = Join-Path $scratch 'r.git'
+# Setup commands of this test run with core.longpaths per command (the runner's per-suite TEMP can be deep). It is not set
+# process-wide (GIT_CONFIG_PARAMETERS) so CicdState.psm1 itself must cope with long paths.
+function tgit { git -c core.longpaths=true @args }
 function New-Clone([string]$Name) {
     $dir = Join-Path $scratch $Name
-    git init -q $dir; git -C $dir config user.email t@example.com; git -C $dir config user.name t; git -C $dir config core.autocrlf false
+    tgit init -q $dir; git -C $dir config user.email t@example.com; git -C $dir config user.name t; git -C $dir config core.autocrlf false
     git -C $dir remote add origin $bare
     New-Item -ItemType Directory -Force (Join-Path $dir 'deploy/prod') | Out-Null
     '{"subscriptionId":"x"}' | Set-Content (Join-Path $dir 'deploy/prod/staged.config.json')
@@ -25,7 +29,10 @@ function Get-RemoteHead { $r = git --git-dir $bare rev-parse --verify -q refs/he
 
 try {
     New-Item -ItemType Directory -Force $scratch | Out-Null
-    git init -q --bare $bare
+    tgit init -q --bare $bare
+    # The local bare remote is a test fixture: git runs its receive-pack without the caller's -c options (local transport
+    # clears GIT_CONFIG_PARAMETERS), so the fixture's own config allows long paths. Production remotes are GitHub (HTTPS).
+    git --git-dir $bare config core.longpaths true
     $a = New-Clone 'a'; $b = New-Clone 'b'
 
     $r = Restore-CicdState $a 'prod'
@@ -142,7 +149,7 @@ try {
     $fake = Join-Path $scratch 'fake-git.ps1'
     Set-Content $fake -Value @(
         '$plan = $env:FAKE_GIT_PLAN | ConvertFrom-Json'
-        '$sub = $args[2]'
+        '$i = 0; while ($args[$i] -in ''-C'', ''-c'') { $i += 2 }; $sub = $args[$i]'
         'if ($plan.PSObject.Properties[$sub]) { foreach ($l in @($plan.$sub.out)) { Write-Output $l }; exit [int]$plan.$sub.code }'
         '& git @args; exit $LASTEXITCODE'
     )
@@ -164,6 +171,25 @@ try {
     Check 'neg mock: unexpected ls-remote output refused' (With-FakeGit @{ 'ls-remote' = @{ code = 0; out = @("$sha`trefs/heads/cicd-state/prod-old") } } { Throws { Restore-CicdState $m 'prod' } 'state_ls_remote_unexpected' })
     Check 'neg mock: branch moved between ls-remote and fetch refused' (With-FakeGit @{ 'ls-remote' = @{ code = 0; out = @("$sha`trefs/heads/cicd-state/prod") } } { Throws { Restore-CicdState $m 'prod' } 'state_branch_moved' })
 
+    # Long workspace path: a state file beyond Windows MAX_PATH (260). Git for Windows refuses it without core.longpaths
+    # even when the OS long-path setting is on (repro: files\cicd-t2-lab\state-integ\Repro-LongPath.ps1).
+    $lpName = 'lp'; while ((Join-Path $scratch $lpName).Length -lt 225) { $lpName = Join-Path $lpName ('w' * 30) }
+    $seed = New-Clone 'lpseed'; New-Item -ItemType Directory -Force (Join-Path $seed 'deploy/lp/.dr-state') | Out-Null; [IO.File]::WriteAllText((Join-Path $seed 'deploy/lp/.dr-state/standby.state.json'), '{}')
+    $null = Restore-CicdState $seed 'lp'; $null = Save-CicdState $seed 'lp' 'seed'
+    $lp = New-Clone $lpName; New-Item -ItemType Directory -Force (Join-Path $lp 'deploy/lp') | Out-Null
+    function WriteLp([string]$Rel, [string]$Text) { $q = Join-Path $lp "deploy/lp/$Rel"; [IO.Directory]::CreateDirectory((Split-Path $q -Parent)) | Out-Null; [IO.File]::WriteAllText($q, $Text) }
+    $lpRel = '.dr-state/evidence/standby-network-preview-20261118T004000Z-long-workspace.json'
+    $lpR0 = $null; try { $lpR0 = Restore-CicdState $lp 'lp' } catch { Write-Host "long path restore (existing branch): $($_.Exception.Message)" }
+    Check 'long path: Restore fetches the existing state branch' ($lpR0.Commit -and [IO.File]::Exists((Join-Path $lp 'deploy/lp/.dr-state/standby.state.json')))
+    WriteLp $lpRel '{"phase":"Network","ok":true}'
+    WriteLp '.dr-state/standby.state.json' '{"phase":"Network"}'
+    $lpSave = $null; try { $lpSave = Save-CicdState $lp 'lp' 'long path' } catch { Write-Host "long path save: $($_.Exception.Message)" }
+    Check "long path: Save pushes a state file of $((Join-Path $lp "deploy/lp/$lpRel").Length) characters" ((Join-Path $lp "deploy/lp/$lpRel").Length -gt 260 -and $lpSave.Pushed -and (@(git --git-dir $bare ls-tree -r --name-only refs/heads/cicd-state/lp) -contains "deploy/lp/$lpRel"))
+    $lp2 = New-Clone (Join-Path (Split-Path $lpName) 'clone2'); New-Item -ItemType Directory -Force (Join-Path $lp2 'deploy/lp') | Out-Null
+    $lpR = $null; try { $lpR = Restore-CicdState $lp2 'lp' } catch { Write-Host "long path restore: $($_.Exception.Message)" }
+    Check 'long path: fresh restore is byte-exact' ($lpR.Commit -and [IO.File]::Exists((Join-Path $lp2 "deploy/lp/$lpRel")) -and [IO.File]::ReadAllText((Join-Path $lp2 "deploy/lp/$lpRel")) -eq '{"phase":"Network","ok":true}')
+    Check 'long path: no git configuration was written (per-command setting only)' (-not (git -C $lp config --local --get core.longpaths) -and -not (git -C $lp2 config --local --get core.longpaths))
+
     # Guards.
     $c = New-Clone 'c'
     Check 'neg: save without restore refused' (Throws { Save-CicdState $c 'prod' 'x' } 'state_not_restored')
@@ -179,7 +205,29 @@ try {
     Check 'script: Restore through the wrapper' ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'restored 4 file')
     $null = & pwsh -NoProfile -File (Join-Path $root 'scripts\cicd\Sync-CicdState.ps1') -Action Save -Environment prod -RepositoryRoot (New-Clone 'd') 2>&1
     Check 'neg script: Save without Restore exits non-zero' ($LASTEXITCODE -ne 0)
-} finally {
+
+    # stderr is never parsed as output: GIT_TRACE makes every git command write trace lines to stderr (any OS).
+    $tr = New-Clone 'trace'; $env:GIT_TRACE = '1'
+    try { $trR = $null; try { $trR = Restore-CicdState $tr 'prod' } catch { Write-Host "trace restore: $($_.Exception.Message)" }
+        Check 'stderr noise: Restore records the real commit, not a git stderr line' ($trR.Commit -eq (Get-RemoteHead) -and (Get-Content (Join-Path $tr 'deploy/prod/.cicd-state-restored') -Raw) -eq (Get-RemoteHead))
+        Write-State $tr '.dr-state/evidence/trace.json' '{"t":1}'
+        $trS = $null; try { $trS = Save-CicdState $tr 'prod' 'trace' } catch { Write-Host "trace save: $($_.Exception.Message)" }
+        Check 'stderr noise: Save pushes a commit hash' ($trS.Pushed -and $trS.Commit -match '^[0-9a-f]{40}$' -and $trS.Commit -eq (Get-RemoteHead)) }
+    finally { Remove-Item env:GIT_TRACE -ErrorAction SilentlyContinue }
+
+    # A driver that crashed mid-write leaves a truncated essential state file: it must never replace the good snapshot.
+    $tj = New-Clone 'tj'; $null = Restore-CicdState $tj 'prod'; $h0 = Get-RemoteHead
+    Write-State $tj '.staged-state/state.json' '{"stages":{"1":{"ok":tr'
+    Write-State $tj '.dr-state/evidence/crash.json' '{"partial":'
+    Check 'neg: truncated essential JSON refused, remote unchanged' ((Throws { Save-CicdState $tj 'prod' 'crash' } 'state_invalid_json: deploy/prod/\.staged-state/state\.json') -and (Get-RemoteHead) -eq $h0)
+    Write-State $tj '.staged-state/state.json' ''
+    Check 'neg: empty essential state file refused' ((Throws { Save-CicdState $tj 'prod' 'crash' } 'state_invalid_json') -and (Get-RemoteHead) -eq $h0)
+    Write-State $tj '.staged-state/state.json' '{"stages":{"1":{"ok":true}}}'
+    $tjS = Save-CicdState $tj 'prod' 'crash evidence'
+    Check 'partial evidence JSON is still saved byte-exact (recovery evidence, not essential)' ($tjS.Pushed -and ((git --git-dir $bare show "refs/heads/cicd-state/prod:deploy/prod/.dr-state/evidence/crash.json") -join '') -eq '{"partial":')
+    $fj = New-Clone 'fj'; New-Item -ItemType Directory -Force (Join-Path $fj 'deploy/fj') | Out-Null; $null = Restore-CicdState $fj 'fj'
+    [IO.Directory]::CreateDirectory((Join-Path $fj 'deploy/fj/.dr-state')) | Out-Null; [IO.File]::WriteAllText((Join-Path $fj 'deploy/fj/.dr-state/standby.state.json'), '{"phases":')
+    Check 'neg: first save with an invalid essential file refused' ((Throws { Save-CicdState $fj 'fj' 'first' } 'state_invalid_json') -and -not (git --git-dir $bare rev-parse --verify -q refs/heads/cicd-state/fj))} finally {
     Get-ChildItem $scratch -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Attributes = 'Normal' }
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -190,4 +238,4 @@ Check 'fetch auth: token passed through GIT_CONFIG_* for the server' ($auth['GIT
 Check 'neg: fetch auth without a token adds nothing' ((Get-CicdStateFetchAuth -Token '' -ServerUrl 'https://github.com').Count -eq 0)
 
 Write-Host "Test-CicdState: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 44) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 54) { exit 1 }

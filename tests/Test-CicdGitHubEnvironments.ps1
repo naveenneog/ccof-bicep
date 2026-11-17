@@ -25,9 +25,9 @@ function Base([string]$Visibility = 'private', [string]$OwnerType = 'Organizatio
     }
     return $m
 }
-function Run($m, [string[]]$Gates = @('apply', 'gate-network'), [string]$Attested = '') {
+function Run($m, [string[]]$Gates = @('apply', 'gate-network')) {
     $get = { param($p) if ($m.ContainsKey($p)) { $m[$p] } else { @{ Status = 404; Body = $null } } }.GetNewClosure()
-    @(Test-CicdGhProtections -Get $get -Repository $R -Environment 'prod' -ReviewedGate $Gates -AttestedPlan $Attested)
+    @(Test-CicdGhProtections -Get $get -Repository $R -Environment 'prod' -ReviewedGate $Gates)
 }
 function F($f, [string]$Subject) { $f | Where-Object Subject -eq $Subject }
 function NoFail($f) { -not @($f | Where-Object Status -eq 'fail').Count }
@@ -49,11 +49,23 @@ foreach ($plan in 'free', 'team', 'pro') {
 $f = Run (Base 'private' 'User' $null)
 Check 'neg: private user-owned repository fails (Free/Pro)' ((F $f 'reviewer plan').Status -eq 'fail' -and (F $f 'reviewer plan').Evidence -match 'user account')
 $f = Run (Base 'internal' 'Organization' $null)
-Check 'neg: unreadable org plan fails closed' ((F $f 'reviewer plan').Status -eq 'fail' -and (F $f 'reviewer plan').Evidence -match 'cannot prove')
-$f = Run (Base 'private' 'Organization' $null) -Attested 'enterprise'
-Check 'unreadable plan + attestation is attested (NOT PROVED), not pass' ((F $f 'reviewer plan').Status -eq 'attested' -and (F $f 'reviewer plan').Evidence -match 'NOT PROVED' -and (NoFail $f))
-$f = Run (Base 'private' 'Organization' 'team') -Attested 'enterprise'
-Check 'neg: attestation cannot override a readable non-enterprise plan' ((F $f 'reviewer plan').Status -eq 'fail')
+Check 'neg: unreadable org plan is deferred, never pass' ((F $f 'reviewer plan').Status -eq 'deferred' -and (F $f 'reviewer plan').Evidence -match 'NOT PROVED')
+# An unreadable plan is never passed: it is deferred to each reviewed job, which must observe an enforced approval
+# (Test-CicdGhJobApproval). A repository variable (former CCOF_GITHUB_PLAN attestation) proves nothing and is ignored.
+$f = Run (Base 'private' 'Organization' $null)
+Check 'neg: unreadable private org plan is deferred (not pass), evidence says not proved' ((F $f 'reviewer plan').Status -eq 'deferred' -and (F $f 'reviewer plan').Evidence -match 'NOT PROVED' -and (F $f 'reviewer plan').Evidence -match 'each reviewed job')
+$m = Base 'private' 'Organization' $null; $m['/orgs/org1'] = @{ Status = 403; Body = $null }; $f = Run $m
+Check 'neg: org GET 403 is deferred, never pass' ((F $f 'reviewer plan').Status -eq 'deferred')
+Check 'neg: the protections module has no attestation input' (-not (Get-Command Test-CicdGhProtections).Parameters.ContainsKey('AttestedPlan') -and -not (Get-Command Test-CicdGhReviewerPlan).Parameters.ContainsKey('AttestedPlan'))
+$f = Run (Base 'private' 'Organization' 'team')
+Check 'neg: readable team plan still fails' ((F $f 'reviewer plan').Status -eq 'fail')
+# Exit code of Test-CicdGitHubEnvironments.ps1: only pass, or a deferred plan, exit 0; every other status fails.
+Check 'exit: all pass = 0' ((Get-CicdGhExitCode (Run (Base))) -eq 0)
+Check 'exit: deferred plan = 0 (this job writes nothing; each reviewed job asserts before writes)' ((Get-CicdGhExitCode (Run (Base 'private' 'Organization' $null))) -eq 0)
+Check 'neg exit: a failure = 1' ((Get-CicdGhExitCode (Run (Base 'private' 'Organization' 'team'))) -eq 1)
+Check 'neg exit: unknown status (e.g. attested) = 1' ((Get-CicdGhExitCode @([pscustomobject]@{ Subject = 'reviewer plan'; Status = 'attested'; Evidence = 'x' })) -eq 1)
+Check 'neg exit: deferred on a non-plan subject = 1' ((Get-CicdGhExitCode @([pscustomobject]@{ Subject = 'prod-apply reviewers'; Status = 'deferred'; Evidence = 'x' })) -eq 1)
+Check 'neg exit: no findings = 1' ((Get-CicdGhExitCode @()) -eq 1)
 $m = Base; $m.Remove("/repos/$R"); $f = Run $m
 Check 'neg: unreadable repository fails' ((F $f 'repository').Status -eq 'fail')
 
@@ -85,10 +97,139 @@ Check 'neg: apply without required reviewers fails' ((F $f 'prod-apply reviewers
 $m = Base; $m["/repos/$R/environments/prod-apply"].Body.protection_rules = @(J @{ type = 'wait_timer'; wait_timer = 5 }); $f = Run $m
 Check 'neg: a wait timer is not a reviewer' ((F $f 'prod-apply reviewers').Status -eq 'fail')
 $m = Base; $m["/repos/$R/environments/prod-apply"].Body.can_admins_bypass = $true; $f = Run $m
-Check 'admin bypass is reported' ((F $f 'prod-apply reviewers').Evidence -match 'bypass')
+Check 'neg: admin bypass allowed fails (a bypassed job has no approval)' ((F $f 'prod-apply reviewers').Status -eq 'fail' -and (F $f 'prod-apply reviewers').Evidence -match 'bypass')
+$m = Base; $m["/repos/$R/environments/prod-apply"].Body.PSObject.Properties.Remove('can_admins_bypass'); $f = Run $m
+Check 'neg: unreadable can_admins_bypass fails closed' ((F $f 'prod-apply reviewers').Status -eq 'fail' -and (F $f 'prod-apply reviewers').Evidence -match 'cannot prove')
+$m = Base; $m["/repos/$R/environments/prod-apply"].Body.can_admins_bypass = 'false'; $f = Run $m
+Check 'neg: non-boolean can_admins_bypass fails closed' ((F $f 'prod-apply reviewers').Status -eq 'fail')
+$m = Base; $m["/repos/$R/environments/prod-preview"].Body.can_admins_bypass = $true; $f = Run $m
+Check 'preview (no reviewers required) is not judged on bypass' (NoFail $f)
 $f = Run (Base) -Gates @('apply') ; $throwGet = { param($p) throw 'network down' }
 $t = @(Test-CicdGhProtections -Get $throwGet -Repository $R -Environment 'prod' -ReviewedGate 'apply')
 Check 'neg: transport error fails closed' ($t.Count -eq 1 -and $t[0].Status -eq 'fail')
 
+# ---------------------------------------------------------------- per-job approval before writes (ccof-step.yml)
+# GET /actions/runs/{id}/approvals is run-level: one record per review, no job id. A job proves its own approval
+# only when approvals for its environment in this run outnumber the ledger artifacts (ccof-approval_<env>_<job>)
+# that earlier jobs of the run uploaded after consuming one, with admin bypass off and reviewers in force.
+$RunId = '777'
+function Appr([string]$State = 'approved', [string]$EnvName = 'prod-apply', [string]$User = 'rev1') { J @{ state = $State; comment = 'ok'; user = @{ login = $User }; environments = @(@{ id = 1; name = $EnvName }) } }
+function Ledger([string[]]$Names) { J @{ total_count = $Names.Count; artifacts = @($Names | ForEach-Object { @{ id = 1; name = $_; expired = $false } }) } }
+function JobBase($Approvals = @((Appr)), [string[]]$LedgerNames = @(), $Plan = 'enterprise') {
+    $m = Base 'private' 'Organization' $Plan
+    $m["/repos/$R/actions/runs/$RunId/approvals"] = @{ Status = 200; Body = @($Approvals) }
+    $m["/repos/$R/actions/runs/$RunId/artifacts?per_page=100&page=1"] = @{ Status = 200; Body = (Ledger $LedgerNames) }
+    return $m
+}
+function RunJob($m, [string]$GhEnv = 'prod-apply', [int]$Attempt = 1) {
+    $get = { param($p) if ($m.ContainsKey($p)) { $m[$p] } else { @{ Status = 404; Body = $null } } }.GetNewClosure()
+    Test-CicdGhJobApproval -Get $get -Repository $R -Environment 'prod' -GitHubEnvironment $GhEnv -RunId $RunId -RunAttempt $Attempt
+}
+$j = RunJob (JobBase)
+Check 'job: first reviewed job with its approval passes' ($j.Verified -and $j.Approved -eq 1 -and $j.Consumed -eq 0 -and $j.LedgerPrefix -ceq 'ccof-approval_prod-apply_' -and @($j.Approvers) -ceq 'rev1')
+$j = RunJob (JobBase @((Appr), (Appr)) @('ccof-approval_prod-apply_staged-1-apply'))
+Check 'job: second job with a second approval passes' ($j.Verified -and $j.Approved -eq 2 -and $j.Consumed -eq 1)
+$j = RunJob (JobBase @((Appr)) @('ccof-approval_prod-apply_staged-1-apply'))
+Check "neg job: an earlier job's review is not this job's approval (approved 1, consumed 1)" (-not $j.Verified -and ($j.Problems -join ';') -match 'approval_already_consumed')
+$j = RunJob (JobBase @())
+Check 'neg job: no review in this run (absent or bypassed) fails' (-not $j.Verified -and ($j.Problems -join ';') -match 'not_approved')
+$j = RunJob (JobBase @((Appr 'approved' 'prod-gate-network')))
+Check 'neg job: an approval of another environment does not count' (-not $j.Verified -and ($j.Problems -join ';') -match 'not_approved')
+$j = RunJob (JobBase @((Appr), (Appr 'rejected')))
+Check 'neg job: a rejection in this run fails' (-not $j.Verified -and ($j.Problems -join ';') -match 'rejected')
+$j = RunJob (JobBase @((Appr 'approved' 'prod-apply-x')))
+Check 'neg job: environment names are matched exactly' (-not $j.Verified)
+$j = RunJob (JobBase @((Appr), (Appr)) @('ccof-approval_prod-apply-x_a', 'ccof-approval_prod-gate-network_b', 'evidence-prod-staged-1-apply-1'))
+Check 'job: ledger of other environments and evidence artifacts is not counted' ($j.Verified -and $j.Consumed -eq 0)
+$m = JobBase; $m["/repos/$R/environments/prod-apply"].Body.can_admins_bypass = $true; $j = RunJob $m
+Check 'neg job: admin bypass allowed fails even with an approval' (-not $j.Verified -and ($j.Problems -join ';') -match 'bypass')
+$m = JobBase; $m["/repos/$R/environments/prod-apply"].Body.protection_rules = @(); $j = RunJob $m
+Check 'neg job: reviewers removed fails even with an approval' (-not $j.Verified -and ($j.Problems -join ';') -match 'reviewer')
+$m = JobBase; $m["/repos/$R/branches/main"].Body.protected = $false; $j = RunJob $m
+Check 'neg job: unprotected default branch fails' (-not $j.Verified)
+$j = RunJob (JobBase -Plan $null)
+Check 'job: unreadable plan is proved by the enforced approval observed in this run' ($j.Verified -and ($j.Evidence -join ';') -match 'observed')
+$j = RunJob (JobBase @() -Plan $null)
+Check 'neg job: unreadable plan and no approval fails' (-not $j.Verified -and ($j.Problems -join ';') -match 'plan')
+$j = RunJob (JobBase -Plan 'team')
+Check 'neg job: readable team plan fails even with an approval' (-not $j.Verified -and ($j.Problems -join ';') -match 'plan')
+$j = RunJob (JobBase) -Attempt 2
+Check 'neg job: a re-run attempt fails (reviews are per run)' (-not $j.Verified -and ($j.Problems -join ';') -match 'rerun_attempt')
+$j = RunJob (JobBase) -GhEnv 'prod-preview'
+Check 'neg job: preview environment is not a reviewed environment' (-not $j.Verified -and ($j.Problems -join ';') -match 'not_reviewed_environment')
+$j = RunJob (JobBase) -GhEnv 'stg-apply'
+Check 'neg job: environment of another CCOF environment refused' (-not $j.Verified)
+$m = JobBase; $m["/repos/$R/actions/runs/$RunId/approvals"] = @{ Status = 403; Body = $null }; $j = RunJob $m
+Check 'neg job: unreadable approvals fail closed' (-not $j.Verified -and ($j.Problems -join ';') -match 'cannot prove')
+$m = JobBase; $m["/repos/$R/actions/runs/$RunId/artifacts?per_page=100&page=1"] = @{ Status = 500; Body = $null }; $j = RunJob $m
+Check 'neg job: unreadable ledger fails closed' (-not $j.Verified -and ($j.Problems -join ';') -match 'cannot prove')
+$m = JobBase; $m["/repos/$R/actions/runs/$RunId/artifacts?per_page=100&page=1"].Body = (J @{ total_count = 150; artifacts = @(1..100 | ForEach-Object { @{ name = "evidence-$_" } }) })
+$m["/repos/$R/actions/runs/$RunId/artifacts?per_page=100&page=2"] = @{ Status = 200; Body = (J @{ total_count = 150; artifacts = @(1..50 | ForEach-Object { @{ name = $(if ($_ -eq 7) { 'ccof-approval_prod-apply_x' } else { "e2-$_" }) } }) }) }; $j = RunJob $m
+Check 'neg job: the ledger is paged (a consumption on page 2 counts)' (-not $j.Verified -and $j.Consumed -eq 1)
+$m = JobBase; $m["/repos/$R/actions/runs/$RunId/artifacts?per_page=100&page=1"].Body = (J @{ total_count = 150; artifacts = @(1..100 | ForEach-Object { @{ name = "evidence-$_" } }) }); $j = RunJob $m
+Check 'neg job: a short ledger (fewer artifacts than total_count) fails closed' (-not $j.Verified -and ($j.Problems -join ';') -match 'cannot prove')
+$m = JobBase; $m["/repos/$R/actions/runs/$RunId/approvals"].Body = (J @{ message = 'odd' }); $j = RunJob $m
+Check 'neg job: approvals that are not a list fail closed' (-not $j.Verified)
+$throwGet = { param($p) throw 'network down' }
+$j = Test-CicdGhJobApproval -Get $throwGet -Repository $R -Environment 'prod' -GitHubEnvironment 'prod-apply' -RunId $RunId -RunAttempt 1
+Check 'neg job: transport error fails closed' (-not $j.Verified)
+
+# ---------------------------------------------------------------- the real scripts over HTTP (local listener)
+# Real JSON text, so a one-item or empty array goes through ConvertFrom-Json exactly as in a job.
+$port = Get-Random -Minimum 20000 -Maximum 60000
+$routes = [Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+$listener = [Net.HttpListener]::new(); $listener.Prefixes.Add("http://localhost:$port/"); $listener.Start()
+$server = Start-ThreadJob -ArgumentList $listener, $routes {
+    param($l, $routes)
+    while ($l.IsListening) {
+        try { $c = $l.GetContext() } catch { break }
+        $key = $c.Request.Url.PathAndQuery; $hit = $null
+        $resp = if ($routes.TryGetValue($key, [ref]$hit)) { $hit } else { @(404, '{"message":"Not Found"}') }
+        $bytes = [Text.Encoding]::UTF8.GetBytes([string]$resp[1]); $c.Response.StatusCode = [int]$resp[0]
+        $c.Response.ContentType = 'application/json'; $c.Response.OutputStream.Write($bytes, 0, $bytes.Length); $c.Response.Close()
+    }
+}
+function Serve($m) { $routes.Clear(); foreach ($k in $m.Keys) { $null = $routes.TryAdd($k, @($m[$k].Status, $(if ($null -eq $m[$k].Body) { '' } else { ConvertTo-Json -InputObject $m[$k].Body -Depth 10 -Compress }))) } }
+$scratch = Join-Path ([IO.Path]::GetTempPath()) "ghe-$([guid]::NewGuid().ToString('N').Substring(0, 8))"; $null = New-Item -ItemType Directory $scratch
+$cicd = Join-Path $root 'scripts\cicd'; $hadEvidence = Test-Path (Join-Path $root 'evidence')
+function Child([string]$Script, [string[]]$ScriptArgs) {
+    $env:GITHUB_API_URL = "http://localhost:$port"; $env:GH_TOKEN = 'test-token'; $env:GITHUB_REPOSITORY = $R; $env:GITHUB_RUN_ID = $RunId; $env:GITHUB_RUN_ATTEMPT = '1'
+    $env:GITHUB_OUTPUT = Join-Path $scratch 'out.txt'; $env:GITHUB_STEP_SUMMARY = Join-Path $scratch 'summary.md'; Remove-Item $env:GITHUB_OUTPUT -ErrorAction Ignore
+    $o = & pwsh -NoProfile -File (Join-Path $cicd $Script) @ScriptArgs 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    foreach ($n in 'GITHUB_API_URL', 'GH_TOKEN', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY') { Remove-Item "env:$n" -ErrorAction Ignore }
+    [pscustomobject]@{ Code = $code; Text = $o }
+}
+try {
+    $assertArgs = @('-Environment', 'prod', '-GitHubEnvironment', 'prod-apply', '-JobKey', 'staged-1-apply')
+    Serve (JobBase -Plan $null); $c = Child 'Assert-CicdJobApproval.ps1' $assertArgs
+    $out = if (Test-Path (Join-Path $scratch 'out.txt')) { Get-Content -Raw (Join-Path $scratch 'out.txt') } else { '' }
+    Check 'http: one approval (one-item JSON array), private org plan unreadable: verified, ledger output' ($c.Code -eq 0 -and (@($out -split '\r?\n') -cmatch '^ledger=ccof-approval_prod-apply_staged-1-apply-[0-9a-f]{8}$').Count -eq 1)
+    if ($c.Code -ne 0) { Write-Host $c.Text }
+    $rec = Get-ChildItem (Join-Path $root 'evidence\prod') -Filter 'approval-prod-apply-staged-1-apply-*.json' -ErrorAction Ignore | Sort-Object LastWriteTime | Select-Object -Last 1
+    Check 'http: approval record written' ($rec -and (Get-Content -Raw $rec.FullName | ConvertFrom-Json).verified -eq $true)
+    Serve (JobBase @()); $c = Child 'Assert-CicdJobApproval.ps1' $assertArgs
+    Check 'neg http: empty approvals (JSON []) exit 4' ($c.Code -eq 4 -and $c.Text -match 'not_approved' -and -not (Test-Path (Join-Path $scratch 'out.txt')))
+    Serve (JobBase @((Appr)) @('ccof-approval_prod-apply_staged-1-apply-0a1b2c3d')); $c = Child 'Assert-CicdJobApproval.ps1' @('-Environment', 'prod', '-GitHubEnvironment', 'prod-apply', '-JobKey', 'staged-2-apply')
+    Check "neg http: second job on the first job's review exit 4" ($c.Code -eq 4 -and $c.Text -match 'approval_already_consumed')
+    $m = JobBase; $m["/repos/$R/environments/prod-apply"].Body.can_admins_bypass = $true; Serve $m; $c = Child 'Assert-CicdJobApproval.ps1' $assertArgs
+    Check 'neg http: admin bypass exit 4' ($c.Code -eq 4)
+    $c = Child 'Assert-CicdJobApproval.ps1' @('-Environment', 'prod', '-GitHubEnvironment', 'prod-apply', '-JobKey', 'bad key')
+    Check 'neg http: invalid job key exit 2' ($c.Code -eq 2)
+    $cliArgs = @('-Repository', $R, '-Environment', 'prod', '-ReviewedGate', 'apply,gate-network')
+    Serve (Base 'private' 'Organization' $null); $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'http cli: unreadable plan is deferred, exit 0, says NOT PROVED' ($c.Code -eq 0 -and $c.Text -match 'NOT PROVED')
+    $m = Base 'private' 'Organization' $null; $m["/repos/$R/environments/prod-gate-network"].Body.can_admins_bypass = $true; Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'neg http cli: admin bypass exit 1' ($c.Code -eq 1 -and $c.Text -match 'bypass')
+    $env:CCOF_GITHUB_PLAN = 'enterprise'; Serve (Base 'private' 'Organization' $null); $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs; Remove-Item env:CCOF_GITHUB_PLAN
+    Check 'neg http cli: CCOF_GITHUB_PLAN=enterprise is ignored (plan deferred, never attested or pass)' ($c.Text -match '\| reviewer plan \| deferred \|' -and $c.Text -notmatch 'attested')
+} finally {
+    $listener.Stop(); $listener.Close(); $server | Wait-Job -Timeout 10 | Out-Null; $server | Remove-Job -Force
+    Remove-Item -Recurse -Force $scratch -ErrorAction Ignore
+    Get-ChildItem (Join-Path $root 'evidence\prod') -Filter 'approval-prod-*.json' -ErrorAction Ignore | Remove-Item -Force
+    if ((Test-Path (Join-Path $root 'evidence\prod')) -and -not (Get-ChildItem (Join-Path $root 'evidence\prod'))) { Remove-Item (Join-Path $root 'evidence\prod') }
+    if (-not $hadEvidence -and (Test-Path (Join-Path $root 'evidence')) -and -not (Get-ChildItem -Force (Join-Path $root 'evidence'))) { Remove-Item (Join-Path $root 'evidence') }
+}
+
 Write-Host "Test-CicdGitHubEnvironments: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 26) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 69) { exit 1 }

@@ -43,9 +43,12 @@ on:
 permissions:
   contents: read
 
+# One run per environment at a time; queue: max keeps up to 100 pending runs and drift jobs of the group in order (the
+# default replaces a pending one). Never cancel-in-progress: a deployment is never interrupted.
 concurrency:
   group: ccof-env-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.environment }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # ---------------------------------------------------------------- pull request: offline checks only
@@ -121,7 +124,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CCOF_ENV: ${{ inputs.environment }}
           CCOF_APPLY: ${{ inputs.apply }}
-          CCOF_GITHUB_PLAN: ${{ vars.CCOF_GITHUB_PLAN }}
         run: |
           $gates = if ($env:CCOF_APPLY -eq 'true') { 'apply,gate-network,gate-entra,gate-privatelink,gate-security,gate-frontdoor' } else { '' }
           & ./scripts/cicd/Test-CicdGitHubEnvironments.ps1 -Repository $env:GITHUB_REPOSITORY -Environment $env:CCOF_ENV -ReviewedGate $gates
@@ -477,7 +479,9 @@ jobs:
   health-test:
     needs: [resolve, health-b-apply]
     if: ${{ !cancelled() && !failure() && inputs.apply && inputs.health_test_notification && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    # One region at a time: each job then waits for, and proves, its own review of <env>-apply.
     strategy:
+      max-parallel: 1
       matrix:
         region: ${{ fromJSON(needs.resolve.outputs.health_b == 'true' && '["a","b"]' || '["a"]') }}
     permissions: { contents: write, actions: read }

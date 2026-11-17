@@ -160,8 +160,9 @@ It fails when anything cannot be proved:
 | Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
 | `main` not protected | fail |
 | Gate environment without a required reviewer | fail |
+| Gate environment that allows administrators to bypass, or whose bypass setting cannot be read | fail (a bypassed job runs with no approval) |
 | Private user-owned repository, or organization plan below Enterprise | fail |
-| Organization plan not readable by the job token (owner-only field) | fail, unless an organization owner confirms GitHub Enterprise and sets the repository variable `CCOF_GITHUB_PLAN=enterprise`. The run then reports the plan as **attested, NOT PROVED** in the summary |
+| Organization plan not readable by the job token (owner-only field) | **deferred, NOT PROVED** in the summary. No write depends on it: each reviewed job must observe its own enforced approval (below) and fails otherwise. No variable or attestation counts as proof (the former `CCOF_GITHUB_PLAN` variable is ignored) |
 | Any API read error | fail ("cannot prove") |
 
 If the job token cannot read branch policies, a repository administrator checks the same items by hand in
@@ -177,7 +178,16 @@ Settings > Environments, and the run cannot proceed until the token can read the
 | `<env>-gate-security` | Security officer | Standby Shells: public API Management bootstrap (`PublicApimBootstrap`, optional `PublicFunctionAccess`) |
 | `<env>-gate-frontdoor` | Platform owner and DR owner | Front Door with region B origins (`StandbyReady`, scope `frontdoor-full`) |
 
-Each approval is recorded in the job summary: who approved, when, and the comment.
+**Approval of each job.** GitHub records reviews per run (`GET /repos/{repo}/actions/runs/{id}/approvals`), not per job, and one review approves every job waiting on that environment at that moment. `<env>-apply` is used by up to 15 jobs in one run, so a review in that list may belong to an earlier job. Every job in `<env>-apply` or `<env>-gate-*` therefore runs [`Assert-CicdJobApproval.ps1`](../../scripts/cicd/Assert-CicdJobApproval.ps1) before Azure sign-in, and stops unless all of these hold at that moment:
+
+- the environment has required reviewers, administrators cannot bypass them, and only `main` (protected) may deploy;
+- the run has more approved reviews of this environment than earlier jobs of the run have used, and no rejection. Each job that passes uploads a ledger artifact `ccof-approval_<environment>_<job>-<id>` before it signs in, which marks one review as used;
+- the plan enforces reviewers: public repository, readable Enterprise plan, or (plan not readable) an approval observed in this run, which only happens when GitHub enforced the review;
+- this is attempt 1 of the run. Reviews cannot be bound to a re-run attempt, so re-running failed jobs is refused: dispatch a new run instead (state on `cicd-state/<env>` lets it continue).
+
+The driver step also refuses `-Apply` or `-TestNotification` without the ledger. `deploy-environment.yml` never lets two jobs of one reviewed environment wait at the same time (a test checks the `needs` graph; the health test-mail matrix runs with `max-parallel: 1`), so each job waits for its own review. The summary and `evidence/<env>/approval-*.json` record the approvers and counts.
+
+Limits (not proved live): artifacts of a running workflow are assumed listable through `GET .../runs/{id}/artifacts` right after upload (if a list missed a ledger entry, an earlier review could be counted again; bypass being off is then the remaining guard); that each matrix job with `max-parallel: 1` waits for its own review; the private organization's plan stays unreadable with `GITHUB_TOKEN`, so a private repository with no observed approval cannot apply at all.
 
 ## 6. Run order and timings
 
@@ -249,7 +259,7 @@ Sources for the times: [STAGED-STDV2-RUNS-2026-10-20.md](../STAGED-STDV2-RUNS-20
 
 A complete first run takes about 3.5-4 hours of machine time. Waiting for approvals adds to that.
 
-A failed job stops every later job. Fix the cause and rerun the workflow with the same inputs. Steps that are
+A failed job stops every later job. Fix the cause and dispatch the workflow again with the same inputs (`Re-run failed jobs` is refused by the approval check, section 5). Steps that are
 already applied preview NoChange and apply idempotently. Saved state lets later stages read earlier outputs.
 
 After Front Door with the standby (saved mode `full`), the driver refuses `-PrimaryOnly`. The `resolve` job reads the saved mode and skips the primary-only Front Door jobs on later runs.
@@ -328,7 +338,9 @@ The drivers write their state into `deploy/<environment>/`:
 `cicd-state/<environment>`:
 
 - every job restores the state before it runs;
-- apply and verify jobs save it afterwards, even when the job fails;
+- apply and verify jobs save it afterwards, even when the driver fails or the job is cancelled, but only when the
+  Restore step of the same job succeeded (`steps.restore.outcome == 'success'`). A failed checkout, host preflight,
+  input guard, sign-in or Restore skips Save; `Sync-CicdState.ps1` also refuses Save without the restore marker;
 - pull request runs never read or save it;
 - `resolve` and drift runs read the branch with the job token (`CCOF_STATE_TOKEN`, passed to git through environment configuration, never on the command line), because those checkouts keep no credentials.
 
@@ -346,6 +358,10 @@ fails when one of these essential files was in the restored snapshot and is miss
 - `.dr-state/state.json` (standby staged outputs, read by DR standby, Front Door and failover);
 - `.dr-state/frontdoor-state.json` (Front Door mode and origins).
 
+Save also fails (`state_invalid_json`) when one of these files is empty or not valid JSON, for example after a
+driver stopped mid-write; the last saved snapshot is kept. Other files, such as partial evidence, are saved as they
+are.
+
 Only these regenerable files are excluded: `.dr-state/generated/packages/**` (build staging, deleted after Code;
 digests are in `standby.state.json`), `.dr-state/generated/*.zip` (rebuilt on every publish), `*.lock` (held
 only while a phase runs), `node_modules/` and `.git/`. Other generated files (gateway policy XML, render and
@@ -356,8 +372,28 @@ The branch holds no secret. Protect it with a ruleset so that only GitHub Action
 
 To deploy from Cloud Shell instead, check out the branch into the folder. The drivers read the same files.
 
-Runs never overlap for one environment (`concurrency: ccof-env-<environment>`).
+Long paths on Windows runners: `Sync-CicdState.ps1` runs git with `-c core.longpaths=true` per command (no git
+or OS setting is written), because Git for Windows refuses paths over 260 characters even when the OS long-path
+setting is on. Windows still cannot use a directory of 248 characters or more as the working directory, and Git
+refuses a `.git` directory path near 260 characters; keep the runner work folder short (for example
+`C:\actions-runner\_work`).
 
+Runs never overlap for one environment. `deploy-environment.yml` holds the concurrency group
+`ccof-env-<environment>` for the whole run. Each `drift` job of `drift-check.yml` takes the same group for its
+environment (job-level, `cancel-in-progress: false`), so a drift preview never runs between or alongside deployment
+stages; the drift workflow itself uses the separate group `ccof-drift` (a `ccof-env` group at workflow level would
+make the job wait on its own run). `ccof-step.yml` sets no concurrency; it runs inside the caller's lock.
+
+By default GitHub keeps one pending run or job per group and a newer pending entry cancels the older one
+(`cancel-in-progress: false` protects only the running one). Every holder of `ccof-env-<environment>`
+(deploy-environment, the drift job, onboard-foundry) therefore sets `queue: max`: pending entries wait in order of
+arrival. Limits:
+
+- At most 100 entries can wait in one group; GitHub cancels any further entry. Nothing has run in a cancelled
+  pending entry; dispatch it again.
+- `queue: max` was proved live at workflow level (three runs queued and all completed; with the default the middle
+  one was cancelled). The job-level setting on the drift job is documented by GitHub but has not been run live.
+- actionlint 1.7.12 reports `queue` as an unknown key (rhysd/actionlint#657).
 ## 9. Rollback per step
 
 The drivers apply forward and are idempotent. To roll back, revert the configuration commit and rerun the step,

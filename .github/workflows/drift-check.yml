@@ -21,6 +21,9 @@ permissions:
   actions: read
   issues: write
 
+# Drift runs do not overlap each other. Each environment's job also takes ccof-env-<env>, the group that deploy-environment
+# holds for a whole run, so a preview never runs between or alongside deployment stages. The workflow-level group must not
+# be a ccof-env group: the job would then wait on its own run.
 concurrency:
   group: ccof-drift
   cancel-in-progress: false
@@ -62,6 +65,10 @@ jobs:
         environment: ${{ fromJSON(needs.targets.outputs.environments) }}
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
     environment: ${{ matrix.environment }}-preview
+    concurrency:
+      group: ccof-env-${{ matrix.environment }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 90
     defaults:
       run:

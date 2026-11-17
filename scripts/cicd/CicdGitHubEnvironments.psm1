@@ -6,11 +6,28 @@
 #  - each environment admits only the protected default branch: a custom deployment branch policy that names
 #    exactly the default branch (https://docs.github.com/en/rest/deployments/branch-policies). "Protected branches
 #    only" is refused: it admits every branch when no rule exists and any branch a pattern rule covers later.
-# Every API error or unreadable fact is "cannot prove" and fails. Read-only (GET only).
+#  - administrators cannot bypass the reviewers of a reviewed environment (can_admins_bypass false): a bypassed
+#    job runs without any approval.
+# Every API error or unreadable fact is "cannot prove" and fails. One exception, before any write: the plan of a
+# private organization is owner-only, so Test-CicdGhProtections reports it 'deferred' and every reviewed job proves
+# it later by observing an enforced approval (Test-CicdGhJobApproval). Nothing is ever attested. Read-only (GET only).
 Set-StrictMode -Version Latest
 
-function New-CicdGhFinding { param([string]$Subject, [ValidateSet('pass', 'fail', 'attested')][string]$Status, [string]$Evidence)
+function New-CicdGhFinding { param([string]$Subject, [ValidateSet('pass', 'fail', 'deferred')][string]$Status, [string]$Evidence)
     [pscustomobject]@{ Subject = $Subject; Status = $Status; Evidence = $Evidence } }
+
+# GET against the GitHub REST API with GH_TOKEN. JSON arrays stay arrays (-NoEnumerate): an empty or one-item list
+# is not mistaken for "no body" or an object.
+function New-CicdGhRestGet {
+    $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
+    $headers = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+    {
+        param($Path)
+        $r = Invoke-WebRequest -Method Get -Headers $headers -Uri "$api$Path" -SkipHttpErrorCheck
+        $body = if ($r.Content) { [string]$r.Content | ConvertFrom-Json -NoEnumerate } else { $null }
+        @{ Status = [int]$r.StatusCode; Body = $body }
+    }.GetNewClosure()
+}
 
 function Invoke-CicdGhGet {
     # Returns @{ Ok; Status; Body }. $Get is injectable for tests: param($Path) -> same shape.
@@ -23,7 +40,7 @@ function Invoke-CicdGhGet {
 
 # Required reviewers enforceable on this repository's plan.
 function Test-CicdGhReviewerPlan {
-    param([scriptblock]$Get, [string]$Repository, [string]$AttestedPlan = '')
+    param([scriptblock]$Get, [string]$Repository)
     $repo = Invoke-CicdGhGet $Get "/repos/$Repository"
     if (-not $repo.Ok) { return New-CicdGhFinding 'reviewer plan' fail "cannot prove: GET /repos/$Repository failed ($($repo.Error))" }
     $vis = [string]$repo.Body.visibility; $ownerType = [string]$repo.Body.owner.type; $owner = [string]$repo.Body.owner.login
@@ -36,10 +53,16 @@ function Test-CicdGhReviewerPlan {
     $plan = if ($org.Ok -and $org.Body.PSObject.Properties['plan'] -and $org.Body.plan) { [string]$org.Body.plan.name } else { '' }
     if ($plan -ceq 'enterprise') { return New-CicdGhFinding 'reviewer plan' pass "$vis repository, organization $owner on plan 'enterprise' (read from GET /orgs/$owner)" }
     if ($plan) { return New-CicdGhFinding 'reviewer plan' fail "$vis repository, organization $owner on plan '$plan': required reviewers are not enforced on private repositories below GitHub Enterprise" }
-    if ($AttestedPlan -ceq 'enterprise') {
-        return New-CicdGhFinding 'reviewer plan' attested "NOT PROVED: the job token cannot read the plan of $owner (owner-only field); repository variable CCOF_GITHUB_PLAN=enterprise attests GitHub Enterprise. An organization owner must confirm it (runbook, Trust boundaries)."
-    }
-    return New-CicdGhFinding 'reviewer plan' fail "cannot prove: the job token cannot read the plan of organization $owner; an organization owner confirms GitHub Enterprise and sets repository variable CCOF_GITHUB_PLAN=enterprise (recorded as attested, not proved)"
+    return New-CicdGhFinding 'reviewer plan' deferred "NOT PROVED here: the job token cannot read the plan of organization $owner ($($org.Error); owner-only field). No write runs on this: each reviewed job proves enforcement before its writes by observing a reviewer approval of its own environment in this run (Test-CicdGhJobApproval), and fails otherwise."
+}
+
+# Exit code of Test-CicdGitHubEnvironments.ps1: 0 only when every finding passes, except a deferred reviewer plan.
+function Get-CicdGhExitCode {
+    param([object[]]$Findings = @())
+    $f = @($Findings | Where-Object { $_ })
+    if (-not $f.Count) { return 1 }
+    $bad = @($f | Where-Object { -not ($_.Status -ceq 'pass' -or ($_.Status -ceq 'deferred' -and $_.Subject -ceq 'reviewer plan')) })
+    return [int]($bad.Count -gt 0)
 }
 
 # One environment: exists, custom branch policy = exactly the protected default branch, reviewers when required.
@@ -79,8 +102,12 @@ function Test-CicdGhEnvironment {
         if (-not $reviewers.Count) { $out.Add((New-CicdGhFinding "$Name reviewers" fail 'no required reviewer')) }
         else {
             $who = ($reviewers | ForEach-Object { "$($_.type):$(if ($_.reviewer.PSObject.Properties['login']) { $_.reviewer.login } else { $_.reviewer.slug })" }) -join ', '
-            $bypass = if ($e.Body.PSObject.Properties['can_admins_bypass'] -and $e.Body.can_admins_bypass -eq $true) { '; administrators can bypass (turn off "Allow administrators to bypass")' } else { '' }
-            $out.Add((New-CicdGhFinding "$Name reviewers" pass "configured: $who$bypass"))
+            $bypassProp = $e.Body.PSObject.Properties['can_admins_bypass']
+            if (-not $bypassProp -or $bypassProp.Value -isnot [bool]) {
+                $out.Add((New-CicdGhFinding "$Name reviewers" fail "cannot prove: can_admins_bypass is not readable as true/false; administrators may be able to bypass the reviewers ($who)"))
+            } elseif ($bypassProp.Value) {
+                $out.Add((New-CicdGhFinding "$Name reviewers" fail "administrators can bypass the reviewers ($who); a bypassed job runs without approval. Turn off 'Allow administrators to bypass configured protection rules' on $Name"))
+            } else { $out.Add((New-CicdGhFinding "$Name reviewers" pass "configured: $who; administrators cannot bypass")) }
         }
     }
     return $out.ToArray()
@@ -89,16 +116,73 @@ function Test-CicdGhEnvironment {
 # All findings for <stem>-preview (branch policy) and each gate (branch policy + reviewers + enforceable plan).
 function Test-CicdGhProtections {
     param([Parameter(Mandatory)][scriptblock]$Get, [Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Environment,
-        [string[]]$ReviewedGate = @(), [string]$AttestedPlan = '')
+        [string[]]$ReviewedGate = @())
     $repo = Invoke-CicdGhGet $Get "/repos/$Repository"
     if (-not $repo.Ok -or -not [string]$repo.Body.default_branch) { return @(New-CicdGhFinding 'repository' fail "cannot prove: GET /repos/$Repository failed ($($repo.Error))") }
     $default = [string]$repo.Body.default_branch
     $findings = @(Test-CicdGhEnvironment $Get $Repository "$Environment-preview" $default $false)
     if ($ReviewedGate.Count) {
-        $findings += Test-CicdGhReviewerPlan $Get $Repository $AttestedPlan
+        $findings += Test-CicdGhReviewerPlan $Get $Repository
         foreach ($g in $ReviewedGate) { $findings += Test-CicdGhEnvironment $Get $Repository "$Environment-$g" $default $true }
     }
     return $findings
 }
 
-Export-ModuleMember -Function Test-CicdGhProtections, Test-CicdGhEnvironment, Test-CicdGhReviewerPlan
+# Before any write, a job in reviewed environment <Environment>-(apply|gate-<name>) proves its own approval.
+# GET /actions/runs/{id}/approvals is run-level (one record per review, no job id) and one review approves every job
+# waiting on that environment at that moment, so a review seen there may belong to an earlier job. Each job that
+# passes uploads a ledger artifact named <LedgerPrefix><job> (ccof-step.yml) before it signs in to Azure; a job is
+# approved only when the approvals of its environment in this run outnumber the ledger entries of earlier jobs.
+# deploy-environment.yml never runs two jobs of one reviewed environment at the same time (tests), so each waits
+# for its own review. Also required now, at job time: reviewers in force, bypass off, main-only branch policy, an
+# enforcing plan (readable, or proved by the observed approval), first run attempt (reviews are per run).
+function Test-CicdGhJobApproval {
+    param([Parameter(Mandatory)][scriptblock]$Get, [Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Environment,
+        [Parameter(Mandatory)][string]$GitHubEnvironment, [Parameter(Mandatory)][string]$RunId, [int]$RunAttempt = 1)
+    $problems = [Collections.Generic.List[string]]::new(); $evidence = [Collections.Generic.List[string]]::new()
+    $prefix = "ccof-approval_$($GitHubEnvironment)_"
+    $result = { [pscustomobject]@{ Verified = ($problems.Count -eq 0); Environment = $GitHubEnvironment; Approved = $approved; Consumed = $consumed
+            Approvers = @($approvers); LedgerPrefix = $prefix; Problems = @($problems); Evidence = @($evidence) } }
+    $approved = 0; $consumed = 0; $approvers = @()
+    if ($GitHubEnvironment -cnotmatch "^$([regex]::Escape($Environment))-(apply|gate-[a-z]+)$") {
+        $problems.Add("not_reviewed_environment: '$GitHubEnvironment' is not $Environment-apply or $Environment-gate-<name>"); return & $result
+    }
+    if ($RunAttempt -ne 1) { $problems.Add("rerun_attempt: attempt $RunAttempt cannot be bound to its own approval (reviews are recorded per run); dispatch a new run") }
+    $repo = Invoke-CicdGhGet $Get "/repos/$Repository"
+    if (-not $repo.Ok -or -not [string]$repo.Body.default_branch) { $problems.Add("cannot prove: GET /repos/$Repository failed ($($repo.Error))"); return & $result }
+    foreach ($f in @(Test-CicdGhEnvironment $Get $Repository $GitHubEnvironment ([string]$repo.Body.default_branch) $true)) {
+        if ($f.Status -ceq 'pass') { $evidence.Add("$($f.Subject): $($f.Evidence)") } else { $problems.Add("$($f.Subject): $($f.Evidence)") }
+    }
+    $a = Invoke-CicdGhGet $Get "/repos/$Repository/actions/runs/$RunId/approvals"
+    $list = $null; if ($a.Ok -and $a.Body -is [array]) { $list = [object[]]$a.Body }
+    if ($null -eq $list) { $problems.Add("cannot prove: GET actions/runs/$RunId/approvals failed or is not a list ($($a.Error))") }
+    else {
+        $mine = @($list | Where-Object { $_ -and @($_.environments | Where-Object { $_ -and [string]$_.name -ceq $GitHubEnvironment }).Count })
+        $ok = @($mine | Where-Object { [string]$_.state -ceq 'approved' }); $approved = $ok.Count
+        $approvers = @($ok | ForEach-Object { [string]$_.user.login } | Sort-Object -Unique)
+        if (@($mine | Where-Object { [string]$_.state -cne 'approved' }).Count) { $problems.Add("rejected: a review of '$GitHubEnvironment' in this run is not 'approved'") }
+        if (-not $approved) { $problems.Add("not_approved: no reviewer approved '$GitHubEnvironment' in this run (no reviewers enforced, or the job was bypassed)") }
+    }
+    $names = [Collections.Generic.List[string]]::new(); $total = -1; $page = 1; $ledgerOk = $true
+    while ($ledgerOk) {
+        $r = Invoke-CicdGhGet $Get "/repos/$Repository/actions/runs/$RunId/artifacts?per_page=100&page=$page"
+        if (-not $r.Ok -or -not $r.Body -or -not $r.Body.PSObject.Properties['total_count']) { $ledgerOk = $false; $problems.Add("cannot prove: GET actions/runs/$RunId/artifacts page $page failed ($($r.Error))"); break }
+        $total = [int]$r.Body.total_count; $batch = @($r.Body.artifacts | Where-Object { $_ })
+        foreach ($x in $batch) { $names.Add([string]$x.name) }
+        if ($names.Count -ge $total) { break }
+        if (-not $batch.Count -or $page -ge 20) { $ledgerOk = $false; $problems.Add("cannot prove: the run lists $total artifact(s) but $($names.Count) were returned"); break }
+        $page++
+    }
+    $consumed = @($names | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) }).Count
+    if ($ledgerOk -and $null -ne $list -and $approved -and $approved -le $consumed) {
+        $problems.Add("approval_already_consumed: $approved approval(s) of '$GitHubEnvironment' in this run and $consumed already used by earlier jobs; this job has no approval of its own (bypassed?)")
+    }
+    $plan = Test-CicdGhReviewerPlan $Get $Repository
+    if ($plan.Status -ceq 'pass') { $evidence.Add("reviewer plan: $($plan.Evidence)") }
+    elseif ($plan.Status -ceq 'deferred' -and $approved) { $evidence.Add("reviewer plan: enforcement observed: GitHub held '$GitHubEnvironment' for review in this run ($approved approval(s)); the plan itself is not readable") }
+    else { $problems.Add("reviewer plan: $($plan.Evidence)") }
+    if ($approved) { $evidence.Add("approvals of '$GitHubEnvironment' in this run: $approved by $($approvers -join ', '); used by earlier jobs: $consumed") }
+    return & $result
+}
+
+Export-ModuleMember -Function Test-CicdGhProtections, Test-CicdGhEnvironment, Test-CicdGhReviewerPlan, Test-CicdGhJobApproval, Get-CicdGhExitCode, New-CicdGhRestGet

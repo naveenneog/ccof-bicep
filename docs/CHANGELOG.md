@@ -11,6 +11,19 @@
 - Whitespace between tags is ignored only where every open element is a structural policy element (element-only content);
   in `set-body`, `value` and unlisted elements it is compared. A live app setting with an empty value that the
   what-if payload lacks is unmeasured (it may be removed by a deployment), no longer matched.
+- CI/CD state: `ccof-step.yml` saves driver state only when its Restore step succeeded (a failed driver still
+  saves). `Sync-CicdState.ps1` refuses an empty or invalid essential state file (`state_invalid_json`), runs git with
+  per-command `core.longpaths` (long Windows work folders), and never parses git stderr as output.
+- Drift: each environment's drift job takes the shared `ccof-env-<environment>` group, so it never runs alongside
+  a deployment. `deploy-environment.yml` and the drift job use `queue: max` (pending entries wait instead of being
+  replaced; at most 100 per group).
+- Approvals: every job in `<env>-apply` or `<env>-gate-*` runs `Assert-CicdJobApproval.ps1` before Azure sign-in
+  and stops unless this job has a reviewer approval of its own. The approvals of the environment in this run must
+  outnumber the ledger artifacts of earlier jobs, administrators must not be able to bypass, and the run must be
+  attempt 1. The driver refuses writes without that ledger. `Test-CicdGitHubEnvironments.ps1` now fails when
+  administrator bypass is on or unreadable. It reports an unreadable organization plan as deferred (NOT PROVED)
+  instead of trusting `CCOF_GITHUB_PLAN` (removed). The health test-mail matrix runs one region at a time.
+
 ## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
 
 - Pull requests run only offline prerequisite checks on a GitHub-hosted runner (no self-hosted runner, managed

@@ -88,15 +88,25 @@ jobs:
         if: inputs.checklist != ''
         run: Get-Content -LiteralPath $env:CCOF_CHECKLIST | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Record approvals of this run
-        if: inputs.gh_environment != ''
+      # Every job of a reviewed environment (<env>-apply, <env>-gate-<name>) proves an approval of its own before Azure
+      # sign-in. The review history (GET .../runs/{id}/approvals) is per run, not per job, so reviews already used by
+      # earlier jobs of this run are counted off through their ledger artifacts (Assert-CicdJobApproval.ps1).
+      - name: Approval of this job
+        id: approval
+        if: inputs.gh_environment != '' && inputs.gh_environment != format('{0}-preview', inputs.environment)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $h = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json' }
-          $a = @(Invoke-RestMethod -Headers $h -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/approvals")
-          $rows = @($a | Where-Object { @($_.environments.name) -contains $env:CCOF_GH_ENV } | ForEach-Object { "- $($_.state) by $($_.user.login): $($_.comment)" })
-          @("### Environment $env:CCOF_GH_ENV", '') + $(if ($rows.Count) { $rows } else { '- no required reviewer on this environment' }) + '' | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          CCOF_JOB_KEY: ${{ inputs.step || 'checks' }}-${{ inputs.test_notification && 'test' || inputs.apply && 'apply' || 'preview' }}
+        run: pwsh scripts/cicd/Assert-CicdJobApproval.ps1 -Environment $env:CCOF_ENV -GitHubEnvironment $env:CCOF_GH_ENV -JobKey $env:CCOF_JOB_KEY
+
+      - name: Record the approval as used (ledger artifact)
+        if: steps.approval.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.approval.outputs.ledger }}'
+          path: '${{ steps.approval.outputs.path }}'
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Azure sign-in (runner managed identity)
         if: inputs.step != '' || inputs.prereq_scope != ''
@@ -105,6 +115,7 @@ jobs:
           expected-role: ${{ env.CCOF_EXPECTED_ROLE }}
 
       - name: Restore driver state (cicd-state/${{ inputs.environment }})
+        id: restore
         if: inputs.step != '' || inputs.prereq_scope != ''
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
 
@@ -125,7 +136,9 @@ jobs:
         env:
           CCOF_REVIEWED_IDS: ${{ inputs.reviewed_ids }}
           CCOF_APPROVE: ${{ inputs.approve }}
+          CCOF_APPROVAL_LEDGER: ${{ steps.approval.outputs.ledger }}
         run: |
+          if (($env:CCOF_APPLY -eq 'true' -or $env:CCOF_TEST_NOTIFICATION -eq 'true') -and -not $env:CCOF_APPROVAL_LEDGER) { throw 'no proved approval of this job (Approval of this job); nothing is written' }
           $p = @{ Environment = $env:CCOF_ENV; Step = $env:CCOF_STEP; Region = $env:CCOF_REGION }
           if ($env:CCOF_APPLY -eq 'true') { $p.Apply = $true }
           if ($env:CCOF_PRIMARY_ONLY -eq 'true') { $p.PrimaryOnly = $true }
@@ -139,8 +152,10 @@ jobs:
         if: inputs.drift && inputs.step != '' && !inputs.apply
         run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedStep $env:CCOF_STEP
 
+      # Saves only after a successful Restore (a failed checkout, preflight, guard, sign-in or Restore skips it); a failed or
+      # cancelled driver after that still saves its partial state. Sync-CicdState also refuses without the restore marker.
       - name: Save driver state
-        if: always() && steps.trusted.outcome == 'success' && inputs.save_state && inputs.step != ''
+        if: always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && inputs.save_state && inputs.step != ''
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "$env:CCOF_STEP run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
 
       - name: Upload evidence

@@ -36,14 +36,22 @@ $script:SecretPatterns = [ordered]@{
     'API key'                        = '(?i)"(api[-_]?key|key1|key2)"\s*:\s*"[A-Za-z0-9]{32,}"'
 }
 
+# Git for Windows refuses paths over 260 characters without core.longpaths, even when the OS long-path setting is on;
+# a runner work folder plus deploy/<env>/.dr-state/... can exceed that. Set per command (no git or OS configuration is
+# written); other platforms ignore it.
+$script:GitOptions = @('-c', 'core.longpaths=true')
+
 function Invoke-CicdGit {
     param([string]$Repo, [string[]]$Arguments, [switch]$AllowFailure, [hashtable]$Environment = @{})
     $saved = @{}
     foreach ($k in $Environment.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $Environment[$k]) }
-    try { $global:LASTEXITCODE = 0; $out = & $script:GitCommand -C $Repo @Arguments 2>&1; $code = $LASTEXITCODE }
+    try { $global:LASTEXITCODE = 0; $out = & $script:GitCommand -C $Repo @script:GitOptions @Arguments 2>&1; $code = $LASTEXITCODE }
     finally { foreach ($k in $saved.Keys) { if ($null -eq $saved[$k]) { Remove-Item -LiteralPath "env:$k" -ErrorAction SilentlyContinue } else { Set-Item -LiteralPath "env:$k" -Value $saved[$k] } } }
-    if ($code -ne 0 -and -not $AllowFailure) { throw "git $($Arguments -join ' ') failed ($code): $(@($out) -join ' ')" }
-    return [pscustomobject]@{ Code = $code; Output = @($out | ForEach-Object { "$_" }) }
+    # Output is stdout only: a git warning on stderr must never be read as a hash or ref. Messages carry both.
+    $stdout = @($out | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+    $all = @($out | ForEach-Object { "$_" })
+    if ($code -ne 0 -and -not $AllowFailure) { throw "git $($Arguments -join ' ') failed ($code): $($all -join ' ')" }
+    return [pscustomobject]@{ Code = $code; Output = $stdout; Text = $all }
 }
 
 function Get-CicdStateBranch { param([string]$Environment)
@@ -108,12 +116,12 @@ function Restore-CicdState {
         Set-Content -LiteralPath (Join-Path $base $script:Marker) -Value 'none' -NoNewline
         return [pscustomobject]@{ Commit = $null; Files = 0; Message = "no $branch branch yet (remote answered, no such ref): first run, nothing restored" }
     }
-    if ($ls.Code -ne 0) { throw "state_remote_unreachable: git ls-remote $Remote exited $($ls.Code): $(@($ls.Output) -join ' '). The state branch cannot be read; nothing was restored and this is not treated as a first run." }
+    if ($ls.Code -ne 0) { throw "state_remote_unreachable: git ls-remote $Remote exited $($ls.Code): $(@($ls.Text) -join ' '). The state branch cannot be read; nothing was restored and this is not treated as a first run." }
     $heads = @($ls.Output | Where-Object { $_ -match "^[0-9a-f]{40}\trefs/heads/$([regex]::Escape($branch))$" })
-    if ($heads.Count -ne 1) { throw "state_ls_remote_unexpected: expected one ref refs/heads/$branch, got: $(@($ls.Output) -join ' ')" }
+    if ($heads.Count -ne 1) { throw "state_ls_remote_unexpected: expected one ref refs/heads/$branch, got: $(@($ls.Text) -join ' ')" }
     $advertised = ($heads[0] -split "`t")[0]
     $fetch = Invoke-CicdGit $Repo @('fetch', '--no-tags', '--depth', '1', $Remote, "+refs/heads/${branch}:refs/remotes/$Remote/$branch") -AllowFailure -Environment $auth
-    if ($fetch.Code -ne 0) { throw "state_fetch_failed: $branch exists on $Remote but git fetch exited $($fetch.Code): $(@($fetch.Output) -join ' ')" }
+    if ($fetch.Code -ne 0) { throw "state_fetch_failed: $branch exists on $Remote but git fetch exited $($fetch.Code): $(@($fetch.Text) -join ' ')" }
     $commit = (Invoke-CicdGit $Repo @('rev-parse', "refs/remotes/$Remote/$branch")).Output[0].Trim()
     if ($commit -cne $advertised) { throw "state_branch_moved: $branch moved from $advertised to $commit during Restore (another run saved state); rerun." }
     $paths = @((Invoke-CicdGit $Repo @('ls-tree', '-r', '--name-only', $commit)).Output | Where-Object { $_ })
@@ -124,7 +132,7 @@ function Restore-CicdState {
         $target = Join-Path $Repo $p
         New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
         $blob = (Invoke-CicdGit $Repo @('rev-parse', "${commit}:$p")).Output[0].Trim()
-        $psi = [Diagnostics.ProcessStartInfo]::new('git', @('-C', $Repo, 'cat-file', 'blob', $blob)); $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
+        $psi = [Diagnostics.ProcessStartInfo]::new($script:GitCommand, @(@('-C', $Repo) + $script:GitOptions + @('cat-file', 'blob', $blob))); $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
         $proc = [Diagnostics.Process]::Start($psi); $fs = [IO.File]::Create($target)
         try { $proc.StandardOutput.BaseStream.CopyTo($fs) } finally { $fs.Dispose(); $proc.WaitForExit() }
         if ($proc.ExitCode -ne 0) { throw "state_restore_failed: $p" }
@@ -143,7 +151,12 @@ function Save-CicdState {
     $sel = Get-CicdStateFiles $Repo $Environment
     if ($sel.Refused.Count) { throw "state_file_not_saved: $($sel.Refused -join '; '). Nothing was pushed; state is never dropped silently (see the documented exclusions)." }
     foreach ($s in $sel.Excluded) { Write-Host "not saved (regenerable): $s" }
-    if ($parent -ne 'none') {
+    # A driver that stopped mid-write can leave an essential state file empty or truncated; pushing it would replace the
+    # good snapshot. Other files (evidence) are saved byte-exact as they are.
+    $invalid = @($script:Essential | ForEach-Object { "deploy/$Environment/$_" } | Where-Object { $sel.Files -contains $_ } | Where-Object {
+            $text = [IO.File]::ReadAllText((Join-Path $Repo $_))
+            try { $null -eq ($text | ConvertFrom-Json -Depth 200 -ErrorAction Stop) } catch { $true } })
+    if ($invalid.Count) { throw "state_invalid_json: $($invalid -join ', ') is empty or not valid JSON. Nothing was pushed; the last saved snapshot is kept." }    if ($parent -ne 'none') {
         # An essential file the restored snapshot had must still be there: a lost state.json would otherwise be
         # pushed as an empty state and the next run would start over.
         $before = @((Invoke-CicdGit $Repo @('ls-tree', '-r', '--name-only', $parent)).Output | Where-Object { $_ })
@@ -170,7 +183,7 @@ function Save-CicdState {
     # Fast-forward only: a first save requires the branch to be absent; later saves require it unchanged.
     $lease = if ($parent -eq 'none') { "--force-with-lease=refs/heads/${branch}:" } else { "--force-with-lease=refs/heads/${branch}:$parent" }
     $push = Invoke-CicdGit $Repo @('push', $lease, $Remote, "${commit}:refs/heads/$branch") -AllowFailure
-    if ($push.Code -ne 0) { throw "state_push_rejected: $branch moved since Restore (another run saved state) or push denied: $(@($push.Output) -join ' ')" }
+    if ($push.Code -ne 0) { throw "state_push_rejected: $branch moved since Restore (another run saved state) or push denied: $(@($push.Text) -join ' ')" }
     Set-Content -LiteralPath $marker -Value $commit -NoNewline
     return [pscustomobject]@{ Commit = $commit; Files = $sel.Files.Count; Pushed = $true; Message = "saved $($sel.Files.Count) file(s) to $branch at $($commit.Substring(0, 12))" }
 }

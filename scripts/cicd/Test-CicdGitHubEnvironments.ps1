@@ -5,9 +5,11 @@
 
 .DESCRIPTION
     <Environment>-preview must admit only the protected default branch. With -ReviewedGate (apply runs) each
-    <Environment>-<gate> must also have required reviewers, and the repository plan must enforce them
-    (public repository, or an organization on GitHub Enterprise). Anything the token cannot read is
-    "cannot prove" and fails. Exit 0 = all pass (an attested plan is reported as NOT PROVED), 1 = a failure.
+    <Environment>-<gate> must also have required reviewers that administrators cannot bypass, and the repository
+    plan must enforce them (public repository, or an organization on GitHub Enterprise). Anything the token cannot
+    read is "cannot prove" and fails. One exception: the plan of a private organization is owner-only; it is
+    reported 'deferred' (NOT PROVED here) and every reviewed job proves enforcement before its writes
+    (Assert-CicdJobApproval.ps1). Exit 0 = every finding passes or the plan is deferred, 1 = anything else.
     Token: GH_TOKEN. API: GITHUB_API_URL (default https://api.github.com). Module: CicdGitHubEnvironments.psm1.
 
 .EXAMPLE
@@ -17,30 +19,22 @@
 param(
     [Parameter(Mandatory)][string]$Repository,
     [Parameter(Mandatory)][string]$Environment,
-    [string[]]$ReviewedGate = @(),
-    [string]$AttestedPlan = $env:CCOF_GITHUB_PLAN
+    [string[]]$ReviewedGate = @()
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'CicdGitHubEnvironments.psm1') -Force
 $ReviewedGate = @($ReviewedGate | ForEach-Object { $_ -split ',' } | ForEach-Object Trim | Where-Object { $_ })
-$api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
-$headers = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
-$get = {
-    param($Path)
-    $code = 0
-    $body = Invoke-RestMethod -Method Get -Headers $headers -Uri "$api$Path" -SkipHttpErrorCheck -StatusCodeVariable code
-    @{ Status = [int]$code; Body = $body }
-}.GetNewClosure()
-$findings = @(Test-CicdGhProtections -Get $get -Repository $Repository -Environment $Environment -ReviewedGate $ReviewedGate -AttestedPlan $AttestedPlan)
-$failed = @($findings | Where-Object Status -eq 'fail')
-$attested = @($findings | Where-Object Status -eq 'attested')
+$get = New-CicdGhRestGet
+$findings = @(Test-CicdGhProtections -Get $get -Repository $Repository -Environment $Environment -ReviewedGate $ReviewedGate)
+$code = Get-CicdGhExitCode $findings
+$deferred = @($findings | Where-Object Status -eq 'deferred')
 $md = @("### GitHub environment protections: $Environment", '', '| Subject | Result | Evidence |', '|---|---|---|')
 $md += $findings | ForEach-Object { "| $($_.Subject) | $($_.Status) | $($_.Evidence -replace '\|', '/') |" }
 if ($ReviewedGate.Count) {
-    $md += '', $(if ($failed.Count) { '**Approvals are NOT enforced or cannot be proved: the run stops.**' } elseif ($attested.Count) { '**Approvals: required reviewers configured; plan enforcement NOT PROVED (attested).**' } else { 'Approvals: required reviewers configured and enforced by the repository plan.' })
+    $md += '', $(if ($code) { '**Approvals are NOT enforced or cannot be proved: the run stops.**' } elseif ($deferred.Count) { '**Plan enforcement NOT PROVED yet: each reviewed job must prove its own approval before any write (Assert-CicdJobApproval.ps1).**' } else { 'Approvals: required reviewers configured, no administrator bypass, enforced by the repository plan. Each reviewed job still proves its own approval.' })
 }
 if ($env:GITHUB_STEP_SUMMARY) { $md + '' | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8NoBOM }
 $md | Write-Host
-foreach ($f in $failed) { Write-Host "::error::$($f.Subject): $($f.Evidence)" }
-foreach ($f in $attested) { Write-Host "::warning::$($f.Subject): $($f.Evidence)" }
-exit ([int]($failed.Count -gt 0))
+foreach ($f in @($findings | Where-Object { $_.Status -ne 'pass' -and $_.Status -ne 'deferred' })) { Write-Host "::error::$($f.Subject): $($f.Evidence)" }
+foreach ($f in $deferred) { Write-Host "::warning::$($f.Subject): $($f.Evidence)" }
+exit $code
