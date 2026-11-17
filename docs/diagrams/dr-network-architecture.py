@@ -447,9 +447,9 @@ def main():
     ET.fromstring(svg)
     OUT.mkdir(parents=True, exist_ok=True)
     target = OUT / "dr-active-passive.svg"
-    target.write_text(svg, encoding="utf-8")
+    target.write_text(svg, encoding="utf-8", newline="\r\n")
     editable = OUT / "dr-active-passive.excalidraw"
-    editable.write_text(json.dumps(editable_scene(svg), indent=2) + "\n", encoding="utf-8")
+    editable.write_text(json.dumps(editable_scene(svg), indent=2) + "\n", encoding="utf-8", newline="\r\n")
     manifest = {
         "source": str(Path(__file__).relative_to(ROOT)).replace("\\", "/"),
         "sourceSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

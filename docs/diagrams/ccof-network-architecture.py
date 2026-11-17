@@ -288,7 +288,7 @@ def render(diagram, name, page_boxes, page_edges, width, height, svg_name):
             svg.append(f'<rect x="{e["lx"]-label_width/2}" y="{e["ly"]-18}" width="{label_width}" height="24" fill="white"/>')
             svg.append(f'<text x="{e["lx"]}" y="{e["ly"]}" text-anchor="middle" fill="{e["color"]}" font-family="Arial,Segoe UI,sans-serif" font-size="17">{html.escape(e["label"])}</text>')
     svg.append('</svg>')
-    (HERE / svg_name).write_text("\n".join(svg), encoding="utf-8")
+    (HERE / svg_name).write_text("\n".join(svg), encoding="utf-8", newline="\r\n")
 
 
 mxfile = E.Element("mxfile", host="local", version="24.7.17")
@@ -297,7 +297,8 @@ render(overview, "Claude on Foundry architecture overview", boxes, edges, 1680, 
 network = E.SubElement(mxfile, "diagram", id="ccof-network-architecture", name="Detailed network and trust")
 render(network, "Claude on Foundry detailed network and trust", network_boxes, network_edges, W, H, "ccof-network-architecture.svg")
 E.indent(mxfile)
-E.ElementTree(mxfile).write(HERE / "ccof-network-architecture.drawio", encoding="utf-8", xml_declaration=True)
+with open(HERE / "ccof-network-architecture.drawio", "w", encoding="utf-8", newline="\r\n") as drawio:
+    drawio.write("<?xml version='1.0' encoding='utf-8'?>\n" + E.tostring(mxfile, encoding="unicode"))
 print(f"Generated two editable pages, {len(boxes)+len(network_boxes)} vertices, original Azure SVG icons and two SVG previews.")
 
 if arguments.png:

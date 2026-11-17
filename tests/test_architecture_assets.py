@@ -108,3 +108,16 @@ for element in scene["elements"]:
 for image in scene["files"].values():
     assert hashlib.sha256(base64.b64decode(image["dataURL"].split(",", 1)[1])).hexdigest() in hashes
 print("DR Azure icons, export hashes, private subnets and managed-service boundaries: PASS")
+
+# The hashes above are of CRLF bytes; every checkout must produce them, whatever core.autocrlf is.
+attributes = {}
+for line in (root / ".gitattributes").read_text(encoding="utf-8").splitlines():
+    fields = line.split()
+    if fields and not fields[0].startswith("#"):
+        attributes[fields[0]] = fields[1:]
+hash_bound = [f"docs/diagrams/{name}" for name in rendered["files"] if not name.endswith(".png")]
+hash_bound += [dr_manifest["source"], "docs/images/dr/dr-active-passive.svg",
+               "docs/images/dr/dr-active-passive.excalidraw"]
+for path in hash_bound:
+    assert {"text", "eol=crlf"} <= set(attributes.get(path, [])), f"Hash-bound asset needs 'text eol=crlf' in .gitattributes: {path}"
+print("Hash-bound text assets check out with the hashed line endings: PASS")
