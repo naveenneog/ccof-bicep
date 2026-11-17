@@ -22,3 +22,6 @@ infra/quickstart/.generated/
 
 # Prevent concurrent Stage 7 package builds in one worktree
 .staged-stage7.lock
+
+# Onboarding and CI/CD step logs and evidence (scripts/cicd); uploaded as workflow artifacts, never committed
+/evidence/

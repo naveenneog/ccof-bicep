@@ -1,0 +1,301 @@
+name: onboard-foundry
+
+# Adds a new Microsoft Foundry account (backend) to an existing deployment in region A and the region B
+# standby (docs/runbooks/CICD-FOUNDRY-ONBOARDING.md). Sign-in is the runner host's managed identity
+# (.github/actions/azure-login-mi); there is no Azure secret, variable or federated credential in GitHub.
+# - pull_request: validate only, on the read-only ccof-preview runner.
+# - workflow_dispatch from main: what-if previews on ccof-apply in <env>-preview (what-if needs deploy
+#   permissions), then, with apply, the private link gate (if needed) and the apply in <env>-apply.
+# Steps run through scripts/cicd/Invoke-CicdOnboardingStep.ps1, which never runs Stage 7 or Stage 8.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/*/staged.config.json'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'deploy/<environment> folder, for example stg'
+        required: true
+        type: string
+      backend_ids:
+        description: 'Comma-separated ids of the backends appended to backends[] (merged on main)'
+        required: true
+        type: string
+      apply:
+        description: 'Apply after the previews (approval in <environment>-apply)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('onboard-foundry-pr-{0}', github.event.pull_request.number) || format('ccof-env-{0}', inputs.environment) }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  validate:
+    name: validate (read-only)
+    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    timeout-minutes: 20
+    outputs:
+      environment: ${{ steps.scope.outputs.environment }}
+      backend-ids: ${{ steps.validate.outputs.backend-ids }}
+      needs-privatelink-gate: ${{ steps.validate.outputs.needs-privatelink-gate }}
+      has-standby: ${{ steps.validate.outputs.has-standby }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Runner host preflight
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Scope (environment, base configuration)
+        id: scope
+        env:
+          CCOF_INPUT_ENV: ${{ inputs.environment }}
+          CCOF_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+            $changed = @(git diff --name-only "$env:CCOF_BASE_SHA" HEAD -- 'deploy/*/staged.config.json')
+            if ($LASTEXITCODE) { throw 'git diff failed' }
+            $envs = @($changed | ForEach-Object { ($_ -split '/')[1] } | Sort-Object -Unique)
+            if ($envs.Count -ne 1) { throw "change exactly one deploy/<env>/staged.config.json per pull request (found: $($envs -join ', '))" }
+            $e = $envs[0]
+            $null = New-Item -ItemType Directory -Force -Path "evidence/$e"
+            $base = "evidence/$e/base.staged.config.json"
+            git show "$($env:CCOF_BASE_SHA):deploy/$e/staged.config.json" | Set-Content -LiteralPath $base -Encoding utf8NoBOM
+            if ($LASTEXITCODE) { throw "deploy/$e/staged.config.json does not exist on the base branch: onboarding adds to an existing deployment" }
+            "base=$base" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          } else {
+            if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'run onboard-foundry from main: the configuration must be reviewed and merged first' }
+            $e = $env:CCOF_INPUT_ENV
+          }
+          if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$e'" }
+          "environment=$e" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+      - name: Azure sign-in (runner managed identity)
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: preview
+
+      - name: Restore driver state (read only)
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment '${{ steps.scope.outputs.environment }}'
+
+      - name: Validate the new backends (configuration, Foundry account, region B coverage)
+        id: validate
+        env:
+          CCOF_ENV: ${{ steps.scope.outputs.environment }}
+          CCOF_BASE: ${{ steps.scope.outputs.base }}
+          CCOF_IDS: ${{ inputs.backend_ids }}
+        run: |
+          $p = @{ Environment = $env:CCOF_ENV; Step = 'validate' }
+          if ($env:CCOF_BASE) { $p.BaseConfigPath = $env:CCOF_BASE } else { $p.BackendIds = $env:CCOF_IDS }
+          & ./scripts/cicd/Invoke-CicdOnboardingStep.ps1 @p
+          exit $LASTEXITCODE
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-evidence-validate-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Azure sign-out
+        if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  preview:
+    name: preview (what-if, region A and B)
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, ccof-vnet, ccof-apply]
+    environment: ${{ needs.validate.outputs.environment }}-preview
+    timeout-minutes: 60
+    env:
+      CCOF_ENV: ${{ needs.validate.outputs.environment }}
+      CCOF_IDS: ${{ needs.validate.outputs.backend-ids }}
+      CCOF_HAS_STANDBY: ${{ needs.validate.outputs.has-standby }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Runner host preflight
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Azure sign-in (runner managed identity)
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: apply
+
+      - name: Restore driver state (read only)
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+
+      - name: Region A Stage 3, 5, 6 and region B Backends what-if; descriptor preview
+        run: |
+          $failed = @()
+          $steps = @('stage3', 'stage5', 'stage6')
+          if ($env:CCOF_HAS_STANDBY -eq 'true') { $steps += 'standby-backends' }
+          $steps += 'descriptor'
+          foreach ($s in $steps) {
+            & ./scripts/cicd/Invoke-CicdOnboardingStep.ps1 -Environment $env:CCOF_ENV -Step $s -BackendIds $env:CCOF_IDS
+            if ($LASTEXITCODE) { $failed += $s }
+          }
+          if ($failed.Count) { throw "preview failed: $($failed -join ', ')" }
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-evidence-preview-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Azure sign-out
+        if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  gate-privatelink:
+    name: private link approved (gate)
+    needs: [validate, preview]
+    if: inputs.apply && github.ref == 'refs/heads/main' && needs.validate.outputs.needs-privatelink-gate == 'true'
+    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    environment: ${{ needs.validate.outputs.environment }}-gate-privatelink
+    timeout-minutes: 20
+    env:
+      CCOF_ENV: ${{ needs.validate.outputs.environment }}
+      CCOF_IDS: ${{ needs.validate.outputs.backend-ids }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Runner host preflight
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Checklist
+        run: |
+          @('### Private link for the new Foundry account',
+            '',
+            "Approve this environment only after the network team created the private endpoint for $env:CCOF_IDS in the workload VNet",
+            '(zone group on the shared privatelink.cognitiveservices.azure.com / privatelink.services.ai.azure.com zones)',
+            'and the Foundry owner approved the connection. The job then proves it: an Approved connection and a private DNS answer from this runner.',
+            '') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Azure sign-in (runner managed identity)
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: preview
+
+      - name: Restore driver state (read only)
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+
+      - name: Validate with the private link required
+        run: |
+          & ./scripts/cicd/Invoke-CicdOnboardingStep.ps1 -Environment $env:CCOF_ENV -Step validate -BackendIds $env:CCOF_IDS -RequirePrivateLink
+          exit $LASTEXITCODE
+
+      - name: Azure sign-out
+        if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  apply:
+    name: apply (region A, region B, descriptor, smoke)
+    needs: [validate, preview, gate-privatelink]
+    if: >-
+      always() && inputs.apply && github.ref == 'refs/heads/main'
+      && needs.validate.result == 'success' && needs.preview.result == 'success'
+      && (needs.gate-privatelink.result == 'success' || needs.gate-privatelink.result == 'skipped')
+    runs-on: [self-hosted, ccof-vnet, ccof-apply]
+    environment: ${{ needs.validate.outputs.environment }}-apply
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      CCOF_ENV: ${{ needs.validate.outputs.environment }}
+      CCOF_IDS: ${{ needs.validate.outputs.backend-ids }}
+      CCOF_HAS_STANDBY: ${{ needs.validate.outputs.has-standby }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner host preflight
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Azure sign-in (runner managed identity)
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: apply
+
+      - name: Restore driver state (cicd-state/${{ needs.validate.outputs.environment }})
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+
+      - name: Apply in order (stops at the first failure)
+        run: |
+          $done = "evidence/$env:CCOF_ENV/onboard-completed.txt"
+          $null = New-Item -ItemType Directory -Force -Path (Split-Path $done -Parent)
+          Set-Content -LiteralPath $done -Value @()
+          $hasFd = Test-Path -LiteralPath "deploy/$env:CCOF_ENV/.dr-state/frontdoor-state.json"
+          $plan = @(
+            @{ Step = 'validate'; RequirePrivateLink = $true },
+            @{ Step = 'stage3'; Apply = $true },
+            @{ Step = 'stage5'; Apply = $true },
+            @{ Step = 'stage6'; Apply = $true })
+          if ($env:CCOF_HAS_STANDBY -eq 'true') { $plan += @(@{ Step = 'standby-backends'; Apply = $true }, @{ Step = 'standby-verify' }) }
+          if ($env:CCOF_HAS_STANDBY -eq 'true' -and $hasFd) { $plan += @{ Step = 'frontdoor-verify' } }
+          $plan += @(@{ Step = 'descriptor'; Apply = $true }, @{ Step = 'smoke' })
+          foreach ($p in $plan) {
+            & ./scripts/cicd/Invoke-CicdOnboardingStep.ps1 -Environment $env:CCOF_ENV -BackendIds $env:CCOF_IDS @p
+            if ($LASTEXITCODE) { throw "$($p.Step) failed (exit $LASTEXITCODE)" }
+            Add-Content -LiteralPath $done -Value $p.Step
+          }
+
+      - name: Rollback guidance
+        if: failure()
+        run: |
+          Import-Module ./scripts/cicd/CicdOnboarding.psm1
+          $done = @(Get-Content -LiteralPath "evidence/$env:CCOF_ENV/onboard-completed.txt" -ErrorAction SilentlyContinue | Where-Object { $_ })
+          $lines = Get-CicdOnboardingRollback -Environment $env:CCOF_ENV -BackendIds ($env:CCOF_IDS -split ',') -Completed $done
+          $lines | Write-Host
+          @('### Onboarding failed', '') + ($lines | ForEach-Object { "- $_" }) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Save driver state
+        if: always()
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "onboard-foundry $env:CCOF_IDS run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-evidence-apply-${{ github.run_attempt }}
+          path: |
+            evidence/
+            deploy/${{ needs.validate.outputs.environment }}/.dr-evidence/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Azure sign-out
+        if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout

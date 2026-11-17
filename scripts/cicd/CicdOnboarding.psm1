@@ -166,4 +166,79 @@ function Get-CicdApimBackendFindings {
     return @(foreach ($p in $problems) { $p })
 }
 
-Export-ModuleMember -Function Get-CicdBackendChange, Get-CicdBackendFieldProblems, Get-CicdBackendAzureFindings, Get-CicdStandbyCoverage, Get-CicdApimBackendFindings, Get-CicdJson, Test-CicdPrivateAddress
+# The command for one onboarding workflow step (.github/workflows/onboard-foundry.yml). Only these steps
+# exist: Stage 7 (code, seed, client) and Stage 8 are never part of onboarding, and standby phases other
+# than Backends and Verify are refused. Returns @{ File; Arguments; Mode; Log }.
+function Get-CicdOnboardingCommand {
+    param(
+        [Parameter(Mandatory)] [ValidateSet('validate', 'stage3', 'stage5', 'stage6', 'standby-backends', 'standby-verify', 'frontdoor-verify', 'descriptor', 'smoke')] [string]$Step,
+        [Parameter(Mandatory)] [string]$Environment,
+        [Parameter(Mandatory)] [string]$RepoRoot,
+        [switch]$Apply,
+        [string[]]$BackendIds = @(),
+        [string]$BaseConfigPath,
+        [switch]$RequirePrivateLink,
+        [string]$ApplyPrincipalId
+    )
+    if ($Environment -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$Environment'" }
+    $ids = @($BackendIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($id in $ids) { if ($id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,78}[A-Za-z0-9]$') { throw "invalid backend id '$id'" } }
+    $dir = Join-Path $RepoRoot "deploy/$Environment"
+    $cfg = Join-Path $dir 'staged.config.json'; $dr = Join-Path $dir 'dr-standby.config.json'
+    $evidence = Join-Path $RepoRoot "evidence/$Environment"
+    $mode = if ($Apply) { 'apply' } else { 'preview' }
+    if ($Apply -and $Step -cnotin 'stage3', 'stage5', 'stage6', 'standby-backends', 'descriptor') { throw "$Step is read-only; -Apply is refused" }
+    if ($Step -cin 'standby-backends', 'descriptor', 'smoke' -and -not $ids.Count) { throw "$Step needs backend ids" }
+    switch ($Step) {
+        'validate' {
+            if (-not $BaseConfigPath -and -not $ids.Count) { throw 'validate needs a base configuration or backend ids' }
+            $file = Join-Path $RepoRoot 'scripts/cicd/Test-CicdBackendOnboarding.ps1'
+            $a = @('-ConfigPath', $cfg, '-ResolveDns', '-EvidencePath', (Join-Path $evidence 'onboard-validate.json'))
+            if ($BaseConfigPath) { $a += @('-BaseConfigPath', $BaseConfigPath) }
+            if ($ids.Count) { $a += @('-BackendIds', ($ids -join ',')) }
+            if ($RequirePrivateLink) { $a += '-RequirePrivateLink' }
+            if ($ApplyPrincipalId) { $a += @('-ApplyPrincipalId', $ApplyPrincipalId) }
+        }
+        { $_ -cin 'stage3', 'stage5', 'stage6' } {
+            $file = Join-Path $RepoRoot 'infra/staged/Invoke-StagedDeployment.ps1'
+            $a = @('-Stage', $Step.Substring(5), '-ConfigPath', $cfg)
+        }
+        'standby-backends' {
+            $file = Join-Path $RepoRoot 'infra/dr/Invoke-DrStandby.ps1'
+            $a = @('-Phase', 'Backends', '-ConfigPath', $dr, '-BackendIds', ($ids -join ','))
+        }
+        # Verify records verification in the standby state, so the workflow runs it in the apply job.
+        'standby-verify' { $file = Join-Path $RepoRoot 'infra/dr/Invoke-DrStandby.ps1'; $a = @('-Phase', 'Verify', '-ConfigPath', $dr) }
+        'frontdoor-verify' { $file = Join-Path $RepoRoot 'infra/dr/Invoke-DrFrontDoor.ps1'; $a = @('-Phase', 'Verify', '-ConfigPath', $dr) }
+        'descriptor' {
+            $file = Join-Path $RepoRoot 'scripts/cicd/Set-CicdBackendDescriptor.ps1'
+            $a = @('-ConfigPath', $cfg, '-BackendIds', ($ids -join ','), '-EvidencePath', (Join-Path $evidence "onboard-descriptor-$mode.json"))
+        }
+        'smoke' {
+            $file = Join-Path $RepoRoot 'scripts/cicd/Test-CicdBackendSmoke.ps1'
+            $a = @('-ConfigPath', $cfg, '-BackendIds', ($ids -join ','), '-EvidencePath', (Join-Path $evidence 'onboard-smoke.json'))
+        }
+    }
+    if ($Apply) { $a += '-Apply' }
+    if ($Step -clike 'standby-*' -or $Step -ceq 'frontdoor-verify') { if (-not (Test-Path -LiteralPath $dr)) { throw "$Step needs $dr (region B)" } }
+    return @{ File = $file; Arguments = $a; Mode = $mode; Log = (Join-Path $evidence "onboard-$Step-$mode.log") }
+}
+
+# What to undo, printed when an apply job fails (docs/runbooks/CICD-FOUNDRY-ONBOARDING.md, Rollback).
+function Get-CicdOnboardingRollback {
+    param([string]$Environment, [string[]]$BackendIds, [string[]]$Completed = @())
+    $ids = $BackendIds -join ', '
+    $done = if ($Completed.Count) { $Completed -join ', ' } else { 'none' }
+    return @(
+        "Onboarding of $ids in $Environment stopped. Completed apply steps: $done.",
+        'Nothing is rolled back automatically. Every applied step is additive and safe to rerun: fix the cause and rerun the workflow.',
+        'To withdraw the backend instead:',
+        "1. Revert the deploy/$Environment/staged.config.json change by pull request so backends[] no longer lists $ids.",
+        '2. From a runner shell (the pipeline only adds backends): rerun Stage 3 and Stage 5 for region A, and Invoke-DrStandby.ps1 -Phase Grants then Config for region B (-Phase Backends refuses removals). The policy is rendered without the id, so requests to it are refused.',
+        "3. If the descriptor was created: set it to disabled in the admin console, or delete backends/$ids in Cosmos Data Explorer. The pipeline never deletes it.",
+        '4. APIM backend entities and Cognitive Services User role assignments stay (deployments are incremental); remove them only if the Foundry owner asks.',
+        '5. Restore readiness: Invoke-DrStandby.ps1 -Phase Verify, then Invoke-DrFrontDoor.ps1 -Phase Verify if Front Door is deployed.'
+    )
+}
+
+Export-ModuleMember -Function Get-CicdOnboardingCommand, Get-CicdOnboardingRollback, Get-CicdBackendChange, Get-CicdBackendFieldProblems, Get-CicdBackendAzureFindings, Get-CicdStandbyCoverage, Get-CicdApimBackendFindings, Get-CicdJson, Test-CicdPrivateAddress

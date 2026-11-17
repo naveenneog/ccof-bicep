@@ -217,11 +217,42 @@ $o = & $pwsh -NoProfile -File (Join-Path $cicd 'Set-CicdBackendDescriptor.ps1') 
 Check 'descriptor: an id that is not in backends[] is refused' ($LASTEXITCODE -eq 3 -and "$o" -match 'descriptor_backend_unknown')
 $o = & $pwsh -NoProfile -File (Join-Path $cicd 'Set-CicdBackendDescriptor.ps1') -ConfigPath $cfgPath -BackendIds be2 -StateDirectory (Join-Path $scratch 'none') 2>&1
 Check 'descriptor: missing driver state is refused' ($LASTEXITCODE -eq 3 -and "$o" -match 'descriptor_state_missing')
+
+# Workflow step commands (Get-CicdOnboardingCommand, Invoke-CicdOnboardingStep.ps1) and rollback text.
+$cmdOf = { param([hashtable]$P) $P.Environment = 'lab'; $P.RepoRoot = $scratch; Get-CicdOnboardingCommand @P }
+$refused = { param([hashtable]$P) try { $null = & $cmdOf $P; $false } catch { $true } }
+$c = & $cmdOf @{ Step = 'stage5'; Apply = $true }
+Check 'step: stage5 apply runs Invoke-StagedDeployment -Stage 5 on deploy/<env> with -Apply' ($c.File -like '*infra*staged*Invoke-StagedDeployment.ps1' -and ($c.Arguments -join ' ') -ceq "-Stage 5 -ConfigPath $cfgPath -Apply" -and $c.Mode -ceq 'apply')
+$c = & $cmdOf @{ Step = 'standby-backends'; BackendIds = @('be2, be3') }
+Check 'step: standby-backends previews -Phase Backends with the ids and no -Apply' (($c.Arguments -join ' ') -ceq "-Phase Backends -ConfigPath $(Join-Path $env1 'dr-standby.config.json') -BackendIds be2,be3" -and $c.Log -like '*onboard-standby-backends-preview.log')
+$c = & $cmdOf @{ Step = 'validate'; BaseConfigPath = $basePath }
+Check 'step: validate compares with the base configuration and resolves DNS' ($c.Arguments -contains '-BaseConfigPath' -and $c.Arguments -contains '-ResolveDns' -and $c.Arguments -notcontains '-Apply' -and $c.Arguments -notcontains '-RequirePrivateLink')
+Check 'step: Stage 7 is not an onboarding step' (& $refused @{ Step = 'stage7'; Apply = $true })
+Check 'step: read-only steps refuse -Apply' ((& $refused @{ Step = 'smoke'; BackendIds = 'be2'; Apply = $true }) -and (& $refused @{ Step = 'validate'; BackendIds = 'be2'; Apply = $true }) -and (& $refused @{ Step = 'standby-verify'; Apply = $true }))
+Check 'step: backend steps refuse an empty id list' ((& $refused @{ Step = 'descriptor' }) -and (& $refused @{ Step = 'standby-backends'; BackendIds = ' , ' }) -and (& $refused @{ Step = 'validate' }))
+Check 'step: invalid environment or backend id is refused' ((& $refused @{ Step = 'smoke'; BackendIds = 'be2;rm' }) -and $(try { $null = Get-CicdOnboardingCommand -Step stage3 -Environment '../x' -RepoRoot $scratch; $false } catch { $true }))
+Move-Item (Join-Path $env1 'dr-standby.config.json') (Join-Path $env1 'dr.keep')
+Check 'step: region B steps need dr-standby.config.json' ((& $refused @{ Step = 'standby-verify' }) -and (& $refused @{ Step = 'frontdoor-verify' }) -and -not (& $refused @{ Step = 'stage6' }))
+Move-Item (Join-Path $env1 'dr.keep') (Join-Path $env1 'dr-standby.config.json')
+$rb = Get-CicdOnboardingRollback -Environment lab -BackendIds be2 -Completed stage3, stage5
+Check 'rollback: names the completed steps, the revert and the region B phases' ("$rb" -match 'Completed apply steps: stage3, stage5\.' -and "$rb" -match 'deploy/lab/staged\.config\.json' -and "$rb" -match 'Phase Grants then Config' -and "$rb" -match 'backends/be2')
+$stepScript = Join-Path $cicd 'Invoke-CicdOnboardingStep.ps1'
+$keepGa = $env:GITHUB_ACTIONS; $keepRole = $env:CCOF_RUNNER_ROLE
+try {
+    $env:GITHUB_ACTIONS = 'true'; $env:CCOF_RUNNER_ROLE = 'preview'
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage3 -Apply -PrintOnly 2>&1
+    Check 'step script: an apply on the preview runner is refused' ($LASTEXITCODE -eq 2 -and "$o" -match 'runner_role_mismatch')
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage3 -PrintOnly 2>&1
+    Check 'step script: a preview prints the command on the preview runner' ($LASTEXITCODE -eq 0 -and "$o" -match 'Invoke-StagedDeployment\.ps1 -Stage 3 -ConfigPath')
+    $env:CCOF_RUNNER_ROLE = 'apply'
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage8 -Apply -PrintOnly 2>&1
+    Check 'step script: an unknown step is refused with exit 2' ($LASTEXITCODE -eq 2 -and "$o" -match 'refused')
+} finally { $env:GITHUB_ACTIONS = $keepGa; $env:CCOF_RUNNER_ROLE = $keepRole }
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name CicdArm, CosmosDocs, CosmosCalls -Scope Global -ErrorAction SilentlyContinue
 }
-$floor = 48
+$floor = 60
 Write-Host "Test-CicdOnboardingScripts: $($script:pass) passed, $($script:fail) failed"
 if ($script:fail -or ($script:pass + $script:fail) -lt $floor) { Write-Host "expected at least $floor checks" -ForegroundColor Red; exit 1 }
 exit 0
