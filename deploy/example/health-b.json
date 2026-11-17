@@ -5,6 +5,9 @@
   "stem": "REPLACE-prefix-uniquesuffix-b",
   "workspaceId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-resource-group/providers/Microsoft.OperationalInsights/workspaces/REPLACE-prefix-uniquesuffix-law",
   "cosmosId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-resource-group/providers/Microsoft.DocumentDB/databaseAccounts/REPLACE-prefix-uniquesuffix-cosmos",
+  "foundryAccountIds": [
+    "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-foundry-rg/providers/Microsoft.CognitiveServices/accounts/REPLACE-foundry-account-centralus"
+  ],
   "emailReceivers": [
     "REPLACE-ops@example.com"
   ],
@@ -24,7 +27,6 @@
     "cosmosAvailability": { "enabled": false },
     "frontDoorOriginHealth": { "enabled": false },
     "frontDoor5xx": { "enabled": false },
-    "foundryServerErrors": { "enabled": false },
     "reconcilerStale": { "enabled": false },
     "gatewayTelemetrySilent": { "enabled": false }
   }

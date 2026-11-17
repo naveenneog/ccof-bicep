@@ -94,7 +94,7 @@ The template is in [`deploy/example/`](../../deploy/example/README.md). The work
 | `staged.config.json` | Stages 0-7; read by DR and Front Door | every scope |
 | `dr-standby.config.json` | DR prerequisites, standby, Front Door, failover status | `all`, `frontdoor-primary`, `standby`, `frontdoor-full` |
 | `health-a.json` | Health alerts, region A | `all`, `health` |
-| `health-b.json` | Health alerts, region B (DR standby: standby stem and group, `workspaceId` and `cosmosId` of the primary, shared and idle-standby rules off; [HEALTH-ALERTS.md](HEALTH-ALERTS.md) section 6) | `all`, `health` when `dr-standby.config.json` exists |
+| `health-b.json` | Health alerts, region B (DR standby: standby stem and group, `workspaceId` and `cosmosId` of the primary, shared and idle-standby rules off, region-B-only Foundry accounts; [HEALTH-ALERTS.md](HEALTH-ALERTS.md) section 6) | `all`, `health` when `dr-standby.config.json` exists |
 | `health-b.optout.json` | Explicit opt-out from region B alerts: `reason`, `approvedBy`, `approvedOn` (`yyyy-MM-dd`). Replaces `health-b.json`; the `resolve` job warns and the run summary shows NO REGION B HEALTH MONITORING | instead of `health-b.json` |
 
 Rules:

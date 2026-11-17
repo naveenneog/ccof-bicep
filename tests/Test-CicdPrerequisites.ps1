@@ -78,6 +78,12 @@ Set-CicdAzInvoker {
     if ($path -like '*/virtualNetworkLinks') { $z = ($path -split '/')[-2]; return & $ok @{ value = @($W.links[$z] | ForEach-Object { @{ properties = @{ virtualNetwork = @{ id = $_ } } } }) } }
     if ($path -like '*/virtualNetworkPeerings') { return & $ok @{ value = @($W.peerings[($path -split '/')[-2]]) } }
     if ($path -like '*/accounts/*/deployments') { return & $ok @{ value = @($W.deployments | ForEach-Object { @{ name = $_ } }) } }
+    if ($path -like '*/providers/Microsoft.Insights/metricDefinitions') {
+        $acct = ($path -split '/')[-4]; $mode = if ($W['foundryMetrics'] -and $W.foundryMetrics[$acct]) { $W.foundryMetrics[$acct] } else { 'ok' }
+        if ($mode -eq 'denied') { return & $err '(AuthorizationFailed) does not have authorization to perform action microsoft.insights/metricDefinitions/read' }
+        if ($mode -eq 'missing') { return & $err '(ResourceNotFound) The Resource was not found.' }
+        return & $ok @{ value = @($(if ($mode -eq 'none') { 'TokenTransaction' } else { 'ModelRequests', 'ServerErrors' }) | ForEach-Object { @{ name = @{ value = $_ } } }) }
+    }
     if ($path -like '*/workspaces/*' -or $path -like '*/Microsoft.ApiManagement/service/*' -or $path -like '*/databaseAccounts/*') { if (@($W.healthTargets) -contains ($path -split '/')[-1]) { return & $ok @{ id = $path } } else { return & $err '(ResourceNotFound) The Resource was not found.' } }
     if ($path -like '*/checkEndpointNameAvailability') { return & $ok @{ nameAvailable = $W.fdAvailable; message = $(if ($W.fdAvailable) { '' } else { 'Name not available' }) } }
     throw "unexpected az call: $line"
@@ -279,6 +285,39 @@ try {
     $fa = "/subscriptions/$SUB/resourceGroups/f-rg/providers/Microsoft.CognitiveServices/accounts/acct"
     Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fa.ToUpper()); $hb.rules.Remove('foundryServerErrors'); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
     Check 'neg: one Foundry account alerted from A and B -> duplicate fail' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'foundryServerErrors')
+    # Foundry coverage: every listed account has foundryServerErrors on in at least one config that can alert on it.
+    $fb = "/subscriptions/$SUB/resourceGroups/f-rg/providers/Microsoft.CognitiveServices/accounts/acct-cus"
+    Reset-World; $r = Get-Run 'apply'
+    Check 'no Foundry account listed -> coverage pass' ((St $r 'health.foundry-coverage') -eq 'pass')
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fb); $hb.rules.Remove('foundryServerErrors'); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'separate A and B accounts, rule on in both -> coverage pass, no duplicate' ((St $r 'health.foundry-coverage') -eq 'pass' -and (St $r 'health.shared-duplicates') -eq 'pass' -and (Get-C $r 'health.foundry-coverage').evidence -match 'acct-cus')
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fb); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: region-B-only account with foundryServerErrors off in B -> coverage fail naming it' ((St $r 'health.foundry-coverage') -eq 'fail' -and (Get-C $r 'health.foundry-coverage').evidence -match 'acct-cus' -and (Get-C $r 'health.foundry-coverage').evidence -notmatch 'acct[^-]')
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fa); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'shared account listed in both, rule off in B, on in A -> covered by A, no duplicate' ((St $r 'health.foundry-coverage') -eq 'pass' -and (St $r 'health.shared-duplicates') -eq 'pass')
+    Reset-World; $hb = New-HealthB; $hb.foundryAccountIds = @($fa); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: account only in B with rule off in B, not listed in A -> coverage fail' ((St $r 'health.foundry-coverage') -eq 'fail')
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $ha.rules = @{ foundryServerErrors = @{ enabled = $false } }; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $null; 'dr-standby.config.json' = $null }
+    Check 'neg: single region A with the account listed and the rule off -> coverage fail' ((St $r 'health.foundry-coverage') -eq 'fail')
+    $fx = "/subscriptions/00000000-0000-4000-8000-0000000000ff/resourceGroups/f-rg/providers/Microsoft.CognitiveServices/accounts/acct-x"
+    Reset-World; $hb = New-HealthB; $hb.foundryAccountIds = @($fx); $hb.rules.Remove('foundryServerErrors'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: B account in another subscription without allowCrossSubscriptionFoundry -> coverage fail (driver skips it)' ((St $r 'health.foundry-coverage') -eq 'fail' -and (Get-C $r 'health.foundry-coverage').evidence -match 'allowCrossSubscriptionFoundry')
+    $hb.allowCrossSubscriptionFoundry = $true; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'B account in another subscription with allowCrossSubscriptionFoundry -> coverage pass' ((St $r 'health.foundry-coverage') -eq 'pass')
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fa, $fb); $hb.rules.Remove('foundryServerErrors'); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: B lists the shared account and its own with the rule on -> duplicate names only the shared one' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'foundryServerErrors \(acct\)' -and (Get-C $r 'health.shared-duplicates').evidence -notmatch 'acct-cus')
+    # Online: the driver alerts only when the account exposes ModelRequests or ServerErrors; otherwise it skips with a note.
+    $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fb); $hb.rules.Remove('foundryServerErrors')
+    Reset-World; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'Foundry metrics readable for every covered account -> pass with metric names' ((St $r 'health.foundry-metrics') -eq 'pass' -and (Get-C $r 'health.foundry-metrics').evidence -match 'acct-cus ModelRequests')
+    Reset-World; $script:W.foundryMetrics = @{ 'acct-cus' = 'none' }; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: account without ModelRequests or ServerErrors -> fail, not monitored' ((St $r 'health.foundry-metrics') -eq 'fail' -and (Get-C $r 'health.foundry-metrics').evidence -match 'acct-cus.*no ModelRequests or ServerErrors')
+    Reset-World; $script:W.foundryMetrics = @{ 'acct-cus' = 'missing' }; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: listed account not found -> fail' ((St $r 'health.foundry-metrics') -eq 'fail' -and (Get-C $r 'health.foundry-metrics').evidence -match 'acct-cus not found')
+    Reset-World; $script:W.foundryMetrics = @{ 'acct-cus' = 'denied' }; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'account metric definitions unreadable -> manual, never pass' ((St $r 'health.foundry-metrics') -eq 'manual')
+    Reset-World; $r = Get-Run 'apply'
+    Check 'no covered Foundry account -> no metric check and no metric read' ((St $r 'health.foundry-metrics') -eq '<absent>' -and -not @($script:calls | Where-Object { $_ -like '*metricDefinitions*' }).Count)
     Reset-World; $hb = New-HealthB; $hb.rules.Remove('reconcilerStale'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
     Check 'neg: reconcilerStale on for the idle standby -> fail' ((St $r 'health.b.standby-rules') -eq 'fail' -and (Get-C $r 'health.b.standby-rules').evidence -match 'reconcilerStale')
     Reset-World; $hb = New-HealthB; $hb.rules.gatewayTelemetrySilent = @{ enabled = $true }; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
@@ -323,4 +362,4 @@ try {
 } finally { Remove-Item -LiteralPath $cli -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Test-CicdPrerequisites: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 60) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 95) { exit 1 }

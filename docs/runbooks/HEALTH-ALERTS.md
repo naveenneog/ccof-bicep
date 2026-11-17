@@ -360,17 +360,27 @@ account. Region B uses a second configuration file and a second run of the drive
 - `rules.<name>.enabled: false` for the shared targets, which region A already alerts on once:
   `cosmosThrottled`, `cosmosServerErrors`, `cosmosAvailability` (the account, all regions),
   `frontDoorOriginHealth`, `frontDoor5xx` and the Front Door web tests (one profile and host for both
-  origins; leave `frontDoor` out or set `probes.frontDoorGateway` and `probes.frontDoorAdmin` to `off`),
-  and `foundryServerErrors` (leave `foundryAccountIds` out when the accounts are the same).
+  origins; leave `frontDoor` out or set `probes.frontDoorGateway` and `probes.frontDoorAdmin` to `off`).
+- Foundry accounts: `foundryServerErrors` is one switch per file and creates one alert for each account
+  that file lists. List each account in exactly one file, with the rule enabled there:
+  - an account used only by region B (for example a Central US account): list it in region B's
+    `foundryAccountIds` and keep `foundryServerErrors` enabled (the template does this);
+  - an account shared by both regions: list it in region A only. If it also appears in region B's list,
+    region B must disable `foundryServerErrors`, which then disables it for every account region B lists.
 - `rules.reconcilerStale.enabled: false` and `rules.gatewayTelemetrySilent.enabled: false`: an idle
   standby has no reconciler runs and no gateway traffic, so both would fire continuously.
 
 Template: [`deploy/example/health-b.json`](../../deploy/example/health-b.json).
 
 What region B then covers: the standby APIM (gateway and backend 5xx, capacity, resolver unavailable),
-the standby Function Apps (server errors, sync and reconciler run failures) and the direct availability
-tests of the standby APIM, admin and resolver. The log rules query the shared workspace for the standby
-resource IDs only.
+the standby Function Apps (server errors, sync and reconciler run failures), the direct availability
+tests of the standby APIM, admin and resolver, and server errors of the Foundry accounts it lists. The
+log rules query the shared workspace for the standby resource IDs only.
+
+The driver alerts on a Foundry account only when the account exposes the `ModelRequests` metric (filtered
+to status 500, 502, 503 and 504) or `ServerErrors`. It skips an account without either metric, or in
+another subscription without `allowCrossSubscriptionFoundry: true`, with a `foundry <name>: skipped` note
+and no alert. Check that the preview lists `<stem>-health-foundry-<n>-5xx` for every account.
 
 After `Invoke-DrFailover.ps1 -Phase Promote`, region B serves traffic and region A is idle: enable
 `reconcilerStale` and `gatewayTelemetrySilent` in the region B file, disable them in the region A file,
@@ -381,7 +391,10 @@ The CI/CD pipeline ([CICD-ENVIRONMENT-DEPLOYMENT.md](CICD-ENVIRONMENT-DEPLOYMENT
 `health-b.optout.json` with `reason`, `approvedBy` and `approvedOn` (`yyyy-MM-dd`); each run then shows
 "NO REGION B HEALTH MONITORING". The prerequisite checks fail when region B does not use the standby
 group and stem, the primary workspace and Cosmos account, and its own APIM; when a shared target is
-alerted from both regions; or when an idle-standby rule is on.
+alerted from both regions; when an idle-standby rule is on; when a listed Foundry account has
+`foundryServerErrors` enabled in no file that can alert on it (`health.foundry-coverage`); or when a
+covered Foundry account is missing or exposes neither metric (`health.foundry-metrics`; unreadable
+metric definitions are reported as manual).
 
 ## 7. Not covered
 - Endpoints reachable only from a private network: availability tests run from Azure's public test

@@ -18,8 +18,11 @@
 - Health alerts for a DR standby (region B): new optional `cosmosId` field in the health configuration names the
   shared primary Cosmos DB account (validated as a full resource ID; a missing account stops with `cosmos_missing`);
   without it the driver still uses `<stem>-cosmos`. Template `deploy/example/health-b.json` and
-  [HEALTH-ALERTS.md](runbooks/HEALTH-ALERTS.md) section 6: shared Cosmos, Front Door and Foundry rules alert from region A
-  only, idle-standby rules off in region B. Prerequisite checks verify region B scope, duplicates and standby rules.
+  [HEALTH-ALERTS.md](runbooks/HEALTH-ALERTS.md) section 6: shared Cosmos and Front Door rules alert from region A
+  only, idle-standby rules off in region B. Each Foundry account is listed in one file with `foundryServerErrors`
+  enabled there; a region-B-only account (the template's Central US placeholder) is alerted from region B.
+  Prerequisite checks verify region B scope, duplicates, standby rules, Foundry coverage (`health.foundry-coverage`)
+  and that each covered Foundry account exposes `ModelRequests` or `ServerErrors` (`health.foundry-metrics`).
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 

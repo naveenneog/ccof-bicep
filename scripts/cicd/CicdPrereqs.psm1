@@ -75,6 +75,36 @@ function Get-CicdHealthPairChecks {
     $idle = @($script:IdleStandbyRules | Where-Object { Test-CicdHealthRuleOn $HealthB $_ })
     New-CicdCheck 'health.b.standby-rules' 'health' 'Idle-standby rules off in region B' $(if ($idle.Count) { 'fail' } else { 'pass' }) $(if ($idle.Count) { "$($idle -join ', ') on in health-b.json: they fire continuously on an idle standby; set rules.<name>.enabled false (swap after Promote)" } else { 'reconcilerStale and gatewayTelemetrySilent off for the standby' }) $script:HealthSource
 }
+# foundryServerErrors is one switch per config and alerts on every account that config lists. Each listed account
+# needs the rule on in at least one config that can alert on it (same subscription, or allowCrossSubscriptionFoundry).
+function Get-CicdFoundryAccounts {
+    param($HealthA, $HealthB)
+    $cfgs = @(@{ n = 'health-a.json'; h = $HealthA }, @{ n = 'health-b.json'; h = $HealthB } | Where-Object { $_.h })
+    $accounts = [ordered]@{}; $covered = [ordered]@{}; $why = @{}; $ids = @{}
+    foreach ($c in $cfgs) {
+        $on = Test-CicdHealthRuleOn $c.h 'foundryServerErrors'
+        foreach ($id in @($c.h['foundryAccountIds'] | Where-Object { $_ -is [string] -and $_ })) {
+            $k = $id.ToLowerInvariant(); if (-not $accounts.Contains($k)) { $accounts[$k] = ($id -split '/')[-1]; $why[$k] = [Collections.Generic.List[string]]::new() }
+            $crossOk = ($id -split '/')[2] -ieq [string]$c.h['subscriptionId'] -or $c.h['allowCrossSubscriptionFoundry'] -eq $true
+            if ($on -and $crossOk) { $covered[$k] = $c.n; $ids[$k] = $id }
+            elseif (-not $on) { $why[$k].Add("rules.foundryServerErrors off in $($c.n)") }
+            else { $why[$k].Add("another subscription and allowCrossSubscriptionFoundry not true in $($c.n)") }
+        }
+    }
+    @{ configs = $cfgs.Count; accounts = $accounts; covered = $covered; why = $why; ids = $ids }
+}
+function Get-CicdFoundryCoverage {
+    param($HealthA, $HealthB)
+    $f = Get-CicdFoundryAccounts $HealthA $HealthB
+    if (-not $f.configs) { return }
+    $accounts = $f.accounts; $covered = $f.covered; $why = $f.why
+    $t = 'Every listed Foundry account has a foundryServerErrors alert'
+    if (-not $accounts.Count) { return New-CicdCheck 'health.foundry-coverage' 'health' $t 'pass' 'no foundryAccountIds listed: no Foundry metric alert planned' $script:HealthSource }
+    $miss = @($accounts.Keys | Where-Object { -not $covered.Contains($_) })
+    if ($miss.Count) { return New-CicdCheck 'health.foundry-coverage' 'health' $t 'fail' "not monitored: $(@($miss | ForEach-Object { "$($accounts[$_]) ($($why[$_] -join '; '))" }) -join ', '); enable foundryServerErrors in the config that lists it, or remove the ID" $script:HealthSource }
+    New-CicdCheck 'health.foundry-coverage' 'health' $t 'pass' "$(@($accounts.Keys | ForEach-Object { "$($accounts[$_]) by $($covered[$_])" }) -join ', ')" $script:HealthSource
+}
+
 # Offline checks of the environment folder: files present, no REPLACE- placeholders, the DR config points at
 # the staged config and state folders the workflow restores, and Stage 4 runs in manual (no Graph write) mode.
 function Get-CicdConfigChecks {
@@ -112,7 +142,10 @@ function Get-CicdConfigChecks {
         $same = $Staged -and $Dr.subscriptionId -ceq $Staged.subscriptionId -and $Dr.tenantId -ceq $Staged.tenantId
         $out.Add((New-CicdCheck 'config.dr.subscription' 'config' 'DR and staged configs target one tenant and subscription' $(if ($same) { 'pass' } else { 'fail' }) "staged $($Staged.subscriptionId) / dr $($Dr.subscriptionId)" $script:ConfigSource))
     }
-    if ($Scope -contains 'health') { foreach ($c in @(Get-CicdHealthPairChecks $Dr $HealthA $HealthB)) { $out.Add($c) } }
+    if ($Scope -contains 'health') {
+        foreach ($c in @(Get-CicdHealthPairChecks $Dr $HealthA $HealthB)) { $out.Add($c) }
+        $cov = Get-CicdFoundryCoverage $HealthA $(if ($OptOut) { $null } else { $HealthB }); if ($cov) { $out.Add($cov) }
+    }
     return $out.ToArray()
 }
 
@@ -173,6 +206,29 @@ function Test-CicdHealthTargets {
     }
 }
 
+# Invoke-HealthAlerts.ps1 alerts on ModelRequests (5xx StatusCode) or ServerErrors and skips an account with neither,
+# with a note only; read the metric definitions of every covered account so a skipped account is not counted as monitored.
+function Test-CicdFoundryMetrics {
+    param($HealthA, $HealthB)
+    $f = Get-CicdFoundryAccounts $HealthA $HealthB
+    if (-not $f.covered.Count) { return }
+    $status = 'pass'; $ev = @()
+    foreach ($k in $f.covered.Keys) {
+        $id = $f.ids[$k]; $name = $f.accounts[$k]
+        if (@(Find-CicdPlaceholders @{ id = $id }).Count) { if ($status -eq 'pass') { $status = 'manual' }; $ev += "$name placeholder"; continue }
+        $r = Invoke-CicdArmGet "$id/providers/Microsoft.Insights/metricDefinitions" '2018-01-01'
+        if (-not $r.Ok) {
+            if (Test-CicdNotFound $r.Error) { $status = 'fail'; $ev += "$name not found ($($f.covered[$k]))" }
+            else { if ($status -eq 'pass') { $status = 'manual' }; $ev += "${name}: metric definitions unreadable ($(Get-CicdAzReason $r.Error)); verify the health preview plans its foundry alert" }
+            continue
+        }
+        $names = @($r.Data.value | ForEach-Object { [string]$_.name.value })
+        $m = if ($names -contains 'ModelRequests') { 'ModelRequests' } elseif ($names -contains 'ServerErrors') { 'ServerErrors' } else { $null }
+        if ($m) { $ev += "$name $m ($($f.covered[$k]))" } else { $status = 'fail'; $ev += "$name has no ModelRequests or ServerErrors metric: the driver skips it, not monitored" }
+    }
+    New-CicdCheck 'health.foundry-metrics' 'health' 'Foundry accounts expose the metric the alert uses' $status ($ev -join '; ') 'docs/runbooks/HEALTH-ALERTS.md#foundryservererrors'
+}
+
 function Invoke-CicdPrerequisites {
     param([string]$Dir, [string]$Mode, [string[]]$Scope, [switch]$Offline)
     $staged = Read-CicdJson (Join-Path $Dir 'staged.config.json')
@@ -200,6 +256,7 @@ function Invoke-CicdPrerequisites {
     foreach ($c in (Test-CicdNetwork $staged $(if ($Scope -contains 'standby') { $dr } else { $null }))) { $checks.Add($c) }
     if ($dr -and $Scope -contains 'frontdoor') { foreach ($c in (Test-CicdFrontDoorInputs $dr (Join-Path $Dir '.dr-state'))) { $checks.Add($c) } }
     if ($Scope -contains 'health') { foreach ($c in @(Test-CicdHealthTargets $staged @{ a = $ha; b = $hb })) { $checks.Add($c) } }
+    if ($Scope -contains 'health') { $fm = Test-CicdFoundryMetrics $ha $(if ($optOut) { $null } else { $hb }); if ($fm) { $checks.Add($fm) } }
     return $checks.ToArray()
 }
 
