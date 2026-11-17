@@ -9,20 +9,84 @@ $script:Providers = @('Microsoft.Web', 'Microsoft.DocumentDB', 'Microsoft.Storag
 
 function Read-CicdJson { param([string]$Path) if (Test-Path -LiteralPath $Path) { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -Depth 100 } else { $null } }
 
+$script:HealthSource = 'docs/runbooks/HEALTH-ALERTS.md#6-region-b-dr-standby'
+$script:SharedRules = @{ cosmos = @('cosmosThrottled', 'cosmosServerErrors', 'cosmosAvailability'); frontDoor = @('frontDoorOriginHealth', 'frontDoor5xx') }
+$script:IdleStandbyRules = @('reconcilerStale', 'gatewayTelemetrySilent')
+
+# A DR environment deploys region B alerts (health-b.json) or records an explicit, approved opt-out
+# (health-b.optout.json); the opt-out is reported as manual so the run summary shows that region B is not monitored.
+function Get-CicdHealthBPresence {
+    param([string]$Dir, $Dr, $HealthB, $OptOut)
+    $t = 'health-b.json (region B alerts) or explicit opt-out'
+    if ($HealthB -and $OptOut) { return New-CicdCheck 'config.health-b' 'config' $t 'fail' "both $Dir/health-b.json and $Dir/health-b.optout.json exist; keep one" $script:HealthSource }
+    if ($OptOut) {
+        $bad = @(foreach ($k in 'reason', 'approvedBy', 'approvedOn') { if (-not ($OptOut -is [Collections.IDictionary] -and $OptOut[$k] -is [string] -and $OptOut[$k].Trim())) { $k } })
+        if (-not $bad.Count -and $OptOut.approvedOn -cnotmatch '^\d{4}-\d{2}-\d{2}$') { $bad = @('approvedOn (yyyy-MM-dd)') }
+        if ($bad.Count) { return New-CicdCheck 'config.health-b' 'config' $t 'fail' "$Dir/health-b.optout.json needs non-empty $($bad -join ', ')" $script:HealthSource }
+        return New-CicdCheck 'config.health-b' 'config' $t 'manual' "EXPLICIT OPT-OUT: NO region B health monitoring; approved by $($OptOut.approvedBy) on $($OptOut.approvedOn): $($OptOut.reason)" $script:HealthSource
+    }
+    if (-not $Dr) { return New-CicdCheck 'config.health-b' 'config' $t 'pass' 'no dr-standby.config.json: region B not applicable' $script:HealthSource }
+    return New-CicdCheck 'config.health-b' 'config' $t 'fail' "$Dir/health-b.json missing for a DR environment; copy deploy/example/health-b.json, or record an approved $Dir/health-b.optout.json {reason, approvedBy, approvedOn} to run without region B alerts" $script:HealthSource
+}
+
+# The workspace, APIM and Cosmos account a health config resolves to, as Invoke-HealthAlerts.ps1 does.
+function Get-CicdHealthEffective {
+    param($H)
+    $base = "/subscriptions/$($H['subscriptionId'])/resourceGroups/$($H['resourceGroup'])/providers"
+    @{ workspace = $(if ($H['workspaceId']) { [string]$H['workspaceId'] } else { "$base/Microsoft.OperationalInsights/workspaces/$($H['stem'])-law" })
+        apim = $(if (Get-CicdValue $H 'apim.id') { [string](Get-CicdValue $H 'apim.id') } else { "$base/Microsoft.ApiManagement/service/$($H['stem'])-apim" })
+        cosmos = $(if ($H['cosmosId']) { [string]$H['cosmosId'] } else { "$base/Microsoft.DocumentDB/databaseAccounts/$($H['stem'])-cosmos" }) }
+}
+function Test-CicdHealthRuleOn { param($H, [string]$Name) $r = Get-CicdValue $H "rules.$Name"; -not ($r -is [Collections.IDictionary] -and $r.Contains('enabled') -and $r.enabled -eq $false) }
+function Test-CicdProbeOn { param($H, [string]$Key) [string](Get-CicdValue $H "probes.$Key") -cne 'off' }
+
+# Region B of a DR environment: the standby group and stem, the primary workspace and Cosmos account, its own APIM;
+# a shared target (Cosmos, Front Door, Foundry) alerts from one region only; idle-standby rules are off in region B.
+function Get-CicdHealthPairChecks {
+    param($Dr, $HealthA, $HealthB)
+    if (-not ($Dr -and $HealthA -and $HealthB)) { return }
+    $ids = { param($h) @{ s = $h['subscriptionId']; r = $h['resourceGroup']; t = $h['stem']; w = $h['workspaceId']; c = $h['cosmosId']; p = (Get-CicdValue $h 'apim.id') } }
+    if (@(Find-CicdPlaceholders (& $ids $HealthA)).Count -or @(Find-CicdPlaceholders (& $ids $HealthB)).Count) { return }
+    $a = Get-CicdHealthEffective $HealthA; $b = Get-CicdHealthEffective $HealthB
+    $suffix = [string](Get-CicdValue $Dr 'standby.nameSuffix'); if (-not $suffix) { $suffix = 'b' }
+    $wantStem = "$($HealthA['stem'])-$suffix"; $wantRg = [string](Get-CicdValue $Dr 'secondary.resourceGroup')
+    $bad = @(
+        if ([string]$HealthB['subscriptionId'] -ine [string]$HealthA['subscriptionId']) { "subscriptionId $($HealthB['subscriptionId']) is not region A's $($HealthA['subscriptionId'])" }
+        if ($wantRg -and [string]$HealthB['resourceGroup'] -ine $wantRg) { "resourceGroup $($HealthB['resourceGroup']) is not the DR secondary.resourceGroup $wantRg" }
+        if ([string]$HealthB['stem'] -cne $wantStem) { "stem $($HealthB['stem']) is not $wantStem (<A stem>-<standby.nameSuffix>)" }
+        if ($b.workspace -ine $a.workspace) { "workspace $(($b.workspace -split '/')[-1]) is not the primary workspace $(($a.workspace -split '/')[-1]) (set workspaceId)" }
+        if ($b.apim -ieq $a.apim) { "APIM $(($b.apim -split '/')[-1]) is region A's APIM; region B watches the standby APIM" }
+        if ($b.cosmos -ine $a.cosmos) { "Cosmos $(($b.cosmos -split '/')[-1]) is not the shared primary account $(($a.cosmos -split '/')[-1]) (set cosmosId)" })
+    New-CicdCheck 'health.b.scope' 'health' 'Health alerts region B scope (standby APIM and apps, shared workspace and Cosmos)' $(if ($bad.Count) { 'fail' } else { 'pass' }) $(if ($bad.Count) { $bad -join '; ' } else { "stem $wantStem in $($HealthB['resourceGroup']); workspace $(($a.workspace -split '/')[-1]) and Cosmos $(($a.cosmos -split '/')[-1]) shared with region A; APIM $(($b.apim -split '/')[-1])" }) $script:HealthSource
+
+    $dup = [Collections.Generic.List[string]]::new()
+    if ($b.cosmos -ieq $a.cosmos) { foreach ($n in $script:SharedRules.cosmos) { if ((Test-CicdHealthRuleOn $HealthA $n) -and (Test-CicdHealthRuleOn $HealthB $n)) { $dup.Add("$n (Cosmos $(($a.cosmos -split '/')[-1]))") } } }
+    $pa = [string](Get-CicdValue $HealthA 'frontDoor.profileId'); $pb = [string](Get-CicdValue $HealthB 'frontDoor.profileId')
+    if ($pa -and $pa -ieq $pb) { foreach ($n in $script:SharedRules.frontDoor) { if ((Test-CicdHealthRuleOn $HealthA $n) -and (Test-CicdHealthRuleOn $HealthB $n)) { $dup.Add("$n (profile $(($pa -split '/')[-1]))") } } }
+    $ha = [string](Get-CicdValue $HealthA 'frontDoor.host'); $hb = [string](Get-CicdValue $HealthB 'frontDoor.host')
+    if ($ha -and $ha -ieq $hb -and (Test-CicdHealthRuleOn $HealthA 'availability') -and (Test-CicdHealthRuleOn $HealthB 'availability')) {
+        foreach ($k in 'frontDoorGateway', 'frontDoorAdmin') { if ((Test-CicdProbeOn $HealthA $k) -and (Test-CicdProbeOn $HealthB $k)) { $dup.Add("probes.$k (web test on $ha)") } }
+    }
+    $fa = @($HealthA['foundryAccountIds'] | Where-Object { $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    $both = @($HealthB['foundryAccountIds'] | Where-Object { $_ -and $fa -contains ([string]$_).ToLowerInvariant() })
+    if ($both.Count -and (Test-CicdHealthRuleOn $HealthA 'foundryServerErrors') -and (Test-CicdHealthRuleOn $HealthB 'foundryServerErrors')) { $dup.Add("foundryServerErrors ($(@($both | ForEach-Object { ($_ -split '/')[-1] }) -join ', '))") }
+    New-CicdCheck 'health.shared-duplicates' 'health' 'Shared targets alert from one region only' $(if ($dup.Count) { 'fail' } else { 'pass' }) $(if ($dup.Count) { "enabled in both health-a.json and health-b.json: $($dup -join '; '); set rules.<name>.enabled false (or probes.<key> off) in health-b.json" } else { 'no Cosmos account, Front Door profile or host, or Foundry account is alerted from both regions' }) $script:HealthSource
+
+    $idle = @($script:IdleStandbyRules | Where-Object { Test-CicdHealthRuleOn $HealthB $_ })
+    New-CicdCheck 'health.b.standby-rules' 'health' 'Idle-standby rules off in region B' $(if ($idle.Count) { 'fail' } else { 'pass' }) $(if ($idle.Count) { "$($idle -join ', ') on in health-b.json: they fire continuously on an idle standby; set rules.<name>.enabled false (swap after Promote)" } else { 'reconcilerStale and gatewayTelemetrySilent off for the standby' }) $script:HealthSource
+}
 # Offline checks of the environment folder: files present, no REPLACE- placeholders, the DR config points at
 # the staged config and state folders the workflow restores, and Stage 4 runs in manual (no Graph write) mode.
 function Get-CicdConfigChecks {
-    param([string]$Dir, [string[]]$Scope, $Staged, $Dr, $HealthA, $HealthB)
+    param([string]$Dir, [string[]]$Scope, $Staged, $Dr, $HealthA, $HealthB, $OptOut)
     $out = [Collections.Generic.List[object]]::new()
     $out.Add((New-CicdCheck 'config.staged' 'config' 'staged.config.json present' $(if ($Staged) { 'pass' } else { 'fail' }) $(if ($Staged) { "$Dir/staged.config.json read" } else { "$Dir/staged.config.json missing (copy deploy/example/staged.config.json)" }) $script:ConfigSource))
     $needDr = $Scope -contains 'standby' -or $Scope -contains 'frontdoor'
     if ($needDr) { $out.Add((New-CicdCheck 'config.dr' 'config' 'dr-standby.config.json present' $(if ($Dr) { 'pass' } else { 'fail' }) $(if ($Dr) { "$Dir/dr-standby.config.json read" } else { "$Dir/dr-standby.config.json missing; Front Door and the DR standby need it" }) $script:ConfigSource)) }
     foreach ($h in @(@{ n = 'a'; c = $HealthA }, @{ n = 'b'; c = $HealthB })) {
         if ($Scope -notcontains 'health') { break }
-        if (-not $h.c -and $h.n -eq 'b') {
-            # Invoke-HealthAlerts needs <stem>-cosmos in the target group; the DR standby shares the primary Cosmos account.
-            $out.Add((New-CicdCheck 'config.health-b' 'config' 'health-b.json (region B alerts)' 'manual' "$Dir/health-b.json absent: no region B alert rules; the health driver needs <stem>-cosmos in region B, which a DR standby does not have (HEALTH-ALERTS.md section 6); watch region B with failover Status" 'docs/runbooks/HEALTH-ALERTS.md')); continue
-        }        if (-not $h.c) { $out.Add((New-CicdCheck "config.health-$($h.n)" 'config' "health-$($h.n).json present" 'fail' "$Dir/health-$($h.n).json missing" 'docs/runbooks/HEALTH-ALERTS.md')); continue }
+        if ($h.n -eq 'b' -and ($OptOut -or -not $h.c)) { $out.Add((Get-CicdHealthBPresence $Dir $Dr $HealthB $OptOut)); continue }
+        if (-not $h.c) { $out.Add((New-CicdCheck "config.health-$($h.n)" 'config' "health-$($h.n).json present" 'fail' "$Dir/health-$($h.n).json missing" 'docs/runbooks/HEALTH-ALERTS.md')); continue }
         $ph = @(Find-CicdPlaceholders $h.c)
         $fdOnly = $ph.Count -gt 0 -and @($ph | Where-Object { $_ -notlike 'frontDoor.*' }).Count -eq 0
         $status = if (-not $ph.Count) { 'pass' } elseif ($fdOnly) { 'manual' } else { 'fail' }
@@ -48,6 +112,7 @@ function Get-CicdConfigChecks {
         $same = $Staged -and $Dr.subscriptionId -ceq $Staged.subscriptionId -and $Dr.tenantId -ceq $Staged.tenantId
         $out.Add((New-CicdCheck 'config.dr.subscription' 'config' 'DR and staged configs target one tenant and subscription' $(if ($same) { 'pass' } else { 'fail' }) "staged $($Staged.subscriptionId) / dr $($Dr.subscriptionId)" $script:ConfigSource))
     }
+    if ($Scope -contains 'health') { foreach ($c in @(Get-CicdHealthPairChecks $Dr $HealthA $HealthB)) { $out.Add($c) } }
     return $out.ToArray()
 }
 
@@ -76,23 +141,24 @@ function Get-CicdRequiredActions {
     return $list.ToArray()
 }
 
-# The workspace and APIM each health config resolves to, as Invoke-HealthAlerts.ps1 does (workspaceId or <stem>-law,
-# apim.id or <stem>-apim). Missing is a fail when no later step creates it: Stage 1 does not create <stem>-apim when
-# apim.existing is used, and the DR standby (region B) logs to the primary workspace. Otherwise manual until Stage 1.
+# The workspace, APIM and Cosmos account each health config resolves to, as Invoke-HealthAlerts.ps1 does (workspaceId or
+# <stem>-law, apim.id or <stem>-apim, cosmosId or <stem>-cosmos). Missing is a fail when no later step creates it: Stage 1
+# creates no <stem>-apim with apim.existing, and the DR standby (region B) shares the primary workspace and Cosmos account.
+# Otherwise manual until Stage 1.
 function Test-CicdHealthTargets {
     param($Staged, [hashtable]$Configs)
     $src = 'docs/runbooks/HEALTH-ALERTS.md'
     foreach ($n in @('a', 'b')) {
         $h = $Configs[$n]
         if (-not $h -or @(Find-CicdPlaceholders @{ s = $h['subscriptionId']; r = $h['resourceGroup']; t = $h['stem'] }).Count) { continue }
-        $base = "/subscriptions/$($h['subscriptionId'])/resourceGroups/$($h['resourceGroup'])/providers"
+        $eff = Get-CicdHealthEffective $h
         $targets = @(
-            @{ key = 'workspaceId'; id = $(if ($h['workspaceId']) { [string]$h['workspaceId'] } else { "$base/Microsoft.OperationalInsights/workspaces/$($h['stem'])-law" }); api = '2023-09-01'
+            @{ key = 'workspaceId'; id = $eff.workspace; api = '2023-09-01'
                 fixed = [bool]$h['workspaceId']; never = ($n -eq 'b'); why = 'the DR standby logs to the primary workspace; set workspaceId to it' }
-            @{ key = 'apim.id'; id = $(if (Get-CicdValue $h 'apim.id') { [string](Get-CicdValue $h 'apim.id') } else { "$base/Microsoft.ApiManagement/service/$($h['stem'])-apim" }); api = '2024-05-01'
+            @{ key = 'apim.id'; id = $eff.apim; api = '2024-05-01'
                 fixed = [bool](Get-CicdValue $h 'apim.id'); never = ($n -eq 'a' -and [bool](Get-CicdValue $Staged 'apim.existing')); why = 'Stage 1 uses apim.existing and creates no <stem>-apim; set apim.id to the existing APIM' }
-            @{ key = 'cosmos'; id = "$base/Microsoft.DocumentDB/databaseAccounts/$($h['stem'])-cosmos"; api = '2024-11-15'
-                fixed = $false; never = ($n -eq 'b'); why = 'the DR standby shares the primary Cosmos account and the health driver has no Cosmos ID field; remove health-b.json' }
+            @{ key = 'cosmos'; id = $eff.cosmos; api = '2024-11-15'
+                fixed = [bool]$h['cosmosId']; never = ($n -eq 'b'); why = 'the DR standby shares the primary Cosmos account; set cosmosId to it' }
         )
         $status = 'pass'; $ev = @()
         foreach ($t in $targets) {
@@ -103,7 +169,7 @@ function Test-CicdHealthTargets {
             if ($t.fixed -or $t.never) { $status = 'fail'; $ev += "$($t.key) $name not found ($(if ($t.fixed) { 'configured ID' } else { $t.why }))" }
             else { if ($status -eq 'pass') { $status = 'manual' }; $ev += "$($t.key) $name not found yet (Stage 1 creates it; the health job stops with *_missing otherwise)" }
         }
-        New-CicdCheck "health.$n.targets" 'health' "Health alerts region $($n.ToUpper()) workspace and APIM" $status ($ev -join '; ') $src
+        New-CicdCheck "health.$n.targets" 'health' "Health alerts region $($n.ToUpper()) workspace, APIM and Cosmos" $status ($ev -join '; ') $src
     }
 }
 
@@ -111,9 +177,9 @@ function Invoke-CicdPrerequisites {
     param([string]$Dir, [string]$Mode, [string[]]$Scope, [switch]$Offline)
     $staged = Read-CicdJson (Join-Path $Dir 'staged.config.json')
     $dr = Read-CicdJson (Join-Path $Dir 'dr-standby.config.json')
-    $ha = Read-CicdJson (Join-Path $Dir 'health-a.json'); $hb = Read-CicdJson (Join-Path $Dir 'health-b.json')
+    $ha = Read-CicdJson (Join-Path $Dir 'health-a.json'); $hb = Read-CicdJson (Join-Path $Dir 'health-b.json'); $optOut = Read-CicdJson (Join-Path $Dir 'health-b.optout.json')
     $checks = [Collections.Generic.List[object]]::new()
-    foreach ($c in (Get-CicdConfigChecks $Dir $Scope $staged $dr $ha $hb)) { $checks.Add($c) }
+    foreach ($c in (Get-CicdConfigChecks $Dir $Scope $staged $dr $ha $hb $optOut)) { $checks.Add($c) }
     if (-not $staged) { return $checks.ToArray() }
     foreach ($c in (Test-CicdEntra $staged -Offline:$Offline)) { $checks.Add($c) }
     if ($Offline) { return $checks.ToArray() }

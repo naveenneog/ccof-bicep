@@ -118,6 +118,10 @@ test("deploy-environment: run order, stage 4 manual, no manual-only operation", 
     if (id.startsWith("fd-primary-")) assert.match(body, /needs: \[resolve, [^\n]*\n\s+if: [^\n]*needs\.resolve\.outputs\.fd_mode != 'full'/, `${id} skipped after a full Front Door`);
   for (const id of ["health-b-preview", "health-b-apply"]) assert.match(j.get(id) ?? "", /needs: \[resolve, [^\n]*\n\s+if: [^\n]*needs\.resolve\.outputs\.health_b == 'true'/, `${id} runs only when health-b.json exists`);
   assert.match(j.get("health-test") ?? "", /fromJSON\(needs\.resolve\.outputs\.health_b == 'true'/, "health-test matrix follows health-b.json");
+  const resolve = j.get("resolve") ?? "";
+  assert.match(resolve, /if \(\$hb -eq \$optOut\) \{ throw [^\n]*exactly one of health-b\.json[^\n]*health-b\.optout\.json/, "a DR environment needs health-b.json or an explicit opt-out");
+  assert.match(resolve, /-in 'all', 'health' -and \(Test-Path "deploy\/\$e\/dr-standby\.config\.json"\)/, "region B requirement applies to DR environments in health scopes");
+  assert.match(resolve, /::warning::NO REGION B HEALTH MONITORING[\s\S]*\*\*NO REGION B HEALTH MONITORING\*\*[^\n]*GITHUB_STEP_SUMMARY/, "the opt-out is a visible warning and summary line");
   }
   // failover-Status needs the standby state; only scopes that build or keep the standby run it.
   const fin = j.get("final") ?? "";

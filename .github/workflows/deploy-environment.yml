@@ -108,6 +108,15 @@ jobs:
             default { 'staged.config.json', 'dr-standby.config.json' }
           }
           foreach ($f in $need) { if (-not (Test-Path "deploy/$e/$f")) { throw "deploy/$e/$f is missing (needed by scope $env:CCOF_SCOPE)" } }
+          # A DR environment deploys region B alerts, or opts out explicitly; the opt-out is shown on every run.
+          if ($env:CCOF_SCOPE -in 'all', 'health' -and (Test-Path "deploy/$e/dr-standby.config.json")) {
+            $hb = Test-Path "deploy/$e/health-b.json"; $optOut = Test-Path "deploy/$e/health-b.optout.json"
+            if ($hb -eq $optOut) { throw "deploy/$e needs exactly one of health-b.json (region B alerts) or health-b.optout.json (explicit opt-out) for a DR environment" }
+            if ($optOut) {
+              Write-Host "::warning::NO REGION B HEALTH MONITORING: deploy/$e/health-b.optout.json (explicit opt-out)"
+              "**NO REGION B HEALTH MONITORING** (explicit opt-out: deploy/$e/health-b.optout.json)" | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
           $gates = @('preview')
           if ($env:CCOF_APPLY -eq 'true') { $gates += 'apply', 'gate-network', 'gate-entra', 'gate-privatelink', 'gate-security', 'gate-frontdoor' }
           $h = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json' }
@@ -139,7 +148,7 @@ jobs:
           $mode = if (Test-Path $p) { [string](Get-Content $p -Raw | ConvertFrom-Json).mode } else { 'none' }
           if ($mode -cnotmatch '^(none|primaryOnly|full)$') { throw "unexpected Front Door mode '$mode' in $p" }
           "mode=$mode" | Add-Content $env:GITHUB_OUTPUT
-          # health-b.json is optional: the health driver cannot target a DR standby (no <stem>-cosmos in region B).
+          # Region B alerts run when health-b.json exists (the check above requires it or an opt-out for a DR environment).
           "health_b=$([string](Test-Path "deploy/$env:CCOF_ENV/health-b.json")).ToLower()" | Add-Content $env:GITHUB_OUTPUT
           "Saved Front Door mode: $mode" | Add-Content $env:GITHUB_STEP_SUMMARY
 
@@ -445,7 +454,7 @@ jobs:
     uses: ./.github/workflows/ccof-step.yml
     with: { environment: '${{ inputs.environment }}', step: frontdoor-Verify, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true, timeout: 60 }
 
-  # ---------------------------------------------------------------- health alerts, region A and B if health-b.json exists (docs/runbooks/HEALTH-ALERTS.md)
+  # ---------------------------------------------------------------- health alerts, region A and B (health-b.json; docs/runbooks/HEALTH-ALERTS.md section 6)
   health-a-preview:
     needs: fd-full-verify
     if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'health') }}

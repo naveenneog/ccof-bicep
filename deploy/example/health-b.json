@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "subscriptionId": "REPLACE-00000000-0000-4000-8000-000000000002",
+  "resourceGroup": "REPLACE-dr-resource-group",
+  "stem": "REPLACE-prefix-uniquesuffix-b",
+  "workspaceId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-resource-group/providers/Microsoft.OperationalInsights/workspaces/REPLACE-prefix-uniquesuffix-law",
+  "cosmosId": "/subscriptions/REPLACE-00000000-0000-4000-8000-000000000002/resourceGroups/REPLACE-resource-group/providers/Microsoft.DocumentDB/databaseAccounts/REPLACE-prefix-uniquesuffix-cosmos",
+  "emailReceivers": [
+    "REPLACE-ops@example.com"
+  ],
+  "tags": {
+    "workload": "claude-code-on-foundry",
+    "region": "b-standby"
+  },
+  "probes": {
+    "apimDirect": "auto",
+    "adminDirect": "auto",
+    "resolverDirect": "auto"
+  },
+  "evaluationFrequencyMinutes": 5,
+  "rules": {
+    "cosmosThrottled": { "enabled": false },
+    "cosmosServerErrors": { "enabled": false },
+    "cosmosAvailability": { "enabled": false },
+    "frontDoorOriginHealth": { "enabled": false },
+    "frontDoor5xx": { "enabled": false },
+    "foundryServerErrors": { "enabled": false },
+    "reconcilerStale": { "enabled": false },
+    "gatewayTelemetrySilent": { "enabled": false }
+  }
+}

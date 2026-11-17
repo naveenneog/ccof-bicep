@@ -102,6 +102,13 @@ function New-Dr {
         frontDoor = @{ stem = 'ccof-fd'; wafMode = 'Prevention' } }
 }
 function New-Health([string]$Stem = 'x') { @{ subscriptionId = $SUB; resourceGroup = 'app-rg'; stem = $Stem; frontDoor = @{ host = 'REPLACE-endpoint.z01.azurefd.net' } } }
+# Region B (DR standby): shared primary workspace and Cosmos account; shared and idle-standby rules off.
+function New-HealthB {
+    $off = { @{ enabled = $false } }
+    @{ subscriptionId = $SUB; resourceGroup = 'app-rg'; stem = 'x-b'
+        workspaceId = "$rgId/providers/Microsoft.OperationalInsights/workspaces/x-law"; cosmosId = "$rgId/providers/Microsoft.DocumentDB/databaseAccounts/x-cosmos"
+        rules = @{ cosmosThrottled = & $off; cosmosServerErrors = & $off; cosmosAvailability = & $off; frontDoorOriginHealth = & $off; frontDoor5xx = & $off; foundryServerErrors = & $off; reconcilerStale = & $off; gatewayTelemetrySilent = & $off } }
+}
 
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('ccof-cicd-prereq-' + [guid]::NewGuid().ToString('N'))
 function Write-Env([hashtable]$Files) {
@@ -110,7 +117,7 @@ function Write-Env([hashtable]$Files) {
     foreach ($k in $Files.Keys) { if ($null -ne $Files[$k]) { $Files[$k] | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $scratch $k) -Encoding utf8NoBOM } }
 }
 function Get-Run([string]$Mode = 'preview', [hashtable]$Override = @{}) {
-    $files = @{ 'staged.config.json' = (New-Staged); 'dr-standby.config.json' = (New-Dr); 'health-a.json' = (New-Health); 'health-b.json' = $null }
+    $files = @{ 'staged.config.json' = (New-Staged); 'dr-standby.config.json' = (New-Dr); 'health-a.json' = (New-Health); 'health-b.json' = (New-HealthB); 'health-b.optout.json' = $null }
     foreach ($k in $Override.Keys) { $files[$k] = $Override[$k] }
     Write-Env $files
     return @(Invoke-CicdPrerequisites $scratch $Mode @('primary', 'frontdoor', 'standby', 'health'))
@@ -223,18 +230,62 @@ try {
     Check 'neg: Foundry create true with placeholder -> fail' ((St $r 'config.staged.placeholders') -eq 'fail')
     Reset-World; $h = New-Health; $h.subscriptionId = 'REPLACE-sub'; $r = Get-Run 'preview' @{ 'health-b.json' = $h }
     Check 'neg: health placeholder outside frontDoor -> fail' ((St $r 'config.health-b') -eq 'fail')
-    # Health alert targets: the driver stops with apim_missing / workspace_missing when they do not resolve.
-    $hb = New-Health 'x-b'; $hb.workspaceId = "$rgId/providers/Microsoft.OperationalInsights/workspaces/x-law"
-    Reset-World; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
-    Check 'health A targets resolve by stem -> pass' ((St $r 'health.a.targets') -eq 'pass')
-    Check 'neg: region B config (no <stem>-b-cosmos for a standby) -> fail' ((St $r 'health.b.targets') -eq 'fail' -and (Get-C $r 'health.b.targets').evidence -match 'cosmos')
+    # Health alert targets: the driver stops with apim_missing / workspace_missing / cosmos_missing when they do not resolve.
     Reset-World; $r = Get-Run 'apply'
-    Check 'health-b.json absent -> manual, no region B target check' ((St $r 'config.health-b') -eq 'manual' -and (St $r 'health.b.targets') -eq '<absent>')
-    Reset-World; $r = Get-Run 'apply' @{ 'health-b.json' = (New-Health 'x-b') }
-    Check 'neg: region B without workspaceId (standby logs to the primary workspace) -> fail' ((St $r 'health.b.targets') -eq 'fail' -and (Get-C $r 'health.b.targets').evidence -match 'workspaceId')
-    Reset-World; $script:W.healthTargets = @('x-law', 'x-cosmos', 'x-b-apim'); $stg = New-Staged; $stg.apim = @{ existing = @{ name = 'corp-apim' } }; $r = Get-Run 'apply' @{ 'staged.config.json' = $stg; 'health-b.json' = $hb }
+    Check 'health A targets resolve by stem -> pass' ((St $r 'health.a.targets') -eq 'pass')
+    Check 'region B with cosmosId and workspaceId of the primary -> targets, scope, shared and standby checks pass' ((St $r 'config.health-b') -eq 'pass' -and (St $r 'health.b.targets') -eq 'pass' -and (St $r 'health.b.scope') -eq 'pass' -and (St $r 'health.shared-duplicates') -eq 'pass' -and (St $r 'health.b.standby-rules') -eq 'pass')
+    Check 'region B Cosmos target is the configured cosmosId' ((Get-C $r 'health.b.targets').evidence -match 'cosmos x-cosmos found')
+    Reset-World; $hb = New-HealthB; $hb.Remove('cosmosId'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B without cosmosId (no <stem>-b-cosmos for a standby) -> fail, hint cosmosId' ((St $r 'health.b.targets') -eq 'fail' -and (Get-C $r 'health.b.targets').evidence -match 'set cosmosId' -and (St $r 'health.b.scope') -eq 'fail')
+    Reset-World; $hb = New-HealthB; $hb.cosmosId = "$rgId/providers/Microsoft.DocumentDB/databaseAccounts/gone-cosmos"; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: cosmosId that does not resolve -> fail (configured ID)' ((St $r 'health.b.targets') -eq 'fail' -and (Get-C $r 'health.b.targets').evidence -match 'gone-cosmos not found \(configured ID\)')
+    Reset-World; $hb = New-HealthB; $hb.Remove('workspaceId'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B without workspaceId (standby logs to the primary workspace) -> fail' ((St $r 'health.b.targets') -eq 'fail' -and (Get-C $r 'health.b.targets').evidence -match 'workspaceId' -and (Get-C $r 'health.b.scope').evidence -match 'workspace')
+    # A DR environment must deploy region B alerts or opt out explicitly and visibly.
+    Reset-World; $r = Get-Run 'apply' @{ 'health-b.json' = $null }
+    Check 'neg: DR environment without health-b.json and no opt-out -> fail' ((St $r 'config.health-b') -eq 'fail' -and (Get-C $r 'config.health-b').evidence -match 'health-b\.optout\.json' -and (St $r 'health.b.targets') -eq '<absent>')
+    $optOut = @{ reason = 'region B watched by failover Status'; approvedBy = 'Ops lead'; approvedOn = '2026-11-20' }
+    Reset-World; $r = Get-Run 'apply' @{ 'health-b.json' = $null; 'health-b.optout.json' = $optOut }
+    Check 'explicit opt-out -> manual, evidence says NO region B monitoring' ((St $r 'config.health-b') -eq 'manual' -and (Get-C $r 'config.health-b').evidence -match 'NO region B health monitoring' -and (Get-C $r 'config.health-b').evidence -match 'Ops lead')
+    Reset-World; $o = $optOut.Clone(); $o.Remove('approvedBy'); $r = Get-Run 'apply' @{ 'health-b.json' = $null; 'health-b.optout.json' = $o }
+    Check 'neg: opt-out without approvedBy -> fail' ((St $r 'config.health-b') -eq 'fail' -and (Get-C $r 'config.health-b').evidence -match 'approvedBy')
+    Reset-World; $o = $optOut.Clone(); $o.approvedOn = '20 Nov'; $r = Get-Run 'apply' @{ 'health-b.json' = $null; 'health-b.optout.json' = $o }
+    Check 'neg: opt-out with a malformed approvedOn -> fail' ((St $r 'config.health-b') -eq 'fail')
+    Reset-World; $r = Get-Run 'apply' @{ 'health-b.optout.json' = $optOut }
+    Check 'neg: health-b.json and health-b.optout.json together -> fail' ((St $r 'config.health-b') -eq 'fail' -and (Get-C $r 'config.health-b').evidence -match 'both')
+    Reset-World; $r = Get-Run 'apply' @{ 'health-b.json' = $null; 'dr-standby.config.json' = $null }
+    Check 'no DR config: region B not applicable -> pass' ((St $r 'config.health-b') -eq 'pass' -and (Get-C $r 'config.health-b').evidence -match 'not applicable')
+    # Region B scope: secondary resource group, <A stem>-<nameSuffix>, the primary workspace and Cosmos, its own APIM.
+    Reset-World; $hb = New-HealthB; $hb.stem = 'y-b'; $script:W.healthTargets += 'y-b-apim'; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B stem not <A stem>-<nameSuffix> -> scope fail' ((St $r 'health.b.scope') -eq 'fail' -and (Get-C $r 'health.b.scope').evidence -match 'stem')
+    Reset-World; $d = New-Dr; $d.standby.nameSuffix = 'c'; $r = Get-Run 'apply' @{ 'dr-standby.config.json' = $d }
+    Check 'neg: stem uses the DR nameSuffix -> x-b against suffix c fails' ((St $r 'health.b.scope') -eq 'fail' -and (Get-C $r 'health.b.scope').evidence -match 'x-c')
+    Reset-World; $hb = New-HealthB; $hb.resourceGroup = 'other-rg'; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B resource group not the DR secondary group -> scope fail' ((St $r 'health.b.scope') -eq 'fail' -and (Get-C $r 'health.b.scope').evidence -match 'resourceGroup')
+    Reset-World; $hb = New-HealthB; $hb.apim = @{ id = "$rgId/providers/Microsoft.ApiManagement/service/x-apim" }; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B APIM is the region A APIM -> scope fail' ((St $r 'health.b.scope') -eq 'fail' -and (Get-C $r 'health.b.scope').evidence -match 'APIM')
+    Reset-World; $hb = New-HealthB; $hb.workspaceId = "$rgId/providers/Microsoft.OperationalInsights/workspaces/x-b-law"; $script:W.healthTargets += 'x-b-law'; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: region B workspace not the primary workspace -> scope fail' ((St $r 'health.b.scope') -eq 'fail' -and (Get-C $r 'health.b.scope').evidence -match 'workspace')
+    # Shared targets alert once (region A); idle-standby rules stay off in region B.
+    Reset-World; $hb = New-HealthB; $hb.rules.Remove('cosmosThrottled'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: cosmosThrottled on in A and B for the shared account -> duplicate fail' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'cosmosThrottled')
+    $fdA = @{ host = 'ccof-fd-abc.z01.azurefd.net'; profileId = "$rgId/providers/Microsoft.Cdn/profiles/ccof-fd" }
+    Reset-World; $ha = New-Health; $ha.frontDoor = $fdA; $hb = New-HealthB; $hb.frontDoor = $fdA.Clone(); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: same Front Door host probed from A and B -> duplicate fail (web tests)' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'frontDoorGateway')
+    $hb.probes = @{ frontDoorGateway = 'off'; frontDoorAdmin = 'off' }; $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'same Front Door with B probes off and FD rules off -> pass' ((St $r 'health.shared-duplicates') -eq 'pass')
+    $hb.rules.Remove('frontDoor5xx'); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: frontDoor5xx on in A and B for one profile -> duplicate fail' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'frontDoor5xx')
+    $fa = "/subscriptions/$SUB/resourceGroups/f-rg/providers/Microsoft.CognitiveServices/accounts/acct"
+    Reset-World; $ha = New-Health; $ha.foundryAccountIds = @($fa); $hb = New-HealthB; $hb.foundryAccountIds = @($fa.ToUpper()); $hb.rules.Remove('foundryServerErrors'); $r = Get-Run 'apply' @{ 'health-a.json' = $ha; 'health-b.json' = $hb }
+    Check 'neg: one Foundry account alerted from A and B -> duplicate fail' ((St $r 'health.shared-duplicates') -eq 'fail' -and (Get-C $r 'health.shared-duplicates').evidence -match 'foundryServerErrors')
+    Reset-World; $hb = New-HealthB; $hb.rules.Remove('reconcilerStale'); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: reconcilerStale on for the idle standby -> fail' ((St $r 'health.b.standby-rules') -eq 'fail' -and (Get-C $r 'health.b.standby-rules').evidence -match 'reconcilerStale')
+    Reset-World; $hb = New-HealthB; $hb.rules.gatewayTelemetrySilent = @{ enabled = $true }; $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Check 'neg: gatewayTelemetrySilent on for the idle standby -> fail' ((St $r 'health.b.standby-rules') -eq 'fail')
+    Reset-World; $script:W.healthTargets = @('x-law', 'x-cosmos', 'x-b-apim'); $stg = New-Staged; $stg.apim = @{ existing = @{ name = 'corp-apim' } }; $r = Get-Run 'apply' @{ 'staged.config.json' = $stg }
     Check 'neg: existing APIM without health apim.id -> fail' ((St $r 'health.a.targets') -eq 'fail' -and (Get-C $r 'health.a.targets').evidence -match 'apim\.id')
-    Reset-World; $script:W.healthTargets = @(); $r = Get-Run 'apply' @{ 'health-b.json' = $hb }
+    Reset-World; $script:W.healthTargets = @(); $r = Get-Run 'apply'
     Check 'new environment: stem targets not created yet -> manual' ((St $r 'health.a.targets') -eq 'manual')
     Reset-World; $r = Get-Run 'preview' @{ 'dr-standby.config.json' = $null }
     Check 'neg: missing DR config -> fail' ((St $r 'config.dr') -eq 'fail')
@@ -246,7 +297,7 @@ try {
     Check 'markdown: fail first, pipes escaped' ($md.IndexOf('**FAIL**') -lt $md.IndexOf('| PASS') -and $md -match 'e\\\|1')
 
     # Script end to end (offline: no Azure call), exit codes and report files.
-    Write-Env @{ 'staged.config.json' = (New-Staged); 'dr-standby.config.json' = (New-Dr); 'health-a.json' = (New-Health); 'health-b.json' = (New-Health) }
+    Write-Env @{ 'staged.config.json' = (New-Staged); 'dr-standby.config.json' = (New-Dr); 'health-a.json' = (New-Health); 'health-b.json' = (New-HealthB) }
     $outDir = Join-Path $scratch 'out'
     $null = & pwsh -NoProfile -File (Join-Path $cicd 'Test-CicdPrerequisites.ps1') -DeployDirectory $scratch -OutputDirectory $outDir -Offline
     $code = $LASTEXITCODE
@@ -272,4 +323,4 @@ try {
 } finally { Remove-Item -LiteralPath $cli -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Test-CicdPrerequisites: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 45) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 60) { exit 1 }

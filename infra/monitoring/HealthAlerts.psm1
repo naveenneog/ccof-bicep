@@ -9,7 +9,7 @@ $script:OwnedValue = 'health-alerts'
 $script:Guid = '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
 $script:OwnedTypes = @('microsoft.insights/actiongroups', 'microsoft.insights/components', 'microsoft.insights/webtests',
     'microsoft.insights/metricalerts', 'microsoft.insights/scheduledqueryrules')
-$script:TopFields = @('schemaVersion', 'subscriptionId', 'resourceGroup', 'stem', 'emailReceivers', 'tags', 'workspaceId', 'apim',
+$script:TopFields = @('schemaVersion', 'subscriptionId', 'resourceGroup', 'stem', 'emailReceivers', 'tags', 'workspaceId', 'cosmosId', 'apim',
     'frontDoor', 'foundryAccountIds', 'allowCrossSubscriptionFoundry', 'probes', 'webTestLocations', 'evaluationFrequencyMinutes', 'rules')
 $script:ProbeKeys = @('frontDoorGateway', 'frontDoorAdmin', 'apimDirect', 'adminDirect', 'resolverDirect')
 $script:MetricWindows = @(5, 15, 30, 60, 360, 720, 1440)
@@ -62,6 +62,8 @@ function Get-HaConfigProblems {
         if ($Cfg.tags -isnot [System.Collections.IDictionary] -or @($Cfg.tags.Values | Where-Object { $_ -isnot [string] }).Count) { $p.Add('tags must be an object of string values') }
     }
     if ($Cfg['workspaceId'] -and -not (Test-HaArmId $Cfg.workspaceId 'Microsoft.OperationalInsights/workspaces')) { $p.Add("workspaceId '$($Cfg.workspaceId)' must be a Log Analytics workspace resource ID") }
+    # Explicit, never defaulted when present: a DR standby names the primary account it shares.
+    if ($Cfg.Contains('cosmosId') -and ($Cfg.cosmosId -isnot [string] -or -not (Test-HaArmId $Cfg.cosmosId 'Microsoft.DocumentDB/databaseAccounts'))) { $p.Add("cosmosId '$($Cfg.cosmosId)' must be a Cosmos DB account resource ID /subscriptions/<id>/resourceGroups/<rg>/providers/Microsoft.DocumentDB/databaseAccounts/<name>") }
     if ($Cfg['apim']) {
         foreach ($k in $Cfg.apim.Keys) { if ($k -cnotin 'id', 'apiId', 'logWorkspaceId') { $p.Add("unknown_field:apim.$k") } }
         if ($Cfg.apim['id'] -and -not (Test-HaArmId $Cfg.apim.id 'Microsoft.ApiManagement/service')) { $p.Add("apim.id '$($Cfg.apim.id)' must be an API Management service resource ID") }

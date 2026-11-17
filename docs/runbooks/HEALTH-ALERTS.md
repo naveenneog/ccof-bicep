@@ -251,6 +251,7 @@ alternative.
 | `emailReceivers` | yes | 1 to 20 plain addresses, no duplicates |
 | `tags` | no | Extra tags; `ccof-component` is always `health-alerts` |
 | `workspaceId` | no | Workspace resource ID when it is not `<stem>-law` (for example a standby region that logs to the primary workspace) |
+| `cosmosId` | no | Cosmos DB account resource ID when it is not `<stem>-cosmos` in `resourceGroup` (a DR standby: the primary account, section 6). When set, an account that does not exist stops the run with `cosmos_missing` |
 | `apim.id`, `apim.apiId`, `apim.logWorkspaceId` | no | Existing APIM (staged `apim.existing`), API name (default `claude-messages`, staged `apim.apiId`), workspace of its resource logs |
 | `frontDoor.host`, `frontDoor.profileId` | no | Front Door endpoint host name (`frontdoor-state.json` `endpointHostName`) and profile ID for its metric alerts |
 | `foundryAccountIds` | no | Foundry account resource IDs (staged `backends[]`) |
@@ -344,11 +345,45 @@ Exit codes: 0 done, 2 configuration refused (nothing read from Azure), 3 refused
 A rule disabled in the Portal is enabled again by the next `-Apply`; `rules.<name>.enabled: false`
 in the configuration keeps it absent.
 
-## 6. Not covered
+## 6. Region B (DR standby)
 
-- A second (standby) region: a separate configuration with the standby stem
-  (`<stem>-b`), its APIM in `apim.id` and the shared workspace in `workspaceId`; resource names do not
-  collide because they start with the stem.
+A DR standby ([DR-ACTIVE-PASSIVE.md](../DR-ACTIVE-PASSIVE.md)) has its own APIM and Function Apps
+(`<stem>-<nameSuffix>-*`) but shares the primary Log Analytics workspace and the primary Cosmos DB
+account. Region B uses a second configuration file and a second run of the driver:
+
+- `stem`: the standby stem, `<stem>-<standby.nameSuffix>` (for example `ccof-abc-b`); `resourceGroup`:
+  the DR `secondary.resourceGroup`. Resource names start with the stem, so they do not collide with region A.
+- `workspaceId`: the primary workspace. The standby APIM diagnostic setting and Application Insights
+  components send to it.
+- `cosmosId`: the primary Cosmos DB account. Without it the driver looks for `<stem>-b-cosmos`, which does
+  not exist, and stops with `stage1_resource_missing`.
+- `rules.<name>.enabled: false` for the shared targets, which region A already alerts on once:
+  `cosmosThrottled`, `cosmosServerErrors`, `cosmosAvailability` (the account, all regions),
+  `frontDoorOriginHealth`, `frontDoor5xx` and the Front Door web tests (one profile and host for both
+  origins; leave `frontDoor` out or set `probes.frontDoorGateway` and `probes.frontDoorAdmin` to `off`),
+  and `foundryServerErrors` (leave `foundryAccountIds` out when the accounts are the same).
+- `rules.reconcilerStale.enabled: false` and `rules.gatewayTelemetrySilent.enabled: false`: an idle
+  standby has no reconciler runs and no gateway traffic, so both would fire continuously.
+
+Template: [`deploy/example/health-b.json`](../../deploy/example/health-b.json).
+
+What region B then covers: the standby APIM (gateway and backend 5xx, capacity, resolver unavailable),
+the standby Function Apps (server errors, sync and reconciler run failures) and the direct availability
+tests of the standby APIM, admin and resolver. The log rules query the shared workspace for the standby
+resource IDs only.
+
+After `Invoke-DrFailover.ps1 -Phase Promote`, region B serves traffic and region A is idle: enable
+`reconcilerStale` and `gatewayTelemetrySilent` in the region B file, disable them in the region A file,
+and run both with `-Apply`. Reverse this after `Failback`.
+
+The CI/CD pipeline ([CICD-ENVIRONMENT-DEPLOYMENT.md](CICD-ENVIRONMENT-DEPLOYMENT.md)) requires
+`health-b.json` for an environment with a DR configuration. To run without region B alerts, commit
+`health-b.optout.json` with `reason`, `approvedBy` and `approvedOn` (`yyyy-MM-dd`); each run then shows
+"NO REGION B HEALTH MONITORING". The prerequisite checks fail when region B does not use the standby
+group and stem, the primary workspace and Cosmos account, and its own APIM; when a shared target is
+alerted from both regions; or when an idle-standby rule is on.
+
+## 7. Not covered
 - Endpoints reachable only from a private network: availability tests run from Azure's public test
   agents. The log and metric rules still cover those services.
 - The admin console's Integrations rows for Microsoft Graph, cost data and retail prices.

@@ -121,8 +121,14 @@ try {
         $pna = [string]$site.properties['publicNetworkAccess']; if (-not $pna) { $pna = 'Enabled' }
         $apps[$a] = @{ componentId = [string]$comp.id; siteId = [string]$site.id; host = [string]$site.properties.defaultHostName; publicNetworkAccess = $pna }
     }
-    $cosmosId = "$base/Microsoft.DocumentDB/databaseAccounts/$stem-cosmos"
-    if (-not (Get-HaArm $cosmosId '2024-11-15' -AllowMissing)) { Stop-Ha "stage1_resource_missing: $stem-cosmos." 3 }
+    if ($cfg.Contains('cosmosId')) {
+        $cosmosId = [string]$cfg.cosmosId
+        if (-not (Get-HaArm $cosmosId '2024-11-15' -AllowMissing)) { Stop-Ha "cosmos_missing: $cosmosId (cosmosId) not found." 3 }
+        if ($cosmosId -notlike "$base/*") { $notes.Add("cosmos: $(($cosmosId -split '/')[-1]) from cosmosId (another resource group)") }
+    } else {
+        $cosmosId = "$base/Microsoft.DocumentDB/databaseAccounts/$stem-cosmos"
+        if (-not (Get-HaArm $cosmosId '2024-11-15' -AllowMissing)) { Stop-Ha "stage1_resource_missing: $stem-cosmos (a DR standby shares the primary account: set cosmosId)." 3 }
+    }
     $apimId = if ($cfg['apim'] -and $cfg.apim['id']) { [string]$cfg.apim.id } else { "$base/Microsoft.ApiManagement/service/$stem-apim" }
     $apimObj = Get-HaArm $apimId '2024-05-01' -AllowMissing
     if (-not $apimObj) { Stop-Ha "apim_missing: $apimId; set apim.id to the existing APIM resource ID." 3 }

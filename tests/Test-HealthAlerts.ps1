@@ -57,6 +57,12 @@ Check 'an unknown top-level field is refused' ((Problems (New-Cfg @{ emailReciev
 Check 'a non-GUID subscription is refused' ((Problems (New-Cfg @{ subscriptionId = 'abc' })) -match 'subscriptionId')
 Check 'a stem with unsafe characters is refused' ((Problems (New-Cfg @{ stem = 'bad stem&' })) -match 'stem')
 Check 'a Front Door host with a scheme is refused' ((Problems (New-Cfg @{ frontDoor = @{ host = 'https://x.azurefd.net' } })) -match 'frontDoor.host')
+$sharedCosmos = "/subscriptions/$sub/resourceGroups/rg-primary/providers/Microsoft.DocumentDB/databaseAccounts/primary-cosmos"
+Check 'cosmosId: a full Cosmos DB account resource ID is accepted' ((Problems (New-Cfg @{ cosmosId = $sharedCosmos })).Count -eq 0)
+Check 'cosmosId: another resource type is refused' ((Problems (New-Cfg @{ cosmosId = "$prov/Microsoft.OperationalInsights/workspaces/x-law" })) -match '^cosmosId')
+Check 'cosmosId: a bare account name is refused' ((Problems (New-Cfg @{ cosmosId = 'primary-cosmos' })) -match '^cosmosId')
+Check 'cosmosId: a child resource path is refused' ((Problems (New-Cfg @{ cosmosId = "$sharedCosmos/sqlDatabases/ccof" })) -match '^cosmosId')
+Check 'cosmosId: empty string or non-string is refused (not silently defaulted)' (((Problems (New-Cfg @{ cosmosId = '' })) -match '^cosmosId') -and ((Problems (New-Cfg @{ cosmosId = 5 })) -match '^cosmosId'))
 Check 'a probe mode other than auto/on/off is refused' ((Problems (New-Cfg @{ probes = @{ apimDirect = 'yes' } })) -match 'probes.apimDirect')
 Check 'an unknown probe is refused' ((Problems (New-Cfg @{ probes = @{ graph = 'on' } })) -match 'probes.graph')
 Check 'an unknown rule is refused' ((Problems (New-Cfg @{ rules = @{ cpu = @{ threshold = 1 } } })) -match 'rules.cpu')
@@ -213,6 +219,7 @@ function global:az {
     if ($l -match '/workspaces/sample-abc123-law\?') { return '{"id":"' + $p + '/Microsoft.OperationalInsights/workspaces/sample-abc123-law","location":"eastus2"}' }
     if ($l -match '/components/sample-abc123-(\w+)-ai\?') { return '{"id":"' + $p + '/Microsoft.Insights/components/sample-abc123-' + $Matches[1] + '-ai"}' }
     if ($l -match '/sites/sample-abc123-(\w+)\?') { $pna = if ($Matches[1] -eq 'resolver') { 'Enabled' } else { 'Disabled' }; return '{"id":"' + $p + '/Microsoft.Web/sites/sample-abc123-' + $Matches[1] + '","properties":{"defaultHostName":"sample-abc123-' + $Matches[1] + '.azurewebsites.net","publicNetworkAccess":"' + $pna + '"}}' }
+    if ($l -match '/resourceGroups/rg-primary/providers/Microsoft\.DocumentDB/databaseAccounts/primary-cosmos\?') { return '{"id":"/subscriptions/' + $env:FAKE_SUB + '/resourceGroups/rg-primary/providers/Microsoft.DocumentDB/databaseAccounts/primary-cosmos"}' }
     if ($l -match '/databaseAccounts/sample-abc123-cosmos\?') { return '{"id":"' + $p + '/Microsoft.DocumentDB/databaseAccounts/sample-abc123-cosmos"}' }
     if ($l -match '/service/sample-abc123-apim/apis/claude-messages\?') { return '{"name":"claude-messages"}' }
     if ($l -match '/service/sample-abc123-apim/providers/Microsoft\.Insights/metricDefinitions') { return '{"value":[{"name":{"value":"Requests"}},{"name":{"value":"Capacity"}}]}' }
@@ -281,5 +288,41 @@ Check 'remove apply: deletes exactly the six owned resources and nothing else' (
 Check 'remove apply: the shared Smart Detection action group Azure creates is left in place and named' (@($deleted | Where-Object { $_ -match 'Smart Detection' }).Count -eq 0 -and $r.out -match "Left in place: action group 'Application Insights Smart Detection'")
 Check 'remove apply: makes no deployment and reads no endpoint' (@($r.log | Where-Object { $_ -match '^deployment ' }).Count -eq 0 -and $r.probes.Count -eq 0)
 
+# ---- region B (DR standby): shared primary Cosmos account by cosmosId, default fallback, fail closed
+$r = Run-Driver @() (New-Cfg @{ cosmosId = $sharedCosmos }) $creates
+$pf = Join-Path $dir '.health-alerts/health-alerts.parameters.json'
+$params = if (Test-Path $pf) { (Get-Content $pf -Raw | ConvertFrom-Json -AsHashtable).parameters } else { @{} }
+Check 'cosmosId override: reads that account, never <stem>-cosmos' ($r.code -eq 0 -and @($r.log | Where-Object { $_ -match '/databaseAccounts/primary-cosmos\?' }).Count -eq 1 -and @($r.log | Where-Object { $_ -match "$stem-cosmos" }).Count -eq 0)
+Check 'cosmosId override: Cosmos rules scope the configured account' ($params.Contains('metricRules') -and @($params.metricRules.value | Where-Object { $_.namespace -eq 'Microsoft.DocumentDB/databaseAccounts' -and $_.scope -ceq $sharedCosmos }).Count -eq 3)
+$r = Run-Driver @() (New-Cfg) $creates
+Check 'cosmosId omitted: default <stem>-cosmos is read as before' ($r.code -eq 0 -and @($r.log | Where-Object { $_ -match "/databaseAccounts/$stem-cosmos\?" }).Count -eq 1)
+$r = Run-Driver @() (New-Cfg @{ cosmosId = "/subscriptions/$sub/resourceGroups/rg-primary/providers/Microsoft.DocumentDB/databaseAccounts/absent-cosmos" }) $creates
+Check 'cosmosId not found: exit 3 cosmos_missing names the ID, no what-if' ($r.code -eq 3 -and $r.out -match 'cosmos_missing: .*absent-cosmos' -and @($r.log | Where-Object { $_ -match '^deployment ' }).Count -eq 0)
+$r = Run-Driver @() (New-Cfg @{ cosmosId = 'primary-cosmos' })
+Check 'cosmosId invalid: exit 2 before any az call' ($r.code -eq 2 -and $r.log.Count -eq 0 -and $r.out -match 'cosmosId')
+
+# Region B parameters: B APIM and B apps, the shared primary workspace and Cosmos account; shared-resource and
+# idle-standby rules disabled in the configuration are absent.
+$stemB = "$stem-b"; $sharedWs = "$prov/Microsoft.OperationalInsights/workspaces/$stem-law"
+$discB = New-Discovered -NoFrontDoor
+foreach ($a in @($discB.apps.Keys)) { $discB.apps[$a].componentId = $discB.apps[$a].componentId -replace "/$stem-", "/$stemB-"; $discB.apps[$a].siteId = $discB.apps[$a].siteId -replace "/$stem-", "/$stemB-" }
+$discB.apim.id = "$prov/Microsoft.ApiManagement/service/$stemB-apim"; $discB.apim.logWorkspaceId = $sharedWs; $discB.workspaceId = $sharedWs; $discB.cosmosId = $sharedCosmos; $discB.foundry = @()
+$off = @{ enabled = $false }
+$cfgB = New-Cfg @{ stem = $stemB; workspaceId = $sharedWs; cosmosId = $sharedCosmos; rules = @{ cosmosThrottled = $off; cosmosServerErrors = $off; cosmosAvailability = $off; frontDoorOriginHealth = $off; frontDoor5xx = $off; foundryServerErrors = $off; reconcilerStale = $off; gatewayTelemetrySilent = $off } }
+$cfgB.Remove('frontDoor'); $cfgB.Remove('foundryAccountIds')
+Check 'region B sample config is valid' ((Problems $cfgB).Count -eq 0)
+$pB = New-HaParameters -Cfg $cfgB -Discovered $discB -RepoRoot $repo
+$bIds = @($discB.apps.Values | ForEach-Object { $_.componentId, $_.siteId })
+Check 'region B: APIM metric rules scope the B APIM only' (@($pB.metricRules | Where-Object { $_.namespace -eq 'Microsoft.ApiManagement/service' }).Count -eq 3 -and @($pB.metricRules | Where-Object { $_.namespace -eq 'Microsoft.ApiManagement/service' -and $_.scope -cne $discB.apim.id }).Count -eq 0)
+Check 'region B: every log rule scopes the shared primary workspace' (@($pB.logRules).Count -gt 0 -and @($pB.logRules | Where-Object { $_.scope -cne $sharedWs }).Count -eq 0 -and $pB.workspaceId -ceq $sharedWs)
+Check 'region B: resolver, function and sync queries name B resources only' (
+    ($pB.logRules | Where-Object { $_.name -eq "$stemB-health-resolver-unavailable" }).query -match [regex]::Escape("'$($discB.apim.id)'") -and
+    ($pB.logRules | Where-Object { $_.name -eq "$stemB-health-function-server-errors" }).query -match "$stemB-resolver-ai" -and
+    ($pB.logRules | Where-Object { $_.name -eq "$stemB-health-sync-run-failures" }).query -match "$stemB-sync-ai" -and
+    @($pB.logRules | Where-Object { $_.query -match "/$stem-(resolver|sync|reconciler|admin)(-ai)?'" -or $_.query -match "/$stem-apim'" }).Count -eq 0)
+Check 'region B: no shared Cosmos, Front Door or Foundry rule (alerted once, by region A)' (@($pB.metricRules | Where-Object { $_.namespace -in 'Microsoft.DocumentDB/databaseAccounts', 'Microsoft.Cdn/profiles', 'Microsoft.CognitiveServices/accounts' }).Count -eq 0)
+Check 'region B: no idle-standby rules (reconciler stale, gateway telemetry silent)' (@($pB.logRules | Where-Object { $_.name -match 'reconciler-stale|gateway-telemetry-silent' }).Count -eq 0 -and @($pB.logRules | Where-Object { $_.name -match 'reconciler-run-failures' }).Count -eq 1)
+Check 'region B: resource names start with the B stem (no collision with region A)' (@(@($pB.metricRules) + @($pB.logRules) | Where-Object { -not $_.name.StartsWith("$stemB-health-") }).Count -eq 0 -and $pB.namePrefix -ceq "$stemB-health")
+
 Write-Host "Test-HealthAlerts: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 92) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 109) { exit 1 }

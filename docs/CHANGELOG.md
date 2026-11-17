@@ -4,8 +4,8 @@
 
 - `.github/workflows/deploy-environment.yml` deploys `deploy/<environment>/` end to end: prerequisite checks,
   gate network, Stages 0-7 (preview then apply each), gate entra (Stage 4 manual verification only),
-  Front Door, DR standby phases, health alerts A (and B when `health-b.json` exists; a DR standby has no
-  region B Cosmos account for the health driver), final status. A rerun manages the environment.
+  Front Door, DR standby phases, health alerts A and B (`health-b.json`, or an explicit
+  `health-b.optout.json` reported as NO REGION B HEALTH MONITORING), final status. A rerun manages the environment.
   Sign-in is the runner host managed identity; previews on `ccof-apply` in `<env>-preview`, writes in
   `<env>-apply` or `<env>-gate-<name>`. Reusable job: `.github/workflows/ccof-step.yml`.
 - `scripts/cicd/`: read-only prerequisite checks (`Test-CicdPrerequisites.ps1`, JSON and Markdown
@@ -15,6 +15,12 @@
 - Stage 0 makes no Microsoft Graph call when `entra.manualVerification` is set.
 - Docs: [CICD-ENVIRONMENT-DEPLOYMENT.md](runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md),
   [CICD-NETWORK-ENTRA-CHECKLIST.md](runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md), `deploy/example/`.
+- Health alerts for a DR standby (region B): new optional `cosmosId` field in the health configuration names the
+  shared primary Cosmos DB account (validated as a full resource ID; a missing account stops with `cosmos_missing`);
+  without it the driver still uses `<stem>-cosmos`. Template `deploy/example/health-b.json` and
+  [HEALTH-ALERTS.md](runbooks/HEALTH-ALERTS.md) section 6: shared Cosmos, Front Door and Foundry rules alert from region A
+  only, idle-standby rules off in region B. Prerequisite checks verify region B scope, duplicates and standby rules.
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the
