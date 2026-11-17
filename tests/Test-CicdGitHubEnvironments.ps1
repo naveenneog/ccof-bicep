@@ -15,7 +15,7 @@ function Env-Body([string]$Name, $Policy, [bool]$Reviewers) {
 }
 $custom = @{ protected_branches = $false; custom_branch_policies = $true }
 # Classic branch protection (GET /repos/{r}/branches/{b}/protection) that makes every change to main a reviewed PR.
-function Classic([int]$Count = 1, [bool]$Admins = $true, [bool]$Stale = $true, [bool]$LastPush = $false, $Allow = $null, [bool]$Force = $false, [bool]$Reviews = $true) {
+function Classic([int]$Count = 1, [bool]$Admins = $true, [bool]$Stale = $true, [bool]$LastPush = $false, $Allow = @{ users = @(); teams = @(); apps = @() }, [bool]$Force = $false, [bool]$Reviews = $true) {
     $b = @{ enabled = $true; enforce_admins = @{ enabled = $Admins }; allow_force_pushes = @{ enabled = $Force }; allow_deletions = @{ enabled = $false } }
     if ($Reviews) {
         $b.required_pull_request_reviews = @{ required_approving_review_count = $Count; dismiss_stale_reviews = $Stale; require_last_push_approval = $LastPush; require_code_owner_reviews = $false }
@@ -156,12 +156,19 @@ Check 'neg: ruleset unreadable (404) fails closed' ((F $f $RP).Status -eq 'fail'
 $m = RsBase @() $null; $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 403; Body = $null }; $f = Run $m
 Check 'neg: rules and classic protection both unreadable fail closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'cannot read')
 # A separate read-only getter (e.g. a token with repository Administration: read) is used only for protection reads.
-$m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 403; Body = $null }
-$get = { param($p) if ($m.ContainsKey($p)) { $m[$p] } else { @{ Status = 404; Body = $null } } }.GetNewClosure()
-$pget = { param($p) if ($p -eq "/repos/$R/branches/main/protection") { @{ Status = 200; Body = (Classic) } } else { @{ Status = 418; Body = $null } } }.GetNewClosure()
-$f = @(Test-CicdGhProtections -Get $get -ProtectionGet $pget -Repository $R -Environment 'prod' -ReviewedGate 'apply')
-Check 'protection getter proves classic protection the job token cannot read' ((F $f $RP).Status -eq 'pass' -and (NoFail $f))
+# bypass_pull_request_allowances and its users/teams/apps are optional in GitHub's OpenAPI schema
+# (protected-branch-pull-request-review): absence is not documented as "none", so it cannot prove "no bypass".
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Allow $null); $f = Run $m
+Check 'neg: bypass allowances not returned fails closed (absence is not proof of none)' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'bypass allowances not returned')
+foreach ($kind in 'users', 'teams', 'apps') {
+    $allow = @{ users = @(); teams = @(); apps = @() }; $allow.Remove($kind)
+    $m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Allow $allow); $f = Run $m
+    Check "neg: bypass allowances without '$kind' fail closed" ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match "'$kind' not returned")
+}
+$f = Run (Base)
 Check 'neg: no environment claims protection from protected:true' (-not @($f | Where-Object { $_.Subject -like '*branches' -and $_.Evidence -match 'branch protected\)' }).Count)
+# No GitHub secret: the protection reads use the job token only; no separate token input exists.
+Check 'neg: no separate protection token (module parameter or CLI variable)' (-not (Get-Command Test-CicdGhProtections).Parameters.ContainsKey('ProtectionGet') -and -not (Select-String -Quiet -Pattern 'CCOF_PROTECTION_READ_TOKEN|ProtectionGet' -Path (Join-Path $root 'scripts\cicd\*.ps1'), (Join-Path $root 'scripts\cicd\*.psm1'), (Join-Path $root '.github\workflows\*.yml')))
 # Deployment branch policy type must be present and 'branch'.
 $m = Base; $m["/repos/$R/environments/prod-apply/deployment-branch-policies?per_page=100"].Body = (J @{ total_count = 1; branch_policies = @(@{ id = 1; name = 'main' }) }); $f = Run $m
 Check 'neg: selected rule named main without a type fails (cannot prove type branch)' ((F $f 'prod-apply branches').Status -eq 'fail')
@@ -323,4 +330,4 @@ try {
 }
 
 Write-Host "Test-CicdGitHubEnvironments: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 104) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 108) { exit 1 }

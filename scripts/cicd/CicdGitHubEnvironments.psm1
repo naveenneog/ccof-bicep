@@ -19,7 +19,7 @@ function New-CicdGhFinding { param([string]$Subject, [ValidateSet('pass', 'fail'
 # GET against the GitHub REST API with GH_TOKEN. JSON arrays stay arrays (-NoEnumerate): an empty or one-item list
 # is not mistaken for "no body" or an object.
 function New-CicdGhRestGet {
-    param([string]$Token = $env:GH_TOKEN)
+    $Token = $env:GH_TOKEN
     $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
     $headers = @{ Authorization = ('Bearer', $Token -join ' '); Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
     {
@@ -187,11 +187,15 @@ function Get-CicdGhClassicGaps {
         if (-not ($rv.PSObject.Properties['dismiss_stale_reviews']?.Value -eq $true -or $rv.PSObject.Properties['require_last_push_approval']?.Value -eq $true)) {
             $gaps.Add('an approval survives a later push (enable dismiss stale approvals or require approval of the most recent push)')
         }
+        # The schema marks bypass_pull_request_allowances and its lists optional; absence is not documented as
+        # "none", so only explicit lists are evidence.
         $al = $rv.PSObject.Properties['bypass_pull_request_allowances']?.Value
-        if ($null -ne $al) {
+        if ($null -eq $al) { $gaps.Add('bypass allowances not returned (absence does not prove there are none)') }
+        else {
             foreach ($k in 'users', 'teams', 'apps') {
                 $v = $al.PSObject.Properties[$k]?.Value
-                if ($null -ne $v -and $v -isnot [array]) { $gaps.Add("bypass allowances '$k' unreadable") }
+                if ($null -eq $v) { $gaps.Add("bypass allowances '$k' not returned (absence does not prove there are none)") }
+                elseif ($v -isnot [array]) { $gaps.Add("bypass allowances '$k' unreadable") }
                 elseif (@($v | Where-Object { $_ }).Count) {
                     $who = (@($v) | ForEach-Object { if ($_.PSObject.Properties['login']) { $_.login } elseif ($_.PSObject.Properties['slug']) { $_.slug } else { $_.id } }) -join ', '
                     $gaps.Add("pull request bypass allowance for ${k}: $who")
@@ -210,11 +214,11 @@ function Get-CicdGhClassicGaps {
 # All findings for <stem>-preview (branch policy) and each gate (branch policy + reviewers + enforceable plan).
 function Test-CicdGhProtections {
     param([Parameter(Mandatory)][scriptblock]$Get, [Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Environment,
-        [string[]]$ReviewedGate = @(), [scriptblock]$ProtectionGet)
+        [string[]]$ReviewedGate = @())
     $repo = Invoke-CicdGhGet $Get "/repos/$Repository"
     if (-not $repo.Ok -or -not [string]$repo.Body.default_branch) { return @(New-CicdGhFinding 'repository' fail "cannot prove: GET /repos/$Repository failed ($($repo.Error))") }
     $default = [string]$repo.Body.default_branch
-    $findings = @(Test-CicdGhBranchReview $(if ($ProtectionGet) { $ProtectionGet } else { $Get }) $Repository $default)
+    $findings = @(Test-CicdGhBranchReview $Get $Repository $default)
     $findings += Test-CicdGhEnvironment $Get $Repository "$Environment-preview" $default $false
 
     if ($ReviewedGate.Count) {

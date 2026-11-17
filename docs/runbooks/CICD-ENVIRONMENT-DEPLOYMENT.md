@@ -165,7 +165,7 @@ It fails when anything cannot be proved:
 | No branch policy, or **Protected branches only** (admits every branch while no protection rule exists, and any branch a pattern rule covers later) | fail |
 | Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
 | `main` not protected | fail |
-| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps), force pushes allowed, ruleset not active or with bypass actors, or any of it unreadable | fail. `protected: true` alone never passes |
+| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps) present or not returned (the API schema marks them optional, so absence is not proof of none), force pushes allowed, ruleset not active or with bypass actors, or any of it unreadable | fail. `protected: true` alone never passes |
 | Selected branch rule without `type` (or not `branch`) | fail |
 | Organization plan other than exactly `enterprise` (`plan.name` is a free string in the API, no enum) | fail; `free`, `team`, `pro` as below Enterprise, anything else as unknown |
 | Gate environment without a required reviewer | fail |
@@ -177,7 +177,15 @@ It fails when anything cannot be proved:
 If the job token cannot read branch policies, a repository administrator checks the same items by hand in
 Settings > Environments, and the run cannot proceed until the token can read them.
 
-**Known blocker: review protection with `GITHUB_TOKEN`.** Branch protection needs repository Administration: read, which `GITHUB_TOKEN` cannot be given, and a ruleset's `bypass_actors` list is returned only to callers with write access to the ruleset ([GitHub REST: rules](https://docs.github.com/en/rest/repos/rules)). With the job token alone the `main review protection` finding therefore fails and `resolve` stops every run. `Test-CicdGitHubEnvironments.ps1` reads `CCOF_PROTECTION_READ_TOKEN` (used only for these GET calls), for example a fine-grained token limited to this repository with Administration: read-only, which can read classic branch protection. `deploy-environment.yml` does not pass such a secret yet: adding one is an owner decision (it would be the first repository secret of these workflows). Until then the run stays blocked; the check is not skipped.
+**Unresolved blocker: proving reviewed `main` without a GitHub secret.** These workflows use no GitHub secrets, only `GITHUB_TOKEN`. Branch protection needs repository Administration: read, which `GITHUB_TOKEN` cannot be given, and a ruleset's `bypass_actors` list is returned only to callers with write access to the ruleset ([GitHub REST: branch protection](https://docs.github.com/en/rest/branches/branch-protection), [GitHub REST: rules](https://docs.github.com/en/rest/repos/rules)). A job-token probe in the lab (private user repository, run 44163305910) read the repository, `branches/main` (`protected`), environments and run approvals, but nothing that proves review protection. The `main review protection` finding therefore fails and `resolve` stops every run. The check reads no other token; it is not skipped and does not fall back to a pass. Options without a GitHub secret:
+
+| Option | What enforces it | Automatic | Limits |
+|---|---|---|---|
+| A. Approved revision pinned on the runner host (recommended) | The runner's job-started hook refuses a job unless `GITHUB_SHA` is in a list kept on the host by a customer administrator, who adds a commit after checking its review with their own GitHub sign-in | yes, outside the repository | Every release must be pinned on every runner host; needs a change to the runner hook (runner owner) |
+| B. Pull request provenance checked in the job with `GITHUB_TOKEN` (pull requests: read): every commit on `main` since a pinned baseline is the merge commit of a pull request approved by someone other than the author | the workflow | yes | Detector only: an unreviewed push can change the workflow or the check. Independent only with A's host-side pinning of those files |
+| C. Customer administrator verifies protection (section 5 list) and records the result in the change record | people | no | Procedural; a record in the repository can be changed by the push it should prevent |
+
+A GitHub App or a personal access token could read protection automatically but is a GitHub secret and is excluded. OIDC token claims do not describe branch protection. Until the owner chooses A (or accepts a secret), runs stay blocked at `resolve`.
 
 | Environment | Approver | Approves |
 |---|---|---|

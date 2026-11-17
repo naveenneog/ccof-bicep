@@ -25,9 +25,9 @@
   instead of trusting `CCOF_GITHUB_PLAN` (removed). The health test-mail matrix runs one region at a time.
 - `main` review protection: `protected: true` no longer passes. The check needs classic protection or an active
   ruleset proving a reviewed pull request (at least 1 approval, reset on push) with administrators included and no
-  bypass. Anything unreadable fails. `GITHUB_TOKEN` cannot read these settings, so `resolve` stops until an owner
-  supplies `CCOF_PROTECTION_READ_TOKEN` (read-only; not yet wired). The check is a detector; reviewed `main` must be
-  enforced before runners connect.
+  bypass. Anything unreadable fails, including bypass allowances the API does not return. `GITHUB_TOKEN` cannot read
+  these settings and the workflows use no GitHub secret, so `resolve` stops (unresolved blocker; runbook section 5
+  lists the options without a secret). The check is a detector; reviewed `main` must be enforced before runners connect.
 - A selected branch rule without `type` fails. An organization plan other than exactly `enterprise` fails, and an
   unrecognised plan name is reported as unknown.
 - `ccof-step.yml` saves state only when the driver step started (`id: driver`, outcome success, failure or
