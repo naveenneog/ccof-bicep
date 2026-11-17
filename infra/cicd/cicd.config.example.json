@@ -59,7 +59,12 @@
     "applyBranches": [
       "main"
     ],
-    "applyWorkflows": []
+    "previewWorkflows": [
+      ".github/workflows/REPLACE-preview.yml"
+    ],
+    "applyWorkflows": [
+      ".github/workflows/REPLACE-deploy.yml"
+    ]
   },
   "cosmos": {
     "accountName": "REPLACE-cosmos-account",
@@ -71,5 +76,11 @@
       "resourceGroup": "REPLACE-foundry-rg",
       "accountName": "REPLACE-foundry-account"
     }
-  ]
+  ],
+  "roles": {
+    "foundryRolesBy": "operator",
+    "foundryPrivateEndpointApproval": false,
+    "deployCosmosDataWriter": false,
+    "assignablePrincipalIds": []
+  }
 }

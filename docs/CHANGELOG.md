@@ -9,6 +9,9 @@
   No GitHub secret, federated credential or Entra change.
 - `scripts/New-CustomerRepoFromZip.ps1`: customer ZIP from a commit with a secret scan, and ZIP to a
   private GitHub repository.
+- `roles.foundryRolesBy: foundry-owner` hands the Foundry role assignments to the Foundry owner; dispatch-only
+  workflow `ccof-runner-smoke.yml` proves sign-in, VNet reach and the negative cases on the runners (lab results
+  in CICD-SETUP.md section 10).
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 

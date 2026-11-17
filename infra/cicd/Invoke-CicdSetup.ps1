@@ -164,11 +164,14 @@ try {
         Say "`n== Roles"
         if (-not $idOf['preview'].principalId -or -not $idOf['apply'].principalId) { Say '  the identities do not exist yet; run -Phase Infra -Apply first' }
         else {
+            # Empty: the conditioned administrator may grant the Stage 3 roles to any service principal (rbac-condition.bicep).
+            $assignable = @(Get-CicdValue $cfg 'roles.assignablePrincipalIds' | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
+            if (-not $assignable.Count) { Say '  note: roles.assignablePrincipalIds is empty: the deploy identity may assign the Stage 3 roles to ANY service principal (managed identity or application) in the tenant' }
             $foundryByOwner = "$(Get-CicdValue $cfg 'roles.foundryRolesBy')" -eq 'foundry-owner'
             $pf = Save-Params 'roles.parameters.json' @{ previewPrincipalId = $idOf['preview'].principalId; deployPrincipalId = $idOf['apply'].principalId
                 workloadResourceGroup = $cfg.workloadResourceGroup; networkResourceGroup = $cfg.networkResourceGroup; cosmosAccountName = $cfg.cosmos.accountName
                 cosmosDatabaseName = $cfg.cosmos.databaseName; foundry = @(if (-not $foundryByOwner) { $cfg.foundry }); foundryPrivateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval')
-                deployCosmosDataWriter = [bool](Get-CicdValue $cfg 'roles.deployCosmosDataWriter') }
+                deployCosmosDataWriter = [bool](Get-CicdValue $cfg 'roles.deployCosmosDataWriter'); assignablePrincipalIds = $assignable }
             $common = @('--subscription', $sub, '--location', $loc, '--name', "ccof-cicd-roles-$($cfg.namePrefix)", '--template-file', (Join-Path $PSScriptRoot 'roles.bicep'), '--parameters', "@$pf")
             if ($Apply) { $null = Invoke-Az (@('deployment', 'sub', 'create') + $common); Say '  role assignments deployed (see the Roles table in docs/runbooks/CICD-SETUP.md)' }
             else { Show-WhatIf (Invoke-Az (@('deployment', 'sub', 'what-if', '--no-pretty-print') + $common)) }
@@ -177,7 +180,7 @@ try {
                 $i = 0
                 foreach ($f in @($cfg.foundry)) {
                     $fp = Save-Params "foundry-roles-$i.parameters.json" @{ accountName = $f.accountName; previewPrincipalId = $idOf['preview'].principalId; deployPrincipalId = $idOf['apply'].principalId
-                        privateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval') }
+                        privateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval'); assignablePrincipalIds = $assignable }
                     Say "  Foundry $($f.accountName): roles.foundryRolesBy is foundry-owner. The Foundry owner (Owner or unconditioned User Access Administrator) runs:"
                     Say "    az deployment group create --subscription $($f.subscriptionId) --resource-group $($f.resourceGroup) --name ccof-cicd-roles-foundry --template-file infra/cicd/modules/foundry-roles.bicep --parameters @$fp"
                     $i++

@@ -53,6 +53,10 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
   `<env>-apply` (required reviewers from `github.reviewers`, deployment branches `main` only) and
   `<env>-gate-<name>` for each of `github.gates` (required reviewers). See
   [Deployments and environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment).
+  In a private repository, required reviewers need GitHub Enterprise and deployment branch policies need GitHub
+  Pro, Team or Enterprise ([plan availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
+  On GitHub Free, `gh` returns HTTP 422 and the driver stops with that hint; the apply gate is then only the
+  runner's job-started hook (`--allowed-refs`, `pull_request` refused).
 - **STG and Prod do not share anything.** Use one configuration file per environment. Prod runners and their
   identities are in the Prod subscription and VNet; the STG identities have no role in Prod.
 
@@ -88,7 +92,7 @@ The customer provides the VMs from its own image (for example a CIS-hardened RHE
 | Item | Requirement |
 | --- | --- |
 | OS | RHEL 8/9, Ubuntu 22.04/24.04 (x64), or Windows Server 2022 |
-| Size | 2 vCPU, 4 GB RAM (`Standard_B2s`), 64 GB disk; 10 GB free in the work directory |
+| Size | 2 vCPU, 4 GB RAM (`Standard_B2s`), 64 GB disk; 10 GB free in the work directory. LVM images with a small root volume (RHEL 9 `rootlv` is 2 GB) need a dedicated volume mounted at `/opt/actions-runner/_work` (`nodev,nosuid`), owned by `ghrunner`, then `restorecon -RF` on it |
 | Network | A subnet in the workload VNet (or a peered VNet) linked to the private DNS zones; no public IP; no inbound rule |
 | Identity | Exactly one user-assigned identity (set by the Attach phase) |
 | IMDS | `169.254.169.254` reachable and not proxied (managed identity tokens come from IMDS) |
@@ -141,7 +145,18 @@ VMs have no outbound access in new subnets
 `infra/cicd/roles.bicep` makes every assignment; nothing else assigns roles to the identities. No Owner and no
 User Access Administrator. Role assignment rights are Role Based Access Control Administrator with a
 [condition](https://learn.microsoft.com/en-us/azure/role-based-access-control/delegate-role-assignments-portal)
-that allows only the role IDs Stage 3 assigns, only to service principals.
+that allows only the role IDs Stage 3 assigns, and only to principals of type `ServicePrincipal`
+([infra/cicd/modules/rbac-condition.bicep](../../infra/cicd/modules/rbac-condition.bicep)).
+
+The condition checks the principal type, not the principal. `ServicePrincipal` covers managed identities and
+also ordinary application (Entra app registration) service principals
+([condition attributes](https://learn.microsoft.com/en-us/azure/role-based-access-control/conditions-authorization-actions-attributes)).
+With `roles.assignablePrincipalIds` empty (default), the deploy identity can grant those roles to any service
+principal in the tenant, including an application that is not part of CCOF. Users and groups are blocked.
+To limit it to exact identities, list their object IDs in `roles.assignablePrincipalIds`; the condition then
+also requires `PrincipalId` for writes and deletes. Stage 3 grants to identities created in Stages 1-2 (Function
+App and APIM identities), so their IDs are known only after those stages: run the Roles phase again with the IDs
+after Stage 2, before Stage 3. Until then, treat the role-ID limit as the boundary.
 
 | Identity | Role (ID) | Scope | Why (source) |
 | --- | --- | --- | --- |
@@ -153,6 +168,12 @@ that allows only the role IDs Stage 3 assigns, only to service principals.
 | deploy | Role Based Access Control Administrator, conditioned | Each Foundry account (may be another subscription) | Cognitive Services User (`a97b65f3-24c7-4388-baec-2e87135dc908`) for the APIM identity ([foundry-role.bicep:18](../../infra/quickstart/modules/foundry-role.bicep)) |
 | deploy | Cognitive Services Contributor (`25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68`), optional (`foundryPrivateEndpointApproval`) | Each Foundry account | Approving private endpoint connections from the pipeline. Default off: the Foundry owner approves |
 | deploy | Cosmos DB Built-in Data Contributor (`00000000-0000-0000-0000-000000000002`), optional (`deployCosmosDataWriter`) | Cosmos database `ccof` | Pipeline steps that write data (seeding). Default off |
+
+Role assignment rights on a Foundry account need Owner or an unconditioned User Access Administrator there.
+When the operator lacks them (for example an Owner assignment with a condition that excludes the
+Role Based Access Control Administrator role), set `roles.foundryRolesBy` to `foundry-owner`: the Roles phase
+assigns nothing on Foundry, writes `foundry-roles-<n>.parameters.json` and prints the
+`az deployment group create ... modules/foundry-roles.bicep` command for the Foundry owner to run.
 
 Entra steps of the staged deployment (groups, app registrations, consent) are not done by these identities;
 they stay with the identity team as in [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md).
@@ -224,8 +245,25 @@ assignments (`az role assignment delete --assignee <principal id>` per scope) an
 
 ## 10. Lab results
 
-See the lab record below; it lists what was proven and what is still unknown.
+Lab: a replica of the STG network (two peered VNets, private endpoints, Cosmos public access disabled), runners
+in a dedicated `/27` subnet without public IP, workflow `.github/workflows/ccof-runner-smoke.yml`
+(`workflow_dispatch` only), November 2026.
 
 | Check | Result |
 | --- | --- |
-| Pending | Filled in after the lab run |
+| Ubuntu 22.04 (marketplace), preview and apply runners | Bootstrap and registration through managed Run Command; both runners online with their labels |
+| Preflight | 0 failures on both runners |
+| `az login --identity` | Preview job signed in as the preview identity, apply job as the deploy identity; no GitHub secret or variable for Azure |
+| VNet | Cosmos FQDN resolved to the private endpoint address; data plane `GET /dbs/ccof/colls` with an Entra token: HTTP 200 |
+| Write from the preview runner | Denied, `AuthorizationFailed` |
+| Deploy identity from the preview runner | `az login --identity --client-id <deploy>` fails: identity not found (not attached to that VM) |
+| Role mismatch | `azure-login-mi` with `expected-role: apply` on the preview runner fails |
+| Job from a non-`main` ref on the apply runner | Refused by the job-started hook before any step |
+| What-if with the preview identity (Reader) | Denied on `Microsoft.Resources/deployments/whatIf/action`. With a custom role adding `whatIf/action` and `validate/action`, an empty template passes but any resource fails with "Authorization failed for template resource": what-if needs write on each resource |
+| What-if with the deploy identity | Succeeded |
+| RHEL 9.8 (`RedHat:RHEL:9-lvm-gen2`), SELinux enforcing, `/tmp` remounted `noexec` | Install succeeded; preflight first failed on disk (2 GB `rootlv`), passed after a 20 GB volume at `_work`; runner service in `unconfined_service_t`; runner user without sudo; Cosmos read, write denied, Bicep build passed. VM deleted after the test |
+| Foundry roles | Operator Owner with a condition: Role Based Access Control Administrator cannot be assigned; `foundryRolesBy: foundry-owner` used |
+| GitHub environments | Private repository on GitHub Free: protection rules rejected (HTTP 422); environments created without rules |
+
+Not tested: proxy and TLS inspection, FIPS mode, Windows Server 2022 bootstrap, a CIS-hardened image,
+an egress allow-list firewall.

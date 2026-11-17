@@ -17,6 +17,7 @@ function New-Cfg([hashtable]$Patch = @{}) {
     $c.cicdResourceGroup = 'rg-cicd'; $c.workloadResourceGroup = 'rg-work'; $c.networkResourceGroup = 'rg-net'; $c.namePrefix = 'lab-cicd'
     $c.runner.subnetId = "/subscriptions/$sub/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/cicd-runner"
     $c.github.owner = 'octo'; $c.github.repo = 'ccof-lab'; $c.github.reviewers = @('alice')
+    $c.github.previewWorkflows = @('.github/workflows/check.yml'); $c.github.applyWorkflows = @('.github/workflows/deploy.yml')
     $c.runner.existingVms = @{ preview = "/subscriptions/$sub/resourceGroups/rg-vm/providers/Microsoft.Compute/virtualMachines/preview-vm"; apply = "/subscriptions/$sub/resourceGroups/rg-vm/providers/Microsoft.Compute/virtualMachines/apply-vm" }
     $c.cosmos.accountName = 'lab-cosmos'
     $c.foundry = @(@{ subscriptionId = $fsub; resourceGroup = 'rg-foundry'; accountName = 'lab-foundry' })
@@ -40,7 +41,8 @@ Check 'subnet must be in networkResourceGroup' ((@(Problems @{ networkResourceGr
 Check 'runner tarball digest must be a SHA-256' ((@(Problems @{ 'runner.runnerSha256' = 'abc' }) -match 'runnerSha256').Count -eq 1)
 Check 'createSubnet needs a /24-/29 prefix' ((@(Problems @{ 'runner.createSubnet' = @{ addressPrefix = '10.0.0.0/16' } }) -match 'createSubnet').Count -eq 1)
 Check 'apply branches must be plain branch names' ((@(Problems @{ 'github.applyBranches' = @('main', 'feat/*') }) -match 'applyBranches').Count -eq 1 -and (@(Problems @{ 'github.applyBranches' = @() }) -match 'applyBranches').Count -eq 1)
-Check 'apply workflows must be .github/workflows/*.yml paths' ((@(Problems @{ 'github.applyWorkflows' = @('.github/workflows/deploy.yml', '../x.yml') }) -match 'applyWorkflows').Count -eq 1)
+Check 'runner workflows: both lists required, .github/workflows/*.yml paths only' ((@(Problems @{ 'github.applyWorkflows' = @('.github/workflows/deploy.yml', '../x.yml') }) -match 'applyWorkflows').Count -eq 1 -and
+    (@(Problems @{ 'github.previewWorkflows' = @() }) -match 'previewWorkflows').Count -eq 1 -and (@(Problems @{ 'github.applyWorkflows' = @('') }) -match 'applyWorkflows').Count -eq 1)
 Check 'a quote in an environment name is refused' ((@(Problems @{ 'github.environments' = @("stg'x") }) -match 'github.environments').Count -eq 1)
 Check 'roles.foundryRolesBy accepts operator or foundry-owner only' ((@(Problems @{ roles = @{ foundryRolesBy = 'someone' } }) -match 'foundryRolesBy').Count -eq 1 -and @(Problems @{ roles = @{ foundryRolesBy = 'foundry-owner' } }).Count -eq 0)
 
@@ -65,6 +67,8 @@ Check 'args: register carries identity, repository, labels, refs, workflows, pro
     $line -match "'--allowed-workflows' '.github/workflows/deploy.yml'" -and $line -match "'--proxy' 'http://proxy.corp:8080'" -and $line -match "'--ca-cert' '/etc/pki/corp.pem'" -and $line -notmatch 'TOKEN')
 Check 'args: install needs no identity; register refuses without a client ID' ((@(Get-CicdInstallArgs (New-Cfg) 'preview' 'install') -join ' ') -notmatch 'client-id' -and
     $(try { $null = Get-CicdInstallArgs (New-Cfg) 'preview' 'register'; $false } catch { "$_" -match 'input_refused' }))
+Check 'args: each runner gets its own workflow allow-list; an empty list is refused' ((@(Get-CicdInstallArgs (New-Cfg @{ 'github.previewWorkflows' = @('.github/workflows/check.yml') }) 'preview' 'register' -ClientId $tenant) -join ' ') -match '--allowed-workflows \.github/workflows/check\.yml$' -and
+    $(try { $null = Get-CicdInstallArgs (New-Cfg @{ 'github.applyWorkflows' = @() }) 'apply' 'register' -ClientId $tenant; $false } catch { "$_" -match 'applyWorkflows is empty' }))
 foreach ($bad in "a'b", 'x;id', '$(id)', 'a`b', "a`nb", 'a"b') {
     Check "args: refused character in $([regex]::Escape($bad))" $(try { $null = ConvertTo-CicdArgsLine @('install', $bad); $false } catch { "$_" -match 'input_refused' })
 }
@@ -112,18 +116,39 @@ if ($bash) {
         finally { Restore-Env $saved }
     }
     function Merge([hashtable]$A, [hashtable]$B) { $h = @{} + $A; foreach ($k in $B.Keys) { $h[$k] = $B[$k] }; $h }
-    $applyPolicy = "RUNNER_ROLE=apply`nREPOSITORY=octo/ccof-lab`nALLOWED_REFS=refs/heads/main`nALLOWED_WORKFLOWS=`n"
-    $ok = @{ GITHUB_REPOSITORY = 'octo/ccof-lab'; GITHUB_EVENT_NAME = 'workflow_dispatch'; GITHUB_REF = 'refs/heads/main'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/main' }
-    Check 'hook: apply runner accepts workflow_dispatch on main' ((Invoke-Hook $applyPolicy $ok).code -eq 0)
-    $r = Invoke-Hook $applyPolicy (Merge $ok @{ GITHUB_EVENT_NAME = 'pull_request' })
-    Check 'hook: apply runner refuses pull_request' ($r.code -ne 0 -and $r.out -match 'pull_request')
-    Check 'hook: apply runner refuses pull_request_target and workflow_run' ((Invoke-Hook $applyPolicy (Merge $ok @{ GITHUB_EVENT_NAME = 'pull_request_target' })).code -ne 0 -and (Invoke-Hook $applyPolicy (Merge $ok @{ GITHUB_EVENT_NAME = 'workflow_run' })).code -ne 0)
-    Check 'hook: apply runner refuses another branch' ((Invoke-Hook $applyPolicy (Merge $ok @{ GITHUB_REF = 'refs/heads/feature' })).code -ne 0)
-    Check 'hook: any runner refuses another repository' ((Invoke-Hook "RUNNER_ROLE=preview`nREPOSITORY=octo/ccof-lab`n" (Merge $ok @{ GITHUB_REPOSITORY = 'evil/fork' })).code -ne 0)
-    Check 'hook: preview runner accepts pull_request on any branch' ((Invoke-Hook "RUNNER_ROLE=preview`nREPOSITORY=octo/ccof-lab`n" (Merge $ok @{ GITHUB_EVENT_NAME = 'pull_request'; GITHUB_REF = 'refs/pull/1/merge' })).code -eq 0)
-    $wfPolicy = $applyPolicy.Replace('ALLOWED_WORKFLOWS=', 'ALLOWED_WORKFLOWS=.github/workflows/deploy.yml')
-    Check 'hook: workflow allow-list accepts a listed workflow and refuses another' ((Invoke-Hook $wfPolicy $ok).code -eq 0 -and
-        (Invoke-Hook $wfPolicy (Merge $ok @{ GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/other.yml@refs/heads/main' })).code -ne 0)
+    $sha1 = 'a' * 40
+    $ok = @{ GITHUB_REPOSITORY = 'octo/ccof-lab'; GITHUB_EVENT_NAME = 'workflow_dispatch'; GITHUB_REF = 'refs/heads/main'; GITHUB_REF_TYPE = 'branch'; GITHUB_HEAD_REF = ''
+        GITHUB_SHA = $sha1; GITHUB_WORKFLOW_SHA = $sha1; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/main' }
+    # Untrusted triggers seen live (same-repository pull request, feature-branch push and dispatch) must be refused on BOTH runners.
+    $denied = [ordered]@{
+        'same-repo pull_request' = @{ GITHUB_EVENT_NAME = 'pull_request'; GITHUB_REF = 'refs/pull/1/merge'; GITHUB_REF_TYPE = 'branch'; GITHUB_HEAD_REF = 'feature' }
+        'pull_request on a main-looking ref' = @{ GITHUB_EVENT_NAME = 'pull_request' }
+        'pull_request_target' = @{ GITHUB_EVENT_NAME = 'pull_request_target' }
+        'workflow_run' = @{ GITHUB_EVENT_NAME = 'workflow_run' }
+        'missing event' = @{ GITHUB_EVENT_NAME = '' }
+        'feature-branch push' = @{ GITHUB_EVENT_NAME = 'push'; GITHUB_REF = 'refs/heads/feature'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/feature' }
+        'feature-branch dispatch' = @{ GITHUB_REF = 'refs/heads/feature'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/feature' }
+        'tag push' = @{ GITHUB_EVENT_NAME = 'push'; GITHUB_REF = 'refs/tags/main'; GITHUB_REF_TYPE = 'tag' }
+        'workflow file from another ref' = @{ GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/feature' }
+        'workflow not in the allow-list' = @{ GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/other.yml@refs/heads/main' }
+        'workflow commit differs from the job commit' = @{ GITHUB_WORKFLOW_SHA = 'b' * 40 }
+        'missing commit' = @{ GITHUB_SHA = ''; GITHUB_WORKFLOW_SHA = '' }
+        'another repository' = @{ GITHUB_REPOSITORY = 'evil/fork' }
+        'pull request head ref set' = @{ GITHUB_HEAD_REF = 'feature' }
+    }
+    foreach ($role in 'preview', 'apply') {
+        $pol = "RUNNER_ROLE=$role`nREPOSITORY=octo/ccof-lab`nALLOWED_REFS=refs/heads/main`nALLOWED_WORKFLOWS=.github/workflows/deploy.yml .github/workflows/check.yml`n"
+        $r = Invoke-Hook $pol $ok
+        Check "hook ($role): trusted workflow_dispatch on main from an allowed workflow is accepted and logs its context" ($r.code -eq 0 -and $r.out -match "context role=$role .*event=workflow_dispatch ref=refs/heads/main")
+        Check "hook ($role): push and schedule on main are accepted" ((Invoke-Hook $pol (Merge $ok @{ GITHUB_EVENT_NAME = 'push' })).code -eq 0 -and (Invoke-Hook $pol (Merge $ok @{ GITHUB_EVENT_NAME = 'schedule' })).code -eq 0)
+        foreach ($k in $denied.Keys) {
+            $r = Invoke-Hook $pol (Merge $ok $denied[$k])
+            Check "hook ($role): $k is refused" ($r.code -ne 0 -and $r.out -match 'job refused')
+        }
+        Check "hook ($role): an empty workflow allow-list refuses every job" ((Invoke-Hook $pol.Replace('ALLOWED_WORKFLOWS=.github/workflows/deploy.yml .github/workflows/check.yml', 'ALLOWED_WORKFLOWS=') $ok).code -ne 0)
+        Check "hook ($role): a policy without ALLOWED_REFS refuses every job" ((Invoke-Hook $pol.Replace('ALLOWED_REFS=refs/heads/main', 'ALLOWED_REFS=') $ok).code -ne 0)
+    }
+    Check 'hook: an unknown role refuses the job' ((Invoke-Hook "RUNNER_ROLE=admin`nREPOSITORY=octo/ccof-lab`nALLOWED_REFS=refs/heads/main`nALLOWED_WORKFLOWS=.github/workflows/deploy.yml`n" $ok).code -ne 0)
     Check 'hook: a missing policy file refuses the job' ((& { [IO.File]::Delete($policy); & $bash (& $toBash $hookFile) (& $toBash $policy) 2>&1 | Out-Null; $LASTEXITCODE }) -ne 0)
 
     # azure-login-mi with a stub az on PATH that logs its arguments
@@ -168,11 +193,21 @@ function Invoke-WinHook([string]$PolicyText, [hashtable]$Env) {
     $saved = @{}; foreach ($k in $Env.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $Env[$k]) }
     try { $null = & pwsh -NoProfile -File $whook $wpolicy 2>&1; $LASTEXITCODE } finally { Restore-Env $saved }
 }
-$wok = @{ GITHUB_REPOSITORY = 'octo/ccof-lab'; GITHUB_EVENT_NAME = 'push'; GITHUB_REF = 'refs/heads/main'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/main' }
-$wpol = "RUNNER_ROLE=apply`nREPOSITORY=octo/ccof-lab`nALLOWED_REFS=refs/heads/main`nALLOWED_WORKFLOWS=.github/workflows/deploy.yml"
-Check 'windows hook: apply accepts push on main from an allowed workflow' ((Invoke-WinHook $wpol $wok) -eq 0)
-Check 'windows hook: apply refuses pull_request, another branch and another workflow' ((Invoke-WinHook $wpol (& { $h = @{} + $wok; $h.GITHUB_EVENT_NAME = 'pull_request'; $h })) -ne 0 -and
-    (Invoke-WinHook $wpol (& { $h = @{} + $wok; $h.GITHUB_REF = 'refs/heads/dev'; $h })) -ne 0 -and (Invoke-WinHook $wpol (& { $h = @{} + $wok; $h.GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/x.yml@refs/heads/main'; $h })) -ne 0)
+$wok = @{ GITHUB_REPOSITORY = 'octo/ccof-lab'; GITHUB_EVENT_NAME = 'push'; GITHUB_REF = 'refs/heads/main'; GITHUB_REF_TYPE = 'branch'; GITHUB_HEAD_REF = ''; GITHUB_SHA = 'c' * 40; GITHUB_WORKFLOW_SHA = 'c' * 40
+    GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/main' }
+function WinCase([hashtable]$Patch) { $h = @{} + $wok; foreach ($k in $Patch.Keys) { $h[$k] = $Patch[$k] }; $h }
+foreach ($role in 'preview', 'apply') {
+    $wpol = "RUNNER_ROLE=$role`nREPOSITORY=octo/ccof-lab`nALLOWED_REFS=refs/heads/main`nALLOWED_WORKFLOWS=.github/workflows/deploy.yml"
+    Check "windows hook ($role): accepts push on main from an allowed workflow" ((Invoke-WinHook $wpol $wok) -eq 0)
+    Check "windows hook ($role): refuses same-repo pull_request, feature-branch push and dispatch, another workflow, a workflow from another commit" (
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_EVENT_NAME = 'pull_request'; GITHUB_REF = 'refs/pull/1/merge'; GITHUB_HEAD_REF = 'feature' })) -ne 0 -and
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_REF = 'refs/heads/dev'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/dev' })) -ne 0 -and
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_EVENT_NAME = 'workflow_dispatch'; GITHUB_REF = 'refs/heads/dev'; GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/dev' })) -ne 0 -and
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/x.yml@refs/heads/main' })) -ne 0 -and
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_WORKFLOW_REF = 'octo/ccof-lab/.github/workflows/deploy.yml@refs/heads/dev' })) -ne 0 -and
+        (Invoke-WinHook $wpol (WinCase @{ GITHUB_WORKFLOW_SHA = 'd' * 40 })) -ne 0)
+    Check "windows hook ($role): an empty workflow allow-list refuses every job" ((Invoke-WinHook ($wpol -replace 'ALLOWED_WORKFLOWS=.*$', 'ALLOWED_WORKFLOWS=') $wok) -ne 0)
+}
 $pf = @(& pwsh -NoProfile -File (Join-Path $repo 'scripts/cicd/Test-RunnerHost.ps1') -NoLogin -ImdsUri 'http://127.0.0.1:9/' -TimeoutSec 2 -MinDiskGb 0 2>&1)
 Check 'windows preflight: IMDS first, evidence lines only, exit 1 when IMDS is unreachable' ($LASTEXITCODE -eq 1 -and "$($pf[0])" -match '^FAIL imds' -and
     @($pf | Where-Object { "$_" -and "$_" -notmatch '^(PASS|FAIL|WARN|INFO) [^:]+: |^Test-RunnerHost: ' }).Count -eq 0)
@@ -202,6 +237,43 @@ $assigned = @([regex]::Matches($stage3 + $foundryRole, "var \w+ = '([0-9a-f-]{36
 Check 'every Azure role Stage 3 assigns is allowed by the deploy identity condition' ($assigned.Count -eq 4 -and @($assigned | Where-Object { $rolesText -notmatch $_ }).Count -eq 0)
 $all = (@('infra/cicd/Invoke-CicdSetup.ps1', 'infra/cicd/Cicd.psm1', 'scripts/cicd/Install-CcofRunner.sh', 'scripts/cicd/Install-CcofRunner.ps1', 'infra/cicd/cicd.bicep', 'infra/cicd/roles.bicep', '.github/actions/azure-login-mi/azure-login-mi.sh') | ForEach-Object { Get-Content -LiteralPath (Join-Path $repo $_) -Raw }) -join "`n"
 Check 'no Microsoft Graph, no az ad, no app registration, no federated credential' ($all -notmatch 'graph\.microsoft|\baz ad\b|''ad'',|applications|federated-credential|federatedIdentityCredentials')
+
+# ---- RBAC condition: evaluated from the real Bicep function (az bicep build-params), not restated here.
+Check 'config: roles.assignablePrincipalIds must be GUIDs' ((@(Problems @{ 'roles.assignablePrincipalIds' = @('not-a-guid') }) -match 'assignablePrincipalIds').Count -eq 1)
+Check 'config: GUID roles.assignablePrincipalIds are accepted' ((@(Problems @{ 'roles.assignablePrincipalIds' = @('11111111-2222-3333-4444-555555555555') }) -match 'assignablePrincipalIds').Count -eq 0)
+$cicdText = (Get-ChildItem (Join-Path $repo 'infra/cicd') -Recurse -Include '*.bicep', '*.ps1', '*.psm1' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+Check 'roles wording: the type-only condition is not described as managed-identity only' ($cicdText + $doc -notmatch '(?i)(to|for) (service principals \()?managed identities\)?[.'']|service principals only|only to service principals')
+Check 'roles wording: the runbook says application service principals are covered' ($doc -match '(?s)covers managed identities and\s+also ordinary\s+application')
+function Get-Condition([string[]]$Roles, [string[]]$Principals) {
+    $d = Join-Path ([IO.Path]::GetTempPath()) ("ccof-cond-" + [guid]::NewGuid().ToString('n')); New-Item -ItemType Directory $d | Out-Null
+    try {
+        Copy-Item (Join-Path $repo 'infra/cicd/modules/rbac-condition.bicep') $d
+        Set-Content (Join-Path $d 'm.bicep') "param c string`noutput o string = c"
+        $list = { param($a) '[' + (($a | ForEach-Object { "'$_'" }) -join ', ') + ']' }
+        Set-Content (Join-Path $d 'm.bicepparam') "using 'm.bicep'`nimport { ccofRbacCondition } from 'rbac-condition.bicep'`nparam c = ccofRbacCondition($(& $list $Roles), $(& $list $Principals))"
+        $out = & $bicepExe build-params (Join-Path $d 'm.bicepparam') --stdout 2>$null
+        return ((($out | Out-String | ConvertFrom-Json).parametersJson | ConvertFrom-Json).parameters.c.value)
+    } finally { Remove-Item -Recurse -Force $d }
+}
+# Minimal evaluator for the write branch of this condition grammar: role IDs, principal type and optional principal IDs.
+function Test-ConditionAllowsWrite([string]$Condition, [string]$RoleId, [string]$PrincipalType, [string]$PrincipalId) {
+    $set = { param($attr) $m = [regex]::Match($Condition, "@Request\[Microsoft\.Authorization/roleAssignments:$attr\] ForAnyOfAnyValues:\w+ \{([^}]*)\}"); if ($m.Success) { @($m.Groups[1].Value -split ',\s*' | ForEach-Object { $_.Trim("' ") }) } else { $null } }
+    $roles = & $set 'RoleDefinitionId'; $types = & $set 'PrincipalType'; $ids = & $set 'PrincipalId'
+    ($roles -contains $RoleId) -and ($types -contains $PrincipalType) -and ($null -eq $ids -or $ids -contains $PrincipalId)
+}
+$bicepExe = @((Get-Command bicep -ErrorAction SilentlyContinue | ForEach-Object Source), (Join-Path $HOME '.azure/bin/bicep.exe'), (Join-Path $HOME '.azure/bin/bicep')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if ($bicepExe) {
+    $blob = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'; $appSp = '9f0e4c1a-0000-4000-8000-0000000000aa'; $mi = '3c2b1a00-0000-4000-8000-0000000000bb'
+    $open = Get-Condition @($blob) @()
+    Check 'condition (no IDs): an arbitrary application service principal IS allowed (type-only boundary)' ($open -and (Test-ConditionAllowsWrite $open $blob 'ServicePrincipal' $appSp))
+    Check 'condition (no IDs): users and groups are blocked' ($open -and -not (Test-ConditionAllowsWrite $open $blob 'User' $appSp) -and -not (Test-ConditionAllowsWrite $open $blob 'Group' $appSp))
+    Check 'condition (no IDs): another role is blocked' ($open -and -not (Test-ConditionAllowsWrite $open '8e3af657-a8ff-443c-a75c-2fe8c4bcb635' 'ServicePrincipal' $appSp))
+    $exact = Get-Condition @($blob) @($mi)
+    Check 'condition (exact IDs): the approved identity is allowed' ($exact -and (Test-ConditionAllowsWrite $exact $blob 'ServicePrincipal' $mi))
+    Check 'condition (exact IDs): an arbitrary application service principal is blocked' ($exact -and -not (Test-ConditionAllowsWrite $exact $blob 'ServicePrincipal' $appSp))
+    Check 'condition (exact IDs): deletes are limited to the approved IDs too' ($exact -match "@Resource\[Microsoft\.Authorization/roleAssignments:PrincipalId\] ForAnyOfAnyValues:GuidEquals \{$mi\}")
+    Check 'roles.bicep passes assignablePrincipalIds to both conditioned modules' (([regex]::Matches((Get-Content -Raw (Join-Path $repo 'infra/cicd/roles.bicep')), 'assignablePrincipalIds: assignablePrincipalIds')).Count -eq 2)
+} else { Write-Host 'SKIP condition evaluation: bicep CLI not found' }
 
 . (Join-Path $PSScriptRoot 'helpers/CicdSetupDriver.ps1')
 

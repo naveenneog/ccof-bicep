@@ -1,15 +1,19 @@
 // Role assignments for one principal on the current resource group (infra/cicd/roles.bicep).
 // conditionedRbacAdministrator, when set, is assigned with an ABAC condition: the principal may only create or
-// delete assignments of assignableRoleIds, and only for service principals (managed identities).
+// delete assignments of assignableRoleIds, of principal type ServicePrincipal (managed identities and also ordinary
+// application service principals), and, when assignablePrincipalIds is set, only for those object IDs.
 targetScope = 'resourceGroup'
+
+import { ccofRbacCondition } from 'rbac-condition.bicep'
 
 param principalId string
 param roleIds array = []
 param conditionedRbacAdministrator string = ''
-param assignableRoleIds array = []
+param assignableRoleIds string[] = []
+@description('Object IDs the conditioned administrator may assign roles to. Empty: any service principal (see rbac-condition.bicep).')
+param assignablePrincipalIds string[] = []
 
-var guids = join(assignableRoleIds, ', ')
-var condition = '((!(ActionMatches{\'Microsoft.Authorization/roleAssignments/write\'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${guids}} AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {\'ServicePrincipal\'})) AND ((!(ActionMatches{\'Microsoft.Authorization/roleAssignments/delete\'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${guids}}))'
+var condition = ccofRbacCondition(assignableRoleIds, assignablePrincipalIds)
 
 resource plain 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for r in roleIds: {
   name: guid(resourceGroup().id, principalId, r)
@@ -28,6 +32,6 @@ resource conditioned 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', conditionedRbacAdministrator)
     conditionVersion: '2.0'
     condition: condition
-    description: 'CCOF deploy identity: may assign only the roles Stage 3 grants, to managed identities.'
+    description: 'CCOF deploy identity: may assign only the roles Stage 3 grants, to service principals.'
   }
 }

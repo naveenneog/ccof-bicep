@@ -43,22 +43,23 @@ param([string]$PolicyPath = (Join-Path $env:ProgramData 'ccof-runner\policy'))
 function Deny([string]$Why) { [Console]::Error.WriteLine("ccof-runner: job refused: $Why"); exit 1 }
 if (-not (Test-Path -LiteralPath $PolicyPath)) { Deny "policy file $PolicyPath is missing" }
 $p = @{}; foreach ($l in Get-Content -LiteralPath $PolicyPath) { if ($l -match '^([A-Z_]+)=(.*)$') { $p[$Matches[1]] = $Matches[2].Trim('"') } }
-$repo = "$($p['REPOSITORY'])"; $event = "$env:GITHUB_EVENT_NAME"; $ref = "$env:GITHUB_REF"
-if (-not $repo) { Deny 'policy has no REPOSITORY' }
-if ("$env:GITHUB_REPOSITORY" -cne $repo) { Deny "repository '$env:GITHUB_REPOSITORY' is not $repo" }
-switch ("$($p['RUNNER_ROLE'])") {
-    'preview' { "ccof-runner: preview runner, $event on $ref accepted."; exit 0 }
-    'apply' { }
-    default { Deny "policy RUNNER_ROLE '$($p['RUNNER_ROLE'])' is not preview or apply" }
-}
-if ($event -notin 'push', 'workflow_dispatch', 'schedule') { Deny "event '$event' cannot run on the apply runner (pull_request jobs use ccof-preview)" }
-if (@("$($p['ALLOWED_REFS'])".Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) -cnotcontains $ref) { Deny "ref '$ref' is not one of: $($p['ALLOWED_REFS'])" }
+$repo = "$($p['REPOSITORY'])"; $role = "$($p['RUNNER_ROLE'])"; $event = "$env:GITHUB_EVENT_NAME"; $ref = "$env:GITHUB_REF"; $wref = "$env:GITHUB_WORKFLOW_REF"
+"ccof-runner: context role=$role repository=$env:GITHUB_REPOSITORY event=$event ref=$ref ref_type=$env:GITHUB_REF_TYPE head_ref=$env:GITHUB_HEAD_REF workflow_ref=$wref sha=$env:GITHUB_SHA workflow_sha=$env:GITHUB_WORKFLOW_SHA"
+# Both runners reach IMDS and the VNet, so both are fail-closed (see Install-CcofRunner.sh).
+if ($role -cnotin 'preview', 'apply') { Deny "policy RUNNER_ROLE '$role' is not preview or apply" }
+$refs = @("$($p['ALLOWED_REFS'])".Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
 $wfs = @("$($p['ALLOWED_WORKFLOWS'])".Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
-if ($wfs.Count) {
-    $wf = "$env:GITHUB_WORKFLOW_REF"; if ($wf.StartsWith("$repo/")) { $wf = $wf.Substring($repo.Length + 1) }; $wf = $wf -replace '@.*$', ''
-    if ($wfs -cnotcontains $wf) { Deny "workflow '$wf' is not one of: $($p['ALLOWED_WORKFLOWS'])" }
-}
-"ccof-runner: apply runner, $event on $ref accepted."
+if (-not $repo) { Deny 'policy has no REPOSITORY' }
+if (-not $refs.Count) { Deny 'policy has no ALLOWED_REFS' }
+if (-not $wfs.Count) { Deny 'policy has no ALLOWED_WORKFLOWS (the allow-list is required)' }
+if ("$env:GITHUB_REPOSITORY" -cne $repo) { Deny "repository '$env:GITHUB_REPOSITORY' is not $repo" }
+if ($event -cnotin 'push', 'workflow_dispatch', 'schedule') { Deny "event '$event' cannot run on a CCOF runner (pull_request jobs use GitHub-hosted runners)" }
+if ("$env:GITHUB_HEAD_REF") { Deny 'a pull request head ref is set' }
+if ("$env:GITHUB_REF_TYPE" -cne 'branch') { Deny "ref type '$env:GITHUB_REF_TYPE' is not branch" }
+if ($refs -cnotcontains $ref) { Deny "ref '$ref' is not one of: $($refs -join ' ')" }
+if (-not "$env:GITHUB_SHA" -or "$env:GITHUB_SHA" -cne "$env:GITHUB_WORKFLOW_SHA") { Deny "workflow commit '$env:GITHUB_WORKFLOW_SHA' is not the job commit '$env:GITHUB_SHA'" }
+if (@($wfs | Where-Object { $wref -ceq "$repo/$_@$ref" }).Count -ne 1) { Deny "workflow '$wref' is not one of: $($wfs -join ' ') (at $ref)" }
+"ccof-runner: $role runner, $event on $ref accepted."
 exit 0
 '@
 
@@ -80,7 +81,7 @@ if ($Command -eq 'register') {
     $other = if ($Role -eq 'preview') { 'apply' } else { 'preview' }
     if (",$Labels," -notlike "*,ccof-$Role,*" -or ",$Labels," -like "*,ccof-$other,*") { Refuse "labels must include ccof-$Role and not ccof-$other" }
     Want 'AllowedRefs' $AllowedRefs '^refs/heads/[A-Za-z0-9._/-]+( refs/heads/[A-Za-z0-9._/-]+)*$'
-    if ($AllowedWorkflows) { Want 'AllowedWorkflows' $AllowedWorkflows '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$' }
+    Want 'AllowedWorkflows' $AllowedWorkflows '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$'
 }
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { Refuse 'run in an elevated PowerShell (Administrator)' }

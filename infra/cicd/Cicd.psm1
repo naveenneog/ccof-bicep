@@ -87,8 +87,11 @@ function Get-CicdConfigProblems {
     if (@(@(& $v 'github.gates') | Where-Object { "$_" -notmatch '^[a-z][a-z0-9-]{0,30}$' }).Count) { $problems.Add('github.gates must be lowercase names such as network') }
     if (@(@(& $v 'github.reviewers') | Where-Object { "$_" -notmatch '^[A-Za-z0-9](-?[A-Za-z0-9]){0,38}(/[A-Za-z0-9._-]+)?$' }).Count) { $problems.Add('github.reviewers must be GitHub user names or org/team slugs') }
     $branches = @(& $v 'github.applyBranches')
-    if ($branches.Count -lt 1 -or @($branches | Where-Object { "$_" -notmatch $script:Branch }).Count) { $problems.Add('github.applyBranches must be one or more plain branch names such as main (no wildcards)') }
-    if (@(@(& $v 'github.applyWorkflows') | Where-Object { "$_" -notmatch $script:Workflow }).Count) { $problems.Add('github.applyWorkflows must be paths such as .github/workflows/deploy.yml') }
+    if ($branches.Count -lt 1 -or @($branches | Where-Object { "$_" -notmatch $script:Branch }).Count) { $problems.Add('github.applyBranches must be one or more plain branch names such as main (no wildcards); both runners accept only these protected branches') }
+    foreach ($k in 'github.previewWorkflows', 'github.applyWorkflows') {
+        $wfs = @(@(& $v $k) | Where-Object { "$_" })
+        if ($wfs.Count -lt 1 -or @($wfs | Where-Object { "$_" -notmatch $script:Workflow }).Count) { $problems.Add("$k must list one or more paths such as .github/workflows/deploy.yml (the runner refuses every other workflow)") }
+    }
     if ("$(& $v 'cosmos.accountName')" -notmatch '^[a-z0-9][a-z0-9-]{1,49}$') { $problems.Add('cosmos.accountName must be a Cosmos DB account name') }
     if ("$(& $v 'cosmos.databaseName')" -notmatch '^[A-Za-z0-9_-]{1,255}$') { $problems.Add('cosmos.databaseName must be a database name') }
     $foundry = @(& $v 'foundry')
@@ -98,6 +101,8 @@ function Get-CicdConfigProblems {
             $problems.Add('foundry entries need subscriptionId (GUID), resourceGroup and accountName')
         }
     }
+    $ids = @(& $v 'roles.assignablePrincipalIds' | Where-Object { $null -ne $_ })
+    if (@($ids | Where-Object { "$_" -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' }).Count) { $problems.Add('roles.assignablePrincipalIds must be a list of object IDs (GUIDs)') }
     if ("$(& $v 'roles.foundryRolesBy')" -notin @('', 'operator', 'foundry-owner')) { $problems.Add('roles.foundryRolesBy must be operator (default) or foundry-owner') }
     return $problems.ToArray()
 }
@@ -169,8 +174,9 @@ function Get-CicdInstallArgs {
         $refs = (@(Get-CicdValue $Config 'github.applyBranches') | ForEach-Object { "refs/heads/$_" }) -join ' '
         $a.AddRange([string[]]@('--client-id', $ClientId, '--subscription-id', (& $v 'subscriptionId'), '--tenant-id', (& $v 'tenantId'),
                 "--repository", "$(& $v 'github.owner')/$(& $v 'github.repo')", '--runner-name', $r.runnerName, '--labels', $r.labels, '--allowed-refs', $refs))
-        $wf = (@(Get-CicdValue $Config 'github.applyWorkflows') | Where-Object { $_ }) -join ' '
-        if ($wf) { $a.AddRange([string[]]@('--allowed-workflows', $wf)) }
+        $wf = (@(Get-CicdValue $Config "github.$($Role)Workflows") | Where-Object { $_ }) -join ' '
+        if (-not $wf) { throw "input_refused: github.$($Role)Workflows is empty; the runner accepts only listed workflows" }
+        $a.AddRange([string[]]@('--allowed-workflows', $wf))
     }
     $null = ConvertTo-CicdArgsLine $a.ToArray()
     return $a.ToArray()

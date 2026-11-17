@@ -1,8 +1,10 @@
 // Roles of the CCOF runner identities on one Foundry account (infra/cicd/roles.bicep). The deploy identity gets
-// Role Based Access Control Administrator on the account, conditioned to Cognitive Services User for service
-// principals: Stage 3 grants that role to the APIM identity (infra/quickstart/modules/foundry-role.bicep).
+// Role Based Access Control Administrator on the account, conditioned to Cognitive Services User for principals of
+// type ServicePrincipal (managed identities and application service principals; exact IDs with assignablePrincipalIds): Stage 3 grants that role to the APIM identity (infra/quickstart/modules/foundry-role.bicep).
 // The Foundry owner can deploy this module alone when the operator may not assign roles there (roles.foundryRolesBy).
 targetScope = 'resourceGroup'
+
+import { ccofRbacCondition } from 'rbac-condition.bicep'
 
 param accountName string
 param previewPrincipalId string
@@ -11,12 +13,13 @@ param deployPrincipalId string
 @description('Cognitive Services Contributor for the deploy identity, for approving private endpoint connections.')
 param privateEndpointApproval bool = false
 param conditionedRbacAdministrator string = 'f58310d9-a9f6-439a-9e8d-f62e7b41a168'
-param assignableRoleIds array = ['a97b65f3-24c7-4388-baec-2e87135dc908']
+param assignableRoleIds string[] = ['a97b65f3-24c7-4388-baec-2e87135dc908']
+@description('Object IDs the conditioned administrator may assign roles to. Empty: any service principal (see rbac-condition.bicep).')
+param assignablePrincipalIds string[] = []
 
 var deployRoleIds = privateEndpointApproval ? ['25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'] : []
 
-var guids = join(assignableRoleIds, ', ')
-var condition = '((!(ActionMatches{\'Microsoft.Authorization/roleAssignments/write\'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${guids}} AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {\'ServicePrincipal\'})) AND ((!(ActionMatches{\'Microsoft.Authorization/roleAssignments/delete\'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${guids}}))'
+var condition = ccofRbacCondition(assignableRoleIds, assignablePrincipalIds)
 var plain = concat(map(previewRoleIds, r => { principalId: previewPrincipalId, roleId: r }), map(deployRoleIds, r => { principalId: deployPrincipalId, roleId: r }))
 
 resource account 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
@@ -42,6 +45,6 @@ resource rbacAdministrator 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', conditionedRbacAdministrator)
     conditionVersion: '2.0'
     condition: condition
-    description: 'CCOF deploy identity: may assign only Cognitive Services User, to managed identities.'
+    description: 'CCOF deploy identity: may assign only Cognitive Services User, to service principals.'
   }
 }

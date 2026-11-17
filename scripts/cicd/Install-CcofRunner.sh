@@ -8,7 +8,12 @@
 #               Needs RUNNER_TOKEN (registration token, 1 hour) in the environment; it is never written
 #   status      service state, then Test-RunnerHost.sh (next to this script) as the runner user
 #   remove      stop the service and unregister; RUNNER_TOKEN is a remove token
+#   check       validate the arguments, paths and runner user and print the service of --runner-dir; changes nothing
 #   print-hook  print the job-started hook (used by the offline tests)
+# Host-wide changes are limited to: missing distribution packages (git curl jq tar gzip, runner dependencies), the
+# Azure CLI package, the runner user, the runner's own systemd unit, /etc/ccof-runner, /opt/ccof-runner, /opt/ccof-tools
+# and SELinux labels of the runner directory. System trust store, git system config, /usr/local/bin and other
+# runner services are not touched.
 # Exit codes: 0 ok, 2 input refused, 3 failed. The last stdout line is one JSON run line
 # ({"schema":"ccof.cicd.runner.v1",...}) because Azure Run Command returns only the last 4,096 bytes.
 set -uo pipefail
@@ -48,8 +53,9 @@ cat <<'HOOK'
 #!/bin/bash
 # CCOF job-started hook (installed by scripts/cicd/Install-CcofRunner.sh). A non-zero exit fails the job before
 # any step runs. Policy: root-owned /etc/ccof-runner/policy (argument 1 overrides it for the offline tests).
-# The apply runner holds the deploy identity: it only runs push, workflow_dispatch or schedule jobs of this
-# repository on an allowed branch, and only allowed workflows when ALLOWED_WORKFLOWS is set.
+# Both runners reach IMDS and the VNet, so both are fail-closed: only push, workflow_dispatch or schedule jobs of
+# this repository, on an allowed (protected) branch, from an allowed workflow file read from that same branch and
+# commit. pull_request and every other event are refused. Anything missing or unexpected is refused.
 set -euo pipefail
 POLICY="${1:-/etc/ccof-runner/policy}"
 deny() { echo "ccof-runner: job refused: $1" >&2; exit 1; }
@@ -57,26 +63,26 @@ deny() { echo "ccof-runner: job refused: $1" >&2; exit 1; }
 get() { { grep -E "^$1=" "$POLICY" || true; } | tail -n 1 | cut -d= -f2- | tr -d '"'; }
 ROLE=$(get RUNNER_ROLE); REPOSITORY=$(get REPOSITORY)
 ALLOWED_REFS=$(get ALLOWED_REFS); ALLOWED_WORKFLOWS=$(get ALLOWED_WORKFLOWS)
-EVENT="${GITHUB_EVENT_NAME:-}"; REF="${GITHUB_REF:-}"; WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-}"
+EVENT="${GITHUB_EVENT_NAME:-}"; REF="${GITHUB_REF:-}"; REF_TYPE="${GITHUB_REF_TYPE:-}"; WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-}"
+SHA="${GITHUB_SHA:-}"; WORKFLOW_SHA="${GITHUB_WORKFLOW_SHA:-}"
+echo "ccof-runner: context role=$ROLE repository=${GITHUB_REPOSITORY:-} event=$EVENT ref=$REF ref_type=$REF_TYPE head_ref=${GITHUB_HEAD_REF:-} workflow_ref=$WORKFLOW_REF sha=$SHA workflow_sha=$WORKFLOW_SHA"
+case "$ROLE" in preview|apply) ;; *) deny "policy RUNNER_ROLE '$ROLE' is not preview or apply" ;; esac
 [ -n "$REPOSITORY" ] || deny "policy has no REPOSITORY"
+[ -n "$ALLOWED_REFS" ] || deny "policy has no ALLOWED_REFS"
+[ -n "$ALLOWED_WORKFLOWS" ] || deny "policy has no ALLOWED_WORKFLOWS (the allow-list is required)"
 [ "${GITHUB_REPOSITORY:-}" = "$REPOSITORY" ] || deny "repository '${GITHUB_REPOSITORY:-}' is not $REPOSITORY"
-case "$ROLE" in
-  preview) echo "ccof-runner: preview runner, $EVENT on $REF accepted."; exit 0 ;;
-  apply) ;;
-  *) deny "policy RUNNER_ROLE '$ROLE' is not preview or apply" ;;
-esac
 case "$EVENT" in
   push|workflow_dispatch|schedule) ;;
-  *) deny "event '$EVENT' cannot run on the apply runner (pull_request jobs use ccof-preview)" ;;
+  *) deny "event '$EVENT' cannot run on a CCOF runner (pull_request jobs use GitHub-hosted runners)" ;;
 esac
+[ -z "${GITHUB_HEAD_REF:-}" ] || deny "a pull request head ref is set"
+[ "$REF_TYPE" = branch ] || deny "ref type '$REF_TYPE' is not branch"
 ok=0; for r in $ALLOWED_REFS; do [ "$REF" = "$r" ] && ok=1; done
 [ "$ok" = 1 ] || deny "ref '$REF' is not one of: $ALLOWED_REFS"
-if [ -n "$ALLOWED_WORKFLOWS" ]; then
-  wf="${WORKFLOW_REF#"$REPOSITORY"/}"; wf="${wf%@*}"
-  ok=0; for w in $ALLOWED_WORKFLOWS; do [ "$wf" = "$w" ] && ok=1; done
-  [ "$ok" = 1 ] || deny "workflow '$wf' is not one of: $ALLOWED_WORKFLOWS"
-fi
-echo "ccof-runner: apply runner, $EVENT on $REF accepted."
+[ -n "$SHA" ] && [ "$SHA" = "$WORKFLOW_SHA" ] || deny "workflow commit '$WORKFLOW_SHA' is not the job commit '$SHA'"
+ok=0; for w in $ALLOWED_WORKFLOWS; do [ "$WORKFLOW_REF" = "$REPOSITORY/$w@$REF" ] && ok=1; done
+[ "$ok" = 1 ] || deny "workflow '$WORKFLOW_REF' is not one of: $ALLOWED_WORKFLOWS (at $REF)"
+echo "ccof-runner: $ROLE runner, $EVENT on $REF accepted."
 HOOK
 }
 
@@ -92,7 +98,7 @@ while [ $# -gt 0 ]; do
     --bicep-version) BICEP_VERSION="$2" ;; --bicep-sha256) BICEP_SHA256="$2" ;;
     --az-package) AZ_PACKAGE="$2" ;; --az-sha256) AZ_SHA256="$2" ;;
     --stage) STAGE="$2" ;; --proxy) PROXY="$2" ;; --no-proxy) NO_PROXY_EXTRA="$2" ;; --ca-cert) CA_CERT="$2" ;;
-    --runner-user) RUNNER_USER="$2" ;; --runner-dir) RUNNER_DIR="$2" ;;
+    --runner-user) RUNNER_USER="$2" ;; --runner-dir) RUNNER_DIR="$2" ;; --tools-dir) TOOLS="$2" ;;
     *) refuse "unknown option $1" ;;
   esac
   shift 2
@@ -100,8 +106,8 @@ done
 
 case "$COMMAND" in
   print-hook) print_hook; exit 0 ;;
-  install|register|status|remove) ;;
-  *) refuse "command must be install, register, status, remove or print-hook" ;;
+  install|register|status|remove|check) ;;
+  *) refuse "command must be install, register, status, remove, check or print-hook" ;;
 esac
 want role "$ROLE" '^(preview|apply)$'
 want runner-version "$RUNNER_VERSION" '^[0-9]+\.[0-9]+\.[0-9]+$'; want node-version "$NODE_VERSION" '^22\.[0-9]+\.[0-9]+$'
@@ -109,7 +115,8 @@ want pwsh-version "$PWSH_VERSION" '^7\.[0-9]+\.[0-9]+$'; want bicep-version "$BI
 for v in "$RUNNER_SHA256" "$NODE_SHA256" "$PWSH_SHA256" "$BICEP_SHA256"; do want sha256 "$v" "$SHA"; done
 [ -z "$AZ_SHA256" ] || want az-sha256 "$AZ_SHA256" "$SHA"
 want runner-user "$RUNNER_USER" '^[a-z_][a-z0-9_-]{0,31}$'; want runner-dir "$RUNNER_DIR" '^/[A-Za-z0-9._/-]+$'
-[ -z "$PROXY" ] || want proxy "$PROXY" '^https?://[A-Za-z0-9.:@_%-]+/?$'
+case "$PROXY" in *@*) refuse "--proxy must not contain credentials (user:password@): use an IP-allow-listed proxy; the value is not shown" ;; esac
+[ -z "$PROXY" ] || want proxy "$PROXY" '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$'
 [ -z "$NO_PROXY_EXTRA" ] || want no-proxy "$NO_PROXY_EXTRA" '^[A-Za-z0-9.,*_/:-]+$'
 if [ "$COMMAND" = register ]; then
   want client-id "$CLIENT_ID" "$GUID"; want subscription-id "$SUBSCRIPTION_ID" "$GUID"; want tenant-id "$TENANT_ID" "$GUID"
@@ -121,9 +128,71 @@ if [ "$COMMAND" = register ]; then
   other=preview; [ "$ROLE" = preview ] && other=apply
   [[ ",$LABELS," != *",ccof-$other,"* ]] || refuse "labels must not include ccof-$other"
   want allowed-refs "$ALLOWED_REFS" '^refs/heads/[A-Za-z0-9._/-]+( refs/heads/[A-Za-z0-9._/-]+)*$'
-  [ -z "$ALLOWED_WORKFLOWS" ] || want allowed-workflows "$ALLOWED_WORKFLOWS" '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$'
+  want allowed-workflows "$ALLOWED_WORKFLOWS" '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$'
 fi
-[ "$(id -u)" = 0 ] || refuse "run as root (sudo): the script installs packages and the runner service"
+
+# ---- dedicated paths, runner user and the runner's own service (checked before any change)
+ME=$(id -u)
+SYSTEM_DIRS=' /bin /boot /dev /etc /home /lib /lib32 /lib64 /libx32 /media /mnt /opt /proc /root /run /sbin /snap /srv /sys /tmp /usr /var /var/lib /var/log /var/opt /var/tmp '
+trusted_owner() { local o; o=$(stat -c %u -- "$1" 2>/dev/null) || return 1; [ "$o" = 0 ] && return 0; [ "$o" = "$ME" ] && return 0; [ -n "${2:-}" ] && [ "$o" = "$2" ]; }
+safe_dir() { # safe_dir <option> <path> <marker> [<allowed owner uid>]: a dedicated directory this script may own
+  local name="$1" p="$2" marker="$3" uid="${4:-}" cur='' part anc
+  [[ "$p" =~ ^(/[A-Za-z0-9._-]+){2,}$ ]] || refuse "$name '$p' must be an absolute path at least two levels deep (for example /opt/actions-runner)"
+  case "$p/" in */./*|*/../*) refuse "$name '$p' must not contain . or .. components" ;; esac
+  [[ "$SYSTEM_DIRS" != *" $p "* ]] || refuse "$name '$p' is a system directory"
+  case "$p/" in /proc/*|/sys/*|/dev/*|/etc/*|/boot/*|/usr/*|/bin/*|/sbin/*|/lib/*|/lib32/*|/lib64/*|/libx32/*|/root/*|/run/*|/tmp/*|/var/tmp/*|/var/log/*|/home/*) refuse "$name '$p' is inside a system or user directory" ;; esac
+  IFS=/ read -r -a parts <<<"${p#/}"
+  anc=/
+  for part in "${parts[@]}"; do
+    cur="$cur/$part"
+    [ -L "$cur" ] && refuse "$name '$p': $cur is a symbolic link"
+    [ -e "$cur" ] || break
+    [ -d "$cur" ] || refuse "$name '$p': $cur is not a directory"
+    [ "$cur" = "$p" ] || anc="$cur"
+  done
+  trusted_owner "$anc" || refuse "$name '$p': parent $anc is not owned by root"
+  [ $(( 8#$(stat -c %a -- "$anc") & 8#022 )) = 0 ] || refuse "$name '$p': parent $anc is writable by group or others"
+  if [ -d "$p" ]; then
+    trusted_owner "$p" "$uid" || refuse "$name '$p' exists and is owned by another user"
+    if [ -n "$(ls -A -- "$p" 2>/dev/null)" ] && [ ! -e "$p/$marker" ] && [ ! -e "$p/.ccof-version" ]; then
+      local e legacy=1
+      for e in $(ls -A -- "$p"); do [[ " ${5:-} " == *" $e "* ]] || legacy=0; done
+      [ -n "${5:-}" ] && [ "$legacy" = 1 ] || refuse "$name '$p' exists, is not empty and has no $marker: use a new dedicated directory"
+    fi
+  fi
+}
+safe_user() {
+  [ "$RUNNER_USER" != root ] || refuse "runner-user must not be root"
+  if id "$RUNNER_USER" >/dev/null 2>&1; then
+    local uid; uid=$(id -u "$RUNNER_USER")
+    [ "$uid" -ge 1000 ] || refuse "runner-user $RUNNER_USER has uid $uid: use a dedicated non-system user (uid 1000 or more)"
+    case " $(id -nG "$RUNNER_USER") " in *" wheel "*|*" sudo "*|*" admin "*|*" root "*|*" docker "*) refuse "runner-user $RUNNER_USER is in an administrative group" ;; esac
+    RUNNER_UID="$uid"
+  fi
+}
+SVC=''
+own_service() { # SVC = the systemd unit svc.sh installed for RUNNER_DIR (empty when none); never another runner's unit
+  SVC=''
+  local f="$RUNNER_DIR/.service" name unit
+  [ -e "$f" ] || return 0
+  [ ! -L "$f" ] || fail service "$f is a symbolic link: not touched"
+  name=$(head -n 1 "$f" | tr -d '\r')
+  [[ "$name" =~ ^actions\.runner\.[A-Za-z0-9._-]+\.service$ ]] || fail service "$f does not name a runner service: not touched"
+  unit=$(systemctl cat -- "$name" 2>/dev/null) || fail service "service $name named in $f is not installed: remove $f after checking by hand"
+  printf '%s\n' "$unit" | grep -qxF "ExecStart=$RUNNER_DIR/runsvc.sh" && printf '%s\n' "$unit" | grep -qxF "WorkingDirectory=$RUNNER_DIR" \
+    || fail service "service $name does not run $RUNNER_DIR/runsvc.sh: not touched"
+  SVC="$name"
+}
+RUNNER_UID=''
+safe_user
+safe_dir runner-dir "$RUNNER_DIR" .ccof-owned "$RUNNER_UID"
+safe_dir tools-dir "$TOOLS" .ccof-owned '' 'node pwsh bin dl'
+if [ "$COMMAND" = check ]; then
+  own_service
+  note "runner-dir $RUNNER_DIR and runner-user $RUNNER_USER accepted; service: ${SVC:-none}"
+  emit succeeded check ok; exit 0
+fi
+[ "$ME" = 0 ] || refuse "run as root (sudo): the script installs packages and the runner service"
 
 mkdir -p "$WORK" && chmod 700 "$WORK" || exit 3
 LOG="$WORK/$COMMAND-$(date -u +%Y%m%dT%H%M%SZ).log"
@@ -163,27 +232,32 @@ preflight_imds() {
 selinux_fix() {
   have selinuxenabled && selinuxenabled || return 0
   # Under SELinux enforcing, systemd only executes files with an executable type: label the runner entry points.
+  # Only the runner and tool directories are relabelled.
   local spec="$RUNNER_DIR/(runsvc\.sh|run\.sh|run-helper\.sh|config\.sh|bin/.*)"
   if have semanage; then
     semanage fcontext -a -t bin_t "$spec" >>"$LOG" 2>&1 || semanage fcontext -m -t bin_t "$spec" >>"$LOG" 2>&1
-    restorecon -RF "$RUNNER_DIR" "$TOOLS" /usr/local/bin >>"$LOG" 2>&1
+    restorecon -RF "$RUNNER_DIR" "$TOOLS" >>"$LOG" 2>&1
   else
-    restorecon -RF "$RUNNER_DIR" "$TOOLS" /usr/local/bin >>"$LOG" 2>&1
+    restorecon -RF "$RUNNER_DIR" "$TOOLS" >>"$LOG" 2>&1
     chcon -t bin_t "$RUNNER_DIR/runsvc.sh" >>"$LOG" 2>&1
   fi
   note "SELinux $(getenforce 2>/dev/null): contexts set under $RUNNER_DIR"
 }
 
+ccof_bundle() { # CA bundle for the runner only: system bundle plus --ca-cert, under $TOOLS/ca (the system store is unchanged)
+  [ -n "$CA_CERT" ] || return 0
+  [ -r "$CA_CERT" ] || refuse "--ca-cert $CA_CERT is not readable"
+  local sys; sys=$(ca_bundle)
+  mkdir -p "$TOOLS/ca" && cp -f "$CA_CERT" "$TOOLS/ca/ccof-corporate-ca.pem" && cat ${sys:+"$sys"} "$CA_CERT" >"$TOOLS/ca/ccof-ca-bundle.pem" \
+    && chmod 644 "$TOOLS/ca/ccof-corporate-ca.pem" "$TOOLS/ca/ccof-ca-bundle.pem" || fail ca "cannot write the CCOF CA bundle"
+  export CURL_CA_BUNDLE="$TOOLS/ca/ccof-ca-bundle.pem"
+}
+
 do_install() {
   preflight_imds
   [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ] && note "FIPS mode is on: see the FIPS notes in CICD-SETUP.md"
-  if [ -n "$CA_CERT" ]; then
-    [ -r "$CA_CERT" ] || refuse "--ca-cert $CA_CERT is not readable"
-    if [ -d /etc/pki/ca-trust/source/anchors ]; then cp -f "$CA_CERT" /etc/pki/ca-trust/source/anchors/ccof-corporate-ca.crt && update-ca-trust extract
-    else mkdir -p /usr/local/share/ca-certificates && cp -f "$CA_CERT" /usr/local/share/ca-certificates/ccof-corporate-ca.crt && update-ca-certificates; fi >>"$LOG" 2>&1 \
-      || fail ca "cannot add $CA_CERT to the system trust store"
-    note "corporate CA added to the system trust store"
-  fi
+  mkdir -p "$TOOLS/bin" && touch "$TOOLS/.ccof-owned" || fail tools "cannot create $TOOLS"
+  if [ -n "$CA_CERT" ]; then ccof_bundle; note "corporate CA added to the CCOF bundle $TOOLS/ca (system trust store unchanged)"; fi
   local missing='' t
   for t in git curl jq tar gzip sha256sum; do have "$t" || missing="$missing $t"; done
   if [ -n "$missing" ]; then
@@ -208,39 +282,42 @@ do_install() {
   if [ "$("$TOOLS/node/bin/node" -v 2>/dev/null)" != "v$NODE_VERSION" ]; then
     fetch "node-v$NODE_VERSION-linux-x64.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.gz" "$NODE_SHA256"
     rm -rf "$TOOLS/node" && mkdir -p "$TOOLS/node" && tar xzf "$FETCHED" -C "$TOOLS/node" --strip-components 1 >>"$LOG" 2>&1 || fail node "Node.js extraction failed"
-    for t in node npm npx; do ln -sf "$TOOLS/node/bin/$t" "/usr/local/bin/$t"; done
+    for t in node npm npx; do ln -sfn "$TOOLS/node/bin/$t" "$TOOLS/bin/$t"; done
     note "node v$NODE_VERSION installed"
   fi
   if [ "$("$TOOLS/pwsh/pwsh" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>/dev/null | tr -d '\r')" != "$PWSH_VERSION" ]; then
     fetch "powershell-$PWSH_VERSION-linux-x64.tar.gz" "https://github.com/PowerShell/PowerShell/releases/download/v$PWSH_VERSION/powershell-$PWSH_VERSION-linux-x64.tar.gz" "$PWSH_SHA256"
     rm -rf "$TOOLS/pwsh" && mkdir -p "$TOOLS/pwsh" && tar xzf "$FETCHED" -C "$TOOLS/pwsh" >>"$LOG" 2>&1 && chmod 755 "$TOOLS/pwsh/pwsh" || fail pwsh "PowerShell extraction failed"
-    ln -sf "$TOOLS/pwsh/pwsh" /usr/local/bin/pwsh
+    ln -sfn "$TOOLS/pwsh/pwsh" "$TOOLS/bin/pwsh"
     note "pwsh $PWSH_VERSION installed"
   fi
-  if [ "$(/usr/local/bin/bicep --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" != "${BICEP_VERSION#v}" ]; then
+  if [ "$("$TOOLS/bin/bicep" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" != "${BICEP_VERSION#v}" ]; then
     fetch bicep-linux-x64 "https://github.com/Azure/bicep/releases/download/$BICEP_VERSION/bicep-linux-x64" "$BICEP_SHA256"
-    install -m 755 "$FETCHED" /usr/local/bin/bicep || fail bicep "Bicep install failed"
+    install -m 755 "$FETCHED" "$TOOLS/bin/bicep" || fail bicep "Bicep install failed"
     note "bicep $BICEP_VERSION installed"
   fi
   id "$RUNNER_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$RUNNER_USER" >>"$LOG" 2>&1 || fail user "cannot create user $RUNNER_USER"
   if [ "$(cat "$RUNNER_DIR/.ccof-version" 2>/dev/null)" != "$RUNNER_VERSION" ]; then
     fetch "actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" "$RUNNER_SHA256"
-    mkdir -p "$RUNNER_DIR" && tar xzf "$FETCHED" -C "$RUNNER_DIR" >>"$LOG" 2>&1 || fail runner "runner extraction failed"
+    mkdir -p "$RUNNER_DIR" && touch "$RUNNER_DIR/.ccof-owned" && tar xzf "$FETCHED" -C "$RUNNER_DIR" --no-same-owner >>"$LOG" 2>&1 || fail runner "runner extraction failed"
     "$RUNNER_DIR/bin/installdependencies.sh" >>"$LOG" 2>&1 || fail runner "runner dependency install failed (libicu, openssl, krb5 from the distribution repositories)"
     echo "$RUNNER_VERSION" >"$RUNNER_DIR/.ccof-version"
+    # Fresh extraction, before any job ran: the only recursive ownership change, never following links.
+    chown -R -h "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR"
     note "runner $RUNNER_VERSION installed in $RUNNER_DIR"
   fi
-  mkdir -p "$RUNNER_DIR/_work/_tmp"; chown -R "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR"
+  mkdir -p "$RUNNER_DIR/_work/_tmp" && chown -h "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR" "$RUNNER_DIR/_work" "$RUNNER_DIR/_work/_tmp" && chmod 750 "$RUNNER_DIR" || fail runner "cannot prepare $RUNNER_DIR/_work"
   rm -rf "$WORK/dl"
   selinux_fix
-  note "az $(az version --query '"azure-cli"' -o tsv 2>/dev/null), node $(node -v 2>/dev/null), pwsh $PWSH_VERSION, bicep $BICEP_VERSION"
+  note "az $(az version --query '"azure-cli"' -o tsv 2>/dev/null), node $("$TOOLS/bin/node" -v 2>/dev/null), pwsh $PWSH_VERSION, bicep $BICEP_VERSION"
 }
 
-service_name() { systemctl list-unit-files --no-legend 'actions.runner.*' 2>/dev/null | awk '{print $1; exit}'; }
 
 write_env() {
   # The runner reads .env and .path at start; every job inherits them.
-  local bundle; bundle=$(ca_bundle)
+  local bundle=''
+  if [ -n "$CA_CERT" ]; then ccof_bundle; bundle="$TOOLS/ca/ccof-ca-bundle.pem"; fi
+  ( umask 027
   {
     echo "LANG=C.UTF-8"
     echo "CCOF_RUNNER_ROLE=$ROLE"
@@ -256,11 +333,16 @@ write_env() {
       echo "https_proxy=$PROXY"; echo "HTTPS_PROXY=$PROXY"; echo "http_proxy=$PROXY"; echo "HTTP_PROXY=$PROXY"
       echo "no_proxy=$NO_PROXY_ALL"; echo "NO_PROXY=$NO_PROXY_ALL"
     fi
-    if [ -n "$CA_CERT" ] && [ -n "$bundle" ]; then echo "REQUESTS_CA_BUNDLE=$bundle"; echo "NODE_EXTRA_CA_CERTS=$CA_CERT"; fi
-  } >"$RUNNER_DIR/.env"
-  echo "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin" >"$RUNNER_DIR/.path"
-  chown "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR/.env" "$RUNNER_DIR/.path"
-  if [ -n "$CA_CERT" ] && [ -n "$bundle" ]; then git config --system http.sslCAInfo "$bundle"; fi
+    if [ -n "$bundle" ]; then
+      # Runner-scoped trust: the system store and git system config stay unchanged.
+      echo "REQUESTS_CA_BUNDLE=$bundle"; echo "CURL_CA_BUNDLE=$bundle"; echo "SSL_CERT_FILE=$bundle"; echo "GIT_SSL_CAINFO=$bundle"
+      echo "NODE_EXTRA_CA_CERTS=$TOOLS/ca/ccof-corporate-ca.pem"
+    fi
+  } >"$RUNNER_DIR/.env.new" ) || fail env "cannot write $RUNNER_DIR/.env"
+  # root-owned, readable by the runner user only: other local users cannot read the runner environment.
+  chown root:"$RUNNER_USER" "$RUNNER_DIR/.env.new" && chmod 640 "$RUNNER_DIR/.env.new" && mv -f "$RUNNER_DIR/.env.new" "$RUNNER_DIR/.env" || fail env "cannot protect $RUNNER_DIR/.env"
+  echo "$TOOLS/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin" >"$RUNNER_DIR/.path"
+  chown root:"$RUNNER_USER" "$RUNNER_DIR/.path" && chmod 644 "$RUNNER_DIR/.path"
   return 0
 }
 
@@ -273,8 +355,9 @@ do_register() {
   print_hook >"$HOOK"
   chown root:root /etc/ccof-runner "$POLICY" "$(dirname "$HOOK")" "$HOOK"
   chmod 755 /etc/ccof-runner "$(dirname "$HOOK")" "$HOOK"; chmod 644 "$POLICY"
-  local svc; svc=$(service_name)
-  if [ -n "$svc" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1 || fail register "cannot stop the existing service $svc"; fi
+  own_service
+  # svc.sh acts only on the unit named in $RUNNER_DIR/.service, verified above; other runner services are untouched.
+  if [ -n "$SVC" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1 || fail register "cannot stop the existing service $SVC"; fi
   # Re-registration: drop the local registration; --replace takes over the runner with the same name on GitHub.
   rm -f "$RUNNER_DIR/.runner" "$RUNNER_DIR/.credentials" "$RUNNER_DIR/.credentials_rsaparams"
   (cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- ./config.sh --unattended --url "https://github.com/$REPOSITORY" \
@@ -284,17 +367,18 @@ do_register() {
   (cd "$RUNNER_DIR" && ./svc.sh install "$RUNNER_USER") >>"$LOG" 2>&1 || fail register "runner service install failed"
   selinux_fix
   (cd "$RUNNER_DIR" && ./svc.sh start) >>"$LOG" 2>&1 || fail register "runner service start failed"
-  note "registered $RUNNER_NAME ($LABELS) to $REPOSITORY as $(service_name)"
+  own_service
+  note "registered $RUNNER_NAME ($LABELS) to $REPOSITORY as ${SVC:-unknown}"
 }
 
 do_status() {
-  local svc state; svc=$(service_name)
-  [ -n "$svc" ] || fail status "no runner service: run register"
-  state=$(systemctl is-active "$svc" 2>/dev/null); note "$svc $state"
-  [ "$state" = active ] || fail status "runner service $svc is $state"
+  local state; own_service
+  [ -n "$SVC" ] || fail status "no runner service for $RUNNER_DIR: run register"
+  state=$(systemctl is-active -- "$SVC" 2>/dev/null); note "$SVC $state"
+  [ "$state" = active ] || fail status "runner service $SVC is $state"
   local pre; pre="$(dirname "$0")/Test-RunnerHost.sh"
   if [ -r "$pre" ]; then
-    (set -a; . "$RUNNER_DIR/.env"; set +a; cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- bash "$pre") >>"$LOG" 2>&1 \
+    (set -a; . "$RUNNER_DIR/.env"; set +a; PATH="$(cat "$RUNNER_DIR/.path")"; cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- bash "$pre") >>"$LOG" 2>&1 \
       || fail preflight "Test-RunnerHost.sh failed as $RUNNER_USER: see $LOG"
     note "Test-RunnerHost.sh passed as $RUNNER_USER"
   fi
@@ -302,8 +386,8 @@ do_status() {
 
 do_remove() {
   [ -n "${RUNNER_TOKEN:-}" ] || refuse "RUNNER_TOKEN (a remove token) is not set in the environment"
-  local svc; svc=$(service_name)
-  if [ -n "$svc" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1; fi
+  own_service
+  if [ -n "$SVC" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1; fi
   (cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- ./config.sh remove --token "$RUNNER_TOKEN") >>"$LOG" 2>&1 || fail remove "config.sh remove failed"
   note "removed the runner registration"
 }

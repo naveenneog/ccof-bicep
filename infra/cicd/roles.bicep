@@ -1,7 +1,8 @@
 // Least-privilege roles of the two CCOF runner identities (docs/runbooks/CICD-SETUP.md, "Roles" table).
 // Deployed at subscription scope by Invoke-CicdSetup.ps1 -Phase Roles; the Foundry accounts may be in another
 // subscription. No Owner and no User Access Administrator: role assignment rights are Role Based Access Control
-// Administrator with an ABAC condition limited to the roles Stage 3 assigns, to service principals only.
+// Administrator with an ABAC condition limited to the roles Stage 3 assigns and to principals of type ServicePrincipal
+// (managed identities and application service principals alike); assignablePrincipalIds narrows it to exact object IDs.
 targetScope = 'subscription'
 
 param previewPrincipalId string
@@ -19,6 +20,9 @@ param foundryPrivateEndpointApproval bool = false
 
 @description('Cosmos DB Built-in Data Contributor for the deploy identity on the database, for pipeline steps that write data (seeding). Off by default.')
 param deployCosmosDataWriter bool = false
+
+@description('Object IDs the deploy identity may assign the Stage 3 roles to (workload RG and Foundry). Empty: any service principal of the tenant.')
+param assignablePrincipalIds string[] = []
 
 var reader = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
 var contributor = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
@@ -53,6 +57,7 @@ module workloadDeploy 'modules/rg-roles.bicep' = {
     roleIds: [contributor]
     conditionedRbacAdministrator: rbacAdministrator
     assignableRoleIds: [blobOwner, metricsPublisher, logReader]
+    assignablePrincipalIds: assignablePrincipalIds
   }
 }
 
@@ -86,5 +91,6 @@ module foundryRoles 'modules/foundry-roles.bicep' = [for (f, i) in foundry: {
     privateEndpointApproval: foundryPrivateEndpointApproval
     conditionedRbacAdministrator: rbacAdministrator
     assignableRoleIds: [cognitiveServicesUser]
+    assignablePrincipalIds: assignablePrincipalIds
   }
 }]
