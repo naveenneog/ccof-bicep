@@ -22,6 +22,10 @@ on:
         description: Only run a probe job on each runner without environment (from main it is accepted; from any other branch the job-started hook must refuse it)
         type: boolean
         default: false
+      windows:
+        description: Only run the Windows preview checks (runner labels ccof-preview and ccof-windows)
+        type: boolean
+        default: false
       dns_private_host:
         description: Optional. An azurewebsites.net host with a private A record (checked against dns_private_ip)
         default: ""
@@ -39,7 +43,7 @@ concurrency:
 
 jobs:
   preview:
-    if: ${{ !inputs.hook_negative }}
+    if: ${{ !inputs.hook_negative && !inputs.windows }}
     runs-on: [self-hosted, ccof-vnet, ccof-preview]
     environment: ${{ inputs.environment }}-preview
     env:
@@ -132,7 +136,7 @@ jobs:
           mode: logout
 
   apply:
-    if: ${{ !inputs.hook_negative }}
+    if: ${{ !inputs.hook_negative && !inputs.windows }}
     needs: preview
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
     environment: ${{ inputs.environment }}-apply
@@ -158,7 +162,7 @@ jobs:
           mode: logout
 
   hook-negative:
-    if: ${{ inputs.hook_negative }}
+    if: ${{ inputs.hook_negative && !inputs.windows }}
     strategy:
       fail-fast: false
       matrix:
@@ -168,3 +172,60 @@ jobs:
       # From main: accepted (the hook prints the accepted context). From any other branch, event or workflow: the
       # job fails at "Set up job" with "ccof-runner: job refused". A green job off main means the hook is not enforced.
       - run: echo "::warning::accepted by the job-started hook ($GITHUB_EVENT_NAME on $GITHUB_REF)"
+
+  preview-windows:
+    if: ${{ inputs.windows && !inputs.hook_negative }}
+    runs-on: [self-hosted, ccof-preview, ccof-windows]
+    environment: ${{ inputs.environment }}-preview
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      COSMOS: ${{ inputs.cosmos_account }}
+      RG: ${{ inputs.workload_resource_group }}
+      DEPLOY_CLIENT_ID: ${{ inputs.deploy_client_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight
+        run: ./scripts/cicd/Test-RunnerHost.ps1 -PrivateFqdns "$env:COSMOS.documents.azure.com" -BicepVersion v0.46.1
+      - uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: preview
+      - name: Cosmos DB data plane read over the private endpoint
+        run: |
+          $h = "$env:COSMOS.documents.azure.com"
+          $ip = ([Net.Dns]::GetHostAddresses($h) | Where-Object AddressFamily -eq InterNetwork | Select-Object -First 1).IPAddressToString
+          "$h -> $ip"
+          if ($ip -notmatch '^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)') { throw "$h does not resolve to a private address" }
+          $token = az account get-access-token --resource "https://$h" --query accessToken -o tsv
+          $auth = [uri]::EscapeDataString("type=aad&ver=1.0&sig=$token")
+          $r = Invoke-WebRequest -SkipHttpErrorCheck -Uri "https://$h/dbs/ccof/colls" -Headers @{ Authorization = $auth; 'x-ms-date' = [DateTime]::UtcNow.ToString('r'); 'x-ms-version' = '2018-12-31' }
+          "GET /dbs/ccof/colls -> HTTP $($r.StatusCode)"
+          if ($r.StatusCode -ne 200) { throw $r.Content }
+      - name: Negative - the preview identity cannot write
+        run: |
+          $out = az group update --name $env:RG --set tags.ccof-smoke=denied -o none 2>&1 | Out-String
+          $code = $LASTEXITCODE; $global:LASTEXITCODE = 0
+          ($out -split "`n" | Select-Object -First 3) -join "`n"
+          if ($code -eq 0 -or $out -notmatch 'AuthorizationFailed') { throw 'write was not denied with AuthorizationFailed' }
+          'PASS write denied (AuthorizationFailed)'
+      - name: Negative - the deploy identity is not available on the preview runner
+        run: |
+          $env:AZURE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'neg-azcfg'; New-Item -ItemType Directory -Force $env:AZURE_CONFIG_DIR | Out-Null
+          $out = az login --identity --client-id $env:DEPLOY_CLIENT_ID --allow-no-subscriptions -o none 2>&1 | Out-String
+          $code = $LASTEXITCODE; $global:LASTEXITCODE = 0
+          Remove-Item -Recurse -Force $env:AZURE_CONFIG_DIR
+          ($out -split "`n" | Select-Object -First 3) -join "`n"
+          if ($code -eq 0) { throw 'the deploy identity signed in on the preview runner' }
+          'PASS deploy identity refused on the preview runner'
+      - if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  hook-negative-windows:
+    if: ${{ inputs.windows && inputs.hook_negative }}
+    runs-on: [self-hosted, ccof-preview, ccof-windows]
+    steps:
+      - run: echo "::warning::accepted by the job-started hook ($env:GITHUB_EVENT_NAME on $env:GITHUB_REF)"
+        shell: pwsh
