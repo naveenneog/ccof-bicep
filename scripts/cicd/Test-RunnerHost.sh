@@ -40,8 +40,11 @@ resolve() {
 code=$(curl -s --noproxy '*' --max-time 5 -o /dev/null -w '%{http_code}' -H Metadata:true "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>/dev/null)
 if [ "$code" = 200 ]; then pass imds "169.254.169.254 HTTP 200"; else bad imds "169.254.169.254 HTTP ${code:-none}: allow it in the host firewall and exclude it from the proxy"; fi
 proxy="${HTTPS_PROXY:-${https_proxy:-}}"; noproxy="${NO_PROXY:-${no_proxy:-}}"
+# Only the proxy host:port is ever printed; a proxy with user:password@ is refused (credentials would reach job logs).
+proxy_shown="${proxy#*://}"; proxy_shown="${proxy_shown##*@}"; proxy_shown="${proxy_shown%%/*}"
 if [ -n "$proxy" ]; then
-  if [[ ",$noproxy," == *",169.254.169.254,"* ]]; then pass proxy "HTTPS_PROXY set; NO_PROXY includes 169.254.169.254"
+  if [[ "$proxy" == *@* ]]; then bad proxy "HTTPS_PROXY contains credentials (user:password@, not shown): use an IP-allow-listed proxy"
+  elif [[ ",$noproxy," == *",169.254.169.254,"* ]]; then pass proxy "HTTPS_PROXY set; NO_PROXY includes 169.254.169.254"
   else bad proxy "HTTPS_PROXY is set but NO_PROXY does not include 169.254.169.254"; fi
 else info proxy "no HTTPS_PROXY"; fi
 
@@ -82,7 +85,7 @@ done
 # 5. GitHub through the proxy (if any), and the clock against the GitHub Date header.
 hdr=$(curl -sS -I --max-time 15 https://api.github.com/ 2>&1)
 gcode=$(printf '%s\n' "$hdr" | awk 'toupper($1) ~ /^HTTP/ {c=$2} END {print c}')
-if [ "$gcode" = 200 ]; then pass github "https://api.github.com HTTP 200${proxy:+ via $proxy}"; else bad github "https://api.github.com: $(printf '%s' "$hdr" | head -n 1 | tr -d '\r' | cut -c1-200)"; fi
+if [ "$gcode" = 200 ]; then pass github "https://api.github.com HTTP 200${proxy:+ via proxy $proxy_shown}"; else bad github "https://api.github.com: $(printf '%s' "$hdr" | head -n 1 | tr -d '\r' | cut -c1-200)"; fi
 gdate=$(printf '%s\n' "$hdr" | awk -F': ' 'tolower($1)=="date" {print $2}' | tr -d '\r')
 if [ -n "$gdate" ] && gs=$(date -u -d "$gdate" +%s 2>/dev/null); then
   skew=$(( $(date -u +%s) - gs )); skew=${skew#-}

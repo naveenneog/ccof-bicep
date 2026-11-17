@@ -37,7 +37,10 @@ $guid = '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
 try { $r = Invoke-WebRequest -NoProxy -TimeoutSec $TimeoutSec -Headers @{ Metadata = 'true' } -Uri $ImdsUri; Pass 'imds' "HTTP $($r.StatusCode)" }
 catch { Bad 'imds' "$ImdsUri not reachable ($($_.Exception.Message)): allow it in the host firewall and exclude it from the proxy" }
 $proxy = "$env:HTTPS_PROXY$env:https_proxy"; $noProxy = ",$env:NO_PROXY,$env:no_proxy,"
-if ($proxy) { if ($noProxy -like '*,169.254.169.254,*') { Pass 'proxy' 'HTTPS_PROXY set; NO_PROXY includes 169.254.169.254' } else { Bad 'proxy' 'HTTPS_PROXY is set but NO_PROXY does not include 169.254.169.254' } }
+# Only the proxy host:port is ever printed; a proxy with user:password@ is refused (credentials would reach job logs).
+$proxyShown = (($proxy -replace '^[a-zA-Z]+://', '') -replace '^.*@', '') -replace '/.*$', ''
+if ($proxy -match '@') { Bad 'proxy' 'HTTPS_PROXY contains credentials (user:password@, not shown): use an IP-allow-listed proxy' }
+elseif ($proxy) { if ($noProxy -like '*,169.254.169.254,*') { Pass 'proxy' 'HTTPS_PROXY set; NO_PROXY includes 169.254.169.254' } else { Bad 'proxy' 'HTTPS_PROXY is set but NO_PROXY does not include 169.254.169.254' } }
 else { Info 'proxy' 'no HTTPS_PROXY' }
 
 # 2. Tools.
@@ -76,7 +79,7 @@ if (-not $PrivateFqdns) { Info 'dns' 'no CCOF_PRIVATE_FQDNS given' }
 # 5. GitHub (through the proxy, if any) and the clock against the GitHub Date header.
 try {
     $g = Invoke-WebRequest -Method Head -TimeoutSec 15 -Uri 'https://api.github.com/'
-    Pass 'github' "https://api.github.com HTTP $($g.StatusCode)$(if ($proxy) { " via $proxy" })"
+    Pass 'github' "https://api.github.com HTTP $($g.StatusCode)$(if ($proxy) { " via proxy $proxyShown" })"
     $skew = [math]::Abs(([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse("$($g.Headers['Date'])")).TotalSeconds)
     if ($skew -le 300) { Pass 'clock' "skew $([int]$skew)s against api.github.com" } else { Bad 'clock' "skew $([int]$skew)s against api.github.com: check time sync" }
 } catch { Bad 'github' "https://api.github.com: $($_.Exception.Message)" }
