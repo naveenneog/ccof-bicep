@@ -1,0 +1,122 @@
+# Proves a CCOF runner pair (docs/runbooks/CICD-SETUP.md, section 6 step 6 and section 10): preflight, managed
+# identity sign-in, private DNS, a Cosmos DB data plane read from the preview runner, the denied write and
+# the unavailable deploy identity on the preview runner, and the deploy identity on the apply runner.
+# Manual only; it changes nothing in Azure. Needs the two runners, so it never runs on GitHub-hosted runners.
+name: ccof-runner-smoke
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment stem (uses <env>-preview and <env>-apply)
+        required: true
+      cosmos_account:
+        description: Cosmos DB account name (data plane read of database ccof)
+        required: true
+      workload_resource_group:
+        description: Workload resource group (target of the denied write and of what-if)
+        required: true
+      deploy_client_id:
+        description: Client ID of the deploy identity (must NOT be usable on the preview runner)
+        required: true
+      hook_negative:
+        description: Only run a job on ccof-apply without environment (run from a non-main branch; the job-started hook must refuse it)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: ccof-env-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: ${{ !inputs.hook_negative }}
+    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    environment: ${{ inputs.environment }}-preview
+    env:
+      COSMOS: ${{ inputs.cosmos_account }}
+      RG: ${{ inputs.workload_resource_group }}
+      DEPLOY_CLIENT_ID: ${{ inputs.deploy_client_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight
+        run: bash scripts/cicd/Test-RunnerHost.sh --private-fqdns "$COSMOS.documents.azure.com" --bicep-version v0.46.1
+      - id: login
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: preview
+      - name: Signed-in identity
+        run: az account show --query "{subscription:id, tenant:tenantId, user:user}" -o json
+      - name: Cosmos DB data plane read over the private endpoint
+        run: |
+          set -euo pipefail
+          host="$COSMOS.documents.azure.com"
+          ip=$(getent hosts "$host" | awk '{print $1; exit}')
+          echo "$host -> $ip"
+          case "$ip" in 10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) ;; *) echo "::error::$host does not resolve to a private address"; exit 1 ;; esac
+          token=$(az account get-access-token --resource "https://$host" --query accessToken -o tsv)
+          auth=$(printf 'type=aad&ver=1.0&sig=%s' "$token" | jq -sRr @uri)
+          code=$(curl -sS -o colls.json -w '%{http_code}' "https://$host/dbs/ccof/colls" -H "Authorization: $auth" \
+            -H "x-ms-date: $(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S GMT')" -H 'x-ms-version: 2018-12-31')
+          echo "GET /dbs/ccof/colls -> HTTP $code"
+          [ "$code" = 200 ] || { cat colls.json; exit 1; }
+          jq -r '"containers: " + ([.DocumentCollections[].id] | join(", "))' colls.json
+      - name: Negative - the preview identity cannot write
+        run: |
+          set -uo pipefail
+          out=$(az group update --name "$RG" --set tags.ccof-smoke=denied -o none 2>&1); code=$?
+          echo "$out" | head -n 3
+          [ $code -ne 0 ] && echo "$out" | grep -q AuthorizationFailed || { echo "::error::write was not denied with AuthorizationFailed"; exit 1; }
+          echo "PASS write denied (AuthorizationFailed)"
+      - name: Negative - the deploy identity is not available on the preview runner
+        run: |
+          set -uo pipefail
+          export AZURE_CONFIG_DIR="$RUNNER_TEMP/neg-azcfg"; mkdir -p "$AZURE_CONFIG_DIR"
+          out=$(az login --identity --client-id "$DEPLOY_CLIENT_ID" --allow-no-subscriptions -o none 2>&1); code=$?
+          rm -rf "$AZURE_CONFIG_DIR"
+          echo "$out" | head -n 3
+          [ $code -ne 0 ] || { echo "::error::the deploy identity signed in on the preview runner"; exit 1; }
+          echo "PASS deploy identity refused on the preview runner"
+      - name: What-if with the preview identity (recorded, not required)
+        continue-on-error: true
+        run: |
+          echo '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":[]}' > empty.json
+          az deployment group what-if --resource-group "$RG" --template-file empty.json --no-pretty-print -o none 2>&1 | head -n 5
+          exit "${PIPESTATUS[0]}"
+      - if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  apply:
+    if: ${{ !inputs.hook_negative }}
+    needs: preview
+    runs-on: [self-hosted, ccof-vnet, ccof-apply]
+    environment: ${{ inputs.environment }}-apply
+    env:
+      COSMOS: ${{ inputs.cosmos_account }}
+      RG: ${{ inputs.workload_resource_group }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight
+        run: bash scripts/cicd/Test-RunnerHost.sh --private-fqdns "$COSMOS.documents.azure.com" --bicep-version v0.46.1
+      - uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: apply
+      - name: Signed-in identity
+        run: az account show --query "{subscription:id, tenant:tenantId, user:user}" -o json
+      - name: What-if with the deploy identity (no change)
+        run: |
+          echo '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":[]}' > empty.json
+          az deployment group what-if --resource-group "$RG" --template-file empty.json --no-pretty-print --query status -o tsv
+      - if: always()
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout
+
+  hook-negative:
+    if: ${{ inputs.hook_negative }}
+    runs-on: [self-hosted, ccof-vnet, ccof-apply]
+    steps:
+      # Expected: the job fails at "Set up job" with "ccof-runner: job refused". A green job means the hook is not enforced.
+      - run: echo "::warning::the job-started hook did not refuse this job"
