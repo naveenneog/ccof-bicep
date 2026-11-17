@@ -41,6 +41,10 @@ administrator selects it in the console (ADMIN-OPERATIONS section 7, step 6).
 6. **GitHub plan and environments.** Environments `<env>-preview`, `<env>-gate-privatelink` and
    `<env>-apply`, the last two with required reviewers, all three limited to the branch `main`. A private
    repository needs GitHub Enterprise for required reviewers (see [Approval check](#approval-check)).
+   Create all three before the first run, including `<env>-gate-privatelink` even if no backend needs a
+   private link: whether the gate is needed is only known after `validate`, so every apply run checks it.
+   For a private organization repository, set the repository variable `CCOF_GITHUB_PLAN` = `enterprise`
+   (an attestation; the token cannot read the plan).
 
 ## Run it
 
@@ -99,6 +103,13 @@ Steps: `validate`, `stage3`, `stage5`, `stage6`, `standby-backends`, `standby-ve
 - Every self-hosted job runs only for `workflow_dispatch` on `main` and inside a GitHub environment:
   `<env>-preview` (no reviewers), `<env>-gate-privatelink` and `<env>-apply` (required reviewers). Set
   the deployment branch policy of all three to `main` only.
+- Before any self-hosted job is queued, the GitHub-hosted `resolve` job (job token, `actions: read`)
+  checks the environment name and that the run is on the default branch, then runs
+  `scripts/cicd/Test-CicdGitHubEnvironments.ps1` (shared with the deployment pipeline). It fails unless
+  `<env>-preview` exists with a branch policy of exactly `main` and, for `apply` = true, `<env>-apply` and
+  `<env>-gate-privatelink` also exist with required reviewers on a plan that enforces them. Every other
+  job needs `resolve`, so a missing environment (which GitHub would create without protection) never
+  reaches the preview runner, which has the apply identity.
 - Previews run on the apply runner because Azure what-if needs the same permissions as a deployment
   ([Learn: what-if permissions](https://learn.microsoft.com/azure/azure-resource-manager/templates/deploy-what-if)).
 - `Invoke-CicdOnboardingStep.ps1` refuses an apply in GitHub Actions unless the runner reports
@@ -140,16 +151,25 @@ Without them the apply always fails, so it never runs unreviewed.
 
 The workflow uses files from the runner and state branches: `scripts/cicd/Test-RunnerHost.sh` and
 `.github/actions/azure-login-mi` (runner infrastructure), and `scripts/cicd/Sync-CicdState.ps1` with
-`CicdState.psm1` (deployment pipeline). Merge those first; until then the self-hosted jobs fail at their
-first step and change nothing. `pr-check` does not use them.
+`CicdState.psm1`, and `scripts/cicd/Test-CicdGitHubEnvironments.ps1` with `CicdGitHubEnvironments.psm1`
+(deployment pipeline). Merge those first; until then `resolve` or the first step of each self-hosted job fails and nothing
+changes. `pr-check` does not use them.
 
 ## Driver state
 
 The staged and standby drivers keep state in `deploy/<env>/.staged-state` and `.dr-state` (git-ignored).
 Each self-hosted job restores it from the `cicd-state/<env>` branch with
-`scripts/cicd/Sync-CicdState.ps1 -Action Restore` (job token in `CCOF_STATE_TOKEN`; the read-only jobs check out without stored credentials); only the apply job saves it back (`-Action Save`, also
-after a failure). Runs for one environment share the concurrency group `ccof-env-<env>` and never run
-at the same time.
+`scripts/cicd/Sync-CicdState.ps1 -Action Restore` (job token in `CCOF_STATE_TOKEN`; the read-only jobs check out without stored credentials); only the apply job saves it back (`-Action Save`). Save runs only
+when Restore succeeded and the driver step started a step (marker `evidence/<env>/onboard-driver-started.txt`),
+including after a driver failure so partial progress is kept. A job that failed at approval, sign-in,
+checkout or Restore saves nothing, so it cannot overwrite the branch with unrestored state.
+
+Runs for one environment share the concurrency group `ccof-env-<env>` and never run at the same time.
+The group uses `queue: max`: up to 100 runs wait in order (order not guaranteed) instead of a new run
+replacing the waiting one. A run beyond 100 pending is cancelled; start it again later
+([GitHub: concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)).
+Every workflow that uses the group should set the same `queue` value. actionlint 1.7.12 does not yet
+know the `queue` key (rhysd/actionlint#657) and reports it.
 
 ## Stage 5 and live settings
 

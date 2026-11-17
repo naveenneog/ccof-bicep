@@ -30,6 +30,10 @@
 - The smoke test follows policy fragments, XML-decodes them and accepts static or registry admission with the
   managed-identity route; it reads ARM responses with or without a UTF-8 BOM and always checks the descriptor outcome.
 - Self-hosted jobs run the host preflight for the runner OS (`Test-RunnerHost.sh` on Linux, `.ps1` on Windows).
+- A GitHub-hosted `resolve` job runs `Test-CicdGitHubEnvironments.ps1` before any self-hosted job, so a missing
+  or unprotected `<env>-preview` (and, for apply runs, `<env>-apply` and `<env>-gate-privatelink`) stops the run.
+  Apply saves driver state only after a successful restore and a started step. The `ccof-env-<env>` group uses
+  `queue: max` (up to 100 waiting runs).
 - DR `-Phase Backends` compares configurations without a JSON round trip (date-like strings such as
   `reconciler.ledgerCoverageStartAt` no longer change the hash) and clears prior evidence only after its checks pass.
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything

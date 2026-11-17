@@ -36,7 +36,10 @@ Three problems blocked automation:
   runner; Azure work only for `workflow_dispatch` on `main`, on the private runners with their managed
   identities, inside main-only GitHub environments (`<env>-preview`, `<env>-gate-privatelink`,
   `<env>-apply`). A private link created by another team is a manual gate. Driver state lives on the
-  `cicd-state/<env>` branch; only the apply job saves it.
+  `cicd-state/<env>` branch; only the apply job saves it, and only after a successful restore and a
+  started driver step. A GitHub-hosted `resolve` job proves the environments' protection before any
+  self-hosted job is queued. The shared `ccof-env-<env>` group uses `queue: max` so a waiting run is not
+  replaced (more than 100 waiting runs are cancelled).
 - **Approval fails closed.** Workflow conditions and GitHub environments can be bypassed or auto-created
   without protection, so the gate and apply jobs verify, with the job token, that the environment has
   required reviewers, a `main`-only branch policy and an approval for this run before any Azure sign-in;

@@ -5,10 +5,12 @@ name: onboard-foundry
 # (.github/actions/azure-login-mi); there is no Azure secret, variable or federated credential in GitHub.
 # - pull_request: an offline check on a GitHub-hosted runner. Pull request code never runs on the private
 #   self-hosted runners and never gets a managed identity.
-# - workflow_dispatch from main (reviewed, merged configuration): validate with Azure reads on ccof-preview,
-#   what-if previews on ccof-apply (what-if needs deploy permissions), then, with apply, the private link
-#   gate if needed and the apply. Every self-hosted job runs in a GitHub environment whose deployment
-#   branch policy allows main only; <env>-gate-privatelink and <env>-apply also need reviewers.
+# - workflow_dispatch from main (reviewed, merged configuration): a GitHub-hosted resolve job first proves the
+#   GitHub environments (main-only branch policy; reviewers and an enforcing plan for apply), then validate
+#   with Azure reads on ccof-preview, what-if previews on ccof-apply (what-if needs deploy permissions), then,
+#   with apply, the private link gate if needed and the apply. Every self-hosted job runs in a GitHub
+#   environment whose deployment branch policy allows main only; <env>-gate-privatelink and <env>-apply also
+#   need reviewers.
 # Steps run through scripts/cicd/Invoke-CicdOnboardingStep.ps1, which never runs Stage 7 or Stage 8.
 # The job conditions below come from the dispatched branch, which its author can edit, so they are not the
 # control: the runner host's job-started hook (scripts/cicd/Install-CcofRunner.*, both runners) refuses any
@@ -38,9 +40,12 @@ on:
 permissions:
   contents: read
 
+# One run per environment at a time, shared with every workflow that changes it (ccof-env-<env>). queue: max
+# keeps up to 100 pending runs in order instead of replacing the pending one; beyond 100 GitHub cancels new runs.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('onboard-foundry-pr-{0}', github.event.pull_request.number) || format('ccof-env-{0}', inputs.environment) }}
   cancel-in-progress: false
+  queue: max
 
 defaults:
   run:
@@ -83,11 +88,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # GitHub-hosted, before any self-hosted job: proves that <env>-preview admits only the protected default
+  # branch and, with apply, that <env>-apply and <env>-gate-privatelink also have required reviewers the
+  # repository plan enforces (scripts/cicd/Test-CicdGitHubEnvironments.ps1). GitHub creates a missing
+  # environment unprotected when a job names it, so a missing or unprotected environment stops the run here.
+  # The gate environment is required on every apply run because the need for it is known only after validate.
+  resolve:
+    name: GitHub environment protections (GitHub-hosted)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      environment: ${{ steps.scope.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Scope
+        id: scope
+        env:
+          CCOF_INPUT_ENV: ${{ inputs.environment }}
+          CCOF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          $e = $env:CCOF_INPUT_ENV
+          if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$e'" }
+          # A clear early message; the control is the environment branch policy proved below.
+          if ($env:GITHUB_REF -ne "refs/heads/$env:CCOF_DEFAULT_BRANCH") { throw "dispatch from $env:GITHUB_REF refused; run from the default branch" }
+          "environment=$e" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+      - name: GitHub environment protections (branch policy, reviewers, plan)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCOF_ENV: ${{ steps.scope.outputs.environment }}
+          CCOF_APPLY: ${{ inputs.apply }}
+          CCOF_GITHUB_PLAN: ${{ vars.CCOF_GITHUB_PLAN }}
+        run: |
+          $gates = if ($env:CCOF_APPLY -eq 'true') { 'apply,gate-privatelink' } else { '' }
+          & ./scripts/cicd/Test-CicdGitHubEnvironments.ps1 -Repository $env:GITHUB_REPOSITORY -Environment $env:CCOF_ENV -ReviewedGate $gates
+          exit $LASTEXITCODE
+
   validate:
     name: validate (Azure reads)
+    needs: resolve
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, ccof-vnet, ccof-preview]
-    environment: ${{ inputs.environment }}-preview
+    environment: ${{ needs.resolve.outputs.environment }}-preview
     timeout-minutes: 20
     outputs:
       environment: ${{ steps.scope.outputs.environment }}
@@ -160,10 +209,10 @@ jobs:
           mode: logout
   preview:
     name: preview (what-if, region A and B)
-    needs: validate
+    needs: [resolve, validate]
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
-    environment: ${{ needs.validate.outputs.environment }}-preview
+    environment: ${{ needs.resolve.outputs.environment }}-preview
     timeout-minutes: 60
     env:
       CCOF_ENV: ${{ needs.validate.outputs.environment }}
@@ -229,10 +278,10 @@ jobs:
 
   gate-privatelink:
     name: private link approved (gate)
-    needs: [validate, preview]
+    needs: [resolve, validate, preview]
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply && needs.validate.outputs.needs-privatelink-gate == 'true'
     runs-on: [self-hosted, ccof-vnet, ccof-preview]
-    environment: ${{ needs.validate.outputs.environment }}-gate-privatelink
+    environment: ${{ needs.resolve.outputs.environment }}-gate-privatelink
     timeout-minutes: 20
     permissions:
       contents: read
@@ -299,13 +348,13 @@ jobs:
 
   apply:
     name: apply (region A, region B, descriptor, smoke)
-    needs: [validate, preview, gate-privatelink]
+    needs: [resolve, validate, preview, gate-privatelink]
     if: >-
       always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply
-      && needs.validate.result == 'success' && needs.preview.result == 'success'
+      && needs.resolve.result == 'success' && needs.validate.result == 'success' && needs.preview.result == 'success'
       && (needs.gate-privatelink.result == 'success' || needs.gate-privatelink.result == 'skipped')
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
-    environment: ${{ needs.validate.outputs.environment }}-apply
+    environment: ${{ needs.resolve.outputs.environment }}-apply
     timeout-minutes: 120
     permissions:
       contents: write
@@ -355,14 +404,17 @@ jobs:
 
       # The checkout's stored credentials authenticate Restore and Save here; CCOF_STATE_TOKEN would add a
       # second Authorization header, which GitHub rejects.
-      - name: Restore driver state (cicd-state/${{ needs.validate.outputs.environment }})
+      - name: Restore driver state (cicd-state/${{ needs.resolve.outputs.environment }})
+        id: restore
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
 
       - name: Apply in order (stops at the first failure)
+        id: drive
         run: |
           $done = "evidence/$env:CCOF_ENV/onboard-completed.txt"
           $null = New-Item -ItemType Directory -Force -Path (Split-Path $done -Parent)
           Set-Content -LiteralPath $done -Value @()
+          Set-Content -LiteralPath "evidence/$env:CCOF_ENV/onboard-driver-started.txt" -Value "$env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
           $hasFd = Test-Path -LiteralPath "deploy/$env:CCOF_ENV/.dr-state/frontdoor-state.json"
           $plan = @(
             @{ Step = 'validate'; RequirePrivateLink = $true },
@@ -387,9 +439,17 @@ jobs:
           $lines | Write-Host
           @('### Onboarding failed', '') + ($lines | ForEach-Object { "- $_" }) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      # Only state restored in this job and changed by a driver that started is saved: after a partial failure
+      # or a cancellation the applied part is recorded; after an early failure (approval, sign-in, checkout,
+      # restore) nothing is saved, so the branch state is never replaced by an empty or stale working copy.
       - name: Save driver state
-        if: always()
-        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "onboard-foundry $env:CCOF_IDS run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
+        if: always() && steps.restore.outcome == 'success' && (steps.drive.outcome == 'success' || steps.drive.outcome == 'failure' || steps.drive.outcome == 'cancelled')
+        run: |
+          if (-not (Test-Path -LiteralPath "evidence/$env:CCOF_ENV/onboard-driver-started.txt")) {
+            Write-Host 'No onboarding step started in this job: driver state not saved.'
+            exit 0
+          }
+          pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "onboard-foundry $env:CCOF_IDS run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
 
       - name: Upload evidence
         if: always()

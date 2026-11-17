@@ -11,7 +11,9 @@ function job(text: string, name: string): string {
   assert.ok(start >= 0, `job ${name} exists`);
   const rest = jobs.slice(start + 1);
   const next = rest.slice(1).search(/\n {2}[a-z][a-z-]*:\n/);
-  return next < 0 ? rest : rest.slice(0, next + 1);
+  const body = next < 0 ? rest : rest.slice(0, next + 1);
+  // A comment block right above the next job belongs to that job.
+  return body.replace(/(?:\n {2}#[^\n]*)+\n?$/, "\n");
 }
 
 // The steps of one job, split at "      - " (six spaces).
@@ -56,12 +58,12 @@ test("pull request code never runs on a self-hosted runner or gets a managed ide
   assert.match(pr, /-Step validate -BaseConfigPath \$base -Offline/);
   assert.doesNotMatch(pr, /self-hosted|azure-login-mi|Sync-CicdState|environment:|-Apply|az /);
   const jobs = [...text.slice(text.indexOf("\njobs:\n")).matchAll(/\n {2}([a-z][a-z-]*):\n/g)].map((m) => m[1]);
-  assert.deepEqual(jobs, ["pr-check", "validate", "preview", "gate-privatelink", "apply"]);
-  for (const name of jobs.filter((n) => n !== "pr-check")) {
+  assert.deepEqual(jobs, ["pr-check", "resolve", "validate", "preview", "gate-privatelink", "apply"]);
+  for (const name of jobs.filter((n) => n !== "pr-check" && n !== "resolve")) {
     const body = job(text, name);
     assert.match(body, /runs-on: \[self-hosted, ccof-vnet, ccof-(preview|apply)\]/, `${name} is self-hosted`);
     assert.match(body, /\n {4}if: (?:>-\n {6})?.*github\.ref == 'refs\/heads\/main'/, `${name} runs only from main`);
-    assert.match(body, /\n {4}environment: \$\{\{ [a-z.-]+ \}\}-(preview|gate-privatelink|apply)\n/, `${name} runs in a main-only GitHub environment`);
+    assert.match(body, /\n {4}environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-(preview|gate-privatelink|apply)\n/, `${name} runs in a main-only GitHub environment proved by resolve`);
     assert.doesNotMatch(body, /pull_request'(?! \|\|)/, `${name} is not a pull request job`);
   }
   assert.match(job(text, "validate"), /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\n {4}runs-on: \[self-hosted, ccof-vnet, ccof-preview\]/);
@@ -120,7 +122,7 @@ test("a job reachable from a pull request is GitHub-hosted; self-hosted jobs req
       hosted++;
     }
   }
-  assert.equal(hosted, 1, "only pr-check is GitHub-hosted");
+  assert.equal(hosted, 2, "only pr-check and resolve are GitHub-hosted");
 });
 
 test("the condition checks reject reachable self-hosted jobs (negative controls)", () => {
@@ -152,16 +154,18 @@ test("approval is verified with the job token before any Azure sign-in, in gate 
   for (const name of ["pr-check", "validate", "preview"]) {
     assert.doesNotMatch(job(text, name), /actions: read|Assert-CicdApproval|CCOF_APPROVAL_TOKEN/, `${name} needs no approval API access`);
   }
+  assert.doesNotMatch(job(text, "resolve"), /Assert-CicdApproval|CCOF_APPROVAL_TOKEN/, "resolve proves configuration, not approvals");
 });
 
 test("every apply-runner job runs inside its GitHub environment and only apply saves state", () => {
   const text = workflow();
-  assert.match(job(text, "preview"), /environment: \$\{\{ needs\.validate\.outputs\.environment \}\}-preview/);
-  assert.match(job(text, "gate-privatelink"), /environment: \$\{\{ needs\.validate\.outputs\.environment \}\}-gate-privatelink/);
+  assert.match(job(text, "validate"), /environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-preview/);
+  assert.match(job(text, "preview"), /environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-preview/);
+  assert.match(job(text, "gate-privatelink"), /environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-gate-privatelink/);
   const apply = job(text, "apply");
-  assert.match(apply, /environment: \$\{\{ needs\.validate\.outputs\.environment \}\}-apply/);
+  assert.match(apply, /environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-apply/);
   assert.match(apply, /permissions:\n {6}contents: write/);
-  assert.match(apply, /if: always\(\)\n {8}run: pwsh scripts\/cicd\/Sync-CicdState\.ps1 -Action Save/);
+  assert.match(apply, /- name: Save driver state[^\n]*\n {8}if: [^\n]*\n(?: {8}[^\n]*\n)*? {8}run: \|\n(?: {10}[^\n]*\n)*? {10}pwsh scripts\/cicd\/Sync-CicdState\.ps1 -Action Save/);
   assert.match(apply, /needs\.gate-privatelink\.result == 'success' \|\| needs\.gate-privatelink\.result == 'skipped'/);
   assert.match(apply, /if: failure\(\)\n {8}run: \|\n {10}Import-Module \.\/scripts\/cicd\/CicdOnboarding\.psm1/);
   assert.equal(text.match(/-Action Save/g)?.length, 1, "previews and the gate never save state");
@@ -216,4 +220,124 @@ test("the host preflight follows runner.os (negative controls)", () => {
   const late = body.replace(/( {6}# The preflight matching the host OS[^\n]*\n(?: {6}- name: Runner host preflight[^\n]*\n(?: {8}[^\n]*\n| {10}[^\n]*\n)*)+)/, "");
   assert.notEqual(late, body, "preflight block found");
   assert.match(preflightProblems(late).join(";"), /no Linux-only/, "a job without preflight fails");
+});
+// Minimal evaluator for the GitHub expressions used in job and step conditions: always(), success(), failure(),
+// cancelled(), ==, !=, &&, ||, !, parentheses, 'strings', true/false and dotted context paths.
+type Ctx = { values: Record<string, string | boolean>; status: "success" | "failure" | "cancelled" };
+function evaluate(expr: string, ctx: Ctx): boolean {
+  const tokens = expr.match(/\s*('(?:[^']|'')*'|&&|\|\||==|!=|!|\(|\)|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*)/g)?.map((t) => t.trim()) ?? [];
+  assert.equal(tokens.join(""), expr.replace(/\s+/g, ""), `tokenised fully: ${expr}`);
+  let i = 0;
+  const value = (t: string): string | boolean => {
+    if (t.startsWith("'")) return t.slice(1, -1).replace(/''/g, "'");
+    if (t === "true") return true;
+    if (t === "false") return false;
+    if (t === "always()") return true;
+    if (t === "success()") return ctx.status === "success";
+    if (t === "failure()") return ctx.status === "failure";
+    if (t === "cancelled()") return ctx.status === "cancelled";
+    return ctx.values[t] ?? "";
+  };
+  const truthy = (v: string | boolean) => v === true || (typeof v === "string" && v !== "");
+  const primary = (): string | boolean => {
+    const t = tokens[i++];
+    if (t === "(") { const v = or(); assert.equal(tokens[i++], ")"); return v; }
+    if (t === "!") return !truthy(primary());
+    return value(t);
+  };
+  const cmp = (): string | boolean => {
+    let l = primary();
+    while (tokens[i] === "==" || tokens[i] === "!=") {
+      const op = tokens[i++], r = primary();
+      const eq = String(l).toLowerCase() === String(r).toLowerCase();
+      l = op === "==" ? eq : !eq;
+    }
+    return l;
+  };
+  const and = (): string | boolean => { let l = cmp(); while (tokens[i] === "&&") { i++; const r = cmp(); l = truthy(l) ? r : l; } return l; };
+  const or = (): string | boolean => { let l = and(); while (tokens[i] === "||") { i++; const r = and(); l = truthy(l) ? l : r; } return l; };
+  const v = or();
+  assert.equal(i, tokens.length, `parsed fully: ${expr}`);
+  // A step or job `if` without a status function gets an implicit success().
+  return truthy(v) && (/\b(always|failure|cancelled|success)\(\)/.test(expr) || ctx.status === "success");
+}
+
+// One step's `if` by its name ("" when none).
+function stepIf(body: string, name: string): string {
+  const s = steps(body).find((x) => x.startsWith(`      - name: ${name}`));
+  assert.ok(s, `step ${name} exists`);
+  return s.match(/\n {8}if: (.*)\n/)?.[1] ?? "";
+}
+
+test("dispatch proves the GitHub environments on a GitHub-hosted runner before any self-hosted job", () => {
+  const text = workflow();
+  const resolve = job(text, "resolve");
+  assert.match(resolve, /\n {4}if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\n {4}runs-on: ubuntu-latest\n/);
+  assert.match(resolve, /\n {4}permissions:\n {6}contents: read\n {6}actions: read\n/);
+  assert.doesNotMatch(resolve, /azure-login-mi|Sync-CicdState|Test-RunnerHost|self-hosted|\n {4}environment:/);
+  assert.match(resolve, /persist-credentials: false/);
+  assert.match(resolve, /if \(\$env:GITHUB_REF -ne "refs\/heads\/\$env:CCOF_DEFAULT_BRANCH"\) \{ throw/);
+  assert.match(resolve, /CCOF_GITHUB_PLAN: \$\{\{ vars\.CCOF_GITHUB_PLAN \}\}/);
+  assert.match(resolve, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(resolve, /\$gates = if \(\$env:CCOF_APPLY -eq 'true'\) \{ 'apply,gate-privatelink' \} else \{ '' \}\n {10}& \.\/scripts\/cicd\/Test-CicdGitHubEnvironments\.ps1 -Repository \$env:GITHUB_REPOSITORY -Environment \$env:CCOF_ENV -ReviewedGate \$gates\n {10}exit \$LASTEXITCODE/);
+  assert.match(resolve, /outputs:\n {6}environment: \$\{\{ steps\.scope\.outputs\.environment \}\}/);
+  // Every self-hosted job needs resolve directly; one that can run after a failed predecessor (always()) also
+  // requires resolve to have succeeded.
+  const names = [...text.slice(text.indexOf("\njobs:\n")).matchAll(/\n {2}([a-z][a-z-]*):\n/g)].map((m) => m[1]);
+  for (const name of names) {
+    const body = job(text, name);
+    if (!/runs-on: \[self-hosted/.test(body)) continue;
+    const needs = body.match(/\n {4}needs: (\[[^\]]*\]|[a-z-]+)\n/)?.[1] ?? "";
+    assert.match(needs, /^\[?resolve\b/, `${name} needs resolve first (got '${needs}')`);
+    const cond = jobIf(body);
+    if (/always\(\)|failure\(\)|cancelled\(\)/.test(cond)) assert.ok(conjuncts(cond).includes("needs.resolve.result == 'success'"), `${name}: always() job requires resolve success`);
+  }
+});
+
+test("environment proof: a failed or skipped resolve schedules no self-hosted job (negative controls)", () => {
+  const text = workflow();
+  const base = { "github.event_name": "workflow_dispatch", "github.ref": "refs/heads/main", "inputs.apply": true,
+    "needs.validate.result": "success", "needs.preview.result": "success", "needs.gate-privatelink.result": "skipped",
+    "needs.validate.outputs.needs-privatelink-gate": "false" } as Record<string, string | boolean>;
+  const apply = jobIf(job(text, "apply"));
+  assert.equal(evaluate(apply, { values: { ...base, "needs.resolve.result": "success" }, status: "success" }), true, "apply runs after a proved resolve");
+  for (const r of ["failure", "skipped", "cancelled"]) {
+    assert.equal(evaluate(apply, { values: { ...base, "needs.resolve.result": r }, status: "failure" }), false, `apply never runs when resolve is ${r}`);
+  }
+  // Mutant: dropping the resolve conjunct would let apply run after a failed resolve.
+  const mutant = apply.replace(" && needs.resolve.result == 'success'", "");
+  assert.notEqual(mutant, apply);
+  assert.equal(evaluate(mutant, { values: { ...base, "needs.resolve.result": "failure" }, status: "failure" }), true, "the control detects a missing conjunct");
+});
+
+test("driver state is saved only after a successful restore and a started driver, including partial failures", () => {
+  const apply = job(workflow(), "apply");
+  assert.match(apply, /- name: Restore driver state[^\n]*\n {8}id: restore\n/);
+  assert.match(apply, /- name: Apply in order \(stops at the first failure\)\n {8}id: drive\n/);
+  const drive = steps(apply).find((s) => s.includes("id: drive")) ?? "";
+  const marker = drive.indexOf("onboard-driver-started.txt"), first = drive.indexOf("Invoke-CicdOnboardingStep.ps1");
+  assert.ok(marker > 0 && first > marker, "the driver-started marker is written before the first step runs");
+  const save = steps(apply).find((s) => s.startsWith("      - name: Save driver state")) ?? "";
+  assert.match(save, /if \(-not \(Test-Path -LiteralPath "evidence\/\$env:CCOF_ENV\/onboard-driver-started\.txt"\)\) \{[^\n]*\n {12}[^\n]*not saved[^\n]*\n {12}exit 0\n {10}\}\n {10}pwsh scripts\/cicd\/Sync-CicdState\.ps1 -Action Save/);
+  const cond = stepIf(apply, "Save driver state");
+  const run = (restore: string, drive: string | undefined, status: Ctx["status"]) =>
+    evaluate(cond, { values: { "steps.restore.outcome": restore, ...(drive === undefined ? {} : { "steps.drive.outcome": drive }) }, status });
+  // Early failures: approval, sign-in, checkout or restore failed, so no driver ran.
+  assert.equal(run("skipped", "skipped", "failure"), false, "approval/checkout/sign-in failure: not saved");
+  assert.equal(run("failure", "skipped", "failure"), false, "restore failure: not saved");
+  assert.equal(run("", undefined, "cancelled"), false, "cancelled before restore: not saved");
+  assert.equal(run("success", undefined, "cancelled"), false, "cancelled before the driver step: not saved");
+  assert.equal(run("success", "skipped", "failure"), false, "driver step skipped: not saved");
+  // The driver ran: save, also after a partial failure or a cancellation mid-run.
+  assert.equal(run("success", "success", "success"), true, "completed driver: saved");
+  assert.equal(run("success", "failure", "failure"), true, "partial driver failure: saved");
+  assert.equal(run("success", "cancelled", "cancelled"), true, "driver cancelled mid-run: saved");
+  // Negative control: the previous unconditional always() would save after an early failure.
+  assert.equal(evaluate("always()", { values: {}, status: "failure" }), true);
+});
+
+test("runs for one environment queue instead of replacing a pending run", () => {
+  const text = workflow();
+  assert.match(text, /^concurrency:\n {2}group: [^\n]+\n {2}cancel-in-progress: false\n {2}queue: max\n/m);
+  assert.doesNotMatch(text, /cancel-in-progress: true/, "queue: max cannot be combined with cancel-in-progress: true");
 });
