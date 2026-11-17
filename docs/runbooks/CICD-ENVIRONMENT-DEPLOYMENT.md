@@ -133,9 +133,15 @@ The full role list with role IDs is in `docs/runbooks/CICD-SETUP.md` section 5.
 ## 5. GitHub environments, gates and approvers
 
 Create these environments before the first run. In each one, set **Deployment branches and tags** to
-**Selected branches and tags** with exactly one rule: the branch `main` (the default branch). Protect `main` with a
-branch protection rule or ruleset. Add required reviewers to all except `-preview`, and turn off "Allow
+**Selected branches and tags** with exactly one rule: the branch `main` (the default branch). Add required reviewers to all except `-preview`, and turn off "Allow
 administrators to bypass".
+
+**Reviewed `main` (required before connecting runners).** Every job of this pipeline, previews included, runs code from `main` on a private runner with a managed identity. `main` must therefore accept only pull requests approved by another person, with no bypass. `protected: true` alone is not enough: a branch protection rule only blocks force pushes and deletion unless reviews are configured, and required reviews and their application to administrators are optional ([GitHub: about protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)). Configure one of:
+
+- a branch protection rule on `main`: require a pull request with at least 1 approval; dismiss stale approvals (or require approval of the most recent push); include administrators (`enforce_admins`); no users, teams or apps allowed to bypass pull requests; force pushes off; or
+- an active ruleset targeting `main` with a pull request rule (at least 1 approval; dismiss stale approvals or require approval of the most recent push) and an empty bypass list.
+
+This must be enforced by a repository or organization administrator outside the pipeline. The pipeline's own check (below) is a detector, not a boundary: if `main` accepted unreviewed pushes, such a push could change the workflow and the check with it. The runner job-start hook (`docs/runbooks/CICD-SETUP.md`) restricts events and refs, not who changed `main`.
 
 **Plan requirement.** Required reviewers are enforced on public repositories, and on private or internal
 repositories only with GitHub Enterprise. GitHub Free, Pro and Team do not enforce them on private repositories
@@ -149,7 +155,7 @@ before any self-hosted job. It reads (GET only):
 - the repository visibility and owner, and the organization plan;
 - each environment (`-preview`; with `apply`, also `-apply` and every `-gate-*`), its required reviewers and branch policy;
 - the environment's selected branch rules ([GitHub REST: deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies));
-- whether `main` is protected.
+- whether `main` is protected, and its review protection: `GET /repos/{repo}/branches/main/protection` and `GET /repos/{repo}/rules/branches/main` with each ruleset (`GET /repos/{repo}/rulesets/{id}`).
 
 It fails when anything cannot be proved:
 
@@ -159,6 +165,9 @@ It fails when anything cannot be proved:
 | No branch policy, or **Protected branches only** (admits every branch while no protection rule exists, and any branch a pattern rule covers later) | fail |
 | Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
 | `main` not protected | fail |
+| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps), force pushes allowed, ruleset not active or with bypass actors, or any of it unreadable | fail. `protected: true` alone never passes |
+| Selected branch rule without `type` (or not `branch`) | fail |
+| Organization plan other than exactly `enterprise` (`plan.name` is a free string in the API, no enum) | fail; `free`, `team`, `pro` as below Enterprise, anything else as unknown |
 | Gate environment without a required reviewer | fail |
 | Gate environment that allows administrators to bypass, or whose bypass setting cannot be read | fail (a bypassed job runs with no approval) |
 | Private user-owned repository, or organization plan below Enterprise | fail |
@@ -167,6 +176,8 @@ It fails when anything cannot be proved:
 
 If the job token cannot read branch policies, a repository administrator checks the same items by hand in
 Settings > Environments, and the run cannot proceed until the token can read them.
+
+**Known blocker: review protection with `GITHUB_TOKEN`.** Branch protection needs repository Administration: read, which `GITHUB_TOKEN` cannot be given, and a ruleset's `bypass_actors` list is returned only to callers with write access to the ruleset ([GitHub REST: rules](https://docs.github.com/en/rest/repos/rules)). With the job token alone the `main review protection` finding therefore fails and `resolve` stops every run. `Test-CicdGitHubEnvironments.ps1` reads `CCOF_PROTECTION_READ_TOKEN` (used only for these GET calls), for example a fine-grained token limited to this repository with Administration: read-only, which can read classic branch protection. `deploy-environment.yml` does not pass such a secret yet: adding one is an owner decision (it would be the first repository secret of these workflows). Until then the run stays blocked; the check is not skipped.
 
 | Environment | Approver | Approves |
 |---|---|---|
@@ -339,8 +350,10 @@ The drivers write their state into `deploy/<environment>/`:
 
 - every job restores the state before it runs;
 - apply and verify jobs save it afterwards, even when the driver fails or the job is cancelled, but only when the
-  Restore step of the same job succeeded (`steps.restore.outcome == 'success'`). A failed checkout, host preflight,
-  input guard, sign-in or Restore skips Save; `Sync-CicdState.ps1` also refuses Save without the restore marker;
+  Restore step of the same job succeeded (`steps.restore.outcome == 'success'`) and the driver step actually started
+  (`steps.driver.outcome` is `success`, `failure` or `cancelled`). A failed checkout, host preflight, input guard,
+  sign-in, Restore, prerequisite check or build, or a cancel before the driver, leaves the driver `skipped` and skips
+  Save; `Sync-CicdState.ps1` also refuses Save without the restore marker;
 - pull request runs never read or save it;
 - `resolve` and drift runs read the branch with the job token (`CCOF_STATE_TOKEN`, passed to git through environment configuration, never on the command line), because those checkouts keep no credentials.
 
@@ -427,7 +440,7 @@ or use the manual action below.
   - the runner job-start hook (`docs/runbooks/CICD-SETUP.md`) refuses untrusted events and refs on both runners.
 - **Mitigations:**
   - every apply job sits behind an environment with required reviewers (enforced only by the plans in section 5) and a `main`-only selected-branch policy;
-  - branch protection on `main`;
+  - reviewed `main` (section 5: pull request with approval, administrators included, no bypass), enforced by an administrator before runners connect; the in-workflow check only detects its absence;
   - CODEOWNERS for `.github/workflows/` and `deploy/**`;
   - the runner role check in each job.
 - **Dependency on the runner branch.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh`/`.ps1` come from the runner setup change (`docs/runbooks/CICD-SETUP.md`). Merge that change before this workflow.

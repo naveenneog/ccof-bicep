@@ -132,6 +132,7 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Driver ${{ inputs.step }}
+        id: driver
         if: inputs.step != ''
         env:
           CCOF_REVIEWED_IDS: ${{ inputs.reviewed_ids }}
@@ -152,10 +153,12 @@ jobs:
         if: inputs.drift && inputs.step != '' && !inputs.apply
         run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedStep $env:CCOF_STEP
 
-      # Saves only after a successful Restore (a failed checkout, preflight, guard, sign-in or Restore skips it); a failed or
-      # cancelled driver after that still saves its partial state. Sync-CicdState also refuses without the restore marker.
+      # Saves only when Restore succeeded AND the driver actually started (outcome success, failure or cancelled). A failed
+      # checkout, preflight, guard, sign-in, Restore, prerequisite check or build, or a cancel before the driver, leaves the
+      # driver 'skipped' and skips Save. A failed or cancelled driver still saves its partial state for recovery.
+      # Sync-CicdState also refuses without the restore marker.
       - name: Save driver state
-        if: always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && inputs.save_state && inputs.step != ''
+        if: always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && (steps.driver.outcome == 'success' || steps.driver.outcome == 'failure' || steps.driver.outcome == 'cancelled') && inputs.save_state && inputs.step != ''
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "$env:CCOF_STEP run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
 
       - name: Upload evidence

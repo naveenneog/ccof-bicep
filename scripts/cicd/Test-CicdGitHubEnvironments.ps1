@@ -10,6 +10,10 @@
     read is "cannot prove" and fails. One exception: the plan of a private organization is owner-only; it is
     reported 'deferred' (NOT PROVED here) and every reviewed job proves enforcement before its writes
     (Assert-CicdJobApproval.ps1). Exit 0 = every finding passes or the plan is deferred, 1 = anything else.
+    The default branch must accept only reviewed pull requests without bypass ('<branch> review protection'):
+    protected:true alone is not enough. Branch protection and ruleset bypass lists are not readable with GITHUB_TOKEN
+    (repository Administration: read, or write access to the ruleset); unreadable fails. CCOF_PROTECTION_READ_TOKEN,
+    when set, is used only for those protection reads (read-only token; GET only).
     Token: GH_TOKEN. API: GITHUB_API_URL (default https://api.github.com). Module: CicdGitHubEnvironments.psm1.
 
 .EXAMPLE
@@ -25,7 +29,8 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'CicdGitHubEnvironments.psm1') -Force
 $ReviewedGate = @($ReviewedGate | ForEach-Object { $_ -split ',' } | ForEach-Object Trim | Where-Object { $_ })
 $get = New-CicdGhRestGet
-$findings = @(Test-CicdGhProtections -Get $get -Repository $Repository -Environment $Environment -ReviewedGate $ReviewedGate)
+$pget = if ($env:CCOF_PROTECTION_READ_TOKEN) { New-CicdGhRestGet -Token $env:CCOF_PROTECTION_READ_TOKEN } else { $get }
+$findings = @(Test-CicdGhProtections -Get $get -ProtectionGet $pget -Repository $Repository -Environment $Environment -ReviewedGate $ReviewedGate)
 $code = Get-CicdGhExitCode $findings
 $deferred = @($findings | Where-Object Status -eq 'deferred')
 $md = @("### GitHub environment protections: $Environment", '', '| Subject | Result | Evidence |', '|---|---|---|')

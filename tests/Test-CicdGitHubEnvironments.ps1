@@ -14,11 +14,24 @@ function Env-Body([string]$Name, $Policy, [bool]$Reviewers) {
     J @{ name = $Name; deployment_branch_policy = $Policy; protection_rules = $rules; can_admins_bypass = $false }
 }
 $custom = @{ protected_branches = $false; custom_branch_policies = $true }
-function Base([string]$Visibility = 'private', [string]$OwnerType = 'Organization', $Plan = 'enterprise') {
+# Classic branch protection (GET /repos/{r}/branches/{b}/protection) that makes every change to main a reviewed PR.
+function Classic([int]$Count = 1, [bool]$Admins = $true, [bool]$Stale = $true, [bool]$LastPush = $false, $Allow = $null, [bool]$Force = $false, [bool]$Reviews = $true) {
+    $b = @{ enabled = $true; enforce_admins = @{ enabled = $Admins }; allow_force_pushes = @{ enabled = $Force }; allow_deletions = @{ enabled = $false } }
+    if ($Reviews) {
+        $b.required_pull_request_reviews = @{ required_approving_review_count = $Count; dismiss_stale_reviews = $Stale; require_last_push_approval = $LastPush; require_code_owner_reviews = $false }
+        if ($Allow) { $b.required_pull_request_reviews.bypass_pull_request_allowances = $Allow }
+    }
+    J $b
+}
+# A ruleset pull_request rule as returned by GET /repos/{r}/rules/branches/{b}, and the ruleset itself.
+function PrRule([int]$Id = 7, [int]$Count = 1, [bool]$Stale = $true, [bool]$LastPush = $false) { J @{ type = 'pull_request'; ruleset_id = $Id; ruleset_source_type = 'Repository'; ruleset_source = $R; parameters = @{ required_approving_review_count = $Count; dismiss_stale_reviews_on_push = $Stale; require_last_push_approval = $LastPush; require_code_owner_review = $false; required_review_thread_resolution = $false } } }
+function Ruleset([int]$Id = 7, [string]$Enforcement = 'active', $Bypass = @(), [switch]$Hidden) { $h = @{ id = $Id; name = "rs$Id"; target = 'branch'; enforcement = $Enforcement; source_type = 'Repository'; source = $R }; if (-not $Hidden) { $h.bypass_actors = @($Bypass) }; J $h }function Base([string]$Visibility = 'private', [string]$OwnerType = 'Organization', $Plan = 'enterprise') {
     $m = @{}
     $m["/repos/$R"] = @{ Status = 200; Body = (J @{ visibility = $Visibility; default_branch = 'main'; owner = @{ login = 'org1'; type = $OwnerType } }) }
     $m['/orgs/org1'] = if ($Plan) { @{ Status = 200; Body = (J @{ login = 'org1'; plan = @{ name = $Plan } }) } } else { @{ Status = 200; Body = (J @{ login = 'org1' }) } }
     $m["/repos/$R/branches/main"] = @{ Status = 200; Body = (J @{ name = 'main'; protected = $true }) }
+    $m["/repos/$R/branches/main/protection"] = @{ Status = 200; Body = (Classic) }
+    $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 200; Body = @() }
     foreach ($e in 'prod-preview', 'prod-apply', 'prod-gate-network') {
         $m["/repos/$R/environments/$e"] = @{ Status = 200; Body = (Env-Body $e $custom ($e -ne 'prod-preview')) }
         $m["/repos/$R/environments/$e/deployment-branch-policies?per_page=100"] = @{ Status = 200; Body = (J @{ total_count = 1; branch_policies = @(@{ id = 1; name = 'main'; type = 'branch' }) }) }
@@ -39,7 +52,7 @@ Check 'preview has no reviewer requirement' (-not (F $f 'prod-preview reviewers'
 $f = Run (Base 'public' 'User' $null)
 Check 'public repository: reviewers enforced on every plan' ((NoFail $f) -and (F $f 'reviewer plan').Evidence -match 'public')
 $f = Run (Base) @()
-Check 'preview-only run checks only the preview environment' ((NoFail $f) -and -not (F $f 'reviewer plan') -and @($f).Count -eq 1)
+Check 'preview-only run checks main review protection and the preview environment only (preview jobs also run on a private runner)' ((NoFail $f) -and -not (F $f 'reviewer plan') -and @($f).Count -eq 2 -and (F $f 'main review protection').Status -eq 'pass')
 
 # Plans that cannot enforce required reviewers on private repositories.
 foreach ($plan in 'free', 'team', 'pro') {
@@ -88,6 +101,75 @@ $m = Base; $m["/repos/$R/branches/main"].Body.protected = $false; $f = Run $m
 Check 'neg: unprotected default branch fails' ((F $f 'prod-apply branches').Status -eq 'fail' -and (F $f 'prod-apply branches').Evidence -match 'no branch protection')
 $m = Base; $m["/repos/$R/branches/main"] = @{ Status = 500; Body = $null }; $f = Run $m
 Check 'neg: unreadable default branch fails closed' ((F $f 'prod-preview branches').Status -eq 'fail')
+
+# Review protection of the default branch: protected:true alone only blocks force-push and deletion
+# (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+$RP = 'main review protection'
+$f = Run (Base)
+Check 'classic: required reviewed PR, stale dismissal, admins enforced, no allowances passes' ((F $f $RP).Status -eq 'pass' -and (F $f $RP).Evidence -match 'classic')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Stale $false -LastPush $true); $f = Run $m
+Check 'classic: last-push approval instead of stale dismissal passes' ((F $f $RP).Status -eq 'pass')
+$m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 404; Body = $null }; $f = Run $m
+Check 'neg: protected:true with no readable review protection fails (parent repro)' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'protected:true alone')
+Check 'neg exit: protected:true only = 1' ((Get-CicdGhExitCode $f) -eq 1)
+$m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 403; Body = $null }; $f = Run $m
+Check 'neg: classic protection unreadable (job token, 403) fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'cannot read.*403')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Reviews $false); $f = Run $m
+Check 'neg: protected:true, classic protection without required reviews fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'no required pull request reviews')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Count 0); $f = Run $m
+Check 'neg: required review count 0 fails' ((F $f $RP).Status -eq 'fail')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Admins $false); $f = Run $m
+Check 'neg: administrators not included (admin bypass) fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'administrators')
+foreach ($kind in 'users', 'teams', 'apps') {
+    $allow = @{ users = @(); teams = @(); apps = @() }; $allow[$kind] = @(@{ login = 'x'; slug = 'x'; id = 1 })
+    $m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Allow $allow); $f = Run $m
+    Check "neg: pull request bypass allowance ($kind) fails" ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match "bypass allowance.*$kind")
+}
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Allow (J @{ users = 'everyone' })); $f = Run $m
+Check 'neg: malformed bypass allowances fail closed' ((F $f $RP).Status -eq 'fail')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Force $true); $f = Run $m
+Check 'neg: force pushes allowed fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'force')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body = (Classic -Stale $false); $f = Run $m
+Check 'neg: approval survives later pushes (no stale dismissal, no last-push approval) fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'later push')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body.enforce_admins = $null; $f = Run $m
+Check 'neg: enforce_admins unreadable fails closed' ((F $f $RP).Status -eq 'fail')
+# Rulesets (only when the ruleset and its bypass list are readable).
+function RsBase([object[]]$Rules, $Rs) { $m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 404; Body = $null }; $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 200; Body = @($Rules) }; if ($Rs) { $m["/repos/$R/rulesets/7?includes_parents=true"] = @{ Status = 200; Body = $Rs } }; $m }
+$f = Run (RsBase @((PrRule)) (Ruleset))
+Check 'ruleset: active pull_request rule, readable empty bypass list passes' ((F $f $RP).Status -eq 'pass' -and (F $f $RP).Evidence -match 'ruleset rs7')
+$f = Run (RsBase @((PrRule)) (Ruleset -Hidden))
+Check 'neg: ruleset bypass list not returned (no write access) fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'bypass_actors not readable')
+$f = Run (RsBase @((PrRule)) (Ruleset -Bypass @(@{ actor_id = 1; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })))
+Check 'neg: ruleset with an admin bypass actor fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'OrganizationAdmin')
+$f = Run (RsBase @((PrRule)) (Ruleset -Bypass @(@{ actor_id = 5; actor_type = 'RepositoryRole'; bypass_mode = 'pull_request' })))
+Check 'neg: ruleset with a pull_request-mode bypass actor fails' ((F $f $RP).Status -eq 'fail')
+$f = Run (RsBase @((PrRule)) (Ruleset -Enforcement 'evaluate'))
+Check 'neg: ruleset not active fails' ((F $f $RP).Status -eq 'fail')
+$f = Run (RsBase @((PrRule -Count 0)) (Ruleset))
+Check 'neg: ruleset rule with 0 approvals fails' ((F $f $RP).Status -eq 'fail')
+$f = Run (RsBase @((PrRule -Stale $false)) (Ruleset))
+Check 'neg: ruleset approval survives later pushes fails' ((F $f $RP).Status -eq 'fail')
+$f = Run (RsBase @((J @{ type = 'deletion'; ruleset_id = 7 }), (J @{ type = 'non_fast_forward'; ruleset_id = 7 })) (Ruleset))
+Check 'neg: ruleset with only deletion/non-fast-forward rules fails' ((F $f $RP).Status -eq 'fail')
+$f = Run (RsBase @((PrRule)) $null)
+Check 'neg: ruleset unreadable (404) fails closed' ((F $f $RP).Status -eq 'fail')
+$m = RsBase @() $null; $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 403; Body = $null }; $f = Run $m
+Check 'neg: rules and classic protection both unreadable fail closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'cannot read')
+# A separate read-only getter (e.g. a token with repository Administration: read) is used only for protection reads.
+$m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 403; Body = $null }
+$get = { param($p) if ($m.ContainsKey($p)) { $m[$p] } else { @{ Status = 404; Body = $null } } }.GetNewClosure()
+$pget = { param($p) if ($p -eq "/repos/$R/branches/main/protection") { @{ Status = 200; Body = (Classic) } } else { @{ Status = 418; Body = $null } } }.GetNewClosure()
+$f = @(Test-CicdGhProtections -Get $get -ProtectionGet $pget -Repository $R -Environment 'prod' -ReviewedGate 'apply')
+Check 'protection getter proves classic protection the job token cannot read' ((F $f $RP).Status -eq 'pass' -and (NoFail $f))
+Check 'neg: no environment claims protection from protected:true' (-not @($f | Where-Object { $_.Subject -like '*branches' -and $_.Evidence -match 'branch protected\)' }).Count)
+# Deployment branch policy type must be present and 'branch'.
+$m = Base; $m["/repos/$R/environments/prod-apply/deployment-branch-policies?per_page=100"].Body = (J @{ total_count = 1; branch_policies = @(@{ id = 1; name = 'main' }) }); $f = Run $m
+Check 'neg: selected rule named main without a type fails (cannot prove type branch)' ((F $f 'prod-apply branches').Status -eq 'fail')
+# Organization plan: GET /orgs/{org} documents plan.name as a free string (no enum); only exact 'enterprise' passes.
+foreach ($plan in 'Enterprise', 'business', 'enterprise_plus', ' enterprise') {
+    $f = Run (Base 'private' 'Organization' $plan)
+    Check "neg: unknown org plan '$plan' fails closed" ((F $f 'reviewer plan').Status -eq 'fail' -and (F $f 'reviewer plan').Evidence -match 'unknown')
+}
 
 # Environments and reviewers.
 $m = Base; $m.Remove("/repos/$R/environments/prod-gate-network"); $f = Run $m
@@ -176,9 +258,12 @@ Check 'neg job: transport error fails closed' (-not $j.Verified)
 
 # ---------------------------------------------------------------- the real scripts over HTTP (local listener)
 # Real JSON text, so a one-item or empty array goes through ConvertFrom-Json exactly as in a job.
-$port = Get-Random -Minimum 20000 -Maximum 60000
 $routes = [Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
-$listener = [Net.HttpListener]::new(); $listener.Prefixes.Add("http://localhost:$port/"); $listener.Start()
+for ($try = 1; ; $try++) {
+    $port = Get-Random -Minimum 20000 -Maximum 60000
+    $listener = [Net.HttpListener]::new(); $listener.Prefixes.Add("http://localhost:$port/")
+    try { $listener.Start(); break } catch { $listener.Close(); if ($try -ge 10) { throw } }
+}
 $server = Start-ThreadJob -ArgumentList $listener, $routes {
     param($l, $routes)
     while ($l.IsListening) {
@@ -221,6 +306,12 @@ try {
     Check 'http cli: unreadable plan is deferred, exit 0, says NOT PROVED' ($c.Code -eq 0 -and $c.Text -match 'NOT PROVED')
     $m = Base 'private' 'Organization' $null; $m["/repos/$R/environments/prod-gate-network"].Body.can_admins_bypass = $true; Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
     Check 'neg http cli: admin bypass exit 1' ($c.Code -eq 1 -and $c.Text -match 'bypass')
+    $m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 404; Body = $null }; Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'neg http cli: main protected:true without review protection exit 1' ($c.Code -eq 1 -and $c.Text -match 'main review protection' -and $c.Text -match 'protected:true alone')
+    $m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 403; Body = $null }; Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'neg http cli: protection unreadable with the job token exit 1 (no fallback)' ($c.Code -eq 1 -and $c.Text -match 'cannot read')
+    $m = RsBase @((PrRule)) (Ruleset); Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'http cli: ruleset proof over real JSON (one-item rules array, empty bypass list) exit 0' ($c.Code -eq 0 -and $c.Text -match 'ruleset rs7')
     $env:CCOF_GITHUB_PLAN = 'enterprise'; Serve (Base 'private' 'Organization' $null); $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs; Remove-Item env:CCOF_GITHUB_PLAN
     Check 'neg http cli: CCOF_GITHUB_PLAN=enterprise is ignored (plan deferred, never attested or pass)' ($c.Text -match '\| reviewer plan \| deferred \|' -and $c.Text -notmatch 'attested')
 } finally {
@@ -232,4 +323,4 @@ try {
 }
 
 Write-Host "Test-CicdGitHubEnvironments: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 69) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 104) { exit 1 }

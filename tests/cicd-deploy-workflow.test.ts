@@ -55,7 +55,7 @@ test("ccof-step: self-hosted only for dispatch or schedule inside an environment
   assert.match(s, /if \(\$writes -and \$g -cnotmatch "\^\$e-\(apply\|gate-\[a-z\]\+\)\$"\) \{ throw/);
   assert.doesNotMatch(uncomment(s), /pull_request/, "no pull-request path in ccof-step");
   assert.doesNotMatch(s, /^permissions:/m, "called workflow inherits (never raises) the caller token");
-  assert.match(s, /if: always\(\) && steps\.trusted\.outcome == 'success' && steps\.restore\.outcome == 'success' && inputs\.save_state/);
+  assert.ok(s.includes(`if: ${SAVE_IF}\n`), "Save condition");
   // Untrusted inputs reach scripts only through environment variables.
   for (const run of s.split(/\n\s+run: /).slice(1)) {
     const block = run.split(/\n\s+- /)[0];
@@ -182,7 +182,33 @@ function steps(text: string): { name: string; body: string }[] {
   return text.split(/\n\s+- (?=name:|uses:|id:)/).slice(1).map((b) => ({ name: /^name: ([^\n]*)/.exec(b)?.[1] ?? b.slice(0, 40), body: b }));
 }
 
-const SAVE_IF = "always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && inputs.save_state && inputs.step != ''";
+const DRIVER_RAN = "(steps.driver.outcome == 'success' || steps.driver.outcome == 'failure' || steps.driver.outcome == 'cancelled')";
+const SAVE_IF = `always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && ${DRIVER_RAN} && inputs.save_state && inputs.step != ''`;
+// Evaluates a step "if:" made only of always(), steps.<id>.outcome, inputs.save_state/step, ==, !=, &&, ||, () and
+// quoted strings, for given step outcomes (GitHub sets 'skipped' for a step that did not start). Anything else throws.
+function evalIf(expr: string, outcomes: Record<string, string>): boolean {
+  const js = expr
+    .replace(/always\(\)/g, "true")
+    .replace(/steps\.([a-z]+)\.outcome/g, (_, id: string) => JSON.stringify(outcomes[id] ?? ""))
+    .replace(/inputs\.save_state/g, "true").replace(/inputs\.step/g, "'driver-step'")
+    .replace(/!=/g, "!==").replace(/([^!=])==(?!=)/g, "$1===");
+  if (!/^(?:\s|true|"[a-z]*"|'[a-z-]*'|===|!==|&&|\|\||\(|\))*$/.test(js)) throw new Error(`unsupported if: ${expr}`);
+  return Boolean(new Function(`return (${js});`)());
+}
+const saveIf = (text: string) => { const s = steps(text); return /\n\s+if: ([^\n]*)/.exec(s.find((x) => /^Save driver state/.test(x.name))?.body ?? "")?.[1] ?? ""; };
+// Step outcomes of one job: [scenario, outcomes, must save]. 'skipped' = never started.
+const OK = { trusted: "success", restore: "success" };
+const SAVE_CASES: [string, Record<string, string>, boolean][] = [
+  ["prerequisite checks fail before the driver", { ...OK, driver: "skipped" }, false],
+  ["build (npm ci/tsc) fails before the driver", { ...OK, driver: "skipped" }, false],
+  ["job cancelled before the driver started", { ...OK, driver: "skipped" }, false],
+  ["restore failed", { trusted: "success", restore: "failure", driver: "skipped" }, false],
+  ["untrusted call", { trusted: "skipped", restore: "skipped", driver: "skipped" }, false],
+  ["driver id missing (outcome unknown)", { ...OK }, false],
+  ["driver failed after a successful restore (partial state)", { ...OK, driver: "failure" }, true],
+  ["driver cancelled while running (partial state)", { ...OK, driver: "cancelled" }, true],
+  ["driver succeeded", { ...OK, driver: "success" }, true],
+];
 // Returns the reasons a ccof-step text could save state after a failed restore (or skip saving after a failed driver).
 function saveProblems(text: string): string[] {
   const s = steps(text);
@@ -197,6 +223,12 @@ function saveProblems(text: string): string[] {
   const co = s.findIndex((x) => /uses: actions\/checkout@v4/.test(x.body));
   if (!(co >= 0 && co < r)) out.push("checkout not before Restore");
   if (!(r < d && d < sv)) out.push("order must be Restore < Driver < Save");
+  if (!/\n\s+id: driver\n/.test(s[d].body) || (text.match(/\n\s+id: driver\n/g)?.length ?? 0) !== 1) out.push("Driver has no unique id driver");
+  const pb = s.findIndex((x) => /^(Prerequisite checks|Build )/.test(x.name));
+  if (s.filter((x) => /^(Prerequisite checks|Build )/.test(x.name)).some((x) => s.indexOf(x) > d)) out.push("prerequisite/build after Driver");
+  if (pb < 0) out.push("prerequisite/build steps missing");
+  try { for (const [name, o, want] of SAVE_CASES) if (evalIf(saveIf(text), o) !== want) out.push(`save ${want ? "skipped" : "runs"}: ${name}`); }
+  catch (e) { out.push(String(e)); }
   return out;
 }
 
@@ -212,6 +244,10 @@ test("ccof-step save check: negative controls (each unsafe mutation is detected)
     ["!= failure", s.replace("steps.restore.outcome == 'success'", "steps.restore.outcome != 'failure'")],
     ["drop id", s.replace(/\n\s+id: restore\n/, "\n")],
     ["duplicate id", s.replace(/(\n\s+)id: trusted\n/, "$1id: restore\n")],
+    ["drop driver started (old 4cc7d75 condition)", s.replace(` && ${DRIVER_RAN}`, "")],
+    ["driver != skipped (empty outcome passes)", s.replace(DRIVER_RAN, "steps.driver.outcome != 'skipped'")],
+    ["driver success only (no partial save)", s.replace(DRIVER_RAN, "steps.driver.outcome == 'success'")],
+    ["drop driver id", s.replace(/\n\s+id: driver\n/, "\n")],
     ["save before driver", s.replace(/(\n\s+- name: Driver [\s\S]*?)(\n\s+- name: Save driver state[\s\S]*?)(\n\s+- name: Upload evidence)/, "$2$1$3")],
   ];
   for (const [name, text] of mut) {

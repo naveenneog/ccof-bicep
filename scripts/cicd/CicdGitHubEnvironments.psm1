@@ -19,8 +19,9 @@ function New-CicdGhFinding { param([string]$Subject, [ValidateSet('pass', 'fail'
 # GET against the GitHub REST API with GH_TOKEN. JSON arrays stay arrays (-NoEnumerate): an empty or one-item list
 # is not mistaken for "no body" or an object.
 function New-CicdGhRestGet {
+    param([string]$Token = $env:GH_TOKEN)
     $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
-    $headers = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+    $headers = @{ Authorization = ('Bearer', $Token -join ' '); Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
     {
         param($Path)
         $r = Invoke-WebRequest -Method Get -Headers $headers -Uri "$api$Path" -SkipHttpErrorCheck
@@ -52,7 +53,9 @@ function Test-CicdGhReviewerPlan {
     $org = Invoke-CicdGhGet $Get "/orgs/$owner"
     $plan = if ($org.Ok -and $org.Body.PSObject.Properties['plan'] -and $org.Body.plan) { [string]$org.Body.plan.name } else { '' }
     if ($plan -ceq 'enterprise') { return New-CicdGhFinding 'reviewer plan' pass "$vis repository, organization $owner on plan 'enterprise' (read from GET /orgs/$owner)" }
-    if ($plan) { return New-CicdGhFinding 'reviewer plan' fail "$vis repository, organization $owner on plan '$plan': required reviewers are not enforced on private repositories below GitHub Enterprise" }
+    if ($plan -cin 'free', 'team', 'pro') { return New-CicdGhFinding 'reviewer plan' fail "$vis repository, organization $owner on plan '$plan': required reviewers are not enforced on private repositories below GitHub Enterprise" }
+    # plan.name is a free string in the API schema (no enum): anything but exact 'enterprise' cannot prove enforcement.
+    if ($plan) { return New-CicdGhFinding 'reviewer plan' fail "cannot prove: organization $owner reports unknown plan '$plan'; only 'enterprise' (GET /orgs/$owner plan.name) is accepted" }
     return New-CicdGhFinding 'reviewer plan' deferred "NOT PROVED here: the job token cannot read the plan of organization $owner ($($org.Error); owner-only field). No write runs on this: each reviewed job proves enforcement before its writes by observing a reviewer approval of its own environment in this run (Test-CicdGhJobApproval), and fails otherwise."
 }
 
@@ -85,7 +88,7 @@ function Test-CicdGhEnvironment {
         else {
             $rules = @($p.Body.branch_policies)
             $total = [int]$p.Body.total_count
-            $bad = @($rules | Where-Object { [string]$_.name -cne $DefaultBranch -or ($_.PSObject.Properties['type'] -and [string]$_.type -cne 'branch') })
+            $bad = @($rules | Where-Object { [string]$_.name -cne $DefaultBranch -or -not $_.PSObject.Properties['type'] -or [string]$_.type -cne 'branch' })
             if ($total -ne 1 -or $rules.Count -ne 1 -or $bad.Count) {
                 $list = ($rules | ForEach-Object { "$($_.PSObject.Properties['type']?.Value):$($_.name)" }) -join ', '
                 $out.Add((New-CicdGhFinding "$Name branches" fail "selected branches must be exactly '$DefaultBranch' (type branch); found $total rule(s): $list"))
@@ -93,7 +96,7 @@ function Test-CicdGhEnvironment {
                 $b = Invoke-CicdGhGet $Get "/repos/$Repository/branches/$([uri]::EscapeDataString($DefaultBranch))"
                 if (-not $b.Ok) { $out.Add((New-CicdGhFinding "$Name branches" fail "cannot prove: GET branches/$DefaultBranch failed ($($b.Error))")) }
                 elseif ($b.Body.protected -ne $true) { $out.Add((New-CicdGhFinding "$Name branches" fail "only '$DefaultBranch' may deploy, but '$DefaultBranch' has no branch protection (anyone with write access can push to it)")) }
-                else { $out.Add((New-CicdGhFinding "$Name branches" pass "only '$DefaultBranch' (selected branch policy, branch protected)")) }
+                else { $out.Add((New-CicdGhFinding "$Name branches" pass "only '$DefaultBranch' (selected branch policy; '$DefaultBranch' reports protected:true, which alone only blocks force-push and deletion; see '$DefaultBranch review protection')")) }
             }
         }
     }
@@ -113,14 +116,107 @@ function Test-CicdGhEnvironment {
     return $out.ToArray()
 }
 
+# Proves that every change to <Branch> is a pull request approved by someone other than the pusher, with no bypass:
+# protected:true alone only blocks force-push and deletion. One fully enforcing source suffices (classic protection
+# and rulesets aggregate; the most restrictive applies):
+#  - classic protection (GET .../branches/{b}/protection, repository Administration: read; GITHUB_TOKEN cannot read
+#    it): required reviews >= 1, stale approvals dismissed or last push approved, administrators included, no pull
+#    request bypass allowances, no force pushes;
+#  - an active ruleset pull_request rule (GET .../rules/branches/{b}) with the same review settings whose ruleset
+#    (GET .../rulesets/{id}) returns an empty bypass_actors list. GitHub returns bypass_actors only to callers with
+#    write access to the ruleset; when it is absent, "no bypass" cannot be proved.
+# Anything unreadable or unknown fails. This is a detector run by a workflow on main, not an independent boundary: a
+# push to an unreviewed main could change the workflow itself, so the protection must be enforced before runners connect.
+function Test-CicdGhBranchReview {
+    param([scriptblock]$Get, [string]$Repository, [string]$Branch)
+    $subject = "$Branch review protection"
+    $why = [Collections.Generic.List[string]]::new(); $b = [uri]::EscapeDataString($Branch)
+    $c = Invoke-CicdGhGet $Get "/repos/$Repository/branches/$b/protection"
+    if ($c.Ok) {
+        $gaps = @(Get-CicdGhClassicGaps $c.Body)
+        if (-not $gaps.Count) {
+            return New-CicdGhFinding $subject pass "classic protection: $($c.Body.required_pull_request_reviews.required_approving_review_count) approving review(s), stale approvals dismissed or last push approved, administrators included, no bypass allowances, no force pushes"
+        }
+        $why.Add("classic: $($gaps -join '; ')")
+    } elseif ($c.Status -eq 404) { $why.Add('classic: none (HTTP 404)') }
+    else { $why.Add("classic: cannot read ($($c.Error); needs repository Administration: read)") }
+
+    $rules = [Collections.Generic.List[object]]::new(); $readable = $true
+    for ($page = 1; $page -le 10; $page++) {
+        $r = Invoke-CicdGhGet $Get "/repos/$Repository/rules/branches/$b`?per_page=100&page=$page"
+        if (-not $r.Ok -or $r.Body -isnot [array]) { $readable = $false; $why.Add("rulesets: cannot read rules for $Branch ($($r.Error))"); break }
+        foreach ($x in $r.Body) { $rules.Add($x) }
+        if ($r.Body.Count -lt 100) { break }
+        if ($page -eq 10) { $readable = $false; $why.Add('rulesets: more than 1000 rules, not all read') }
+    }
+    if (-not $readable) { return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why) }
+    $pr = @($rules | Where-Object { [string]$_.type -ceq 'pull_request' })
+    $good = @($pr | Where-Object {
+            $q = $_.PSObject.Properties['parameters']?.Value
+            if (-not $q) { return $false }
+            $n = $q.PSObject.Properties['required_approving_review_count']?.Value
+            ($n -is [int] -or $n -is [long]) -and $n -ge 1 -and ($q.PSObject.Properties['dismiss_stale_reviews_on_push']?.Value -eq $true -or $q.PSObject.Properties['require_last_push_approval']?.Value -eq $true)
+        })
+    if (-not $good.Count) { $why.Add("rulesets: no active pull_request rule with >= 1 approval and stale dismissal or last-push approval ($($pr.Count) pull_request rule(s))") }
+    foreach ($id in @($good | ForEach-Object { $_.PSObject.Properties['ruleset_id']?.Value } | Sort-Object -Unique)) {
+        if ("$id" -notmatch '^\d+$') { $why.Add("rulesets: invalid ruleset_id '$id'"); continue }
+        $s = Invoke-CicdGhGet $Get "/repos/$Repository/rulesets/$id`?includes_parents=true"
+        if (-not $s.Ok) { $why.Add("ruleset ${id}: cannot read ($($s.Error))"); continue }
+        $n = [string]$s.Body.name
+        if ([string]$s.Body.enforcement -cne 'active') { $why.Add("ruleset $n (${id}): enforcement '$($s.Body.enforcement)'"); continue }
+        $bp = $s.Body.PSObject.Properties['bypass_actors']
+        if (-not $bp -or $null -eq $bp.Value -or $bp.Value -isnot [array]) { $why.Add("ruleset $n (${id}): bypass_actors not readable (returned only with write access to the ruleset); no bypass cannot be proved"); continue }
+        if ($bp.Value.Count) { $why.Add("ruleset $n (${id}): bypass actors $(($bp.Value | ForEach-Object { "$($_.actor_type):$($_.actor_id)/$($_.bypass_mode)" }) -join ', ')"); continue }
+        return New-CicdGhFinding $subject pass "ruleset $n ($id, $($s.Body.source_type)): active pull_request rule, no bypass actors"
+    }
+    return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why)
+}
+
+function Get-CicdGhReviewFailText([string]$Branch, $Why) {
+    "cannot prove that every change to '$Branch' is a reviewed pull request without bypass (protected:true alone only blocks force-push and deletion): $($Why -join ' | ')"
+}
+
+function Get-CicdGhClassicGaps {
+    param($P)
+    $gaps = [Collections.Generic.List[string]]::new()
+    $rv = $P.PSObject.Properties['required_pull_request_reviews']?.Value
+    if (-not $rv) { $gaps.Add('no required pull request reviews') }
+    else {
+        $n = $rv.PSObject.Properties['required_approving_review_count']?.Value
+        if (-not ($n -is [int] -or $n -is [long]) -or $n -lt 1) { $gaps.Add("required approving reviews '$n' (need >= 1)") }
+        if (-not ($rv.PSObject.Properties['dismiss_stale_reviews']?.Value -eq $true -or $rv.PSObject.Properties['require_last_push_approval']?.Value -eq $true)) {
+            $gaps.Add('an approval survives a later push (enable dismiss stale approvals or require approval of the most recent push)')
+        }
+        $al = $rv.PSObject.Properties['bypass_pull_request_allowances']?.Value
+        if ($null -ne $al) {
+            foreach ($k in 'users', 'teams', 'apps') {
+                $v = $al.PSObject.Properties[$k]?.Value
+                if ($null -ne $v -and $v -isnot [array]) { $gaps.Add("bypass allowances '$k' unreadable") }
+                elseif (@($v | Where-Object { $_ }).Count) {
+                    $who = (@($v) | ForEach-Object { if ($_.PSObject.Properties['login']) { $_.login } elseif ($_.PSObject.Properties['slug']) { $_.slug } else { $_.id } }) -join ', '
+                    $gaps.Add("pull request bypass allowance for ${k}: $who")
+                }
+            }
+        }
+    }
+    $ea = $P.PSObject.Properties['enforce_admins']?.Value
+    if (-not $ea -or $ea.enabled -isnot [bool]) { $gaps.Add('cannot read enforce_admins') }
+    elseif (-not $ea.enabled) { $gaps.Add('administrators are not included (they can push without review)') }
+    $fp = $P.PSObject.Properties['allow_force_pushes']?.Value
+    if (-not $fp -or $fp.enabled -ne $false) { $gaps.Add('force pushes allowed or unreadable') }
+    return $gaps.ToArray()
+}
+
 # All findings for <stem>-preview (branch policy) and each gate (branch policy + reviewers + enforceable plan).
 function Test-CicdGhProtections {
     param([Parameter(Mandatory)][scriptblock]$Get, [Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Environment,
-        [string[]]$ReviewedGate = @())
+        [string[]]$ReviewedGate = @(), [scriptblock]$ProtectionGet)
     $repo = Invoke-CicdGhGet $Get "/repos/$Repository"
     if (-not $repo.Ok -or -not [string]$repo.Body.default_branch) { return @(New-CicdGhFinding 'repository' fail "cannot prove: GET /repos/$Repository failed ($($repo.Error))") }
     $default = [string]$repo.Body.default_branch
-    $findings = @(Test-CicdGhEnvironment $Get $Repository "$Environment-preview" $default $false)
+    $findings = @(Test-CicdGhBranchReview $(if ($ProtectionGet) { $ProtectionGet } else { $Get }) $Repository $default)
+    $findings += Test-CicdGhEnvironment $Get $Repository "$Environment-preview" $default $false
+
     if ($ReviewedGate.Count) {
         $findings += Test-CicdGhReviewerPlan $Get $Repository
         foreach ($g in $ReviewedGate) { $findings += Test-CicdGhEnvironment $Get $Repository "$Environment-$g" $default $true }
@@ -185,4 +281,4 @@ function Test-CicdGhJobApproval {
     return & $result
 }
 
-Export-ModuleMember -Function Test-CicdGhProtections, Test-CicdGhEnvironment, Test-CicdGhReviewerPlan, Test-CicdGhJobApproval, Get-CicdGhExitCode, New-CicdGhRestGet
+Export-ModuleMember -Function Test-CicdGhBranchReview, Test-CicdGhProtections, Test-CicdGhEnvironment, Test-CicdGhReviewerPlan, Test-CicdGhJobApproval, Get-CicdGhExitCode, New-CicdGhRestGet
