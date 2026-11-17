@@ -12,17 +12,18 @@ no VM extension or custom data is used. Commands:
   status      service state, then Test-RunnerHost.ps1 next to this script.
   remove      unregister; $env:RUNNER_TOKEN is a remove token.
   check       validate the arguments and paths and print the service of -RunnerDir; changes nothing.
+  print-env   print the runner .env that register writes (without the token); changes nothing.
   print-hook  print the job-started hook (offline tests).
 Service operations act only on the service named in <RunnerDir>\.service whose binary is
 <RunnerDir>\bin\RunnerService.exe; other runner services are never stopped, deleted or restarted.
 Host-wide changes are limited to the Azure CLI MSI, the runner's own service and %ProgramData%\ccof-runner: the
-machine PATH, the certificate stores and the git system config are not changed (tools are on the runner .path,
+machine PATH, the certificate stores and the git system config are not changed (tools are on the PATH in the runner .env,
 the corporate CA is in a runner-only bundle referenced from the runner .env).
 Exit codes: 0 ok, 2 input refused, 3 failed.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory, Position = 0)][ValidateSet('install', 'register', 'status', 'remove', 'check', 'print-hook')][string]$Command,
+    [Parameter(Mandatory, Position = 0)][ValidateSet('install', 'register', 'status', 'remove', 'check', 'print-hook', 'print-env')][string]$Command,
     [ValidateSet('preview', 'apply')][string]$Role,
     [string]$ClientId, [string]$SubscriptionId, [string]$TenantId, [string]$Repository,
     [string]$RunnerName = "$($env:COMPUTERNAME.ToLowerInvariant())", [string]$Labels,
@@ -81,7 +82,7 @@ if ($Proxy -match '@') { Refuse '-Proxy must not contain credentials (user:passw
 if ($Proxy) { Want 'Proxy' $Proxy '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$' }
 $noProxyAll = if ($NoProxy) { "$defaultNoProxy,$NoProxy" } else { $defaultNoProxy }
 if (-not $Labels) { $Labels = "ccof-vnet,ccof-$Role" }
-if ($Command -eq 'register') {
+if ($Command -in 'register', 'print-env') {
     Want 'ClientId' $ClientId $guid; Want 'SubscriptionId' $SubscriptionId $guid; Want 'TenantId' $TenantId $guid
     Want 'Repository' $Repository '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'; Want 'RunnerName' $RunnerName '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
     Want 'Labels' $Labels '^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$'
@@ -130,6 +131,21 @@ function Get-OwnService {
 Assert-SafeDir 'RunnerDir' $RunnerDir
 Assert-SafeDir 'ToolsDir' $ToolsDir @('node', 'pwsh', 'bin', 'dl', 'azure-cli.msi', 'ca')
 $RunnerDir = [IO.Path]::GetFullPath($RunnerDir); $ToolsDir = [IO.Path]::GetFullPath($ToolsDir)
+function Get-RunnerEnvLines([string]$Bundle) {
+    # The Windows runner service reads .env (not .path, which only the Linux svc.sh uses), so PATH is set here.
+    $path = "$ToolsDir\bin;$ToolsDir\node;$ToolsDir\pwsh;C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;$([Environment]::GetEnvironmentVariable('Path', 'Machine'))"
+    $lines = @("CCOF_RUNNER_ROLE=$Role", "CCOF_RUNNER_IDENTITY_CLIENT_ID=$ClientId", "CCOF_RUNNER_SUBSCRIPTION_ID=$SubscriptionId", "CCOF_RUNNER_TENANT_ID=$TenantId",
+        "ACTIONS_RUNNER_HOOK_JOB_STARTED=$(Join-Path $policyDir 'job-started.ps1')", "TMP=$RunnerDir\_work\_tmp", "TEMP=$RunnerDir\_work\_tmp", "PATH=$path",
+        'AZURE_BICEP_USE_BINARY_FROM_PATH=true', 'AZURE_BICEP_CHECK_VERSION=false', 'AZURE_CORE_COLLECT_TELEMETRY=false')
+    if ($Proxy) { $lines += "HTTPS_PROXY=$Proxy", "HTTP_PROXY=$Proxy", "NO_PROXY=$noProxyAll" }
+    if ($Bundle) {
+        # Runner-scoped trust: Git uses OpenSSL with the bundle through per-process config variables.
+        $lines += "REQUESTS_CA_BUNDLE=$Bundle", "SSL_CERT_FILE=$Bundle", "NODE_EXTRA_CA_CERTS=$(Join-Path $ToolsDir 'ca\ccof-corporate-ca.pem')",
+            'GIT_CONFIG_COUNT=2', 'GIT_CONFIG_KEY_0=http.sslBackend', 'GIT_CONFIG_VALUE_0=openssl', 'GIT_CONFIG_KEY_1=http.sslCAInfo', "GIT_CONFIG_VALUE_1=$Bundle"
+    }
+    return $lines
+}
+if ($Command -eq 'print-env') { Get-RunnerEnvLines $(if ($CaCert) { Join-Path $ToolsDir 'ca\ccof-ca-bundle.pem' }); exit 0 }
 if ($Command -eq 'check') { $s = Get-OwnService; "RunnerDir $RunnerDir accepted; service: $(if ($s) { $s } else { 'none' })"; exit 0 }
 if ($Command -eq 'status') {
     $s = Get-OwnService
@@ -139,7 +155,6 @@ if ($Command -eq 'status') {
     $pre = Join-Path $PSScriptRoot 'Test-RunnerHost.ps1'
     if (Test-Path $pre) {
         foreach ($l in Get-Content "$RunnerDir\.env") { if ($l -match '^([^=]+)=(.*)$') { Set-Item "env:$($Matches[1])" $Matches[2] } }
-        $env:Path = "$(Get-Content "$RunnerDir\.path" -ErrorAction SilentlyContinue);$env:Path"
         & pwsh -NoProfile -File $pre; if ($LASTEXITCODE -ne 0) { Fail 'Test-RunnerHost.ps1 failed' }
     }
     exit 0
@@ -231,16 +246,7 @@ switch ($Command) {
             if (Test-Path .runner) { Remove-Item .runner, .credentials, .credentials_rsaparams -Force -ErrorAction SilentlyContinue }
             & .\config.cmd --unattended --url "https://github.com/$Repository" --token $env:RUNNER_TOKEN --name $RunnerName --labels $Labels --work _work --replace --runasservice | Out-Null
             if ($LASTEXITCODE -ne 0) { Fail 'config.cmd failed: the registration token may be expired (1 hour) or for another repository' }
-            $envLines = @("CCOF_RUNNER_ROLE=$Role", "CCOF_RUNNER_IDENTITY_CLIENT_ID=$ClientId", "CCOF_RUNNER_SUBSCRIPTION_ID=$SubscriptionId", "CCOF_RUNNER_TENANT_ID=$TenantId",
-                "ACTIONS_RUNNER_HOOK_JOB_STARTED=$(Join-Path $policyDir 'job-started.ps1')", "TMP=$RunnerDir\_work\_tmp", "TEMP=$RunnerDir\_work\_tmp",
-                'AZURE_BICEP_USE_BINARY_FROM_PATH=true', 'AZURE_BICEP_CHECK_VERSION=false', 'AZURE_CORE_COLLECT_TELEMETRY=false')
-            if ($Proxy) { $envLines += "HTTPS_PROXY=$Proxy", "HTTP_PROXY=$Proxy", "NO_PROXY=$noProxyAll" }
-            if ($CaCert) {
-                $bundle = New-CcofBundle
-                # Runner-scoped trust: Git uses OpenSSL with the bundle through per-process config variables.
-                $envLines += "REQUESTS_CA_BUNDLE=$bundle", "SSL_CERT_FILE=$bundle", "NODE_EXTRA_CA_CERTS=$(Join-Path $ToolsDir 'ca\ccof-corporate-ca.pem')",
-                    'GIT_CONFIG_COUNT=2', 'GIT_CONFIG_KEY_0=http.sslBackend', 'GIT_CONFIG_VALUE_0=openssl', 'GIT_CONFIG_KEY_1=http.sslCAInfo', "GIT_CONFIG_VALUE_1=$bundle"
-            }
+            $envLines = Get-RunnerEnvLines $(if ($CaCert) { New-CcofBundle })
             $own = Get-OwnService
             if (-not $own) { Fail "config.cmd did not create a verifiable service for $RunnerDir" }
             $account = "$((Get-CimInstance -ClassName Win32_Service -Filter "Name='$own'").StartName)"
@@ -252,7 +258,6 @@ switch ($Command) {
                 $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($r[0], $r[1], 'Allow')))
             }
             Set-Acl -LiteralPath (Join-Path $RunnerDir '.env') $acl
-            Set-Content .path "$ToolsDir\bin;$ToolsDir\node;$ToolsDir\pwsh;C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;$([Environment]::GetEnvironmentVariable('Path', 'Machine'))" -Encoding ascii
             Restart-Service -Name $own -Force
             "registered $RunnerName ($Labels) to $Repository as $own"
         } finally { Pop-Location }

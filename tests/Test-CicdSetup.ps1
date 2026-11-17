@@ -211,6 +211,16 @@ foreach ($role in 'preview', 'apply') {
 $pf = @(& pwsh -NoProfile -File (Join-Path $repo 'scripts/cicd/Test-RunnerHost.ps1') -NoLogin -ImdsUri 'http://127.0.0.1:9/' -TimeoutSec 2 -MinDiskGb 0 2>&1)
 Check 'windows preflight: IMDS first, evidence lines only, exit 1 when IMDS is unreachable' ($LASTEXITCODE -eq 1 -and "$($pf[0])" -match '^FAIL imds' -and
     @($pf | Where-Object { "$_" -and "$_" -notmatch '^(PASS|FAIL|WARN|INFO) [^:]+: |^Test-RunnerHost: ' }).Count -eq 0)
+# The Windows runner service reads .env but not .path (lab run 44136504965 failed with "pwsh: command not found").
+$wtools = Join-Path $wscratch 'tools'
+$savedPublic = @{ PUBLIC = $env:PUBLIC }; $env:PUBLIC = 'C:\ccof-test-no-profiles\Public'   # the scratch dir is under the real profiles root
+$wenv = @(& pwsh -NoProfile -File (Join-Path $repo 'scripts/cicd/Install-CcofRunner.ps1') print-env -Role preview -ClientId ([guid]::NewGuid()) -SubscriptionId ([guid]::NewGuid()) `
+    -TenantId ([guid]::NewGuid()) -Repository octo/ccof-lab -AllowedWorkflows .github/workflows/deploy.yml -RunnerDir (Join-Path $wscratch 'runner') -ToolsDir $wtools 2>&1)
+Restore-Env $savedPublic
+$wpath = @($wenv | Where-Object { "$_" -cmatch '^PATH=' })
+Check 'windows .env: PATH puts the pinned bicep, node and pwsh first, then the Azure CLI and the machine PATH' ($LASTEXITCODE -eq 0 -and $wpath.Count -eq 1 -and
+    "$($wpath[0])".StartsWith("PATH=$wtools\bin;$wtools\node;$wtools\pwsh;C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;", 'Ordinal') -and
+    @($wenv | Where-Object { "$_" -match 'RUNNER_TOKEN' }).Count -eq 0)
 Remove-Item -Recurse -Force $wscratch
 # ---- templates and roles table
 $built = @{}
