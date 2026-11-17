@@ -156,7 +156,7 @@ function Invoke-Stage1 {
         $previous = Get-StgStage1Deployment $Cfg
         if (-not $previous -or $previous.properties.provisioningState -cne 'Succeeded') { throw 'stage1_state_orphaned: local state says Stage 1 completed but its ARM deployment is not Succeeded; inspect the deployment before recovery.' }
         Assert-StgStage1Parameters $previous $Cfg
-        if (-not $Apply) { Write-Host 'preview: Stage 1 is already verified for this target and config; no resource write will occur.'; return $null }
+        if (-not $Apply) { Write-StgWhatIfResult 'stage1-services' $null 'deploymentRecordMatch'; Write-Host 'preview: Stage 1 is already verified for this target and config; no resource write will occur.'; return $null }
         Write-Host 'verify-only: Stage 1 is already verified for this target and config; no resource write will occur.'
         return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
     }
@@ -171,6 +171,7 @@ function Invoke-Stage1 {
             '--template-file', (Join-Path $script:StagedDir 'main.bicep'), '--parameters', "@$(Write-StgParameters $Cfg 'stage1-services' (Get-Stage1Parameters $Cfg))", '--no-pretty-print', '--output', 'json')
         $risky = Get-StgUnsafeSharedChanges -Changes @($preview.changes) -PriorStage1TargetIds $priorTargets
         $null = Write-StgEvidence 'stage1.shared-rg.what-if.json' @($preview.changes | ForEach-Object { [ordered]@{ change = $_.changeType; id = $_.resourceId } })
+        Write-StgWhatIfResult 'stage1-services' @($preview.changes)
         foreach ($change in $preview.changes) { Write-Host ("  {0,-8} {1}" -f $change.changeType, ($change.resourceId -replace '^/subscriptions/[^/]+/resourceGroups/', '')) }
         if ($risky.Count) { throw "shared_rg_changes: what-if would change $($risky.Count) resources not recorded by this Stage 1 deployment: $(@($risky | ForEach-Object { "$($_.changeType) $($_.resourceId)" }) -join '; ')" }
         Write-Host "guarded preview: $($items.Count) existing resources; no unrelated Modify or Delete."
@@ -184,7 +185,7 @@ function Invoke-Stage1 {
         # This deployment already completed, but local state was lost: resume only if every Stage 1
         # parameter matches the ARM deployment record. A shared RG is still read-only here.
         Assert-StgStage1Parameters $previous $Cfg
-        if (-not $Apply) { Write-Host 'preview: matching succeeded Stage 1 deployment found; no resource write will occur.'; return $null }
+        if (-not $Apply) { Write-StgWhatIfResult 'stage1-services' $null 'deploymentRecordMatch'; Write-Host 'preview: matching succeeded Stage 1 deployment found; no resource write will occur.'; return $null }
         Write-Host 'verify-only: matching succeeded Stage 1 deployment found; no resource write will occur.'
         return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
     }

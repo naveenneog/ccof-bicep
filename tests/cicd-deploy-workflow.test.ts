@@ -38,17 +38,24 @@ test("CICD workflows sign in with the runner managed identity only", () => {
   assert.match(drift(), /if: always\(\)\n\s+uses: \.\/\.github\/actions\/azure-login-mi\n\s+with:\n\s+mode: logout/);
 });
 
-test("ccof-step lands on the apply runner only outside pull requests and inside a GitHub environment", () => {
+const TRUSTED = "(github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && inputs.gh_environment != ''";
+const uncomment = (t: string) => t.replace(/^\s*#.*$/gm, "");
+
+test("ccof-step: self-hosted only for dispatch or schedule inside an environment; any other call is GitHub-hosted and refused", () => {
   const s = step();
   const runsOn = /runs-on: (.+)\n/.exec(s)?.[1] ?? "";
-  assert.match(runsOn, /^\$\{\{ \(inputs\.runner == 'apply' && github\.event_name != 'pull_request' && inputs\.gh_environment != ''\) && fromJSON\('\["self-hosted","ccof-vnet","ccof-apply"\]'\) \|\| fromJSON\('\["self-hosted","ccof-vnet","ccof-preview"\]'\) \}\}$/);
-  assert.match(s, /CCOF_EXPECTED_ROLE: \$\{\{ \(inputs\.runner == 'apply' && github\.event_name != 'pull_request' && inputs\.gh_environment != ''\) && 'apply' \|\| 'preview' \}\}/);
+  assert.equal(runsOn, `\${{ (${TRUSTED}) && (inputs.runner == 'apply' && fromJSON('["self-hosted","ccof-vnet","ccof-apply"]') || fromJSON('["self-hosted","ccof-vnet","ccof-preview"]')) || 'ubuntu-latest' }}`);
+  assert.doesNotMatch(uncomment(s).replace(runsOn, ""), /"self-hosted"|\[self-hosted|runs-on:[^\n]*self-hosted/, "self-hosted labels only in the trusted branch of runs-on");
+  const refuse = s.indexOf("- name: Refuse an untrusted call");
+  assert.ok(refuse > 0 && refuse < s.indexOf("- uses: actions/checkout@v4"), "refusal runs before any repository code");
+  assert.match(s.slice(refuse), new RegExp(`^- name: Refuse an untrusted call[^\\n]*\\n\\s+if: \\$\\{\\{ !\\(${TRUSTED.replace(/[()|.$]/g, "\\$&")}\\) \\}\\}\\n\\s+run: \\|\\n[^\\n]*\\n\\s+exit 1\\n`));
+  assert.match(s, /CCOF_EXPECTED_ROLE: \$\{\{ inputs\.runner == 'apply' && 'apply' \|\| 'preview' \}\}/);
   assert.match(s, /environment: \$\{\{ inputs\.gh_environment \}\}/);
-  assert.match(s, /if \(\$writes -and \$env:GITHUB_EVENT_NAME -eq 'pull_request'\) \{ throw/);
+  assert.match(s, /if \(\$env:GITHUB_EVENT_NAME -notin 'workflow_dispatch', 'schedule'\) \{ throw/);
   assert.match(s, /if \(\$writes -and \$g -cnotmatch "\^\$e-\(apply\|gate-\[a-z\]\+\)\$"\) \{ throw/);
+  assert.doesNotMatch(uncomment(s), /pull_request/, "no pull-request path in ccof-step");
   assert.doesNotMatch(s, /^permissions:/m, "called workflow inherits (never raises) the caller token");
-  assert.match(s, /persist-credentials: \$\{\{ github\.event_name != 'pull_request' \}\}/);
-  assert.match(s, /if: always\(\) && inputs\.save_state && github\.event_name != 'pull_request'/);
+  assert.match(s, /if: always\(\) && steps\.trusted\.outcome == 'success' && inputs\.save_state/);
   // Untrusted inputs reach scripts only through environment variables.
   for (const run of s.split(/\n\s+run: /).slice(1)) {
     const block = run.split(/\n\s+- /)[0];
@@ -56,21 +63,41 @@ test("ccof-step lands on the apply runner only outside pull requests and inside 
   }
 });
 
-test("deploy-environment: pull requests are read-only on the preview runner", () => {
+test("deploy-environment: pull requests run offline on GitHub-hosted runners only", () => {
   const text = deploy();
   assert.match(text, /concurrency:\n\s+group: ccof-env-\$\{\{ github\.event_name == 'pull_request' && format\('pr-\{0\}', github\.event\.pull_request\.number\) \|\| inputs\.environment \}\}\n\s+cancel-in-progress: false/);
   assert.match(text, /^permissions:\n\s+contents: read/m);
+  assert.doesNotMatch(uncomment(text), /self-hosted|ccof-preview\]|ccof-apply\]/, "no job of deploy-environment names a self-hosted runner itself");
   const j = jobs(text);
-  assert.match(j.get("pr-environments") ?? "", /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
-  const pr = j.get("pr-checks") ?? "";
-  assert.match(pr, /runner: preview/);
-  assert.doesNotMatch(pr, /runner: apply|apply: true|save_state|gh_environment|contents: write/);
-  for (const [id, body] of j) {
-    if (id.startsWith("pr-")) continue;
-    assert.match(body, /if: .*(github\.event_name == 'workflow_dispatch'|inputs\.scope|inputs\.apply)/, `${id} is dispatch-only`);
+  const pr = [...j].filter(([, b]) => /github\.event_name == 'pull_request'/.test(b));
+  assert.deepEqual(pr.map(([id]) => id), ["pr-offline"]);
+  const body = j.get("pr-offline") ?? "";
+  assert.match(body, /runs-on: ubuntu-latest\n/);
+  assert.match(body, /permissions: \{ contents: read \}/);
+  assert.match(body, /persist-credentials: false/);
+  assert.match(body, /Test-CicdPrerequisites\.ps1 [^\n]*-Offline -Mode preview/);
+  assert.doesNotMatch(body, /azure-login-mi|Sync-CicdState|CCOF_STATE_TOKEN|ccof-step|uses: \.\/|GH_TOKEN|github\.token|secrets\./);
+  for (const [id, b] of j) {
+    assert.match(b, /runs-on: ubuntu-latest\n|uses: \.\/\.github\/workflows\/ccof-step\.yml\n/, `${id} is GitHub-hosted or goes through ccof-step`);
+    if (id === "pr-offline") continue;
+    assert.match(b, /if: .*(github\.event_name == 'workflow_dispatch'|inputs\.scope|inputs\.apply)/, `${id} is dispatch-only`);
+    if (/uses: \.\/\.github\/workflows\/ccof-step\.yml/.test(b)) assert.match(b, /gh_environment: '\$\{\{ inputs\.environment \}\}-(preview|apply|gate-[a-z]+)'/, `${id} runs inside a GitHub environment`);
   }
+  assert.doesNotMatch(text, /^\s+pull_request_target:|^\s+push:/m);
+  const resolve = j.get("resolve") ?? "";
+  assert.match(resolve, /runs-on: ubuntu-latest\n/, "the dispatch ref is checked before any self-hosted job");
+  assert.doesNotMatch(resolve, /azure-login-mi/);
+  assert.match(resolve, /& \.\/scripts\/cicd\/Test-CicdGitHubEnvironments\.ps1 -Repository \$env:GITHUB_REPOSITORY -Environment \$env:CCOF_ENV -ReviewedGate \$gates\n\s+exit \$LASTEXITCODE/);
+  assert.match(resolve, /CCOF_GITHUB_PLAN: \$\{\{ vars\.CCOF_GITHUB_PLAN \}\}/);
 });
 
+test("runner host preflight matches the runner OS (bash on Linux, PowerShell on Windows)", () => {
+  for (const [name, text] of [["ccof-step", step()], ["drift-check", drift()]]) {
+    assert.match(text, /- name: Runner host preflight \(Linux\)\n\s+if: runner\.os != 'Windows'\n\s+shell: bash\n\s+run: bash scripts\/cicd\/Test-RunnerHost\.sh\n/, `${name} Linux`);
+    assert.match(text, /- name: Runner host preflight \(Windows\)\n\s+if: runner\.os == 'Windows'\n\s+shell: pwsh\n\s+run: pwsh -NoProfile -File scripts\/cicd\/Test-RunnerHost\.ps1\n/, `${name} Windows`);
+    for (const blk of text.split(/\n\s+- (?=name:|uses:)/)) if (/\n\s+shell: bash\n/.test(blk)) assert.match(blk, /\n\s+if: runner\.os != 'Windows'\n/, `${name}: bash step without an OS condition: ${blk.slice(0, 60)}`);
+  }
+});
 test("deploy-environment: every write runs on the apply runner in <env>-apply or a named gate", () => {
   const j = jobs(deploy());
   const writers = [...j].filter(([, b]) => /apply: true/.test(b));
@@ -110,8 +137,7 @@ test("deploy-environment: run order, stage 4 manual, no manual-only operation", 
   assert.match(j.get("fd-primary-approve-apply") ?? "", /inputs\.fd_reviewed_ids != ''/);
   assert.match(j.get("fd-full-deploy-apply") ?? "", /approve: StandbyReady/);
   assert.match(j.get("standby-network-apply") ?? "", /approve: PrivateNetworkChanges/);
-  assert.match(j.get("resolve") ?? "", /required_reviewers/);
-  assert.match(j.get("resolve") ?? "", /deployment_branch_policy/);
+
   // A full (two-region) Front Door makes the driver refuse -PrimaryOnly; reruns skip the primary-only jobs.
   assert.match(j.get("resolve") ?? "", /fd_mode: \$\{\{ steps\.fdmode\.outputs\.mode \}\}/);
   for (const [id, body] of j) {
@@ -134,12 +160,18 @@ test("drift-check is read-only: previews only, no save, issue on drift", () => {
   assert.match(text, /schedule:/);
   assert.match(text, /environment: \$\{\{ matrix\.environment \}\}-preview/);
   assert.match(text, /expected-role: apply/);
-  assert.match(text, /Get-CicdDrift\.ps1/);
+  assert.match(text, /Get-CicdDrift\.ps1 -LogDirectory "evidence\/\$env:CCOF_ENV" -ExpectedStep \$env:CCOF_EXPECTED_STEPS\n/);
+  assert.match(text, /"CCOF_EXPECTED_STEPS=\$\(\$steps -join ','\)"/);
+  assert.doesNotMatch(text, /-ExpectedLog/);
+  assert.doesNotMatch(uncomment(text), /pull_request|push:/, "drift-check has no pull-request trigger");
+  const j = jobs(text);
+  assert.match(j.get("targets") ?? "", /runs-on: ubuntu-latest\n[\s\S]*Test-CicdGitHubEnvironments\.ps1 -Repository \$env:GITHUB_REPOSITORY -Environment \$e\n/, "environment names and branch policies proved on a GitHub-hosted runner");
+  assert.match(j.get("drift") ?? "", /needs: targets\n[\s\S]*environment: \$\{\{ fromJSON\(needs\.targets\.outputs\.environments\) \}\}\n\s+runs-on: \[self-hosted, ccof-vnet, ccof-apply\]/);
   assert.match(text, /issues: write/);
   assert.doesNotMatch(text, /-Apply|Action Save|apply: true|-TestNotification/);
   assert.match(text, /persist-credentials: false/);
   assert.match(text, /CCOF_STATE_TOKEN: \$\{\{ github\.token \}\}\n\s+run: pwsh scripts\/cicd\/Sync-CicdState\.ps1 -Action Restore/);
   // The report and issue steps have no always(); the preview loop must not end with a driver exit code.
   assert.match(text, /PREVIEW_FAILED=[^\n]*\n(\s*#[^\n]*\n)?\s+exit 0\n/);
-  assert.match(step(), /CCOF_STATE_TOKEN: \$\{\{ github\.event_name == 'pull_request' && github\.token \|\| '' \}\}/);
+  assert.doesNotMatch(step(), /CCOF_STATE_TOKEN/);
 });

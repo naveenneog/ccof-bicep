@@ -51,8 +51,10 @@ permissions. Settings per application are printed by the Stage 4 preview job in 
       application redirect URIs for the admin Function App; assignment required; editors and readers assigned.
 - [ ] Security groups exist for each project and classification; object IDs in `groups[].groupId`;
       group owners add members (the pipeline adds none).
-- [ ] Region B (DR 7.3): admin redirect URIs for the region B admin app added, as printed by the standby
-      Config step.
+- [ ] Region B (DR 7.3): single-page application redirect URIs `https://<region B admin host>/api/console` and
+      `/api/console-v3` added to the admin app, as printed by the standby Config step ("manual Entra handoff
+      (pipeline)"). The pipeline always hands these over and makes no Graph call, even when the primary's
+      Stage 4 was verified through Graph.
 - [ ] `entra.manualVerification` committed with `confirmedBy` (name) and `confirmedOn` (yyyy-MM-dd).
 
 Reference: [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md), [Staged.Entra.ps1](../../infra/staged/Staged.Entra.ps1)

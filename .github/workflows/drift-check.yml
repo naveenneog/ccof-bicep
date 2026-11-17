@@ -2,7 +2,7 @@ name: drift-check
 
 # Scheduled read-only drift check (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md, "Drift check").
 # Runs the what-if previews of an environment and opens (or comments on) an issue when a preview shows
-# Create, Delete or Modify. Nothing is applied and no driver state is saved. What-if needs deployment
+# Create, Delete or Modify, or when a preview failed or produced no recognized result. Nothing is applied and no driver state is saved. What-if needs deployment
 # permissions, so the job runs on the apply runner inside <env>-preview (branch policy main, no reviewers).
 # Environments: repository variable CCOF_DRIFT_ENVIRONMENTS, a JSON array such as ["prod"].
 
@@ -26,12 +26,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  drift:
+  # GitHub-hosted: validates the names and proves each <env>-preview admits only the protected default branch
+  # before a job is scheduled on the self-hosted runner (an unknown environment name would be created unprotected).
+  targets:
     if: vars.CCOF_DRIFT_ENVIRONMENTS != '' || inputs.environment != ''
+    runs-on: ubuntu-latest
+    permissions: { contents: read, actions: read }
+    outputs:
+      environments: ${{ steps.list.outputs.environments }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - id: list
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCOF_INPUT: ${{ inputs.environment }}
+          CCOF_LIST: ${{ vars.CCOF_DRIFT_ENVIRONMENTS }}
+        run: |
+          $envs = if ($env:CCOF_INPUT) { @($env:CCOF_INPUT) } else { @($env:CCOF_LIST | ConvertFrom-Json) }
+          $failed = 0
+          foreach ($e in $envs) {
+            if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$' -or $e -eq 'example' -or -not (Test-Path "deploy/$e/staged.config.json")) { throw "invalid environment '$e'" }
+            & ./scripts/cicd/Test-CicdGitHubEnvironments.ps1 -Repository $env:GITHUB_REPOSITORY -Environment $e
+            if ($LASTEXITCODE) { $failed++ }
+          }
+          if ($failed) { exit 1 }
+          "environments=$(ConvertTo-Json -Compress -InputObject @($envs))" | Add-Content $env:GITHUB_OUTPUT
+
+  drift:
+    needs: targets
     strategy:
       fail-fast: false
       matrix:
-        environment: ${{ fromJSON(inputs.environment != '' && format('["{0}"]', inputs.environment) || vars.CCOF_DRIFT_ENVIRONMENTS) }}
+        environment: ${{ fromJSON(needs.targets.outputs.environments) }}
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
     environment: ${{ matrix.environment }}-preview
     timeout-minutes: 90
@@ -44,9 +72,15 @@ jobs:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
 
-      - name: Runner host preflight
+      - name: Runner host preflight (Linux)
+        if: runner.os != 'Windows'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
 
       - name: Guard inputs
         run: |
@@ -72,7 +106,7 @@ jobs:
             & ./scripts/cicd/Invoke-CicdDriver.ps1 -Environment $env:CCOF_ENV -Step $s
             if ($LASTEXITCODE) { $failed += "$s exit $LASTEXITCODE" }
           }
-          "expected=$($steps | ForEach-Object { "$_-preview.log" } | Join-String -Separator ',')" | Add-Content $env:GITHUB_ENV
+          "CCOF_EXPECTED_STEPS=$($steps -join ',')" | Add-Content $env:GITHUB_ENV
           if ($failed.Count) { "PREVIEW_FAILED=$($failed -join '; ')" | Add-Content $env:GITHUB_ENV }
           # The report and issue steps decide; a failed last preview must not skip them.
           exit 0
@@ -80,7 +114,7 @@ jobs:
       - name: Drift report
         id: drift
         run: |
-          pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedLog ($env:expected -split ',')
+          pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedStep $env:CCOF_EXPECTED_STEPS
           "drift=$([int]($LASTEXITCODE -ne 0 -or [bool]$env:PREVIEW_FAILED))" | Add-Content $env:GITHUB_OUTPUT
           exit 0
 

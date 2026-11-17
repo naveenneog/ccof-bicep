@@ -45,6 +45,16 @@ try {
     Check 'stage 4 undated confirmation refused' (Throws { Cmd 'staged-4' } 'stage4_graph_write_refused')
     Set-Entra @{ manualVerification = 'yes' }
     Check 'stage 4 non-object confirmation refused' (Throws { Cmd 'staged-4' } 'stage4_graph_write_refused')
+    # Graph contract beyond Stage 4: the pipeline identity makes no operator Graph read (Stage 0, Stage 7 delegated
+    # snapshot) and standby Config never writes the admin app, whatever the restored Stage 4 record says.
+    Check 'stage 0 graph mode refused' (Throws { Cmd 'staged-0' } 'graph_call_refused: staged-0')
+    Check 'stage 7 graph mode refused' (Throws { Cmd 'staged-7' @{ Apply = $true } } 'graph_call_refused: staged-7')
+    Check 'standby Config apply forces the manual Entra handoff with a Graph-mode config' ((Cmd 'standby-Config' @{ Apply = $true }).Arguments -contains '-ManualEntraHandoff')
+    Check 'standby Config preview forces the manual Entra handoff' ((Line 'standby-Config') -ceq 'pwsh -NoProfile -File infra/dr/Invoke-DrStandby.ps1 -Phase Config -ConfigPath deploy/prod/dr-standby.config.json -ManualEntraHandoff')
+    Check 'other standby phases take no handoff switch' ((Cmd 'standby-Grants' @{ Apply = $true }).Arguments -notcontains '-ManualEntraHandoff')
+    Set-Entra @{ manualVerification = @{ confirmedBy = 'entra-team'; confirmedOn = '2026-11-01' } }
+    Check 'stage 0 manual mode allowed' ((Line 'staged-0') -like '*-Stage 0 *')
+    Check 'stage 7 manual mode allowed' ((Line 'staged-7' @{ Apply = $true }) -like '*-Stage 7 *-Apply')
     Remove-Item $cfgPath
     Check 'stage 4 missing config refused' (Throws { Cmd 'staged-4' } 'config_missing')
 
@@ -89,27 +99,7 @@ try {
     $names = Get-CicdStepNames
     Check 'step list has no manual-only operation' (-not ($names | Where-Object { $_ -match 'Lockdown|Drain|Restore|Promote|Fence|Failback|staged-8' }))
 
-    # Drift detection from preview logs.
-    $logs = Join-Path $scratch 'evidence'; New-Item -ItemType Directory -Force $logs | Out-Null
-    @('what-if stage1-services : NoChange=3', '  NoChange INFSIM-STG-RG/providers/Microsoft.Web/sites/a', '  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/b') | Set-Content (Join-Path $logs 'staged-1-preview.log')
-    @('NoChange=1', '  NoChange /subscriptions/s/resourceGroups/r/providers/Microsoft.Insights/actionGroups/x-health-ag') | Set-Content (Join-Path $logs 'health-a-preview.log')
-    $drift = Join-Path $root 'scripts\cicd\Get-CicdDrift.ps1'
-    $null = & pwsh -NoProfile -File $drift -LogDirectory $logs 2>&1
-    Check 'no drift exit 0' ($LASTEXITCODE -eq 0 -and (Get-Content (Join-Path $logs 'drift.json') -Raw | ConvertFrom-Json).drift.Count -eq 0)
-    $null = & pwsh -NoProfile -File $drift -LogDirectory $logs -ExpectedLog 'health-b-preview.log' 2>&1
-    Check 'missing expected log is drift' ($LASTEXITCODE -eq 1)
-    Add-Content (Join-Path $logs 'staged-1-preview.log') '  Modify   INFSIM-STG-RG/providers/Microsoft.Web/sites/a'
-    Add-Content (Join-Path $logs 'health-a-preview.log') '  Deploy   /subscriptions/s/resourceGroups/r/providers/Microsoft.Resources/deployments/n'
-    $r = Get-CicdDrift -LogPath (Get-ChildItem $logs -Filter '*-preview.log' | ForEach-Object FullName)
-    Check 'modify is drift' ($r.Drift.Count -eq 1 -and $r.Drift[0].Change -eq 'Modify' -and $r.Drift[0].Id -like '*/sites/a')
-    Check 'deploy is review only' ($r.Review.Count -eq 1 -and $r.Review[0].Change -eq 'Deploy')
-    $null = & pwsh -NoProfile -File $drift -LogDirectory $logs 2>&1
-    Check 'drift exit 1 with markdown' ($LASTEXITCODE -eq 1 -and (Get-Content (Join-Path $logs 'drift.md') -Raw) -match '\| staged-1-preview.log \| Modify \|')
-    Check 'summary text is not drift' ((Get-CicdDrift -LogPath (Join-Path $logs 'staged-1-preview.log')).Drift.Count -eq 1)
-    @('what-if: NoChange /subscriptions/s/x/y', 'what-if: Create /subscriptions/s/resourceGroups/b/providers/Microsoft.Network/virtualNetworks/v') | Set-Content (Join-Path $logs 'drprereq-Bootstrap-preview.log')
-    Check 'dr prerequisites what-if format' ((Get-CicdDrift -LogPath (Join-Path $logs 'drprereq-Bootstrap-preview.log')).Drift.Change -ceq 'Create')
-    $null = & pwsh -NoProfile -File $drift -LogDirectory (Join-Path $scratch 'none') 2>&1
-    Check 'no logs exit 1' ($LASTEXITCODE -eq 1)
+    # Drift: tests/Test-CicdDrift.ps1.
 } finally {
     Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 }

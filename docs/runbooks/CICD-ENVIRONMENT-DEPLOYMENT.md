@@ -116,7 +116,7 @@ environments.
 
 | Runner (labels) | Identity roles | Runs |
 |---|---|---|
-| `ccof-preview` (`self-hosted, ccof-vnet, ccof-preview`) | Reader on the workload, network and Foundry scopes; Cosmos DB Built-in Data Reader | Pull request checks, `resolve`, gate checks, Stage 0, Stage 4 preview |
+| `ccof-preview` (`self-hosted, ccof-vnet, ccof-preview`) | Reader on the workload, network and Foundry scopes; Cosmos DB Built-in Data Reader | `resolve`, gate checks, Stage 0, Stage 4 preview |
 | `ccof-apply` (`self-hosted, ccof-vnet, ccof-apply`) | Contributor on the workload RGs; Network Contributor on the network RGs; Role Based Access Control Administrator, conditioned to the Stage 3 and Foundry roles | Every what-if preview, every verify and status step, every apply. Only inside a GitHub environment, never for a pull request |
 
 What-if needs the same permissions as the deployment ([Learn: what-if permissions](https://learn.microsoft.com/azure/azure-resource-manager/templates/deploy-what-if#required-permissions)).
@@ -132,10 +132,40 @@ The full role list with role IDs is in `docs/runbooks/CICD-SETUP.md` section 5.
 
 ## 5. GitHub environments, gates and approvers
 
-Create these environments before the first run. In each one, set the deployment branch policy to the
-`main` branch only. Add required reviewers to all except `-preview`. The `resolve` job refuses to start if any
-environment is missing, has no reviewers, or has no branch policy. Without this check, GitHub would create an
-unknown environment without protection.
+Create these environments before the first run. In each one, set **Deployment branches and tags** to
+**Selected branches and tags** with exactly one rule: the branch `main` (the default branch). Protect `main` with a
+branch protection rule or ruleset. Add required reviewers to all except `-preview`, and turn off "Allow
+administrators to bypass".
+
+**Plan requirement.** Required reviewers are enforced on public repositories, and on private or internal
+repositories only with GitHub Enterprise. GitHub Free, Pro and Team do not enforce them on private repositories
+([GitHub: required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)).
+A private repository therefore belongs to an organization on GitHub Enterprise. Without that, approvals are not
+enforced and the pipeline must not run with `apply`.
+
+The `resolve` job (GitHub-hosted) runs [`Test-CicdGitHubEnvironments.ps1`](../../scripts/cicd/Test-CicdGitHubEnvironments.ps1)
+before any self-hosted job. It reads (GET only):
+
+- the repository visibility and owner, and the organization plan;
+- each environment (`-preview`; with `apply`, also `-apply` and every `-gate-*`), its required reviewers and branch policy;
+- the environment's selected branch rules ([GitHub REST: deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies));
+- whether `main` is protected.
+
+It fails when anything cannot be proved:
+
+| Finding | Result |
+|---|---|
+| Environment missing (GitHub would create it without protection) | fail |
+| No branch policy, or **Protected branches only** (admits every branch while no protection rule exists, and any branch a pattern rule covers later) | fail |
+| Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
+| `main` not protected | fail |
+| Gate environment without a required reviewer | fail |
+| Private user-owned repository, or organization plan below Enterprise | fail |
+| Organization plan not readable by the job token (owner-only field) | fail, unless an organization owner confirms GitHub Enterprise and sets the repository variable `CCOF_GITHUB_PLAN=enterprise`. The run then reports the plan as **attested, NOT PROVED** in the summary |
+| Any API read error | fail ("cannot prove") |
+
+If the job token cannot read branch policies, a repository administrator checks the same items by hand in
+Settings > Environments, and the run cannot proceed until the token can read them.
 
 | Environment | Approver | Approves |
 |---|---|---|
@@ -226,15 +256,31 @@ After Front Door with the standby (saved mode `full`), the driver refuses `-Prim
 
 ## 7. Manage the environment afterwards
 
-- **Configuration change.** Open a pull request that edits `deploy/<environment>/`. The pull request runs
-  Stage 0 and the prerequisite checks on the preview runner. Pull requests from forks get no job. After the
-  merge, run the workflow with `apply` false to review the previews. Then run it with `apply` true.
+- **Configuration change.** Open a pull request that edits `deploy/<environment>/`. The pull request runs the
+  offline prerequisite checks (`Test-CicdPrerequisites.ps1 -Offline`) on a GitHub-hosted runner: no Azure
+  sign-in, no private network, no driver state. After the merge, run the workflow with `apply` false to review
+  the previews. Then run it with `apply` true.
 - **Drift.** [`drift-check.yml`](../../.github/workflows/drift-check.yml) runs on weekdays at 03:17 UTC for the
   environments in the repository variable `CCOF_DRIFT_ENVIRONMENTS` (a JSON array, for example `["infprod"]`).
-  It previews Stages 1, 2, 3, 5, 6 and the health alerts whose files exist. `Get-CicdDrift.ps1` reports every what-if Create,
-  Delete or Modify as drift, and every missing log as drift. Deploy and Unsupported lines are listed for review.
-  On drift it opens an issue `Drift: <environment>` with the label `ccof-drift`, or comments on the open one.
-  It never applies and never saves state.
+  A GitHub-hosted job first checks each name and its `-preview` branch policy (section 5). The drift job previews
+  Stages 1, 2, 3, 5, 6 and the health alerts whose files exist. [`Get-CicdDrift.ps1`](../../scripts/cicd/Get-CicdDrift.ps1)
+  reads the structured result each preview writes (`<step>-preview.result.json` and `.whatif.jsonl`), not the log text:
+
+  | Status | Meaning | Clean |
+  |---|---|---|
+  | Clean | What-if ran; only NoChange or Ignore | yes |
+  | RecordMatch | Stage 1: the deployment record matches the template and parameters (resource what-if not run) | yes |
+  | Drift | What-if shows Create, Delete or Modify | no |
+  | Unverifiable | What-if shows Deploy or Unsupported (cannot be evaluated) | no, listed for review |
+  | Unmeasured | The preview ran but produced no what-if result (for example "No what-if output was produced.") | no |
+  | PreviewFailed | The preview exited non-zero | no |
+  | NoResult | No result file for an expected step | no |
+
+  Only when every expected step is Clean or RecordMatch does the report say "No drift in N of N expected previews".
+  Otherwise it opens an issue `Drift: <environment>` with the label `ccof-drift`, or comments on the open one.
+  It never applies and never saves state. In the lab the steady state still shows Modify on Stages 2, 5 and 6
+  (Cosmos containers, APIM policies and app settings, private endpoint DNS zone groups); review and accept or
+  fix these before scheduling the check.
 
 ## 8. Driver state
 
@@ -250,8 +296,28 @@ The drivers write their state into `deploy/<environment>/`:
 
 - every job restores the state before it runs;
 - apply and verify jobs save it afterwards, even when the job fails;
-- pull request runs never save.
-- pull request and drift runs read the branch with the job token (`CCOF_STATE_TOKEN`, passed to git through environment configuration, never on the command line), because those checkouts keep no credentials.
+- pull request runs never read or save it;
+- `resolve` and drift runs read the branch with the job token (`CCOF_STATE_TOKEN`, passed to git through environment configuration, never on the command line), because those checkouts keep no credentials.
+
+Restore fails when it cannot prove the branch is absent: `git ls-remote --exit-code` exit 2 (no such ref) is
+the first run; any other error (repository not found, authorization, network) stops the job, as does a failed
+fetch or a branch that moved during the restore.
+
+Save keeps files of known types (`.json`, `.jsonl`, `.md`, `.txt`, `.log`, `.xml`, `.csv`) and refuses (the job
+fails, nothing is pushed) on an unknown type, a file over 5 MB, or content that looks like a secret (JWT, GitHub
+token, Entra client secret, private key, account key, SAS, connection string, authorization header). It also
+fails when one of these essential files was in the restored snapshot and is missing now:
+
+- `.staged-state/state.json` (staged outputs; every stage reads it);
+- `.dr-state/standby.state.json` (DR phases done, package digests);
+- `.dr-state/state.json` (standby staged outputs, read by DR standby, Front Door and failover);
+- `.dr-state/frontdoor-state.json` (Front Door mode and origins).
+
+Only these regenerable files are excluded: `.dr-state/generated/packages/**` (build staging, deleted after Code;
+digests are in `standby.state.json`), `.dr-state/generated/*.zip` (rebuilt on every publish), `*.lock` (held
+only while a phase runs), `node_modules/` and `.git/`. Other generated files (gateway policy XML, render and
+workbook JSON) are regenerated by Stage 5 or Config but are saved, for evidence. Tested with the complete lab DR
+state (38,730 files, 224 MB): 32 files saved and restored byte for byte, 38,698 excluded, nothing refused.
 
 The branch holds no secret. Protect it with a ruleset so that only GitHub Actions can push.
 
@@ -282,14 +348,22 @@ or use the manual action below.
 - **Runner scope.** Organisation runner groups can limit a runner to selected repositories and workflows. For
   a repository owned by a user account, a self-hosted runner is scoped to the repository, and any workflow in
   that repository can target its labels.
+- **Trust boundaries.** A self-hosted runner gives any job the host's managed identity and the private network,
+  whatever the identity's roles. So:
+  - pull request jobs run only on GitHub-hosted runners, offline (no Azure sign-in, no state); `pull_request_target` is not used;
+  - `ccof-step.yml` picks a self-hosted runner only for `workflow_dispatch` or `schedule` and only inside a GitHub
+    environment. Any other call lands on a GitHub-hosted runner and its first step fails;
+  - the branch check of a dispatch is the environment branch policy, which GitHub enforces before it schedules the
+    job. The `resolve` and drift `targets` jobs run on GitHub-hosted runners and prove the policies first;
+  - the runner job-start hook (`docs/runbooks/CICD-SETUP.md`) refuses untrusted events and refs on both runners.
 - **Mitigations:**
-  - no pull request jobs from forks;
-  - pull request jobs never run on `ccof-apply`;
-  - every apply job sits behind an environment with required reviewers and a `main`-only branch policy;
+  - every apply job sits behind an environment with required reviewers (enforced only by the plans in section 5) and a `main`-only selected-branch policy;
   - branch protection on `main`;
   - CODEOWNERS for `.github/workflows/` and `deploy/**`;
   - the runner role check in each job.
-- **Dependency on the runner branch.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh` come from the runner setup change (`docs/runbooks/CICD-SETUP.md`). Merge that change before this workflow.
+- **Dependency on the runner branch.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh`/`.ps1` come from the runner setup change (`docs/runbooks/CICD-SETUP.md`). Merge that change before this workflow.
+- **Runner OS.** The host preflight runs `Test-RunnerHost.sh` with bash on Linux and `Test-RunnerHost.ps1` with
+  PowerShell on Windows (`runner.os`). Only Linux runners have been exercised; Windows is untested.
 
   See [GitHub: security hardening for self-hosted runners](https://docs.github.com/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners).
 - **Inputs.** Workflow inputs reach scripts only through environment variables, never inline in `run:`.
@@ -298,6 +372,8 @@ or use the manual action below.
 
 - [Learn: sign in with a managed identity (`az login --identity`)](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-managed-identity)
 - [GitHub: deployment environments](https://docs.github.com/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment)
+- [GitHub: required reviewers and plans](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)
+- [GitHub REST: deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies)
 - [GitHub: reusable workflows](https://docs.github.com/actions/sharing-automations/reusing-workflows)
 - [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md), [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md),
   [DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md), [DR-FRONT-DOOR.md](DR-FRONT-DOOR.md),

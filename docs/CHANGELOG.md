@@ -1,5 +1,21 @@
 # Change log
 
+## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
+
+- Pull requests run only offline prerequisite checks on a GitHub-hosted runner (no self-hosted runner, managed
+  identity or driver state). `ccof-step.yml` uses a self-hosted runner only for `workflow_dispatch`/`schedule`
+  inside a GitHub environment; any other call is GitHub-hosted and refused. `resolve` runs GitHub-hosted.
+- New `scripts/cicd/Test-CicdGitHubEnvironments.ps1`: proves each environment admits exactly the protected default
+  branch (selected-branch policy), gates have required reviewers, and the plan enforces them (public, or
+  GitHub Enterprise for private repositories). Unreadable facts fail; an attested plan is reported NOT PROVED.
+- Driver state: a failed `ls-remote`/fetch (repository not found, authorization, network) stops the restore
+  instead of starting over; Save refuses unknown types, files over 5 MB, secret-like content and missing
+  essential files. Exclusions are documented and limited to regenerable build output.
+- Drift: `Get-CicdDrift.ps1 -ExpectedStep` reads structured what-if results; empty, failed, missing or
+  Unsupported/Deploy previews are not clean.
+- Standby Config in the pipeline hands the region B admin redirect URIs to the Entra admin (`-ManualEntraHandoff`);
+  Stages 0 and 7 refuse to run without `entra.manualVerification`. No Graph call from the pipeline.
+- Runner host preflight follows `runner.os` (bash on Linux, PowerShell on Windows).
 ## 2026-11-17 - CI/CD pipeline for a complete environment (deploy-environment)
 
 - `.github/workflows/deploy-environment.yml` deploys `deploy/<environment>/` end to end: prerequisite checks,

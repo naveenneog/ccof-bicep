@@ -1,0 +1,4 @@
+== stage 1 (preview) subscription 00000000-0000-0000-0000-000000000000 RG INFSIM-STG-RG; state <repo>\deploy\infsim-hf\.staged-state
+note: existing APIM infsim-apim is not changed by the driver; do by hand or set to true: diagnostic setting ccof-gateway-logs (GatewayLogs, GatewayLlmLogs) to the Stage 1 workspace (apim.existing.configureGatewayDiagnostics: Stage 5); outbound VNet integration on network.existing.apimSubnetId (apim.existing.integrateOutboundVnet: Stage 6).
+preview: Stage 1 is already verified for this target and config; no resource write will occur.
+stage 1 preview only: nothing changed. Rerun with -Apply.

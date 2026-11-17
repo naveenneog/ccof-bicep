@@ -34,11 +34,11 @@ try {
     Write-State $a '.staged-state/state.json' "{`"stages`":{`"1`":{`"ok`":true}}}`r`n"
     Write-State $a '.dr-state/frontdoor-state.json' '{"profileName":"p"}'
     Write-State $a '.health-alerts-a/state.json' '{"x":1}'
-    Write-State $a '.dr-state/package.zip' 'PK'
+    Write-State $a '.dr-state/generated/packages/resolver.zip' 'PK'
     Write-State $a 'other/notes.json' '{}'
     $s = Save-CicdState $a 'prod' 'first'
     $tree = @(git --git-dir $bare ls-tree -r --name-only refs/heads/cicd-state/prod)
-    Check 'save: pushed the allowed state files only' ($s.Pushed -and $tree.Count -eq 3 -and $tree -contains 'deploy/prod/.staged-state/state.json' -and $tree -notcontains 'deploy/prod/.dr-state/package.zip')
+    Check 'save: pushed the allowed state files only' ($s.Pushed -and $tree.Count -eq 3 -and $tree -contains 'deploy/prod/.staged-state/state.json' -and $tree -notcontains 'deploy/prod/.dr-state/generated/packages/resolver.zip')
     Check 'save: config and other folders not saved' (@($tree | Where-Object { $_ -match 'staged.config.json|other/' }).Count -eq 0)
     Check 'save: orphan commit (no parent)' (@(git --git-dir $bare rev-list --parents -n 1 refs/heads/cicd-state/prod)[0].Split(' ').Count -eq 1)
 
@@ -66,6 +66,104 @@ try {
     Remove-Item (Join-Path $b 'deploy/prod/.staged-state/tok.json')
     Check 'secret message names the file and kind, not the value' (-not (Throws { Save-CicdState $b 'prod' 'clean' } '.'))
 
+    # New secret shapes (not JWT): each refused by kind, nothing pushed.
+    $head = Get-RemoteHead
+    $samples = [ordered]@{
+        'GitHub token'              = '{"token":"ghp_' + ('a1B2' * 9) + '"}'
+        'GitHub token '             = '{"t":"ghs_' + ('Z9y8' * 9) + '"}'
+        'GitHub token  '            = '{"t":"github_pat_11ABCDEFG0' + ('x_Y1' * 20) + '"}'
+        'Entra client secret value' = '{"value":"Abc8Q~' + ('k-9_Lm.~Qz' * 3) + 'abcd"}'
+        'connection string key'     = '{"cs":"Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=' + ('Q' * 43) + '="}'
+        'HTTP authorization header' = '{"header":"AUTHORIZATION: basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('x-access-token:abc123def456')) + '"}'
+        'credentials in a URL'      = '{"remote":"https://x-access-token:s3cr3tvalue1@github.com/o/r.git"}'
+        'API key'                   = '{"key1":"' + ('0123456789abcdef' * 2) + '"}'
+    }
+    foreach ($k in $samples.Keys) {
+        Write-State $b '.dr-state/leak.json' $samples[$k]
+        Check "neg: $($k.Trim()) in state refused, nothing pushed ($($samples[$k].Substring(0, 12))...)" ((Throws { Save-CicdState $b 'prod' 'leak' } "leak.json: $([regex]::Escape($k.Trim()))") -and (Get-RemoteHead) -eq $head)
+    }
+    Remove-Item (Join-Path $b 'deploy/prod/.dr-state/leak.json')
+    Write-State $b '.dr-state/ids.json' ('{"appId":"' + [guid]::NewGuid() + '","digest":"sha256:' + ('ab' * 32) + '","id":"/subscriptions/' + [guid]::NewGuid() + '/resourceGroups/r/providers/Microsoft.Web/sites/a","etag":"\"0a00d1b2-0000-0200-0000-6553a1b20000\""}')
+    Check 'identifiers, digests and etags are not secrets' (@(Find-CicdStateSecrets $b @('deploy/prod/.dr-state/ids.json')).Count -eq 0)
+    Remove-Item (Join-Path $b 'deploy/prod/.dr-state/ids.json')
+
+    function NewDr([string]$N) { $r = New-Clone $N; New-Item -ItemType Directory -Force (Join-Path $r 'deploy/dr') | Out-Null; '{}' | Set-Content (Join-Path $r 'deploy/dr/staged.config.json'); $r }
+    function WriteDr([string]$Repo, [string]$Rel, [string]$Text) { $q = Join-Path $Repo "deploy/dr/$Rel"; New-Item -ItemType Directory -Force (Split-Path $q -Parent) | Out-Null; [IO.File]::WriteAllText($q, $Text) }
+    function DrHead { $r = git --git-dir $bare rev-parse --verify -q refs/heads/cicd-state/dr; if ($LASTEXITCODE) { $null } else { $r } }
+    # DR state fixture (layout of a real primary + standby + Front Door + health run): every state file saved and
+    # restored byte-exact; only the documented regenerable files left out; unknown or oversized files fail Save.
+    $d = NewDr 'drfix'; $null = Restore-CicdState $d 'dr'
+    $fixture = [ordered]@{
+        '.staged-state/state.json' = '{"target":{"subscriptionId":"s"},"stages":{"1":{"ok":true},"4":{"verification":"manual"}}}'
+        '.staged-state/evidence/stage1-services.what-if.json' = '[{"change":"NoChange","id":"/subscriptions/s/resourceGroups/r/providers/Microsoft.Web/sites/a"}]'
+        '.staged-state/stage5-config.parameters.json' = '{"parameters":{"x":{"value":1}}}'
+        '.staged-state/generated/gateway-config.json' = '{"apiId":"claude-messages"}'
+        '.staged-state/generated/gateway/claude-messages.policy.xml' = '<policies><inbound /></policies>'
+        '.dr-state/state.json' = '{"stages":{"1":{"ok":true}}}'
+        '.dr-state/standby.state.json' = '{"phases":{"Data":{"ok":true},"Code":{"packages":{"resolver":"sha256:' + ('cd' * 32) + '"}}}}'
+        '.dr-state/frontdoor-state.json' = '{"profileName":"p","mode":"primary-only"}'
+        '.dr-state/frontdoor.parameters.json' = '{"parameters":{}}'
+        '.dr-state/dr-standby-stage5-config.parameters.json' = ('{"parameters":{"big":{"value":"' + ('x' * 100000) + '"}}}')
+        '.dr-state/standby.staged.config.json' = '{"resourceGroup":"rb"}'
+        '.dr-state/cosmos-throughput-preview.json' = '{"steps":[]}'
+        '.dr-state/evidence/failover-status-20261117T000000Z.json' = '{"schema":"ccof.dr.failover.v1"}'
+        '.dr-evidence/discover-20261117.json' = '{"checks":{}}'
+        '.health-alerts-a/health-alerts.parameters.json' = '{"parameters":{"prefix":{"value":"x-health"}}}'
+        '.health-alerts-a/test-notification.json' = '{"sent":true}'
+        '.health-alerts-b/health-alerts.parameters.json' = '{"parameters":{"prefix":{"value":"x-b-health"}}}'
+    }
+    foreach ($k in $fixture.Keys) { WriteDr $d $k $fixture[$k] }
+    WriteDr $d '.dr-state/frontdoor-state.lock' ''
+    WriteDr $d '.staged-state/generated/admin.zip' 'PK'
+    WriteDr $d '.dr-state/generated/packages/resolver/node_modules/x/index.js' 'module.exports=1'
+    $sel = Get-CicdStateFiles $d 'dr'
+    Check 'fixture: exactly the state files selected' ((@($sel.Files) -join ',') -ceq (@($fixture.Keys | ForEach-Object { "deploy/dr/$_" } | Sort-Object) -join ',') -and $sel.Refused.Count -eq 0)
+    Check 'fixture: lock, package zip and build staging excluded with a reason' ($sel.Excluded.Count -eq 3 -and @($sel.Excluded | Where-Object { $_ -match 'lock file|deployment package|build staging' }).Count -eq 3)
+    $sd = Save-CicdState $d 'dr' 'fixture'
+    $e = NewDr 'drfix2'; $re = Restore-CicdState $e 'dr'
+    $same = @($fixture.Keys | Where-Object { [IO.File]::ReadAllText((Join-Path $e "deploy/dr/$_")) -ceq $fixture[$_] })
+    Check 'fixture: save then restore returns every state file byte-exact' ($sd.Pushed -and $re.Files -eq $fixture.Count -and $same.Count -eq $fixture.Count)
+    Check 'fixture: excluded files are not on the branch' (-not (Test-Path (Join-Path $e 'deploy/dr/.dr-state/frontdoor-state.lock')) -and -not (Test-Path (Join-Path $e 'deploy/dr/.staged-state/generated/admin.zip')))
+    $head = DrHead
+    WriteDr $e '.dr-state/frontdoor.bicepparam' 'using x'
+    Check 'neg: unknown file type fails Save, nothing pushed' ((Throws { Save-CicdState $e 'dr' 'x' } "state_file_not_saved: deploy/dr/.dr-state/frontdoor.bicepparam \(type") -and (DrHead) -eq $head)
+    Remove-Item (Join-Path $e 'deploy/dr/.dr-state/frontdoor.bicepparam')
+    $big = Join-Path $e 'deploy/dr/.dr-state/huge.json'; $fs = [IO.File]::Create($big); $fs.SetLength(5MB + 1); $fs.Dispose()
+    Check 'neg: file over 5 MB fails Save, nothing pushed' ((Throws { Save-CicdState $e 'dr' 'x' } 'state_file_not_saved: deploy/dr/.dr-state/huge.json \(size') -and (DrHead) -eq $head)
+    Remove-Item $big
+    Remove-Item (Join-Path $e 'deploy/dr/.staged-state/state.json')
+    Check 'neg: restored essential state missing fails Save, nothing pushed' ((Throws { Save-CicdState $e 'dr' 'x' } 'state_essential_missing: deploy/dr/.staged-state/state.json') -and (DrHead) -eq $head)
+    WriteDr $e '.staged-state/state.json' $fixture['.staged-state/state.json']; Remove-Item (Join-Path $e 'deploy/dr/.dr-state/state.json')
+    Check 'neg: standby staged state.json missing fails Save, nothing pushed' ((Throws { Save-CicdState $e 'dr' 'x' } 'state_essential_missing: deploy/dr/.dr-state/state.json') -and (DrHead) -eq $head)
+
+    # Restore: only "no such ref" (ls-remote exit 2) is a first run.
+    $u = New-Clone 'unreach'; git -C $u remote set-url origin (Join-Path $scratch 'missing.git')
+    Check 'neg real git: missing remote repository refused, no marker' ((Throws { Restore-CicdState $u 'prod' } 'state_remote_unreachable: git ls-remote origin exited 128') -and -not (Test-Path (Join-Path $u 'deploy/prod/.cicd-state-restored')))
+    $fake = Join-Path $scratch 'fake-git.ps1'
+    Set-Content $fake -Value @(
+        '$plan = $env:FAKE_GIT_PLAN | ConvertFrom-Json'
+        '$sub = $args[2]'
+        'if ($plan.PSObject.Properties[$sub]) { foreach ($l in @($plan.$sub.out)) { Write-Output $l }; exit [int]$plan.$sub.code }'
+        '& git @args; exit $LASTEXITCODE'
+    )
+    $mod = Get-Module CicdState
+    function With-FakeGit([hashtable]$Plan, [scriptblock]$Block) {
+        $env:FAKE_GIT_PLAN = $Plan | ConvertTo-Json -Depth 4
+        & $mod { param($p) $script:GitCommand = $p } $fake
+        try { & $Block } finally { & $mod { $script:GitCommand = 'git' }; Remove-Item env:FAKE_GIT_PLAN -ErrorAction SilentlyContinue }
+    }
+    $m = New-Clone 'mock'
+    $notFound = @('remote: Repository not found.', "fatal: repository 'https://github.com/o/r.git/' not found")
+    Check 'neg mock: repository not found (exit 128) is not a first run' (With-FakeGit @{ 'ls-remote' = @{ code = 128; out = $notFound } } { (Throws { Restore-CicdState $m 'prod' } 'state_remote_unreachable: .*exited 128.*Repository not found') -and -not (Test-Path (Join-Path $m 'deploy/prod/.cicd-state-restored')) })
+    Check 'neg mock: authentication failure is not a first run' (With-FakeGit @{ 'ls-remote' = @{ code = 128; out = @("fatal: Authentication failed for 'https://github.com/o/r.git/'") } } { Throws { Restore-CicdState $m 'prod' } 'state_remote_unreachable' })
+    Check 'neg mock: network failure (exit 1) is not a first run' (With-FakeGit @{ 'ls-remote' = @{ code = 1; out = @('fatal: unable to access: Could not resolve host: github.com') } } { Throws { Restore-CicdState $m 'prod' } 'state_remote_unreachable: .*exited 1' })
+    Check 'mock: no matching ref (exit 2) is a first run' (With-FakeGit @{ 'ls-remote' = @{ code = 2; out = @() } } { $x = Restore-CicdState $m 'prod'; $null -eq $x.Commit -and (Get-Content (Join-Path $m 'deploy/prod/.cicd-state-restored') -Raw) -eq 'none' })
+    Remove-Item (Join-Path $m 'deploy/prod/.cicd-state-restored')
+    $sha = 'a' * 40
+    Check 'neg mock: ref advertised but fetch fails ("not found") is refused' (With-FakeGit @{ 'ls-remote' = @{ code = 0; out = @("$sha`trefs/heads/cicd-state/prod") }; fetch = @{ code = 128; out = @("fatal: couldn't find remote ref refs/heads/cicd-state/prod") } } { (Throws { Restore-CicdState $m 'prod' } 'state_fetch_failed: .*exited 128') -and -not (Test-Path (Join-Path $m 'deploy/prod/.cicd-state-restored')) })
+    Check 'neg mock: unexpected ls-remote output refused' (With-FakeGit @{ 'ls-remote' = @{ code = 0; out = @("$sha`trefs/heads/cicd-state/prod-old") } } { Throws { Restore-CicdState $m 'prod' } 'state_ls_remote_unexpected' })
+    Check 'neg mock: branch moved between ls-remote and fetch refused' (With-FakeGit @{ 'ls-remote' = @{ code = 0; out = @("$sha`trefs/heads/cicd-state/prod") } } { Throws { Restore-CicdState $m 'prod' } 'state_branch_moved' })
+
     # Guards.
     $c = New-Clone 'c'
     Check 'neg: save without restore refused' (Throws { Save-CicdState $c 'prod' 'x' } 'state_not_restored')
@@ -92,4 +190,4 @@ Check 'fetch auth: token passed through GIT_CONFIG_* for the server' ($auth['GIT
 Check 'neg: fetch auth without a token adds nothing' ((Get-CicdStateFetchAuth -Token '' -ServerUrl 'https://github.com').Count -eq 0)
 
 Write-Host "Test-CicdState: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 17) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 44) { exit 1 }

@@ -6,9 +6,21 @@
 Set-StrictMode -Version Latest
 
 $script:StateFolders = @('.staged-state', '.dr-state', '.dr-evidence', '.health-alerts-a', '.health-alerts-b')
-$script:Extensions = @('.json', '.jsonl', '.txt', '.md', '.log', '.csv')
+$script:Extensions = @('.json', '.jsonl', '.txt', '.md', '.log', '.csv', '.xml')
 $script:MaxBytes = 5MB
 $script:Marker = '.cicd-state-restored'
+$script:GitCommand = 'git'
+# Safe, regenerable exclusions (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md, "State"). Anything else in a state
+# folder is saved, or Save fails: a file is never dropped silently.
+$script:Exclusions = [ordered]@{
+    'build staging (generated/packages: npm trees and per-app zips; digests are in standby.state.json)' = '^[^/]+/generated/packages/'
+    'deployment package (generated/*.zip, rebuilt from source by Stage 7 and standby Code)'              = '^[^/]+/generated/[^/]+\.zip$'
+    'lock file (frontdoor-state.lock, held only while a phase runs)'                                   = '\.lock$'
+    'node_modules or .git folder'                                                                       = '(^|/)(node_modules|\.git)/'
+}
+# State the drivers read back on the next run: losing one would make a rerun start over or lose evidence.
+# .dr-state/state.json is the standby's staged state (Invoke-DrStandby, Invoke-DrFrontDoor and Invoke-DrFailover read it).
+$script:Essential = @('.staged-state/state.json', '.dr-state/state.json', '.dr-state/standby.state.json', '.dr-state/frontdoor-state.json')
 $script:SecretPatterns = [ordered]@{
     'storage or Cosmos account key'  = '(?i)(AccountKey|primaryMasterKey|secondaryMasterKey|primaryKey|secondaryKey)["'']?\s*[:=]\s*["'']?[A-Za-z0-9+/]{40,}={0,2}'
     'SAS signature'                  = '(?i)[?&]sig=[A-Za-z0-9%+/]{20,}'
@@ -16,13 +28,19 @@ $script:SecretPatterns = [ordered]@{
     'bearer or access token (JWT)'   = 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
     'client secret'                  = '(?i)"?(client_?secret|clientSecret|password)"?\s*[:=]\s*"[^"]{8,}"'
     'APIM subscription key'          = '(?i)(Ocp-Apim-Subscription-Key|subscriptionKey)"?\s*[:=]\s*"?[0-9a-f]{32}'
+    'GitHub token'                   = '\b(gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{60,255})\b'
+    'Entra client secret value'      = '(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.-]{3}[0-9]Q~[A-Za-z0-9_~.-]{31,34}(?![A-Za-z0-9_~.-])'
+    'connection string key'          = '(?i)(SharedAccessKey|AccountKey|AccessKey)=[A-Za-z0-9+/]{20,}={0,2}'
+    'HTTP authorization header'      = '(?i)authorization["'']?\s*[:=]\s*["'']?(basic|bearer)\s+[A-Za-z0-9+/=._~-]{16,}'
+    'credentials in a URL'           = '(?i)\bhttps?://[^/\s:@"'']+:[^/\s@"'']{8,}@'
+    'API key'                        = '(?i)"(api[-_]?key|key1|key2)"\s*:\s*"[A-Za-z0-9]{32,}"'
 }
 
 function Invoke-CicdGit {
     param([string]$Repo, [string[]]$Arguments, [switch]$AllowFailure, [hashtable]$Environment = @{})
     $saved = @{}
     foreach ($k in $Environment.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $Environment[$k]) }
-    try { $out = & git -C $Repo @Arguments 2>&1; $code = $LASTEXITCODE }
+    try { $global:LASTEXITCODE = 0; $out = & $script:GitCommand -C $Repo @Arguments 2>&1; $code = $LASTEXITCODE }
     finally { foreach ($k in $saved.Keys) { if ($null -eq $saved[$k]) { Remove-Item -LiteralPath "env:$k" -ErrorAction SilentlyContinue } else { Set-Item -LiteralPath "env:$k" -Value $saved[$k] } } }
     if ($code -ne 0 -and -not $AllowFailure) { throw "git $($Arguments -join ' ') failed ($code): $(@($out) -join ' ')" }
     return [pscustomobject]@{ Code = $code; Output = @($out | ForEach-Object { "$_" }) }
@@ -33,24 +51,27 @@ function Get-CicdStateBranch { param([string]$Environment)
     return "cicd-state/$Environment"
 }
 
-# Files the state branch may hold: under deploy/<env>/<state folder>/, allowed extensions, at most 5 MB.
-# Returns @{ Files = repo-relative paths; Skipped = reasons }.
+# Files the state branch holds: every file under deploy/<env>/<state folder>/ except the documented regenerable
+# exclusions. Returns @{ Files = repo-relative paths; Excluded = "path (reason)"; Refused = "path (reason)" }.
+# Refused files (unknown type, over 5 MB) make Save fail; they are never dropped silently.
 function Get-CicdStateFiles {
     param([string]$Repo, [string]$Environment)
     $base = Join-Path $Repo "deploy/$Environment"
-    $files = [Collections.Generic.List[string]]::new(); $skipped = [Collections.Generic.List[string]]::new()
+    $files = [Collections.Generic.List[string]]::new(); $excluded = [Collections.Generic.List[string]]::new(); $refused = [Collections.Generic.List[string]]::new()
     foreach ($folder in $script:StateFolders) {
         $dir = Join-Path $base $folder
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($f in Get-ChildItem -LiteralPath $dir -Recurse -File -Force) {
             $rel = [IO.Path]::GetRelativePath($Repo, $f.FullName).Replace('\', '/')
-            if ($script:Extensions -notcontains $f.Extension.ToLowerInvariant()) { $skipped.Add("$rel (type $($f.Extension))"); continue }
-            if ($f.Length -gt $script:MaxBytes) { $skipped.Add("$rel (size $($f.Length))"); continue }
-            if ($rel -match '/(node_modules|\.git)/') { $skipped.Add("$rel (excluded folder)"); continue }
+            $inFolder = [IO.Path]::GetRelativePath($base, $f.FullName).Replace('\', '/')
+            $why = @($script:Exclusions.Keys | Where-Object { $inFolder -match $script:Exclusions[$_] }) | Select-Object -First 1
+            if ($why) { $excluded.Add("$rel ($why)"); continue }
+            if ($script:Extensions -notcontains $f.Extension.ToLowerInvariant()) { $refused.Add("$rel (type '$($f.Extension)' is not a known state type)"); continue }
+            if ($f.Length -gt $script:MaxBytes) { $refused.Add("$rel (size $($f.Length) bytes, limit $($script:MaxBytes))"); continue }
             $files.Add($rel)
         }
     }
-    return @{ Files = @($files | Sort-Object); Skipped = $skipped.ToArray() }
+    return @{ Files = @($files | Sort-Object); Excluded = $excluded.ToArray(); Refused = $refused.ToArray() }
 }
 
 # Secret findings as "path: kind" (never the matched value).
@@ -65,7 +86,7 @@ function Find-CicdStateSecrets {
 }
 
 function Get-CicdStateFetchAuth {
-    # Jobs checked out with persist-credentials: false (pull requests, drift check) pass the read-only job token
+    # Jobs checked out with persist-credentials: false (resolve, drift check) pass the read-only job token
     # in CCOF_STATE_TOKEN. It goes to git through GIT_CONFIG_* variables, so it never appears on a command line.
     param([string]$Token = $env:CCOF_STATE_TOKEN, [string]$ServerUrl = $env:GITHUB_SERVER_URL)
     if (-not $Token) { return @{} }
@@ -79,13 +100,22 @@ function Restore-CicdState {
     $branch = Get-CicdStateBranch $Environment
     $base = Join-Path $Repo "deploy/$Environment"
     if (-not (Test-Path -LiteralPath $base)) { throw "environment_folder_missing: deploy/$Environment" }
-    $fetch = Invoke-CicdGit $Repo @('fetch', '--no-tags', '--depth', '1', $Remote, "+refs/heads/${branch}:refs/remotes/$Remote/$branch") -AllowFailure -Environment (Get-CicdStateFetchAuth)
-    if ($fetch.Code -ne 0) {
-        if (@($fetch.Output) -join ' ' -notmatch "couldn't find remote ref|not found") { throw "state_fetch_failed: $(@($fetch.Output) -join ' ')" }
+    $auth = Get-CicdStateFetchAuth
+    # Only "the remote answered and has no such branch" (ls-remote --exit-code: 2) is a first run. Any other
+    # failure (repository not found, lost authorization, network) stops: never apply without prior state.
+    $ls = Invoke-CicdGit $Repo @('ls-remote', '--exit-code', '--heads', $Remote, "refs/heads/$branch") -AllowFailure -Environment $auth
+    if ($ls.Code -eq 2) {
         Set-Content -LiteralPath (Join-Path $base $script:Marker) -Value 'none' -NoNewline
-        return [pscustomobject]@{ Commit = $null; Files = 0; Message = "no $branch branch yet: first run, nothing restored" }
+        return [pscustomobject]@{ Commit = $null; Files = 0; Message = "no $branch branch yet (remote answered, no such ref): first run, nothing restored" }
     }
+    if ($ls.Code -ne 0) { throw "state_remote_unreachable: git ls-remote $Remote exited $($ls.Code): $(@($ls.Output) -join ' '). The state branch cannot be read; nothing was restored and this is not treated as a first run." }
+    $heads = @($ls.Output | Where-Object { $_ -match "^[0-9a-f]{40}\trefs/heads/$([regex]::Escape($branch))$" })
+    if ($heads.Count -ne 1) { throw "state_ls_remote_unexpected: expected one ref refs/heads/$branch, got: $(@($ls.Output) -join ' ')" }
+    $advertised = ($heads[0] -split "`t")[0]
+    $fetch = Invoke-CicdGit $Repo @('fetch', '--no-tags', '--depth', '1', $Remote, "+refs/heads/${branch}:refs/remotes/$Remote/$branch") -AllowFailure -Environment $auth
+    if ($fetch.Code -ne 0) { throw "state_fetch_failed: $branch exists on $Remote but git fetch exited $($fetch.Code): $(@($fetch.Output) -join ' ')" }
     $commit = (Invoke-CicdGit $Repo @('rev-parse', "refs/remotes/$Remote/$branch")).Output[0].Trim()
+    if ($commit -cne $advertised) { throw "state_branch_moved: $branch moved from $advertised to $commit during Restore (another run saved state); rerun." }
     $paths = @((Invoke-CicdGit $Repo @('ls-tree', '-r', '--name-only', $commit)).Output | Where-Object { $_ })
     $prefix = "deploy/$Environment/"
     $n = 0
@@ -111,7 +141,15 @@ function Save-CicdState {
     if (-not (Test-Path -LiteralPath $marker)) { throw 'state_not_restored: run Sync-CicdState.ps1 -Action Restore in this job before Save' }
     $parent = (Get-Content -LiteralPath $marker -Raw).Trim()
     $sel = Get-CicdStateFiles $Repo $Environment
-    foreach ($s in $sel.Skipped) { Write-Warning "not saved: $s" }
+    if ($sel.Refused.Count) { throw "state_file_not_saved: $($sel.Refused -join '; '). Nothing was pushed; state is never dropped silently (see the documented exclusions)." }
+    foreach ($s in $sel.Excluded) { Write-Host "not saved (regenerable): $s" }
+    if ($parent -ne 'none') {
+        # An essential file the restored snapshot had must still be there: a lost state.json would otherwise be
+        # pushed as an empty state and the next run would start over.
+        $before = @((Invoke-CicdGit $Repo @('ls-tree', '-r', '--name-only', $parent)).Output | Where-Object { $_ })
+        $lost = @($script:Essential | ForEach-Object { "deploy/$Environment/$_" } | Where-Object { $before -contains $_ -and $sel.Files -notcontains $_ })
+        if ($lost.Count) { throw "state_essential_missing: $($lost -join ', ') was restored but is missing now. Nothing was pushed." }
+    }
     $secrets = @(Find-CicdStateSecrets $Repo $sel.Files)
     if ($secrets.Count) { throw "state_secret_detected: $($secrets -join '; '). Nothing was pushed; remove the value from the state file." }
     $index = Join-Path ([IO.Path]::GetTempPath()) ('ccof-state-index-' + [guid]::NewGuid().ToString('N'))

@@ -321,6 +321,17 @@ Check 'admin redirects: Graph apply keeps existing URIs and adds missing ones' (
 $script:patched = $null
 $r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'a' -Apply -GetApp { [pscustomobject]@{ id = 'o'; spa = [pscustomobject]@{ redirectUris = @('https://a/api/console', 'https://a/api/console-v3') } } } -PatchApp $patch 6>$null
 Check 'admin redirects: nothing patched when both URIs exist' ($null -eq $script:patched -and @($r.added).Count -eq 0)
+# Pipeline handoff (-ManualEntraHandoff): a Graph-verified Stage 4 record (no 'manual') still makes no Graph call.
+$script:graphCalls = 0; $script:patched = $null
+$r = Invoke-DrAdminRedirects -Stage4 @{ verification = 'graph'; admin = @{ appId = 'adm' } } -AdminHost 'b' -Apply -ManualHandoff -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: forced handoff with Graph-verified Stage 4 makes no Graph call' ($script:graphCalls -eq 0 -and $null -eq $script:patched -and $r.mode -ceq 'manual' -and $r.reason -ceq 'pipeline' -and (@($r.redirects) -join ',') -ceq 'https://b/api/console,https://b/api/console-v3')
+$r = Invoke-DrAdminRedirects -Stage4 @{ admin = @{ appId = 'adm' } } -AdminHost 'b' -ManualHandoff -GetApp $getApp -PatchApp $patch 6>$null
+Check 'admin redirects: forced handoff preview makes no Graph read' ($script:graphCalls -eq 0 -and $r.mode -ceq 'manual')
+# Wiring: Invoke-DrStandby.ps1 has -ManualEntraHandoff and passes it to the Config phase redirect call.
+$dsAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'infra/dr/Invoke-DrStandby.ps1'), [ref]$null, [ref]$null)
+$dsParams = @($dsAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+$redirCall = @($dsAst.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-DrAdminRedirects' }, $true))
+Check 'Invoke-DrStandby: -ManualEntraHandoff reaches Invoke-DrAdminRedirects' ($dsParams -contains 'ManualEntraHandoff' -and $redirCall.Count -eq 1 -and $redirCall[0].Extent.Text -match '-ManualHandoff:\$ManualEntraHandoff')
 # Code build staging (packages/ with node_modules, about 40k files) is not needed after publish: the digests
 # are in standby.state.json, and nothing in Verify or Front Door reads it. Leaving it made each saved archive 80 MB.
 $gen = Join-Path $repo ".env.public-test-scratch/dr-staging-$PID"

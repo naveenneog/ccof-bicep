@@ -3,7 +3,7 @@ name: deploy-environment
 # Complete deployment of one CCOF environment from deploy/<environment>/, then the same run manages it
 # (a rerun previews NoChange and re-applies idempotently). Runbook: docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md.
 # Sign-in: runner host managed identity (.github/actions/azure-login-mi). No Azure secret, no federated credential.
-# Runners: ccof-preview (read-only identity) for pull requests and read-only checks; ccof-apply (deploy identity)
+# Runners: pull requests run offline on GitHub-hosted runners only. ccof-preview (read-only identity) for read-only checks; ccof-apply (deploy identity)
 # only inside a GitHub environment. What-if needs deployment permissions, so main-branch previews run on ccof-apply
 # in <env>-preview (branch policy main; no reviewers). Every change runs in <env>-apply or <env>-gate-<name>.
 # Manual steps that stay outside: Entra changes (Entra team), sites private endpoints, Front Door Lockdown,
@@ -48,40 +48,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------- pull request: read-only checks
-  pr-environments:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, ccof-vnet, ccof-preview]
-    outputs:
-      environments: ${{ steps.list.outputs.environments }}
+  # ---------------------------------------------------------------- pull request: offline checks only
+  # Pull request code never reaches a self-hosted runner, a managed identity, the private network or the state
+  # branch: this job runs on a GitHub-hosted runner with config-only checks (no Azure sign-in).
+  pr-offline:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
-      - id: list
+      - name: Offline prerequisite checks of changed environments
         shell: pwsh
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           $changed = @(git diff --name-only "$env:BASE_SHA...HEAD")
           $envs = @($changed | Where-Object { $_ -match '^deploy/([a-z0-9][a-z0-9-]{0,30})/' } | ForEach-Object { $Matches[1] } | Where-Object { $_ -ne 'example' -and (Test-Path "deploy/$_/staged.config.json") } | Sort-Object -Unique)
-          "environments=$(ConvertTo-Json -Compress -InputObject @($envs))" | Add-Content $env:GITHUB_OUTPUT
-          "Environments changed: $($envs -join ', ')" | Add-Content $env:GITHUB_STEP_SUMMARY
-
-  pr-checks:
-    needs: pr-environments
-    if: needs.pr-environments.outputs.environments != '[]' && needs.pr-environments.outputs.environments != ''
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: ${{ fromJSON(needs.pr-environments.outputs.environments) }}
-    permissions: { contents: read, actions: read }
-    uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ matrix.environment }}', step: staged-0, runner: preview, prereq_scope: 'primary,frontdoor,standby,health', prereq_mode: preview }
+          "Environments changed: $(if ($envs.Count) { $envs -join ', ' } else { 'none' })" | Add-Content $env:GITHUB_STEP_SUMMARY
+          $failed = @()
+          foreach ($e in $envs) {
+            & ./scripts/cicd/Test-CicdPrerequisites.ps1 -DeployDirectory "deploy/$e" -OutputDirectory "evidence/$e" -Offline -Mode preview -Scope primary, frontdoor, standby, health
+            if ($LASTEXITCODE) { $failed += $e }
+          }
+          if ($failed.Count) { Write-Host "::error::offline prerequisite checks failed: $($failed -join ', ')"; exit 1 }
 
   # ---------------------------------------------------------------- dispatch: inputs and protections
+  # GitHub-hosted: the dispatch ref is not trusted until the environment branch policies (checked here, and
+  # enforced by GitHub before any job of <env>-* is scheduled) admit it. No self-hosted job runs before this one.
   resolve:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    runs-on: ubuntu-latest
     permissions: { contents: read, actions: read }
     outputs:
       fd_mode: ${{ steps.fdmode.outputs.mode }}
@@ -89,10 +86,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
-      - name: Environment folder and GitHub environment protections
+      - name: Environment folder
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
           CCOF_ENV: ${{ inputs.environment }}
           CCOF_APPLY: ${{ inputs.apply }}
           CCOF_SCOPE: ${{ inputs.scope }}
@@ -100,6 +96,7 @@ jobs:
         run: |
           $e = $env:CCOF_ENV
           if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$' -or $e -eq 'example') { throw "invalid environment '$e'" }
+          # Fails early with a clear message; the trust boundary is the environment branch policy, not this line.
           if ($env:GITHUB_REF -ne "refs/heads/$env:CCOF_DEFAULT_BRANCH") { throw "dispatch from $env:GITHUB_REF refused; run from the default branch" }
           $need = switch ($env:CCOF_SCOPE) {
             'all' { 'staged.config.json', 'dr-standby.config.json', 'health-a.json' }
@@ -117,20 +114,18 @@ jobs:
               "**NO REGION B HEALTH MONITORING** (explicit opt-out: deploy/$e/health-b.optout.json)" | Add-Content $env:GITHUB_STEP_SUMMARY
             }
           }
-          $gates = @('preview')
-          if ($env:CCOF_APPLY -eq 'true') { $gates += 'apply', 'gate-network', 'gate-entra', 'gate-privatelink', 'gate-security', 'gate-frontdoor' }
-          $h = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json' }
-          $bad = @()
-          foreach ($g in $gates) {
-            $name = "$e-$g"
-            try { $envObj = Invoke-RestMethod -Headers $h -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/environments/$name" } catch { $bad += "$name missing (create it before the run; an unknown name would be created without protection)"; continue }
-            $reviewers = @($envObj.protection_rules | Where-Object { $_.type -eq 'required_reviewers' })
-            if ($g -ne 'preview' -and -not $reviewers.Count) { $bad += "$name has no required reviewers" }
-            if (-not $envObj.deployment_branch_policy) { $bad += "$name has no deployment branch policy (main only)" }
-            "- $name : reviewers $($reviewers.Count), branch policy $([bool]$envObj.deployment_branch_policy)" | Add-Content $env:GITHUB_STEP_SUMMARY
-          }
-          if ($bad.Count) { $bad | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           "Run: $e, scope $env:CCOF_SCOPE, apply $env:CCOF_APPLY" | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: GitHub environment protections (branch policy, reviewers, plan)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCOF_ENV: ${{ inputs.environment }}
+          CCOF_APPLY: ${{ inputs.apply }}
+          CCOF_GITHUB_PLAN: ${{ vars.CCOF_GITHUB_PLAN }}
+        run: |
+          $gates = if ($env:CCOF_APPLY -eq 'true') { 'apply,gate-network,gate-entra,gate-privatelink,gate-security,gate-frontdoor' } else { '' }
+          & ./scripts/cicd/Test-CicdGitHubEnvironments.ps1 -Repository $env:GITHUB_REPOSITORY -Environment $env:CCOF_ENV -ReviewedGate $gates
+          exit $LASTEXITCODE
       - name: Restore driver state (read only)
         shell: pwsh
         env:
@@ -177,7 +172,7 @@ jobs:
     if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
     permissions: { contents: read, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: staged-0, runner: preview }
+    with: { environment: '${{ inputs.environment }}', step: staged-0, runner: preview, gh_environment: '${{ inputs.environment }}-preview' }
 
   stage1-preview:
     needs: stage0
@@ -225,7 +220,7 @@ jobs:
     if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
     permissions: { contents: read, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: staged-4, runner: preview, checklist: docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md }
+    with: { environment: '${{ inputs.environment }}', step: staged-4, runner: preview, gh_environment: '${{ inputs.environment }}-preview', checklist: docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md }
   gate-entra:
     needs: stage4-preview
     if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}

@@ -1,9 +1,11 @@
 name: ccof-step
 
-# One step of deploy-environment.yml / drift-check.yml on a self-hosted CCOF runner (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md).
-# Sign-in is the runner host's managed identity (.github/actions/azure-login-mi); there is no Azure secret in GitHub.
-# The runner is chosen from the inputs: the apply runner only for non-pull_request runs inside a GitHub environment.
-# Anything else lands on the read-only preview runner, where azure-login-mi and Invoke-CicdDriver.ps1 refuse writes.
+# One step of deploy-environment.yml on a self-hosted CCOF runner (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md,
+# "Trust boundaries"). Sign-in is the runner host's managed identity (.github/actions/azure-login-mi); there is no
+# Azure secret in GitHub. A job reaches a self-hosted runner only for workflow_dispatch or schedule AND inside a
+# GitHub environment (gh_environment): the environment's deployment branch policy then keeps code from other
+# branches off the runner before the job is scheduled. Pull requests never call this workflow. Any other call
+# lands on a GitHub-hosted runner (no private network, no managed identity) and its first step fails.
 
 on:
   workflow_call:
@@ -22,7 +24,7 @@ on:
       prereq_mode: { type: string, default: 'apply' }
       checklist: { type: string, default: '', description: 'Markdown file shown in the job summary (gates)' }
       save_state: { type: boolean, default: false }
-      drift: { type: boolean, default: false, description: 'Run Get-CicdDrift.ps1 on this job evidence' }
+      drift: { type: boolean, default: false, description: 'Run Get-CicdDrift.ps1 -ExpectedStep <step> on this job evidence' }
       node_build: { type: boolean, default: false, description: 'npm ci and tsc before the driver (code publication)' }
       timeout: { type: number, default: 120 }
 
@@ -31,7 +33,7 @@ on:
 jobs:
   run:
     name: ${{ inputs.step || 'checks' }} (${{ inputs.test_notification && 'test' || inputs.apply && 'apply' || 'preview' }})
-    runs-on: ${{ (inputs.runner == 'apply' && github.event_name != 'pull_request' && inputs.gh_environment != '') && fromJSON('["self-hosted","ccof-vnet","ccof-apply"]') || fromJSON('["self-hosted","ccof-vnet","ccof-preview"]') }}
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && inputs.gh_environment != '') && (inputs.runner == 'apply' && fromJSON('["self-hosted","ccof-vnet","ccof-apply"]') || fromJSON('["self-hosted","ccof-vnet","ccof-preview"]')) || 'ubuntu-latest' }}
     environment: ${{ inputs.gh_environment }}
     timeout-minutes: ${{ inputs.timeout }}
     defaults:
@@ -48,15 +50,29 @@ jobs:
       CCOF_CHECKLIST: ${{ inputs.checklist }}
       CCOF_PREREQ_SCOPE: ${{ inputs.prereq_scope }}
       CCOF_PREREQ_MODE: ${{ inputs.prereq_mode }}
-      CCOF_EXPECTED_ROLE: ${{ (inputs.runner == 'apply' && github.event_name != 'pull_request' && inputs.gh_environment != '') && 'apply' || 'preview' }}
+      CCOF_EXPECTED_ROLE: ${{ inputs.runner == 'apply' && 'apply' || 'preview' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: ${{ github.event_name != 'pull_request' }}
+      - name: Refuse an untrusted call (no self-hosted runner)
+        if: ${{ !((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && inputs.gh_environment != '') }}
+        run: |
+          Write-Host "::error::ccof-step runs only for workflow_dispatch or schedule inside a GitHub environment (event '$env:GITHUB_EVENT_NAME'); nothing was run."
+          exit 1
 
-      - name: Runner host preflight
+      - name: Trusted call
+        id: trusted
+        run: Write-Host "event $env:GITHUB_EVENT_NAME, environment $env:CCOF_GH_ENV, ref $env:GITHUB_REF, runner $env:RUNNER_OS"
+
+      - uses: actions/checkout@v4
+
+      - name: Runner host preflight (Linux)
+        if: runner.os != 'Windows'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
 
       - name: Guard inputs
         run: |
@@ -64,7 +80,7 @@ jobs:
           if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$e'" }
           if (-not (Test-Path "deploy/$e/staged.config.json")) { throw "deploy/$e/staged.config.json is missing" }
           $writes = $env:CCOF_APPLY -eq 'true' -or $env:CCOF_TEST_NOTIFICATION -eq 'true'
-          if ($writes -and $env:GITHUB_EVENT_NAME -eq 'pull_request') { throw 'pull_request runs never apply' }
+          if ($env:GITHUB_EVENT_NAME -notin 'workflow_dispatch', 'schedule') { throw "event '$env:GITHUB_EVENT_NAME' never runs ccof-step" }
           if ($writes -and $g -cnotmatch "^$e-(apply|gate-[a-z]+)$") { throw "an apply runs only in environment $e-apply or $e-gate-<name>, not '$g'" }
           if ($g -and $g -cnotmatch "^$e-(preview|apply|gate-[a-z]+)$") { throw "GitHub environment '$g' does not belong to $e" }
 
@@ -90,9 +106,6 @@ jobs:
 
       - name: Restore driver state (cicd-state/${{ inputs.environment }})
         if: inputs.step != '' || inputs.prereq_scope != ''
-        env:
-          # Pull request checkouts keep no credentials; the read-only job token fetches the state branch.
-          CCOF_STATE_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
 
       - name: Prerequisite checks
@@ -123,11 +136,11 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Drift report
-        if: inputs.drift
-        run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV"
+        if: inputs.drift && inputs.step != '' && !inputs.apply
+        run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedStep $env:CCOF_STEP
 
       - name: Save driver state
-        if: always() && inputs.save_state && github.event_name != 'pull_request' && inputs.step != ''
+        if: always() && steps.trusted.outcome == 'success' && inputs.save_state && inputs.step != ''
         run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "$env:CCOF_STEP run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
 
       - name: Upload evidence
@@ -142,7 +155,7 @@ jobs:
           retention-days: 90
 
       - name: Azure sign-out
-        if: always() && (inputs.step != '' || inputs.prereq_scope != '')
+        if: always() && steps.trusted.outcome == 'success' && (inputs.step != '' || inputs.prereq_scope != '')
         uses: ./.github/actions/azure-login-mi
         with:
           mode: logout

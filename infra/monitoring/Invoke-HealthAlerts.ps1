@@ -177,6 +177,11 @@ try {
     $common = @('--subscription', $sub, '--resource-group', $rg, '--name', 'ccof-health-alerts', '--template-file', (Join-Path $PSScriptRoot 'health-alerts.bicep'), '--parameters', "@$parameterFile")
     $whatIf = Invoke-HaAz (@('deployment', 'group', 'what-if') + $common + @('--no-pretty-print'))
     $changes = @($whatIf.changes | Where-Object { $_ })
+    if ($env:CCOF_WHATIF_RESULTS) {
+        # Structured result for the CI/CD drift check (scripts/cicd/Invoke-CicdDriver.ps1 sets the path).
+        $rec = [ordered]@{ schema = 'ccof.whatif.v1'; source = 'ccof-health-alerts'; kind = 'whatIf'; changes = @($changes | ForEach-Object { [ordered]@{ change = [string]$_.changeType; id = [string]$_.resourceId } }) }
+        [IO.File]::AppendAllText($env:CCOF_WHATIF_RESULTS, ($rec | ConvertTo-Json -Depth 6 -Compress) + "`n")
+    }
     $changes | Group-Object { $_.changeType } | ForEach-Object { Write-Host "$($_.Name)=$($_.Count)" }
     $changes | Where-Object { $_.changeType -notin 'NoChange', 'Ignore' } | ForEach-Object { Write-Host ("  {0,-8} {1}" -f $_.changeType, $_.resourceId) }
     $problems = @(Get-HaWhatIfProblems $changes $prefix)

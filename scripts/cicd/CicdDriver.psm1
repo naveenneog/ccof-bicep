@@ -59,6 +59,9 @@ function Get-CicdDriverCommand {
         'staged' {
             $driver = 'infra/staged/Invoke-StagedDeployment.ps1'
             if ($name -eq '4') { Assert-CicdManualEntra (Join-Path $RepoRoot $staged) }
+            # Without entra.manualVerification, Stage 0 reads Graph and Stage 7 takes a delegated Graph snapshot
+            # with the operator's token; the pipeline's managed identity makes no Graph call.
+            if ($name -in '0', '7') { Assert-CicdManualEntra (Join-Path $RepoRoot $staged) -Code "graph_call_refused: staged-$name" }
             $argv.AddRange([string[]]@('-Stage', $name, '-ConfigPath', $staged))
         }
         'drprereq' { $driver = 'infra/dr/Invoke-DrPrerequisites.ps1'; $argv.AddRange([string[]]@('-Phase', $name, '-ConfigPath', $dr, '-EvidenceDirectory', "$folder/.dr-evidence")) }
@@ -66,6 +69,9 @@ function Get-CicdDriverCommand {
             $driver = 'infra/dr/Invoke-DrStandby.ps1'
             $argv.AddRange([string[]]@('-Phase', $name, '-ConfigPath', $dr))
             if ($name -eq 'Code' -and $Apply) { $argv.Add('-PrivatePublisher') }
+            # The admin app redirect URIs for region B go to the Entra admin; no Graph PATCH or read, whatever the
+            # restored Stage 4 record says (a Graph-verified primary would otherwise patch the app).
+            if ($name -eq 'Config') { $argv.Add('-ManualEntraHandoff') }
         }
         'frontdoor' {
             $driver = 'infra/dr/Invoke-DrFrontDoor.ps1'
@@ -100,34 +106,15 @@ function Get-CicdDriverCommand {
 
 # Stage 4 in the pipeline only verifies: without entra.manualVerification it would write through Graph.
 function Assert-CicdManualEntra {
-    param([string]$StagedConfigPath)
+    param([string]$StagedConfigPath, [string]$Code = 'stage4_graph_write_refused')
     if (-not (Test-Path -LiteralPath $StagedConfigPath)) { throw "config_missing: $StagedConfigPath" }
     $cfg = Get-Content -LiteralPath $StagedConfigPath -Raw | ConvertFrom-Json -AsHashtable
     $mv = if ($cfg.Contains('entra') -and $cfg.entra -is [Collections.IDictionary] -and $cfg.entra.Contains('manualVerification')) { $cfg.entra.manualVerification } else { $null }
     if ($mv -isnot [Collections.IDictionary] -or -not "$($mv['confirmedBy'])".Trim() -or "$($mv['confirmedOn'])" -notmatch '^\d{4}-\d{2}-\d{2}$') {
-        throw 'stage4_graph_write_refused: entra.manualVerification (confirmedBy, confirmedOn) is required; the pipeline never creates or changes Entra objects. See docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md.'
+        throw "${Code}: entra.manualVerification (confirmedBy, confirmedOn) is required; the pipeline makes no Microsoft Graph call and never creates or changes Entra objects. See docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md."
     }
 }
 
 function Format-CicdCommand { param($Command) "pwsh -NoProfile -File $($Command.Script) $($Command.Arguments -join ' ')" }
 
-# Drift = a what-if line the drivers print as "  <Create|Delete|Modify> <resource id>" (DR prerequisites: "what-if: <change> <id>").
-# NoChange and Ignore are not drift; Deploy and Unsupported cannot be evaluated by what-if and are listed for review.
-function Get-CicdDrift {
-    param([Parameter(Mandatory)][string[]]$LogPath)
-    $rows = foreach ($p in $LogPath) {
-        if (-not (Test-Path -LiteralPath $p)) { [pscustomobject]@{ Log = (Split-Path $p -Leaf); Change = 'MissingLog'; Id = $p }; continue }
-        foreach ($l in Get-Content -LiteralPath $p) {
-            if ($l -cmatch '^(?:\s{2}|what-if: )(Create|Delete|Modify|Deploy|Unsupported)\s+(\S+/\S+)\s*$') {
-                [pscustomobject]@{ Log = (Split-Path $p -Leaf); Change = $Matches[1]; Id = $Matches[2] }
-            }
-        }
-    }
-    $rows = @($rows)
-    [pscustomobject]@{
-        Drift  = @($rows | Where-Object { $_.Change -in 'Create', 'Delete', 'Modify', 'MissingLog' })
-        Review = @($rows | Where-Object { $_.Change -in 'Deploy', 'Unsupported' })
-    }
-}
-
-Export-ModuleMember -Function Get-CicdStepNames, Get-CicdApprovalNames, Get-CicdDriverCommand, Assert-CicdManualEntra, Format-CicdCommand, Get-CicdDrift
+Export-ModuleMember -Function Get-CicdStepNames, Get-CicdApprovalNames, Get-CicdDriverCommand, Assert-CicdManualEntra, Format-CicdCommand

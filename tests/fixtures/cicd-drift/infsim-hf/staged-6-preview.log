@@ -1,0 +1,90 @@
+== stage 6 (preview) subscription 00000000-0000-0000-0000-000000000000 RG INFSIM-STG-RG; state <repo>\deploy\infsim-hf\.staged-state
+what-if stage6-network : Ignore=76, Modify=10
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-admin-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-b-admin-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-b-reconciler-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-b-resolver-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-b-sync-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-reconciler-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-resolver-ai
+  Ignore   INFSIM-STG-RG/providers/microsoft.alertsmanagement/smartDetectorAlertRules/Failure Anomalies - infsim-5dnel4x4647ag-sync-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-5dnel4x4647ag-b-apim
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Cdn/profiles/infsim-fd-fd
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Cdn/profiles/infsim-fd-fd/afdendpoints/infsim-fd
+  Ignore   INFSIM-STG-RG/providers/Microsoft.DocumentDB/databaseAccounts/infsim-5dnel4x4647ag-cosmos
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agadm-8383c021-2d28-45f2-a384-461ae56a9fe1
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agbadm-6866aa8e-342b-4c23-be6d-18d9491bef6e
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agbrec-e8cb1927-d981-4b04-b871-30779529dd16
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agbres-87396182-4625-4bbf-b27b-ffb0f1e8d339
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agbsyn-9fce9d5f-0234-4932-8d58-de0dc9c56a0c
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agrec-c5baa978-dae4-426b-8761-7229c22efc1e
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agres-3d01c8bb-cefd-42c3-95fe-27ce7cd610ee
+  Ignore   infsim-stg-rg/providers/Microsoft.EventGrid/systemTopics/infsim5dnel4x4647agsyn-0706a306-3d53-4206-bcda-79b218addd96
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-admin-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-b-admin-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-b-reconciler-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-b-resolver-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-b-sync-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-reconciler-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-resolver-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-sync-ai
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Insights/workbooks/c6d1af39-1661-4a8d-a3c4-37475257d932
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/infsim-5dnel4x4647ag-reconciler-id
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/infsim-5dnel4x4647ag-sync-id
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/infsim-reconciler-b-id
+  Ignore   INFSIM-STG-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/infsim-sync-b-id
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/frontdoorWebApplicationFirewallPolicies/infsimfdwaf
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/frontdoorWebApplicationFirewallPolicies/infsimipwaf
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim-5dnel4x4647ag-cosmos-sql-pe-b.nic.e2f9b126-3d14-4549-a7ef-4e326020173b
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim-5dnel4x4647ag-cosmos-sql-pe.nic.eeb263b9-62b5-4265-a2c0-c17fd2a253ec
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agadm-blob-pe.nic.79704aef-76bd-41e8-b3be-3e855f9c6066
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agbadm-blob-pe-b.nic.b8407cd7-81ef-4a17-83ac-c31869d11ac7
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agbrec-blob-pe-b.nic.39031b3e-71f5-47d4-9b68-ab640fcb274e
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agbres-blob-pe-b.nic.49ab451c-2c8e-4475-b77d-b7f204dfb808
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agbsyn-blob-pe-b.nic.1fcb1f98-8aed-4b5f-8935-a48b4abf2dfb
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agrec-blob-pe.nic.c0b79b8e-e1f6-4a21-97fc-b800994a51f0
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agres-blob-pe.nic.730c3a18-93d1-4936-af50-741ba6c97654
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/networkInterfaces/infsim5dnel4x4647agsyn-blob-pe.nic.d2994885-9e4f-4770-8603-9d7e6d4c233a
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe-b
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe/privateDnsZoneGroups/default
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agadm-blob-pe
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agadm-blob-pe/privateDnsZoneGroups/default
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agbadm-blob-pe-b
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agbrec-blob-pe-b
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agbres-blob-pe-b
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agbsyn-blob-pe-b
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agrec-blob-pe
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agrec-blob-pe/privateDnsZoneGroups/default
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agres-blob-pe
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agres-blob-pe/privateDnsZoneGroups/default
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agsyn-blob-pe
+  Modify   INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim5dnel4x4647agsyn-blob-pe/privateDnsZoneGroups/default
+  Ignore   INFSIM-STG-RG/providers/Microsoft.OperationalInsights/workspaces/infsim-5dnel4x4647ag-law
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agadm
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agbadm
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agbrec
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agbres
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agbsyn
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agrec
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agres
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Storage/storageAccounts/infsim5dnel4x4647agsyn
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-admin-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-b-admin-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-b-reconciler-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-b-resolver-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-b-sync-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-reconciler-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-resolver-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/serverFarms/infsim-5dnel4x4647ag-sync-plan
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-admin
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-b-admin
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-b-reconciler
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-b-resolver
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-b-sync
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-reconciler
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-resolver
+  Ignore   INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-sync
+then: VNet integration, one app at a time, for admin, reconciler, resolver, sync (az functionapp vnet-integration add).
+stage 6 preview only: nothing changed. Rerun with -Apply.

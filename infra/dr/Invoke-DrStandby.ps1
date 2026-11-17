@@ -24,6 +24,10 @@
                    region B reads the shared Cosmos account.
   -Phase Verify    Read-only: apps list their functions, both writers are off, APIM B has the API.
 
+  -ManualEntraHandoff  Config: print the admin app's redirect URIs for the Entra admin and make no Microsoft
+                   Graph call, even when the primary's Stage 4 record was verified through Graph. The CI/CD
+                   pipeline always sets it (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md).
+
   The primary's staged state (standby.stagedStateDirectory) is read, never written.
 
 .EXAMPLE
@@ -39,7 +43,8 @@ param(
     [switch]$ApprovePublicApimBootstrap,
     [switch]$ApprovePublicFunctionAccess,
     [switch]$ApproveCosmosThroughputReduction,
-    [switch]$PrivatePublisher
+    [switch]$PrivatePublisher,
+    [switch]$ManualEntraHandoff
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -376,7 +381,7 @@ switch ($Phase) {
         Stop-Dr 'admin_hostname_missing: the standby admin app has no default hostname; read its App Service properties before continuing with the Entra redirect handoff.' 3
     }
     if ($adminHost) {
-        $null = Invoke-DrAdminRedirects -Stage4 $pS4 -AdminHost $adminHost -Apply:$Apply -GetApp { Get-StgAppById $pS4.admin.appId } `
+        $null = Invoke-DrAdminRedirects -Stage4 $pS4 -AdminHost $adminHost -Apply:$Apply -ManualHandoff:$ManualEntraHandoff -GetApp { Get-StgAppById $pS4.admin.appId } `
             -PatchApp { param($app, $merged) Send-StgGraph 'PATCH' "applications/$($app.id)" @{ spa = @{ redirectUris = $merged } } | Out-Null }
     }
     if ($Apply) { Save-StgStage $bCfg 5 $o; Save-DrPhase 'Config' @{ gatewayUrl = $o.gatewayUrl; adminHost = $adminHost; timers = $o.verify.timers } }

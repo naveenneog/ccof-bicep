@@ -413,6 +413,15 @@ function Get-StgStage { param($Cfg, [int]$Number)
     return $s.outputs
 }
 
+# Structured what-if result for the CI/CD drift check: one JSON line per what-if (or per explicit
+# deployment-record check) appended to $env:CCOF_WHATIF_RESULTS, set by scripts/cicd/Invoke-CicdDriver.ps1.
+function Write-StgWhatIfResult { param([string]$Source, $Changes, [string]$Kind = 'whatIf')
+    if (-not $env:CCOF_WHATIF_RESULTS) { return }
+    $rec = [ordered]@{ schema = 'ccof.whatif.v1'; source = $Source; kind = $Kind }
+    if ($Kind -ceq 'whatIf') { $rec.changes = @(@($Changes) | Where-Object { $_ } | ForEach-Object { [ordered]@{ change = [string]$_.changeType; id = [string]$_.resourceId } }) }
+    [IO.File]::AppendAllText($env:CCOF_WHATIF_RESULTS, ($rec | ConvertTo-Json -Depth 6 -Compress) + "`n")
+}
+
 function Write-StgEvidence { param([string]$Name, $Value)
     $dir = Join-Path $script:StateDir 'evidence'; New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $file = Join-Path $dir $Name
@@ -534,6 +543,7 @@ function Invoke-StgBicep {
         $raw = Invoke-QsAz (@('deployment', 'group', 'what-if') + $common + @('--no-pretty-print', '--output', 'json'))
         $changes = @($raw.changes | ForEach-Object { [ordered]@{ change = $_.changeType; id = $_.resourceId } })
         $null = Write-StgEvidence "$Name.what-if.json" $changes
+        Write-StgWhatIfResult $Name @($raw.changes)
         $byType = $changes | Group-Object { $_.change } | ForEach-Object { "$($_.Name)=$($_.Count)" }
         Write-Host "what-if $Name : $($byType -join ', ')"
         foreach ($c in $changes) { Write-Host ("  {0,-8} {1}" -f $c.change, ($c.id -replace '^/subscriptions/[^/]+/resourceGroups/', '')) }

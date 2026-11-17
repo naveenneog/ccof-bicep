@@ -7,7 +7,9 @@
     Builds the command with CicdDriver.psm1 (guards: Stage 4 only in Entra manual mode, no Stage 8, no
     Lockdown/Drain/Restore/Fence/Promote/Failback, approvals only on their own step and only with -Apply),
     prints it, runs it from the repository root, writes the output to evidence/<env>/<step>-<mode>.log and
-    a job summary, and exits with the driver's exit code.
+    a job summary, and exits with the driver's exit code. Next to the log it writes <step>-<mode>.result.json
+    (exit code, times) and, through CCOF_WHATIF_RESULTS, <step>-<mode>.whatif.jsonl: one structured record per
+    what-if the driver ran. Get-CicdDrift.ps1 reads both and fails closed without them.
     In GitHub Actions an -Apply step refuses to run unless the runner role (CCOF_RUNNER_ROLE, set on the
     runner host by infra/cicd) is "apply".
 
@@ -46,13 +48,21 @@ if ($PrintOnly) { exit 0 }
 
 $log = Join-Path $repo $cmd.Log
 New-Item -ItemType Directory -Force -Path (Split-Path $log -Parent) | Out-Null
+$stem = $log -replace '\.log$', ''
+$resultPath = "$stem.result.json"; $whatIfPath = "$stem.whatif.jsonl"
+# A result or what-if file from an earlier run must never stand in for this one.
+Remove-Item -LiteralPath $resultPath, $whatIfPath -ErrorAction SilentlyContinue
 $started = Get-Date
+$savedWhatIf = $env:CCOF_WHATIF_RESULTS
+$env:CCOF_WHATIF_RESULTS = $whatIfPath
 Push-Location $repo
 try {
     & pwsh -NoProfile -File $cmd.Script @($cmd.Arguments) 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log
     $code = $LASTEXITCODE
-} finally { Pop-Location }
+} finally { Pop-Location; $env:CCOF_WHATIF_RESULTS = $savedWhatIf }
 $secs = [int]((Get-Date) - $started).TotalSeconds
+[ordered]@{ schema = 'ccof.driver-result.v1'; environment = $Environment; step = $Step; mode = $cmd.Mode; exitCode = $code; startedAt = $started.ToUniversalTime().ToString('o'); seconds = $secs; command = $line } |
+    ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
 Write-Host "== exit $code after $secs s; log $($cmd.Log)"
 if ($env:GITHUB_STEP_SUMMARY) {
     $tail = @(Get-Content -LiteralPath $log -Tail 25) -join "`n"
