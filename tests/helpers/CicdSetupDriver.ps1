@@ -59,6 +59,10 @@ Check 'driver preview: prints the admin bootstrap commands with the identity cli
 Check 'driver: az and gh arguments carry no character az.cmd quoting breaks, no Graph, no secret or variable' (@(@($r.az) + @($r.gh) | Where-Object { $_ -match '[()|&<>^]' -or $_ -match '^ad |graph\.microsoft|secrets|variables' }).Count -eq 0)
 $r = Run-Setup @('-Apply') (New-Cfg @{ 'github.applyBranches' = @('feat/*') })
 Check 'driver: a configuration problem stops before any call (exit 2)' ($r.code -eq 2 -and $r.az.Count -eq 0 -and $r.out -match 'applyBranches')
+$r = Run-Setup @('-Phase', 'Roles') (New-Cfg @{ 'roles' = @{ foundryRolesBy = 'foundry-owner' } })
+Check 'roles: foundryRolesBy foundry-owner assigns nothing on Foundry and prints the module command for the Foundry owner' ($r.code -eq 0 -and
+    $r.state -match '"foundry":\s*\{\s*"value":\s*\[\s*\]' -and $r.out -match 'az deployment group create --subscription \S+ --resource-group rg-foundry .*modules/foundry-roles\.bicep --parameters @\S+foundry-roles-0\.parameters\.json' -and
+    $r.state -match '"accountName":\s*\{\s*"value":\s*"lab-foundry"')
 $r = Run-Setup @('-Apply', '-Phase', 'Attach') $vmCfg '{"type":"SystemAssigned, UserAssigned","userAssignedIdentities":{}}'
 Check 'attach: a VM with a system-assigned identity is refused (exit 3), nothing attached' ($r.code -eq 3 -and $r.out -match 'system-assigned' -and @($r.az | Where-Object { $_ -match '^vm identity assign' }).Count -eq 0)
 $r = Run-Setup @('-Apply', '-Phase', 'Attach') $vmCfg

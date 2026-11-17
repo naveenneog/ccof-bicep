@@ -42,6 +42,7 @@ Check 'createSubnet needs a /24-/29 prefix' ((@(Problems @{ 'runner.createSubnet
 Check 'apply branches must be plain branch names' ((@(Problems @{ 'github.applyBranches' = @('main', 'feat/*') }) -match 'applyBranches').Count -eq 1 -and (@(Problems @{ 'github.applyBranches' = @() }) -match 'applyBranches').Count -eq 1)
 Check 'apply workflows must be .github/workflows/*.yml paths' ((@(Problems @{ 'github.applyWorkflows' = @('.github/workflows/deploy.yml', '../x.yml') }) -match 'applyWorkflows').Count -eq 1)
 Check 'a quote in an environment name is refused' ((@(Problems @{ 'github.environments' = @("stg'x") }) -match 'github.environments').Count -eq 1)
+Check 'roles.foundryRolesBy accepts operator or foundry-owner only' ((@(Problems @{ roles = @{ foundryRolesBy = 'someone' } }) -match 'foundryRolesBy').Count -eq 1 -and @(Problems @{ roles = @{ foundryRolesBy = 'foundry-owner' } }).Count -eq 0)
 
 # ---- runners, identities and the GitHub plan
 $runners = @(Get-CicdRunners (New-Cfg))

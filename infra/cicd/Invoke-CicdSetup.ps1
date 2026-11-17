@@ -111,7 +111,7 @@ try {
         Say "`n== Infra"
         $rg = Invoke-Az @('group', 'show', '--subscription', $sub, '--name', $cicdRg) -AllowMissing
         if (-not $rg) {
-            Say "  resource group $cicdRg does not exist$(if (-not $Apply) { ': it would be created' })"
+            Say "  resource group $cicdRg does not exist: it $(if ($Apply) { 'is' } else { 'would be' }) created"
             if ($Apply) { $null = Invoke-Az @('group', 'create', '--subscription', $sub, '--name', $cicdRg, '--location', $loc, '--tags', 'ccof-component=cicd-runner') }
         }
         if ($cfg.runner.createSubnet) {
@@ -164,13 +164,25 @@ try {
         Say "`n== Roles"
         if (-not $idOf['preview'].principalId -or -not $idOf['apply'].principalId) { Say '  the identities do not exist yet; run -Phase Infra -Apply first' }
         else {
+            $foundryByOwner = "$(Get-CicdValue $cfg 'roles.foundryRolesBy')" -eq 'foundry-owner'
             $pf = Save-Params 'roles.parameters.json' @{ previewPrincipalId = $idOf['preview'].principalId; deployPrincipalId = $idOf['apply'].principalId
                 workloadResourceGroup = $cfg.workloadResourceGroup; networkResourceGroup = $cfg.networkResourceGroup; cosmosAccountName = $cfg.cosmos.accountName
-                cosmosDatabaseName = $cfg.cosmos.databaseName; foundry = @($cfg.foundry); foundryPrivateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval')
+                cosmosDatabaseName = $cfg.cosmos.databaseName; foundry = @(if (-not $foundryByOwner) { $cfg.foundry }); foundryPrivateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval')
                 deployCosmosDataWriter = [bool](Get-CicdValue $cfg 'roles.deployCosmosDataWriter') }
             $common = @('--subscription', $sub, '--location', $loc, '--name', "ccof-cicd-roles-$($cfg.namePrefix)", '--template-file', (Join-Path $PSScriptRoot 'roles.bicep'), '--parameters', "@$pf")
             if ($Apply) { $null = Invoke-Az (@('deployment', 'sub', 'create') + $common); Say '  role assignments deployed (see the Roles table in docs/runbooks/CICD-SETUP.md)' }
             else { Show-WhatIf (Invoke-Az (@('deployment', 'sub', 'what-if', '--no-pretty-print') + $common)) }
+            if ($foundryByOwner) {
+                # The Foundry owner deploys the same module; nothing is assigned on the Foundry accounts from here.
+                $i = 0
+                foreach ($f in @($cfg.foundry)) {
+                    $fp = Save-Params "foundry-roles-$i.parameters.json" @{ accountName = $f.accountName; previewPrincipalId = $idOf['preview'].principalId; deployPrincipalId = $idOf['apply'].principalId
+                        privateEndpointApproval = [bool](Get-CicdValue $cfg 'roles.foundryPrivateEndpointApproval') }
+                    Say "  Foundry $($f.accountName): roles.foundryRolesBy is foundry-owner. The Foundry owner (Owner or unconditioned User Access Administrator) runs:"
+                    Say "    az deployment group create --subscription $($f.subscriptionId) --resource-group $($f.resourceGroup) --name ccof-cicd-roles-foundry --template-file infra/cicd/modules/foundry-roles.bicep --parameters @$fp"
+                    $i++
+                }
+            }
         }
     }
 
@@ -239,7 +251,11 @@ try {
                 })
             $body = @{ reviewers = $rev; deployment_branch_policy = if ($e.branches) { @{ protected_branches = $false; custom_branch_policies = $true } } else { $null } }
             $bf = Save-Json "github-env-$($e.name).json" $body
-            $null = Invoke-CicdTool 'gh' @('api', '-X', 'PUT', "repos/$ghRepo/environments/$($e.name)", '--input', $bf) -Raw
+            try { $null = Invoke-CicdTool 'gh' @('api', '-X', 'PUT', "repos/$ghRepo/environments/$($e.name)", '--input', $bf) -Raw }
+            catch {
+                if ("$_" -match 'billing plan') { throw "$_ -- in a private repository, required reviewers need GitHub Enterprise and deployment branch policies need GitHub Pro, Team or Enterprise; without them the apply gate is only the runner job-started hook (docs/runbooks/CICD-SETUP.md)" }
+                throw
+            }
             foreach ($b in $e.branches) {
                 $have = Invoke-CicdTool 'gh' @('api', "repos/$ghRepo/environments/$($e.name)/deployment-branch-policies", '--jq', '.branch_policies[].name') -Raw
                 if (@("$have" -split "`n") -notcontains $b) { $null = Invoke-CicdTool 'gh' @('api', '-X', 'POST', "repos/$ghRepo/environments/$($e.name)/deployment-branch-policies", '-f', "name=$b", '-f', 'type=branch') -Raw }

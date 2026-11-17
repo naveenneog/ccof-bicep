@@ -64,7 +64,7 @@ jobs:
       - name: Negative - the preview identity cannot write
         run: |
           set -uo pipefail
-          out=$(az group update --name "$RG" --set tags.ccof-smoke=denied -o none 2>&1); code=$?
+          out=$(az group update --name "$RG" --set tags.ccof-smoke=denied -o none 2>&1) && code=0 || code=$?
           echo "$out" | head -n 3
           [ $code -ne 0 ] && echo "$out" | grep -q AuthorizationFailed || { echo "::error::write was not denied with AuthorizationFailed"; exit 1; }
           echo "PASS write denied (AuthorizationFailed)"
@@ -72,7 +72,7 @@ jobs:
         run: |
           set -uo pipefail
           export AZURE_CONFIG_DIR="$RUNNER_TEMP/neg-azcfg"; mkdir -p "$AZURE_CONFIG_DIR"
-          out=$(az login --identity --client-id "$DEPLOY_CLIENT_ID" --allow-no-subscriptions -o none 2>&1); code=$?
+          out=$(az login --identity --client-id "$DEPLOY_CLIENT_ID" --allow-no-subscriptions -o none 2>&1) && code=0 || code=$?
           rm -rf "$AZURE_CONFIG_DIR"
           echo "$out" | head -n 3
           [ $code -ne 0 ] || { echo "::error::the deploy identity signed in on the preview runner"; exit 1; }

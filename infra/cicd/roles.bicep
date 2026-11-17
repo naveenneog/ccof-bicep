@@ -24,7 +24,6 @@ var reader = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
 var contributor = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var networkContributor = '4d97b98b-1d4f-4787-a291-c67834d212e7'
 var rbacAdministrator = 'f58310d9-a9f6-439a-9e8d-f62e7b41a168'
-var cognitiveServicesContributor = '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logReader = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -84,7 +83,7 @@ module foundryRoles 'modules/foundry-roles.bicep' = [for (f, i) in foundry: {
     previewPrincipalId: previewPrincipalId
     previewRoleIds: previewRoleIds
     deployPrincipalId: deployPrincipalId
-    deployRoleIds: foundryPrivateEndpointApproval ? [cognitiveServicesContributor] : []
+    privateEndpointApproval: foundryPrivateEndpointApproval
     conditionedRbacAdministrator: rbacAdministrator
     assignableRoleIds: [cognitiveServicesUser]
   }

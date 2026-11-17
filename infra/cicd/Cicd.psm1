@@ -98,6 +98,7 @@ function Get-CicdConfigProblems {
             $problems.Add('foundry entries need subscriptionId (GUID), resourceGroup and accountName')
         }
     }
+    if ("$(& $v 'roles.foundryRolesBy')" -notin @('', 'operator', 'foundry-owner')) { $problems.Add('roles.foundryRolesBy must be operator (default) or foundry-owner') }
     return $problems.ToArray()
 }
 
