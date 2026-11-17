@@ -8,6 +8,9 @@
 - APIM policies are compared as XML tokens with only XML-equivalent normalisation; whitespace inside text,
   attribute values, expressions or string literals is drift; uncertain parsing is unmeasured.
 - Unresolved `reference()` values, unknown or failed read-backs are unmeasured, never clean.
+- Whitespace between tags is ignored only where every open element is a structural policy element (element-only content);
+  in `set-body`, `value` and unlisted elements it is compared. A live app setting with an empty value that the
+  what-if payload lacks is unmeasured (it may be removed by a deployment), no longer matched.
 ## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
 
 - Pull requests run only offline prerequisite checks on a GitHub-hosted runner (no self-hosted runner, managed

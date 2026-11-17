@@ -23,15 +23,18 @@ $pe = '/privateEndpoints/[^/]+$'; $dns = '/privateDnsZoneGroups/'; $ctr = '/cont
 $api = '/apis/claude-messages$'; $pol = '/apis/claude-messages/policies/policy$'; $frag = '/policyFragments/claude-messages-backend$'
 $sync = '-sync/config/appsettings$'; $admin = '-admin/config/appsettings$'; $wb = '/workbooks/'
 
-# The unchanged lab: every leaf is noise or matched; nothing is drift.
+# The unchanged lab: nothing is drift. The only unmeasured leaf is the admin app settings: the live app has
+# ADMIN_READER_IDS/ADMIN_EDITOR_IDS = '' and what-if omits empty template values, so their presence in the
+# template cannot be proved from what-if.
 $all = @((Get-Fx).changes | ForEach-Object { Verdicts $_ })
-Check 'lab: 11 Modify changes, no drift or unmeasured leaf' (@((Get-Fx).changes).Count -eq 11 -and @($all | Where-Object verdict -cin 'drift', 'unmeasured').Count -eq 0)
+$um = @($all | Where-Object verdict -ceq 'unmeasured')
+Check 'lab: 11 Modify changes, no drift, only the admin empty settings unmeasured' (@((Get-Fx).changes).Count -eq 11 -and -not @($all | Where-Object verdict -ceq 'drift').Count -and $um.Count -eq 1 -and $um[0].detail -match 'ADMIN_EDITOR_IDS, ADMIN_READER_IDS')
 Check 'lab: container defaults are 4 noise' ((Verdicts (Get-Change $ctr)).Count -eq 4 -and (Only (Verdicts (Get-Change $ctr)) 'noise'))
 Check 'lab: API defaults are 2 noise' ((Verdicts (Get-Change $api)).Count -eq 2 -and (Only (Verdicts (Get-Change $api)) 'noise'))
 Check 'lab: policy and fragment re-serialisation is noise' ((Only (Verdicts (Get-Change $pol)) 'noise') -and (Only (Verdicts (Get-Change $frag)) 'noise'))
 Check 'lab: DNS zone group read-only fields are 4 noise' ((Verdicts (Get-Change $dns)).Count -eq 4 -and (Only (Verdicts (Get-Change $dns)) 'noise'))
 Check 'lab: PE IPv6 default is noise' (Only (Verdicts (Get-Change $pe)) 'noise')
-foreach ($p in $db, $sync, $admin, $wb) { Check "lab: write-only read-back matched ($p)" (Only (Verdicts (Get-Change $p)) 'matched') }
+foreach ($p in $db, $sync, $wb) { Check "lab: write-only read-back matched ($p)" (Only (Verdicts (Get-Change $p)) 'matched') }
 Check 'lab: verdicts carry no values' (-not @($all | Where-Object { $_.PSObject.Properties.Name -cin 'before', 'after', 'value' }).Count)
 foreach ($p in $db, $sync, $wb) { Check "no read-back: write-only is unmeasured ($p)" (Only (Verdicts (Get-Change $p) $null) 'unmeasured') }
 
@@ -101,6 +104,16 @@ Check 'policy neg: &#0; cannot fake extra attributes' ((PolicyVerdict '<policies
 Check 'policy neg: mid-text @( does not swallow tags' ((PolicyVerdict '<policies><value>x@(&lt;/value&gt;&lt;value&gt;)</value></policies>' '<policies><value>x@(</value><value>)</value></policies>') -cne 'noise')
 Check 'policy neg: upper-case entity in an xml template is not decoded as its lower-case form' ((PolicyVerdict ($hdr -f 'a &amp;LT; b') ($hdr -f 'a &LT; b') 'xml') -cne 'noise')
 Check 'policy: expression after leading whitespace in text is still scanned' ((PolicyVerdict ($hdr -f "`n  @(1 &lt; 2)`n") ($hdr -f "`n  @(1 < 2)`n")) -ceq 'noise')
+Check 'policy neg: whitespace between child elements of set-body (mixed content) is not noise' ((PolicyVerdict '<policies><inbound><set-body><a/> <b/></set-body></inbound></policies>' '<policies><inbound><set-body><a/><b/></set-body></inbound></policies>') -cne 'noise')
+Check 'policy neg (reported probe, xml format): <a/> <b/> vs <a/><b/> in set-body is not noise' ((PolicyVerdict '<policies><inbound><set-body><a/> <b/></set-body></inbound></policies>' '<policies><inbound><set-body><a/><b/></set-body></inbound></policies>' 'xml') -cne 'noise')
+Check 'policy neg: structural name (trace) nested in set-body payload keeps whitespace' ((PolicyVerdict '<policies><inbound><set-body><Envelope><trace><a/> <b/></trace></Envelope></set-body></inbound></policies>' '<policies><inbound><set-body><Envelope><trace><a/><b/></trace></Envelope></set-body></inbound></policies>') -cne 'noise')
+Check 'policy neg: structural name (backend) directly in liquid set-body keeps whitespace' ((PolicyVerdict '<policies><inbound><set-body template="liquid"><backend>  <x/></backend></set-body></inbound></policies>' '<policies><inbound><set-body template="liquid"><backend><x/></backend></set-body></inbound></policies>') -cne 'noise')
+Check 'policy neg: structural name (when) in set-body, xml form, keeps whitespace' ((PolicyVerdict '<policies><inbound><set-body><when><a/>  </when></set-body></inbound></policies>' '<policies><inbound><set-body><when><a/></when></set-body></inbound></policies>' 'xml') -cne 'noise')
+Check 'unmeasured: mismatched end tag' ((PolicyVerdict '<policies><inbound></outbound></policies>' '<policies><inbound></outbound></policies>') -ceq 'unmeasured')
+Check 'policy neg: indentation between nested elements inside set-body is not noise' ((PolicyVerdict "<policies><inbound><set-body><a>`n  <b/>`n</a></set-body></inbound></policies>" '<policies><inbound><set-body><a><b/></a></set-body></inbound></policies>') -cne 'noise')
+Check 'policy neg: whitespace between children of an unlisted element is not noise' ((PolicyVerdict '<policies><inbound><custom-x><a/> <b/></custom-x></inbound></policies>' '<policies><inbound><custom-x><a/><b/></custom-x></inbound></policies>') -cne 'noise')
+Check 'policy neg: whitespace between <value> children of set-body-like text parent is not noise' ((PolicyVerdict '<policies><inbound><set-header name="h"><value><x/> <y/></value></set-header></inbound></policies>' '<policies><inbound><set-header name="h"><value><x/><y/></value></set-header></inbound></policies>') -cne 'noise')
+Check 'policy: indentation inside choose/when/otherwise/set-header is noise' ((PolicyVerdict "<policies>`n <inbound>`n  <choose>`n   <when condition=`"@(true)`">`n    <set-header name=`"h`">`n     <value>v</value>`n    </set-header>`n   </when>`n   <otherwise>`n    <base />`n   </otherwise>`n  </choose>`n </inbound>`n</policies>" '<policies><inbound><choose><when condition="@(true)"><set-header name="h"><value>v</value></set-header></when><otherwise><base /></otherwise></choose></inbound></policies>') -ceq 'noise')
 Check 'policy: text split by CDATA equals the same text' ((PolicyVerdict '<policies><set-body>ab</set-body></policies>' '<policies><set-body>a<![CDATA[b]]></set-body></policies>' 'xml') -ceq 'noise')
 Check 'policy: indentation around a comment between tags is noise' ((PolicyVerdict "<policies>`r`n`t<!-- c -->`r`n`t<inbound />`r`n</policies>" "<policies>`n    <!-- c -->`n    <inbound />`n</policies>") -ceq 'noise')
 Check 'policy neg: comment text change is drift' ((PolicyVerdict '<policies><!-- a --><inbound /></policies>' '<policies><!--  a --><inbound /></policies>') -ceq 'drift')
@@ -124,7 +137,8 @@ Check 'neg: changed app setting is drift with its name, never its value' ((Only 
 $script:fx.readBacks[$key]['MANUAL_SETTING'] = 'x'
 Check 'neg: extra non-empty setting is drift' ((Only (Verdicts (Get-Change $sync)) 'drift')); Reset-ReadBacks
 $script:fx.readBacks[$key]['EMPTY_SETTING'] = ''
-Check 'extra empty setting (what-if omits empty values) is matched' (Only (Verdicts (Get-Change $sync)) 'matched'); Reset-ReadBacks
+$v = Verdicts (Get-Change $sync)
+Check 'neg: extra empty live setting not in the what-if payload is unmeasured (deployment may remove it), named' ((Only $v 'unmeasured') -and $v[0].detail -match 'EMPTY_SETTING'); Reset-ReadBacks
 $script:fx.readBacks[$key].Remove($name)
 Check 'neg: missing setting is drift' (Only (Verdicts (Get-Change $sync)) 'drift'); Reset-ReadBacks
 foreach ($k in @($script:fx.readBacks.Keys | Where-Object { $_ -like 'reference|*' })) { $script:fx.readBacks.Remove($k) }
@@ -160,4 +174,4 @@ Check 'canonical: values differ' ((ConvertTo-StgCanonicalJson @{ a = 1 }) -cne (
 Check 'type: nested resource type' ((Get-StgResourceType '/subscriptions/s/resourceGroups/g/providers/Microsoft.Web/sites/a/config/appsettings') -ceq 'Microsoft.Web/sites/config')
 
 Write-Host "Test-StagedWhatIf: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 84) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 93) { exit 1 }

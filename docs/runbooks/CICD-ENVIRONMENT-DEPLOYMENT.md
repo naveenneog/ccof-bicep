@@ -290,12 +290,17 @@ After Front Door with the standby (saved mode `full`), the driver refuses `-Prim
   | noise | Exact path and exact value of a service default or read-only field: Cosmos container conflict path `/_ts` and default indexing policy; private endpoint `isIPv6EnabledPrivateEndpoint` false; APIM API `isAgent` false and header `Ocp-Apim-Subscription-Key`; DNS zone group `etag`/`id`/`type`/`provisioningState`. APIM policy `format` xml to rawxml, and a policy value equal as XML tokens (below). |
   | matched | A read-only read-back equals the template: app settings (`config/appsettings/list`, `reference()` values resolved by reading the referenced resource), Cosmos database throughput, workbook content. |
   | drift | Any other path or value, a policy that differs, a read-back that differs (app setting names only). |
-  | unmeasured | The comparison is not certain: an unresolved expression, a read-back that failed or was denied, policy text that cannot be tokenised with certainty, workbook content that differs only in non-ASCII characters. |
+  | unmeasured | The comparison is not certain: an unresolved expression, a live app setting with an empty value that the what-if payload lacks (what-if omits empty template values, so the template cannot be shown to contain it and a deployment may remove it), a read-back that failed or was denied, policy text that cannot be tokenised with certainty, workbook content that differs only in non-ASCII characters. |
 
   APIM policies are compared as XML tokens, not as collapsed text. Only XML-equivalent differences are
   ignored: line endings, the five predefined entities and numeric references in the stored (xml) form,
-  attribute order, `<x/>` against `<x></x>`, and whitespace-only text between two tags (not an element's only
-  content). Text, attribute values, C# policy expressions, string literals and comments must be identical, so
+  attribute order, `<x/>` against `<x></x>`, and whitespace-only text between two tags directly inside a
+  structural policy element whose content is policy elements only, with every enclosing element also
+  structural (`policies`, `inbound`, `backend`,
+  `outbound`, `on-error`, `fragment`, `choose`, `when`, `otherwise`, `set-header`, `set-query-parameter`,
+  `return-response`, `send-request`, `send-one-way-request`, `trace`, `retry`), and not the element's only
+  content. Inside `set-body`, `value` or any other element (possible mixed content), including markup nested in them whatever its names, whitespace is compared, so
+  `<a/> <b/>` against `<a/><b/>` there is drift. Mismatched tags are unmeasured. Text, attribute values, C# policy expressions, string literals and comments must be identical, so
   `Bearer A` to `Bearer  A` is drift. Template rawxml is not entity-decoded; its `@(...)`/`@{...}` expressions
   are scanned with C# string rules only where they start an attribute value or a text run. An interpolated
   string (`$"..."`), an entity inside rawxml, an entity name in other than lower case, a character XML 1.0
@@ -306,7 +311,9 @@ After Front Door with the standby (saved mode `full`), the driver refuses `-Prim
   output, so a workbook containing them is unmeasured there; on a UTF-8 Linux runner it is compared (not yet
   proven on a runner). Health alert records carry no property verdicts, so any Modify there is drift.
   Lab evidence (unchanged infsim, read-only, 2026-11-18): Stage 2 Clean (10 Modify explained), Stage 6 Clean
-  (10), Stage 5 12 explained including all 6 APIM policies and fragments, and the workbook unmeasured on Windows.
+  (10), Stage 5 explained all 6 APIM policies and fragments; the workbook (on Windows) is unmeasured, and so are
+  the admin app settings, because the live `ADMIN_READER_IDS`/`ADMIN_EDITOR_IDS` are empty and what-if omits
+  them. Stage 5 on that lab is therefore Unverifiable, not Clean.
 
 ## 8. Driver state
 

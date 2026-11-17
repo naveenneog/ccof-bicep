@@ -54,8 +54,8 @@ function Get-StgDeltaLeaves { param($Delta, [string]$Prefix = '')
 # so they are scanned with balanced delimiters and C# string/char/comment rules; nothing is entity-decoded.
 # Without -Raw (format xml, as APIM returns it) the five predefined entities and numeric references are
 # decoded in text and attribute values. Both: CRLF/CR -> LF (XML 1.0 section 2.11), attributes compared
-# by name, <x/> equals <x></x>, and whitespace-only text between two tags dropped unless it is an element's
-# only content. Text, attribute values, expressions, comments and CDATA are otherwise compared exactly, so
+# by name, <x/> equals <x></x>, and whitespace-only text between two tags dropped only where every open
+# element is a structural policy element (see $script:StgPolicyStructural) and it is not an element's only content. Text, attribute values, expressions, comments and CDATA are otherwise compared exactly, so
 # "Bearer A" -> "Bearer  A" is a difference. $null when the text cannot be tokenised with certainty
 # (interpolated C# strings, an entity in rawxml, a literal newline in an escaped attribute, unbalanced input).
 function Get-StgPolicyExpressionEnd { param([string]$S, [int]$I)
@@ -91,6 +91,13 @@ function Get-StgPolicyExpressionEnd { param([string]$S, [int]$I)
     }
     return -1
 }
+
+# APIM policy elements whose children are policy elements only (no character data), so whitespace between
+# their child tags is formatting; APIM itself reformats it when storing (lab evidence). set-body, value,
+# message and every unlisted element may hold text and keep their whitespace.
+$script:StgPolicyStructural = [Collections.Generic.HashSet[string]]::new([string[]]@(
+    'policies', 'inbound', 'backend', 'outbound', 'on-error', 'fragment', 'choose', 'when', 'otherwise',
+    'set-header', 'set-query-parameter', 'return-response', 'send-request', 'send-one-way-request', 'trace', 'retry'), [StringComparer]::Ordinal)
 
 function ConvertTo-StgPolicyTokens { param([string]$Text, [switch]$Raw)
     $s = $Text.Replace("`r`n", "`n").Replace("`r", "`n"); $n = $s.Length; $i = 0
@@ -153,15 +160,22 @@ function ConvertTo-StgPolicyTokens { param([string]$Text, [switch]$Raw)
     # Adjacent text and CDATA are one run of character data.
     $merged = [Collections.Generic.List[string]]::new()
     foreach ($t in $tokens) { if ($t[0] -eq 'T' -and $merged.Count -and $merged[$merged.Count - 1][0] -eq 'T') { $merged[$merged.Count - 1] += $t.Substring(1) } else { $merged.Add($t) } }
-    # Whitespace-only text is dropped only when the nearest tokens on both sides that are neither comments nor
-    # whitespace are tags, and it is
-    # not an element's only content; whitespace next to character data (across a comment) is kept.
+    # Whitespace-only text is dropped only outside the root element or inside an element of
+    # $script:StgPolicyStructural (APIM policy elements whose content is policy elements only) whose every
+    # ancestor is also structural (so markup inside set-body never qualifies, whatever its names), when the
+    # nearest tokens on both sides that are neither comments nor whitespace are tags, and it is not the
+    # element's only content. Anywhere else (set-body, value, unknown elements: possible mixed content) it is kept.
     $blank = { param($x) $x[0] -eq 'C' -or ($x[0] -eq 'T' -and $x.Substring(1).Trim(" `t`n").Length -eq 0) }
-    $out = [Collections.Generic.List[string]]::new()
+    $out = [Collections.Generic.List[string]]::new(); $open = [Collections.Generic.Stack[string]]::new(); $nonStructural = 0
     for ($k = 0; $k -lt $merged.Count; $k++) {
         $t = $merged[$k]
+        if ($t[0] -eq 'S') { $el = $t.Substring(1).Split([char]0)[0]; $open.Push($el); if (-not $script:StgPolicyStructural.Contains($el)) { $nonStructural++ } }
+        elseif ($t[0] -eq 'E') {
+            if (-not $open.Count -or $open.Pop() -cne $t.Substring(1)) { return $null }
+            if (-not $script:StgPolicyStructural.Contains($t.Substring(1))) { $nonStructural-- }
+        }
         if ($t -ceq 'T') { continue }
-        if ($t[0] -eq 'T' -and $t.Substring(1).Trim(" `t`n").Length -eq 0) {
+        if ($t[0] -eq 'T' -and $t.Substring(1).Trim(" `t`n").Length -eq 0 -and $nonStructural -eq 0) {
             $p = $k - 1; while ($p -ge 0 -and (& $blank $merged[$p])) { $p-- }
             $q = $k + 1; while ($q -lt $merged.Count -and (& $blank $merged[$q])) { $q++ }
             $prev = if ($p -ge 0) { $merged[$p] } else { 'B' }; $next = if ($q -lt $merged.Count) { $merged[$q] } else { 'B' }
@@ -249,10 +263,11 @@ function Compare-StgWriteOnly {
                 }
                 if (-not $actual.Contains($k) -or [string]$actual[$k] -cne [string]$w) { $differs.Add($k) }
             }
-            # What-if leaves out settings whose template value is ''; any other extra setting would be removed by a deployment.
-            foreach ($k in $actual.Keys) { if (-not $want.Contains($k) -and [string]$actual[$k] -cne '') { $differs.Add($k) } }
+            # A live setting the what-if payload lacks would be removed by a deployment. What-if also leaves out
+            # settings whose template value is '', so an extra empty setting cannot be proved either way.
+            foreach ($k in $actual.Keys) { if (-not $want.Contains($k)) { if ([string]$actual[$k] -cne '') { $differs.Add($k) } else { $open.Add($k) } } }
             if ($differs.Count) { return & $Row 'drift' 'appsettings-read-back' "settings differ: $(@($differs | Sort-Object) -join ', ')" }
-            if ($open.Count) { return & $Row 'unmeasured' 'appsettings-read-back' "cannot resolve: $(@($open | Sort-Object) -join ', ')" }
+            if ($open.Count) { return & $Row 'unmeasured' 'appsettings-read-back' "cannot prove: $(@($open | Sort-Object) -join ', ') (unresolved reference, or an empty live setting what-if omits)" }
             return & $Row 'matched' 'appsettings-read-back'
         }
         'throughput' {

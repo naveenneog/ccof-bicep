@@ -145,9 +145,10 @@ try {
             Copy-Item $env:CCOF_WHATIF_RESULTS (Join-Path $d 'staged-5-preview.whatif.jsonl') -Force
             $o = Get-Content (Join-Path $fixtures 'staged-3-preview.result.json') -Raw | ConvertFrom-Json; $o.step = 'staged-5'; $o | ConvertTo-Json | Set-Content (Join-Path $d 'staged-5-preview.result.json')
             $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-5'
-            $want = if ($case.Mutate) { 'Drift' } else { 'Clean' }
+            # Unchanged lab: the admin app's empty live settings cannot be proved from what-if (unmeasured).
+            $want = if ($case.Mutate) { 'Drift' } else { 'Unverifiable' }
             Check "e2e $($case.Name): real lab Modify deltas through the writer give $want" ((Status $r 'staged-5') -eq $want)
-            if (-not $case.Mutate) { Check 'e2e clean: all 11 Modify explained, none reviewed' (($r.Steps | Where-Object Step -eq 'staged-5').Detail -match 'property verdicts \(11\)' -and -not $r.Review.Count -and -not $r.Drift.Count) }
+            if (-not $case.Mutate) { Check 'e2e unchanged: 10 Modify explained, only admin app settings reviewed, no drift' (($r.Steps | Where-Object Step -eq 'staged-5').Detail -match '1 Deploy, Unsupported or unmeasured Modify' -and $r.Review.Count -eq 1 -and $r.Review[0].Id -match '-admin/config/appsettings$' -and -not $r.Drift.Count) }
             else { Check 'e2e mutated: only the PE is drift' ($r.Drift.Count -eq 1 -and $r.Drift[0].Id -match '/privateEndpoints/') }
         }
     } finally { $env:CCOF_WHATIF_RESULTS = $saved }
