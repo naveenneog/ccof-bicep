@@ -77,12 +77,28 @@ jobs:
           echo "$out" | head -n 3
           [ $code -ne 0 ] || { echo "::error::the deploy identity signed in on the preview runner"; exit 1; }
           echo "PASS deploy identity refused on the preview runner"
-      - name: What-if with the preview identity (recorded, not required)
+      - id: wrongrole
+        name: Negative - expected-role apply on the preview runner (must fail)
         continue-on-error: true
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: apply
+      - name: Negative - check the role mismatch was refused
+        env:
+          OUTCOME: ${{ steps.wrongrole.outcome }}
         run: |
-          echo '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":[]}' > empty.json
-          az deployment group what-if --resource-group "$RG" --template-file empty.json --no-pretty-print -o none 2>&1 | head -n 5
-          exit "${PIPESTATUS[0]}"
+          [ "$OUTCOME" = failure ] || { echo "::error::expected-role apply was accepted on the preview runner"; exit 1; }
+          echo "PASS expected-role apply refused on the preview runner"
+      # Learn: what-if needs the same permissions as a deployment. Calls the REST API so the ARM error code is shown.
+      - name: What-if with the preview identity (result recorded, either outcome passes)
+        run: |
+          sub=$(az account show --query id -o tsv)
+          body='{"properties":{"mode":"Incremental","template":{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":[]}}}'
+          out=$(az rest --method post --url "https://management.azure.com/subscriptions/$sub/resourcegroups/$RG/providers/Microsoft.Resources/deployments/ccof-smoke-whatif/whatIf?api-version=2024-03-01" --body "$body" 2>&1) && code=0 || code=$?
+          echo "$out" | head -n 3
+          if [ $code -eq 0 ]; then echo "RESULT what-if accepted for the preview identity"
+          elif echo "$out" | grep -q AuthorizationFailed; then echo "RESULT what-if denied for the preview identity (AuthorizationFailed)"
+          else echo "::error::what-if failed for another reason"; exit 1; fi
       - if: always()
         uses: ./.github/actions/azure-login-mi
         with:
