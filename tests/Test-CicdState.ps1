@@ -13,10 +13,19 @@ $bare = Join-Path $scratch 'r.git'
 # Setup commands of this test run with core.longpaths per command (the runner's per-suite TEMP can be deep). It is not set
 # process-wide (GIT_CONFIG_PARAMETERS) so CicdState.psm1 itself must cope with long paths.
 function tgit { git -c core.longpaths=true @args }
-function New-Clone([string]$Name) {
+function New-Clone([string]$Name, [switch]$SeparateGitDir) {
     $dir = Join-Path $scratch $Name
-    tgit init -q $dir; git -C $dir config user.email t@example.com; git -C $dir config user.name t; git -C $dir config core.autocrlf false
-    git -C $dir remote add origin $bare
+    if ($SeparateGitDir) {
+        $gitDir = Join-Path $scratch ('gd-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        tgit init -q "--separate-git-dir=$gitDir" $dir
+    } else {
+        tgit init -q $dir
+    }
+    if ($LASTEXITCODE) { throw 'fixture git init failed' }
+    tgit -C $dir config user.email t@example.com; if ($LASTEXITCODE) { throw 'fixture git email config failed' }
+    tgit -C $dir config user.name t; if ($LASTEXITCODE) { throw 'fixture git name config failed' }
+    tgit -C $dir config core.autocrlf false; if ($LASTEXITCODE) { throw 'fixture git autocrlf config failed' }
+    tgit -C $dir remote add origin $bare; if ($LASTEXITCODE) { throw 'fixture git remote setup failed' }
     New-Item -ItemType Directory -Force (Join-Path $dir 'deploy/prod') | Out-Null
     '{"subscriptionId":"x"}' | Set-Content (Join-Path $dir 'deploy/prod/staged.config.json')
     return $dir
@@ -176,7 +185,8 @@ try {
     $lpName = 'lp'; while ((Join-Path $scratch $lpName).Length -lt 225) { $lpName = Join-Path $lpName ('w' * 30) }
     $seed = New-Clone 'lpseed'; New-Item -ItemType Directory -Force (Join-Path $seed 'deploy/lp/.dr-state') | Out-Null; [IO.File]::WriteAllText((Join-Path $seed 'deploy/lp/.dr-state/standby.state.json'), '{}')
     $null = Restore-CicdState $seed 'lp'; $null = Save-CicdState $seed 'lp' 'seed'
-    $lp = New-Clone $lpName; New-Item -ItemType Directory -Force (Join-Path $lp 'deploy/lp') | Out-Null
+    # Git for Windows can fail to discover a .git directory at this workspace length; the ordinary layout is tested below.
+    $lp = New-Clone $lpName -SeparateGitDir:$IsWindows; New-Item -ItemType Directory -Force (Join-Path $lp 'deploy/lp') | Out-Null
     function WriteLp([string]$Rel, [string]$Text) { $q = Join-Path $lp "deploy/lp/$Rel"; [IO.Directory]::CreateDirectory((Split-Path $q -Parent)) | Out-Null; [IO.File]::WriteAllText($q, $Text) }
     $lpRel = '.dr-state/evidence/standby-network-preview-20261118T004000Z-long-workspace.json'
     $lpR0 = $null; try { $lpR0 = Restore-CicdState $lp 'lp' } catch { Write-Host "long path restore (existing branch): $($_.Exception.Message)" }
@@ -185,10 +195,33 @@ try {
     WriteLp '.dr-state/standby.state.json' '{"phase":"Network"}'
     $lpSave = $null; try { $lpSave = Save-CicdState $lp 'lp' 'long path' } catch { Write-Host "long path save: $($_.Exception.Message)" }
     Check "long path: Save pushes a state file of $((Join-Path $lp "deploy/lp/$lpRel").Length) characters" ((Join-Path $lp "deploy/lp/$lpRel").Length -gt 260 -and $lpSave.Pushed -and (@(git --git-dir $bare ls-tree -r --name-only refs/heads/cicd-state/lp) -contains "deploy/lp/$lpRel"))
-    $lp2 = New-Clone (Join-Path (Split-Path $lpName) 'clone2'); New-Item -ItemType Directory -Force (Join-Path $lp2 'deploy/lp') | Out-Null
+    $lp2 = New-Clone (Join-Path (Split-Path $lpName) 'clone2') -SeparateGitDir:$IsWindows; New-Item -ItemType Directory -Force (Join-Path $lp2 'deploy/lp') | Out-Null
     $lpR = $null; try { $lpR = Restore-CicdState $lp2 'lp' } catch { Write-Host "long path restore: $($_.Exception.Message)" }
     Check 'long path: fresh restore is byte-exact' ($lpR.Commit -and [IO.File]::Exists((Join-Path $lp2 "deploy/lp/$lpRel")) -and [IO.File]::ReadAllText((Join-Path $lp2 "deploy/lp/$lpRel")) -eq '{"phase":"Network","ok":true}')
-    Check 'long path: no git configuration was written (per-command setting only)' (-not (git -C $lp config --local --get core.longpaths) -and -not (git -C $lp2 config --local --get core.longpaths))
+    $lpConfig = @(tgit -C $lp config --local --get core.longpaths); $lpConfigExit = $LASTEXITCODE
+    $lp2Config = @(tgit -C $lp2 config --local --get core.longpaths); $lp2ConfigExit = $LASTEXITCODE
+    Check 'long path: no git configuration was written (per-command setting only)' ($lpConfigExit -eq 1 -and $lp2ConfigExit -eq 1 -and $lpConfig.Count -eq 0 -and $lp2Config.Count -eq 0)
+
+    $normalName = 'normal'
+    while ((Join-Path $scratch $normalName).Length -lt 225) {
+        $remaining = 225 - (Join-Path $scratch $normalName).Length - 1
+        $normalName = Join-Path $normalName ('n' * [Math]::Max(1, [Math]::Min(30, $remaining)))
+    }
+    $normal = New-Clone $normalName; New-Item -ItemType Directory -Force (Join-Path $normal 'deploy/lp') | Out-Null
+    Check 'long path, ordinary .git: a directory in a workspace at least 225 characters long' ((Test-Path -LiteralPath (Join-Path $normal '.git') -PathType Container) -and $normal.Length -ge 225)
+    $normalR0 = $null; try { $normalR0 = Restore-CicdState $normal 'lp' } catch { Write-Host "ordinary long path restore: $($_.Exception.Message)" }
+    Check 'long path, ordinary .git: Restore fetches the existing state branch' ($normalR0.Commit -and [IO.File]::Exists((Join-Path $normal 'deploy/lp/.dr-state/standby.state.json')))
+    $normalFile = Join-Path $normal "deploy/lp/$lpRel"
+    [IO.Directory]::CreateDirectory((Split-Path $normalFile -Parent)) | Out-Null
+    [IO.File]::WriteAllText($normalFile, '{"phase":"Config","ok":true}')
+    $normalSave = $null; try { $normalSave = Save-CicdState $normal 'lp' 'ordinary long path' } catch { Write-Host "ordinary long path save: $($_.Exception.Message)" }
+    Check 'long path, ordinary .git: Save pushes a state file beyond 260 characters' ($normalFile.Length -gt 260 -and $normalSave.Pushed -and (@(git --git-dir $bare ls-tree -r --name-only refs/heads/cicd-state/lp) -contains "deploy/lp/$lpRel"))
+    $normal2 = New-Clone (Join-Path (Split-Path $normalName) 'ordinary-copy'); New-Item -ItemType Directory -Force (Join-Path $normal2 'deploy/lp') | Out-Null
+    $normalR = $null; try { $normalR = Restore-CicdState $normal2 'lp' } catch { Write-Host "ordinary long path fresh restore: $($_.Exception.Message)" }
+    Check 'long path, ordinary .git: fresh restore is byte-exact' ($normalR.Commit -and [IO.File]::Exists((Join-Path $normal2 "deploy/lp/$lpRel")) -and [IO.File]::ReadAllText((Join-Path $normal2 "deploy/lp/$lpRel")) -eq '{"phase":"Config","ok":true}')
+    $normalConfig = @(tgit -C $normal config --local --get core.longpaths); $normalConfigExit = $LASTEXITCODE
+    $normal2Config = @(tgit -C $normal2 config --local --get core.longpaths); $normal2ConfigExit = $LASTEXITCODE
+    Check 'long path, ordinary .git: no git configuration was written' ($normalConfigExit -eq 1 -and $normal2ConfigExit -eq 1 -and $normalConfig.Count -eq 0 -and $normal2Config.Count -eq 0)
 
     # Guards.
     $c = New-Clone 'c'
@@ -238,4 +271,4 @@ Check 'fetch auth: token passed through GIT_CONFIG_* for the server' ($auth['GIT
 Check 'neg: fetch auth without a token adds nothing' ((Get-CicdStateFetchAuth -Token '' -ServerUrl 'https://github.com').Count -eq 0)
 
 Write-Host "Test-CicdState: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 54) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 59) { exit 1 }

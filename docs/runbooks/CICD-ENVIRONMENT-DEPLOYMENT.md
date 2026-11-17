@@ -68,6 +68,11 @@ reference. The run stops on any fail. Items marked manual are confirmed at a gat
 | Front Door | Front Door name (`frontDoor.stem`) and WAF mode inputs | Platform owner |
 | Entra | App and group IDs are GUIDs; read with Graph GET only when the identity may, else manual; `entra.manualVerification` present | Entra team |
 
+On Windows, a short runner work path reduces Git checkout path-length failures. In a local test with
+Git for Windows 2.56.0.windows.4, a conventional `.git` directory at a 253-character workspace root
+was not discoverable even with `core.longpaths=true`; a 225-character root worked. Limits on other
+versions and hosts are not established. See [Git for Windows long paths](https://github.com/git-for-windows/git-for-windows.github.io/blob/main/content/git-cannot-create-a-file-or-directory-with-a-long-path.md).
+
 Run it on a workstation from a PowerShell 7 prompt at the repository root (read-only, Azure CLI signed in). Call it in-process as shown: through `pwsh -File`, the `-Scope` list arrives as one string.
 
 ```powershell

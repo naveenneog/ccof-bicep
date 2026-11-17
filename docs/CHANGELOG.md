@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-11-18 - Windows state-test fixtures
+
+- The long-workspace state test uses a separate Git directory on Windows where the fixture's original
+  checkout root can prevent Git from discovering a conventional `.git` directory. It also checks a
+  conventional `.git` checkout with state paths beyond 260 characters.
+- Git exit status is checked before an absent local `core.longpaths` setting is reported. The
+  Git-for-Windows checkout-root limitation and its unverified version boundaries are recorded in
+  `UNKNOWNS.md` as CICD-WIN-PATH-01.
+- The suite requires all 59 checks to run; negative controls exercise the Git option, query failures,
+  and the check count.
+- The offline packet gate passed with the verified runner harness and Foundry diagram overlays;
+  integrated and unmodified-branch validation remain pending.
+
 ## 2026-11-19 - Drift: property verdicts for what-if Modify
 
 - New `infra/staged/Staged.WhatIf.ps1`: pipeline previews give each Modify property a verdict (noise, matched,
