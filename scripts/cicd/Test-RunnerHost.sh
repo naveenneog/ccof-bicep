@@ -107,7 +107,10 @@ if [ "$tdir" != /tmp ] && have findmnt && findmnt -no OPTIONS --target /tmp 2>/d
 
 # 7. Host facts.
 info selinux "$(getenforce 2>/dev/null || echo 'not present')"
-info fips "fips_enabled=$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo n/a)"
+# A FIPS-mode OS is reported, never passed: this check does not test that the toolchain uses validated crypto.
+if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
+  warn fips "FIPS mode is on; this preflight does not verify FIPS compliance. On the RHEL 9.8 lab host the official Node.js build reported crypto.getFips()=0 and both Node.js and pwsh (.NET) computed MD5; the runner's bundled action runtimes have their own crypto. See CICD-SETUP.md section 4"
+else info fips "fips_enabled=$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo n/a)"; fi
 info os "$( (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || uname -sr)"
 info role "CCOF_RUNNER_ROLE=${CCOF_RUNNER_ROLE:-unset}"
 

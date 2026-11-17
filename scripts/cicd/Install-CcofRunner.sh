@@ -255,7 +255,7 @@ ccof_bundle() { # CA bundle for the runner only: system bundle plus --ca-cert, u
 
 do_install() {
   preflight_imds
-  [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ] && note "FIPS mode is on: see the FIPS notes in CICD-SETUP.md"
+  [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ] && note "FIPS mode is on: the installed Node.js, pwsh and runner are not FIPS-validated builds; see the FIPS notes in CICD-SETUP.md"
   mkdir -p "$TOOLS/bin" && touch "$TOOLS/.ccof-owned" || fail tools "cannot create $TOOLS"
   if [ -n "$CA_CERT" ]; then ccof_bundle; note "corporate CA added to the CCOF bundle $TOOLS/ca (system trust store unchanged)"; fi
   local missing='' t

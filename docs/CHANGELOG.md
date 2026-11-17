@@ -28,6 +28,13 @@
   Bicep binary, no tokens). The run fails before any suite when the test directory, the Node or PowerShell
   suites, or a Bicep binary are missing. Full run about 280 s instead of about 1170 s on 16 logical processors.
   New `tests/Test-RunTests.ps1` covers exit codes, empty runs, output order and isolation.
+- Each suite's `TEMP` is a short directory created by the run under the caller's `TEMP` (`ccof-t-<id>\<n>`), not
+  under the scratch directory: from a deep worktree, Git in `Test-CicdState` failed with "Filename too long". On
+  Windows the run stops before any suite if that `TEMP` would exceed 120 characters, and it deletes only the
+  directory it created. No Git or registry setting is changed.
+- Smoke workflow input `fips`; the preflight reports FIPS mode as a warning, not a pass. Lab result on RHEL 9.8 in
+  FIPS mode (functional, not a compliance test): Node.js 22 (`crypto.getFips()` = 0) and pwsh computed MD5; VM
+  extensions needed the `enableFips1403Encryption` opt-in. See CICD-SETUP.md sections 4 and 10.
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 

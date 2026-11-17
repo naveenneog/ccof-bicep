@@ -65,7 +65,7 @@ jobs:
           expected-role: preview
       - name: Signed-in identity
         run: az account show --query "{subscription:id, tenant:tenantId, user:user}" -o json
-      # FIPS host only. Fails unless FIPS mode is on and the Azure CLI, Bicep, git and pwsh work; the MD5 lines
+      # FIPS host only. Functional smoke, not a compliance test: fails unless FIPS mode is on and the Azure CLI, Bicep, git and pwsh work; the MD5 lines
       # record which tools use the system FIPS module (an official Node.js build bundles its own OpenSSL).
       - name: FIPS mode and tools
         if: ${{ inputs.fips }}
@@ -79,7 +79,8 @@ jobs:
           printf 'param name string = %s\noutput n string = name\n' "'fips'" > fips.bicep
           bicep build fips.bicep --stdout | jq -e '.outputs.n' >/dev/null || { echo "::error::bicep build failed"; exit 1; }
           echo "PASS bicep $(bicep --version | awk '{print $4}') build"
-          git ls-remote --heads "https://github.com/$GITHUB_REPOSITORY" >/dev/null 2>&1 && echo "PASS git HTTPS (token-less ls-remote may be refused on a private repository; checkout already used git)" || echo "RESULT git ls-remote without credentials refused (private repository); checkout step used git"
+          git ls-remote --heads "https://github.com/$GITHUB_REPOSITORY" >/dev/null 2>&1 || { echo "::error::git HTTPS ls-remote failed"; exit 1; }
+          echo "PASS git HTTPS ls-remote (with the job token that actions/checkout keeps in the workspace)"
           pwsh -NoProfile -Command '[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]](1,2,3)))' >/dev/null || { echo "::error::pwsh SHA-256 failed"; exit 1; }
           echo "PASS pwsh SHA-256"
           pwsh -NoProfile -Command '[Security.Cryptography.MD5]::HashData([byte[]](1))' >/dev/null 2>&1 && echo "RESULT pwsh (.NET) computes MD5" || echo "RESULT pwsh (.NET) refuses MD5 (uses the system OpenSSL FIPS provider)"

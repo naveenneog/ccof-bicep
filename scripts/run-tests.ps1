@@ -12,6 +12,12 @@ The PowerShell suites run in parallel, up to CCOF_TEST_THROTTLE at a time (defau
 at most 8; 1 runs them one at a time), each with its own TEMP/TMP. Output is printed per suite, in name order,
 after all suites end. The exit code is 1 when any suite exits non-zero or its result cannot be read. A failed
 suite's files are kept for inspection.
+
+Each suite's TEMP is a short directory (ccof-t-<8 hex>\<n>) that the run creates under the runner's own TEMP, not
+under the scratch directory, so the suite path depth does not grow with the workspace path: Git for Windows fails on
+paths over 260 characters, and some suites build nested Git repositories in TEMP. On Windows the run exits 1 before
+any suite if that TEMP would exceed 120 characters. The run deletes only the directory it created, never an existing
+one. Logs and profiles stay in the scratch directory (-ScratchDir, default .env.public-test-scratch).
 #>
 param([string]$TestsDir, [string]$ScratchDir, [switch]$NoNodeSuites)
 $ErrorActionPreference = 'Continue'
@@ -30,6 +36,14 @@ $bicep = @((Join-Path $cliSource 'bin/bicep.exe'), (Join-Path $cliSource 'bin/bi
 if (-not $bicep.Count) { $bicep = @(Get-Command bicep -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object Source) }
 if (-not $bicep.Count) { Stop-Run "no Bicep binary in $cliSource\bin or on PATH; install it (az bicep install) and run again. The suites never use the operator profile itself." }
 
+# Read before TEMP is pointed at the scratch directory below.
+$sysTemp = [IO.Path]::GetTempPath()
+$tempId = 'ccof-t-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+$tempLength = (Join-Path (Join-Path $sysTemp $tempId) "$($suites.Count)").Length
+if ($IsWindows -and $tempLength -gt 120) {
+    Stop-Run "a suite TEMP under $sysTemp would be $tempLength characters (limit 120): suites build Git repositories in TEMP and Git for Windows fails on paths over 260 characters. Set TEMP and TMP to a shorter directory and run again."
+}
+
 $scratch = if ($ScratchDir) { $ScratchDir } else { Join-Path $root '.env.public-test-scratch' }
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 $env:TEMP = $scratch
@@ -37,11 +51,14 @@ $env:TMP = $scratch
 $env:CCOF_LIVE_TESTS = '0'
 $run = Join-Path $scratch ('run-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $run | Out-Null
+# Without -Force: fails rather than adopt (and later delete) a directory that already exists.
+try { $tempRoot = (New-Item -ItemType Directory -Path (Join-Path $sysTemp $tempId) -ErrorAction Stop).FullName }
+catch { Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue; Stop-Run "cannot create a new TEMP directory for the suites in ${sysTemp}: $_" }
 
 # A logged-out Azure CLI profile: config files and the Bicep binary only.
 function New-SuiteProfile([string]$Dir) {
     $cli = Join-Path $Dir 'azure'
-    New-Item -ItemType Directory -Path (Join-Path $Dir 'tmp'), (Join-Path $cli 'bin') -ErrorAction Stop | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cli 'bin') -ErrorAction Stop | Out-Null
     foreach ($f in 'config', 'bicepVersionCheck.json', 'versionCheck.json') {
         $s = Join-Path $cliSource $f
         if (Test-Path -LiteralPath $s -PathType Leaf) { Copy-Item -LiteralPath $s -Destination (Join-Path $cli $f) -ErrorAction Stop }
@@ -72,17 +89,19 @@ $throttle = 0
 if (-not [int]::TryParse("$env:CCOF_TEST_THROTTLE", [ref]$throttle) -or $throttle -lt 1) { $throttle = [Math]::Max(1, [Math]::Min(8, [int][Math]::Floor([Environment]::ProcessorCount / 2))) }
 $pwshExe = (Get-Process -Id $PID).Path
 $here = (Get-Location).Path
+$n = 0
 $jobs = foreach ($s in $suites) {
     $dir = Join-Path $run $s.BaseName
+    $temp = Join-Path $tempRoot "$((++$n))"
     $cli = $null; $failure = ''
-    try { $cli = New-SuiteProfile $dir } catch { $failure = "profile setup: $_" }
-    [pscustomobject]@{ suite = $s; dir = $dir; cli = $cli; failure = $failure }
+    try { $cli = New-SuiteProfile $dir; New-Item -ItemType Directory -Path $temp -ErrorAction Stop | Out-Null } catch { $failure = "profile or TEMP setup: $_" }
+    [pscustomobject]@{ suite = $s; dir = $dir; temp = $temp; cli = $cli; failure = $failure }
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $done = @($jobs | ForEach-Object -ThrottleLimit $throttle -Parallel {
     $job = $_; $pwshExe = $using:pwshExe
     Set-Location -LiteralPath $using:here
-    $temp = Join-Path $job.dir 'tmp'; $log = Join-Path $job.dir 'output.log'
+    $temp = $job.temp; $log = Join-Path $job.dir 'output.log'
     $code = $null; $failure = $job.failure; $watch = [Diagnostics.Stopwatch]::StartNew()
     if (-not $failure) {
         try {
@@ -94,7 +113,7 @@ $done = @($jobs | ForEach-Object -ThrottleLimit $throttle -Parallel {
             if ($wrapper.Trim()) { $failure = "runner wrapper output: $($wrapper.Trim())" }
         } catch { $failure = "$_" }
     }
-    [pscustomobject]@{ name = $job.suite.Name; code = $code; seconds = [int]$watch.Elapsed.TotalSeconds; log = $log; dir = $job.dir; failure = $failure }
+    [pscustomobject]@{ name = $job.suite.Name; code = $code; seconds = [int]$watch.Elapsed.TotalSeconds; log = $log; dir = $job.dir; temp = $temp; failure = $failure }
 } | Where-Object { $_ -is [pscustomobject] -and $_.PSObject.Properties['code'] })
 
 $failed = @()
@@ -106,13 +125,14 @@ foreach ($s in $suites) {
     if (-not $ok) {
         $failed += $s.Name
         $why = if ($r.Count -ne 1) { 'no result' } elseif ($r[0].code -isnot [int]) { "no exit code; $($r[0].failure)" } elseif ($r[0].code -ne 0) { "exit code $($r[0].code)" } else { $r[0].failure }
-        Write-Host "SUITE FAILED: $($s.Name) ($why); files kept in $(if ($r.Count -eq 1) { $r[0].dir } else { $run })"
+        Write-Host "SUITE FAILED: $($s.Name) ($why); files kept in $(if ($r.Count -eq 1) { "$($r[0].dir), TEMP kept in $($r[0].temp)" } else { "$run, TEMP kept in $tempRoot" })"
     } else {
         Write-Host "--- $($s.Name): exit 0 in $($r[0].seconds)s"
-        Remove-Item -LiteralPath $r[0].dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $r[0].dir, $r[0].temp -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 if ($failed.Count) { $result = 1 }
 if (-not $result) { Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue }
+if (-not $failed.Count) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 Write-Host "`n$($suites.Count) PowerShell suite(s) in $([int]$clock.Elapsed.TotalSeconds)s, up to $throttle at a time; failed: $(if ($failed.Count) { $failed -join ', ' } else { 'none' })"
 exit $result
