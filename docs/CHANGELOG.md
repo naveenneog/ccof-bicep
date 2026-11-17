@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-11-17 - Self-hosted CI/CD runners with managed identities
+
+- New add-on [CICD-SETUP.md](runbooks/CICD-SETUP.md): `infra/cicd/` (two user-assigned identities, optional
+  runner VMs and subnet, least-privilege roles with conditioned role assignment rights, driver
+  `Invoke-CicdSetup.ps1`), host bootstrap and preflight for hardened RHEL/Ubuntu/Windows images in
+  `scripts/cicd/`, and the shared sign-in action `.github/actions/azure-login-mi` (`az login --identity`).
+  No GitHub secret, federated credential or Entra change.
+- `scripts/New-CustomerRepoFromZip.ps1`: customer ZIP from a commit with a secret scan, and ZIP to a
+  private GitHub repository.
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the
