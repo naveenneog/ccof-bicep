@@ -42,9 +42,11 @@ Three problems blocked automation:
   replaced (more than 100 waiting runs are cancelled).
 - **Approval fails closed.** Workflow conditions and GitHub environments can be bypassed or auto-created
   without protection, so the gate and apply jobs verify, with the job token, that the environment has
-  required reviewers, a `main`-only branch policy and an approval for this run before any Azure sign-in;
-  the step runner refuses `-Apply` without that record. A re-run is refused because the approvals API is
-  per run. The runner host's job hook is the real control against untrusted code.
+  required reviewers that administrators cannot bypass, a `main`-only branch policy and exactly one approval
+  for this run before any Azure sign-in; the step runner refuses `-Apply` without that record. A re-run is
+  refused because the approvals API is per run. The apply job also stops on cancellation (`!cancelled()`).
+  The runner host's job hook guards against untrusted code on the runner, but neither it nor the
+  environments make unreviewed `main` trustworthy; that needs reviewed-main branch protection.
 - **Settings values.** Stage 5 carries the exact live value of the Stage 7 `snapshotApply` flag and
   refuses to change defaulted settings silently (`stage5_settings_would_change`); other written values
   come from the configuration.

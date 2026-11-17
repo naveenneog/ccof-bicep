@@ -12,7 +12,9 @@
 
     Required reviewers on a private repository need GitHub Enterprise; on Free, Pro and Team plans they exist
     for public repositories only (https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers).
-    Without them this script fails, so the apply never runs unreviewed.
+    Without them this script fails, so the apply never runs unreviewed. The job token cannot read an
+    organization's plan: the one approval of this environment observed in this run is the proof that GitHub
+    enforced the review. can_admins_bypass must be readable and false.
 
 .EXAMPLE
     pwsh scripts/cicd/Assert-CicdApproval.ps1 -Environment stg -GitHubEnvironment stg-apply

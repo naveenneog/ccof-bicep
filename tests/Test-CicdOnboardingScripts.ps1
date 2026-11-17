@@ -351,9 +351,24 @@ try {
     Check 'approval: no approval in this run (bypass) fails' ("$((& $ap (& $okEnv) $main @()).problems)" -match '^not_approved')
     Check 'approval: an approval of another environment does not count' ("$((& $ap (& $okEnv) $main (& $approved 'lab-gate-privatelink')).problems)" -match '^not_approved')
     Check 'approval: a rejection fails' ("$((& $ap (& $okEnv) $main @(@(& $approved) + @(& $approved 'lab-apply' 'rejected' 'other'))).problems)" -match '^rejected')
-    $e = & $okEnv; $e.protection_rules[0].prevent_self_review = $false; $e.can_admins_bypass = $true
+    $e = & $okEnv; $e.protection_rules[0].prevent_self_review = $false
     $r = & $ap $e $main (& $approved 'lab-apply' 'approved' 'starter')
-    Check 'approval: self-review, admin bypass and self-approval are warnings' ($r.problems.Count -eq 0 -and "$($r.warnings)" -match 'self_review_allowed' -and "$($r.warnings)" -match 'admins_can_bypass' -and "$($r.warnings)" -match 'self_approved')
+    Check 'approval: self-review and self-approval are warnings' ($r.problems.Count -eq 0 -and "$($r.warnings)" -match 'self_review_allowed' -and "$($r.warnings)" -match 'self_approved')
+    # Administrator bypass fails closed whether it is on, absent or not a boolean (same contract as
+    # Test-CicdGhEnvironment in CicdGitHubEnvironments.psm1): a bypassed job runs without any review.
+    $e = & $okEnv; $e.can_admins_bypass = $true
+    $r = & $ap $e
+    Check 'approval: administrator bypass on fails even with an approval in this run' ($r.problems.Count -eq 1 -and "$($r.problems)" -match '^admins_can_bypass' -and "$($r.warnings)" -notmatch 'admins_can_bypass')
+    $e = & $okEnv; $e.PSObject.Properties.Remove('can_admins_bypass')
+    Check 'approval: an unreadable (absent) administrator bypass fails' ("$((& $ap $e).problems)" -match '^admins_bypass_unreadable')
+    foreach ($v in @('false', 0, $null)) {
+        $e = & $okEnv; $e.can_admins_bypass = $v
+        Check "approval: a non-boolean administrator bypass ($(if ($null -eq $v) { 'null' } else { "$($v.GetType().Name) $v" })) fails" ("$((& $ap $e).problems)" -match '^admins_bypass_unreadable')
+    }
+    # One reviewed job per environment and run: a second approval of the same environment means another job
+    # (or an unexpected review) used it, so this job cannot tell which approval is its own.
+    $two = @(@(& $approved) + @(& $approved 'lab-apply' 'approved' 'second'))
+    Check 'approval: two approvals of the environment in one run fail (one reviewed job per environment)' ("$((& $ap (& $okEnv) $main $two).problems)" -match '^approval_not_unique')
 
     $assert = Join-Path $cicd 'Assert-CicdApproval.ps1'
     $record = Join-Path $root 'evidence/lab/approval-lab-apply.json'
@@ -387,6 +402,11 @@ try {
     $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
     Check 'approval script: a rerun attempt exits 4 even with an approval in the run' ($LASTEXITCODE -eq 4 -and "$o" -match 'rerun_attempt')
     $env:GITHUB_RUN_ATTEMPT = '1'
+    $e = & $okEnv; $e.can_admins_bypass = $true
+    @{ environment = $e; branchPolicies = $main; approvals = (& $approved) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixture
+    $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
+    Check 'approval script: administrator bypass exits 4 and records verified false' ($LASTEXITCODE -eq 4 -and (Get-Content -Raw -LiteralPath $record | ConvertFrom-Json).verified -eq $false -and "$o" -match 'admins_can_bypass')
+    @{ environment = (& $okEnv); branchPolicies = $main; approvals = (& $approved) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixture
     $env:GITHUB_RUN_ID = ''
     $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
     Check 'approval script: without the run context it refuses (exit 2)' ($LASTEXITCODE -eq 2)

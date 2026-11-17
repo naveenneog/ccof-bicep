@@ -43,8 +43,9 @@ administrator selects it in the console (ADMIN-OPERATIONS section 7, step 6).
    repository needs GitHub Enterprise for required reviewers (see [Approval check](#approval-check)).
    All three exist before the first run. Every apply run checks `<env>-gate-privatelink`, even when no
    backend needs a private link, because the need is only known after `validate`. The job token cannot
-   read an organization's plan; the repository variable `CCOF_GITHUB_PLAN` = `enterprise` is an
-   attestation, and the check reports it as attested, not proved.
+   read an organization's plan, so `resolve` reports that finding as not proved; the one approval of each
+   reviewed environment observed in the same run is the per-run proof that GitHub enforced the review
+   (see [Approval check](#approval-check)).
 
 ## Run it
 
@@ -107,9 +108,12 @@ Steps: `validate`, `stage3`, `stage5`, `stage6`, `standby-backends`, `standby-ve
   checks the environment name and that the run is on the default branch, then runs
   `scripts/cicd/Test-CicdGitHubEnvironments.ps1` (shared with the deployment pipeline). It fails unless
   `<env>-preview` exists with a branch policy of exactly `main` and, for `apply` = true, `<env>-apply` and
-  `<env>-gate-privatelink` also exist with required reviewers. The reviewer plan passes for a public
-  repository; for a private organization repository with `CCOF_GITHUB_PLAN` = `enterprise` the check
-  currently passes on that attestation and reports the plan as not proved. Every other
+  `<env>-gate-privatelink` also exist with required reviewers that administrators cannot bypass. The
+  reviewer plan passes for a public repository; for a private organization repository the job token cannot
+  read the plan, so the check reports it as not proved and the reviewed jobs prove enforcement by their own
+  approval in the run. The shared check also requires proof that `main` accepts only reviewed pull requests
+  without bypass; branch protection and ruleset bypass lists are not readable with the job token, so with the
+  job token alone `resolve` fails on that finding and the run stops (no secret or extra token is used). Every other
   job needs `resolve`, so a missing environment (which GitHub would create without protection) never
   reaches the preview runner, which has the apply identity.
 - Previews run on the apply runner because Azure what-if needs the same permissions as a deployment
@@ -136,14 +140,22 @@ bypass reviews. Before any Azure sign-in, the `gate-privatelink` and `apply` job
 its deployment branch policies and the run's approvals, and fails (exit 4) unless:
 
 - the environment exists and has required reviewers;
+- `can_admins_bypass` is readable and `false` (on, absent or not a boolean fails);
 - deployment branches are the selected branch `main` only;
-- this run has an `approved` review for that environment.
+- this run has exactly one `approved` review for that environment (each reviewed environment is used by one
+  job per run, so a second approval means the job cannot tell which one is its own).
 
 The apply job checks `<env>-apply`, and also `<env>-gate-privatelink` when `validate` said the gate was
-needed. `Invoke-CicdOnboardingStep.ps1` refuses every `-Apply` in GitHub Actions without a verified record
+needed; it re-reads the gate's approval from the run's review history, so no second review is requested.
+The apply job runs only when the gate job succeeded or was skipped because no gate was needed, and stops when
+the run is cancelled (GitHub re-evaluates a running job's condition on cancellation). `Invoke-CicdOnboardingStep.ps1` refuses every `-Apply` in GitHub Actions without a verified record
 for the same run and attempt. The approvals API is per run, not per attempt, so a re-run (attempt 2 or
-later) is refused: start a new dispatch instead. Warnings (not failures): self-review allowed,
-administrators can bypass, approved by the run's own actor.
+later) is refused: start a new dispatch instead. Warnings (not failures): self-review allowed, approved by
+the run's own actor.
+
+These checks prove that the run was reviewed, not that the code on `main` was. Neither the runner host's job
+hook nor the environments make unreviewed `main` trustworthy; that needs branch protection or a ruleset
+requiring reviewed pull requests without bypass, which the job token cannot read (see the `resolve` check above).
 
 Required reviewers on a **private** repository need GitHub Enterprise; on Free, Pro and Team they exist
 for public repositories only ([GitHub: required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)).

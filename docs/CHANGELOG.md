@@ -25,8 +25,12 @@
   value that differs from the default and the configuration does not set the field; `stage5.allowChangedSettings`
   acknowledges it. Without a previous Stage 5 record, any live setting outside the Stage 5 template names counts as a removal.
 - Apply fails closed unless `scripts/cicd/Assert-CicdApproval.ps1` (job token, `actions: read`) proves the
-  environment has required reviewers, deployment branches `main` only and an approval for this run; reruns are
-  refused. Private repositories need GitHub Enterprise for required reviewers.
+  environment has required reviewers that administrators cannot bypass (`can_admins_bypass` readable and
+  `false`), deployment branches `main` only and exactly one approval for this run; reruns are refused.
+  Private repositories need GitHub Enterprise for required reviewers; the job token cannot read an
+  organization's plan, so the approval observed in the run is the proof of enforcement.
+- The apply job stops when the run is cancelled (`!cancelled()`) and runs only when the private link gate
+  succeeded or was skipped because no gate was needed.
 - The smoke test follows policy fragments, XML-decodes them and accepts static or registry admission with the
   managed-identity route; it reads ARM responses with or without a UTF-8 BOM and always checks the descriptor outcome.
 - Self-hosted jobs run the host preflight for the runner OS (`Test-RunnerHost.sh` on Linux, `.ps1` on Windows).
@@ -36,6 +40,8 @@
   `queue: max` (up to 100 waiting runs).
 - DR `-Phase Backends` compares configurations without a JSON round trip (date-like strings such as
   `reconciler.ledgerCoverageStartAt` no longer change the hash) and clears prior evidence only after its checks pass.
+- Hash-bound diagram assets are stored as CRLF blobs with `-text` in `.gitattributes`, so Git checkouts (any
+  `core.autocrlf`), `git archive` / GitHub source ZIPs and the ZIP publisher carry the bytes the manifests hash.
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

@@ -166,7 +166,7 @@ test("every apply-runner job runs inside its GitHub environment and only apply s
   assert.match(apply, /environment: \$\{\{ needs\.resolve\.outputs\.environment \}\}-apply/);
   assert.match(apply, /permissions:\n {6}contents: write/);
   assert.match(apply, /- name: Save driver state[^\n]*\n {8}if: [^\n]*\n(?: {8}[^\n]*\n)*? {8}run: \|\n(?: {10}[^\n]*\n)*? {10}pwsh scripts\/cicd\/Sync-CicdState\.ps1 -Action Save/);
-  assert.match(apply, /needs\.gate-privatelink\.result == 'success' \|\| needs\.gate-privatelink\.result == 'skipped'/);
+  assert.match(apply, /needs\.gate-privatelink\.result == 'success' \|\| \(needs\.gate-privatelink\.result == 'skipped' && needs\.validate\.outputs\.needs-privatelink-gate != 'true'\)/);
   assert.match(apply, /if: failure\(\)\n {8}run: \|\n {10}Import-Module \.\/scripts\/cicd\/CicdOnboarding\.psm1/);
   assert.equal(text.match(/-Action Save/g)?.length, 1, "previews and the gate never save state");
   // Jobs without stored checkout credentials pass the job token; the apply job (which pushes state) must not
@@ -277,7 +277,7 @@ test("dispatch proves the GitHub environments on a GitHub-hosted runner before a
   assert.doesNotMatch(resolve, /azure-login-mi|Sync-CicdState|Test-RunnerHost|self-hosted|\n {4}environment:/);
   assert.match(resolve, /persist-credentials: false/);
   assert.match(resolve, /if \(\$env:GITHUB_REF -ne "refs\/heads\/\$env:CCOF_DEFAULT_BRANCH"\) \{ throw/);
-  assert.match(resolve, /CCOF_GITHUB_PLAN: \$\{\{ vars\.CCOF_GITHUB_PLAN \}\}/);
+  assert.doesNotMatch(text, /CCOF_GITHUB_PLAN|CCOF_PROTECTION_READ_TOKEN|secrets\./, "no plan attestation variable and no secret: unreadable facts stay unproved");
   assert.match(resolve, /GH_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(resolve, /\$gates = if \(\$env:CCOF_APPLY -eq 'true'\) \{ 'apply,gate-privatelink' \} else \{ '' \}\n {10}& \.\/scripts\/cicd\/Test-CicdGitHubEnvironments\.ps1 -Repository \$env:GITHUB_REPOSITORY -Environment \$env:CCOF_ENV -ReviewedGate \$gates\n {10}exit \$LASTEXITCODE/);
   assert.match(resolve, /outputs:\n {6}environment: \$\{\{ steps\.scope\.outputs\.environment \}\}/);
@@ -334,6 +334,51 @@ test("driver state is saved only after a successful restore and a started driver
   assert.equal(run("success", "cancelled", "cancelled"), true, "driver cancelled mid-run: saved");
   // Negative control: the previous unconditional always() would save after an early failure.
   assert.equal(evaluate("always()", { values: {}, status: "failure" }), true);
+});
+
+// GitHub re-evaluates a running job's `if` on cancellation and keeps the job running when it is still true
+// (docs: workflow-cancellation). Live on GitHub-hosted runners (lab run 44165941394): an `always()` job ran to
+// success after the cancel; an `always() && !cancelled()` job was cancelled and its always() save step, gated on
+// the started driver, still ran with drive outcome 'cancelled'.
+test("a cancelled run stops apply; an intentionally skipped gate still allows it", () => {
+  const text = workflow();
+  const cond = jobIf(job(text, "apply"));
+  assert.ok(conjuncts(cond).includes("!cancelled()"), "apply requires !cancelled()");
+  const base = { "github.event_name": "workflow_dispatch", "github.ref": "refs/heads/main", "inputs.apply": true,
+    "needs.resolve.result": "success", "needs.validate.result": "success", "needs.preview.result": "success" } as Record<string, string | boolean>;
+  const at = (gate: string, needed: string, status: Ctx["status"]) =>
+    evaluate(cond, { values: { ...base, "needs.gate-privatelink.result": gate, "needs.validate.outputs.needs-privatelink-gate": needed }, status });
+  assert.equal(at("skipped", "false", "success"), true, "gate not needed and skipped: apply runs");
+  assert.equal(at("success", "true", "success"), true, "gate needed and approved: apply runs");
+  assert.equal(at("skipped", "true", "success"), false, "gate needed but skipped: apply does not run");
+  assert.equal(at("failure", "true", "failure"), false, "gate failed: apply does not run");
+  for (const [gate, needed] of [["skipped", "false"], ["success", "true"]]) {
+    assert.equal(at(gate, needed, "cancelled"), false, `cancelled run (gate ${gate}): apply stops`);
+  }
+  // Negative control: without !cancelled() the apply would keep running after a cancel.
+  const mutant = cond.replace(" && !cancelled()", "").replace("!cancelled() && ", "");
+  assert.notEqual(mutant, cond);
+  assert.equal(evaluate(mutant, { values: { ...base, "needs.gate-privatelink.result": "skipped", "needs.validate.outputs.needs-privatelink-gate": "false" }, status: "cancelled" }), true);
+  // Every job that can run after a failed or skipped predecessor also stops on cancellation.
+  const names = [...text.slice(text.indexOf("\njobs:\n")).matchAll(/\n {2}([a-z][a-z-]*):\n/g)].map((m) => m[1]);
+  for (const name of names) {
+    const c = jobIf(job(text, name));
+    if (/always\(\)/.test(c)) assert.ok(conjuncts(c).includes("!cancelled()"), `${name}: always() job requires !cancelled()`);
+  }
+  // The partial-state Save after a started driver still runs when the job is cancelled.
+  const save = stepIf(job(text, "apply"), "Save driver state");
+  assert.equal(evaluate(save, { values: { "steps.restore.outcome": "success", "steps.drive.outcome": "cancelled" }, status: "cancelled" }), true);
+});
+
+test("each reviewed environment is used by exactly one job (approvals are not shared or counted twice)", () => {
+  const text = workflow();
+  for (const env of ["gate-privatelink", "apply"]) {
+    const users = [...text.matchAll(new RegExp(`\\n {4}environment: \\$\\{\\{ needs\\.resolve\\.outputs\\.environment \\}\\}-${env}\\n`, "g"))];
+    assert.equal(users.length, 1, `${env}: exactly one job`);
+  }
+  // The apply job re-reads the gate approval of this run (no environment, no second review).
+  const apply = job(text, "apply");
+  assert.doesNotMatch(apply, /environment: [^\n]*gate-privatelink/);
 });
 
 test("runs for one environment queue instead of replacing a pending run", () => {

@@ -332,7 +332,9 @@ function Get-CicdOnboardingRollback {
 # $Environment: GET /repos/{repo}/environments/{name} ($null when it does not exist); $BranchPolicies: names and
 # types from .../deployment-branch-policies; $Approvals: GET /repos/{repo}/actions/runs/{run}/approvals.
 # Required reviewers on a private repository need GitHub Enterprise (Free, Pro and Team: public repositories
-# only), so on those plans the rule is absent and this fails closed. GitHub creates a missing environment
+# only), so on those plans the rule is absent and this fails closed. The job token cannot read an organization's
+# plan; the approval observed in this run for this environment is the per-run proof that GitHub enforced the
+# review. Administrator bypass must be readable and false. GitHub creates a missing environment
 # without protection when a job references it, so 'exists' alone is not enough. Returns @{ problems; warnings; approvers }.
 function Get-CicdApprovalProblems {
     param([Parameter(Mandatory)] [string]$Name, $Environment, $BranchPolicies = @(), $Approvals = @(), [string]$Actor, [int]$RunAttempt = 1)
@@ -358,7 +360,11 @@ function Get-CicdApprovalProblems {
         $names = @($BranchPolicies | Where-Object { $_ } | ForEach-Object { "$($_.type)`:$($_.name)" })
         if ($names.Count -ne 1 -or $names[0] -cne 'branch:main') { $problems.Add("branch_policy_not_main_only: '$Name' branch rules are [$($names -join ', ')]; expected [branch:main]") }
     }
-    if ($Environment.can_admins_bypass) { $warnings.Add("admins_can_bypass: disable 'Allow administrators to bypass' on '$Name'; a bypassed run has no approval and is refused here") }
+    if ($Environment.PSObject.Properties['can_admins_bypass'] -and $Environment.can_admins_bypass -is [bool]) {
+        if ($Environment.can_admins_bypass) { $problems.Add("admins_can_bypass: administrators can bypass the reviewers of '$Name', so a bypassed job runs without approval; turn off 'Allow administrators to bypass configured protection rules'") }
+    } else {
+        $problems.Add("admins_bypass_unreadable: can_admins_bypass of '$Name' is not readable as true/false; administrator bypass cannot be ruled out")
+    }
     # The review history is per run, not per attempt: an approval of attempt 1 would also satisfy a rerun.
     if ($RunAttempt -gt 1) { $problems.Add("rerun_attempt: attempt $RunAttempt of this run cannot be bound to its own approval (the review history is per run); dispatch a new run instead of re-running") }
     $forEnv = @($Approvals | Where-Object { $_ -and @($_.environments | Where-Object { $_ -and $_.name -ceq $Name }).Count })
@@ -366,6 +372,7 @@ function Get-CicdApprovalProblems {
     $approvers = @($approved | ForEach-Object { "$($_.user.login)" } | Sort-Object -Unique)
     if (@($forEnv | Where-Object { $_.state -ceq 'rejected' }).Count) { $problems.Add("rejected: a reviewer rejected '$Name' in this run") }
     elseif (-not $approved.Count) { $problems.Add("not_approved: this run has no reviewer approval for '$Name' (bypassed, or no reviewers)") }
+    elseif ($approved.Count -gt 1) { $problems.Add("approval_not_unique: $($approved.Count) approvals of '$Name' in this run; only one job per run uses this environment, so this job cannot tell which approval is its own") }
     elseif ($Actor -and $approvers.Count -eq 1 -and $approvers[0] -ceq $Actor) { $warnings.Add("self_approved: '$Name' was approved by the run's own actor $Actor") }
     return @{ problems = @($problems); warnings = @($warnings); approvers = $approvers }
 }

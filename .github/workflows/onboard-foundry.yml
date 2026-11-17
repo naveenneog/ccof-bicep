@@ -89,10 +89,13 @@ jobs:
           retention-days: 30
 
   # GitHub-hosted, before any self-hosted job: proves that <env>-preview admits only the protected default
-  # branch and, with apply, that <env>-apply and <env>-gate-privatelink also have required reviewers the
-  # repository plan enforces (scripts/cicd/Test-CicdGitHubEnvironments.ps1). GitHub creates a missing
-  # environment unprotected when a job names it, so a missing or unprotected environment stops the run here.
+  # branch and, with apply, that <env>-apply and <env>-gate-privatelink also have required reviewers that
+  # administrators cannot bypass (scripts/cicd/Test-CicdGitHubEnvironments.ps1). The job token cannot read an
+  # organization's plan; that finding is not proved here, and each reviewed job proves enforcement by its own
+  # approval in this run (Assert-CicdApproval.ps1). GitHub creates a missing environment unprotected when a
+  # job names it, so a missing or unprotected environment stops the run here.
   # The gate environment is required on every apply run because the need for it is known only after validate.
+  # Cancelling the run stops the apply job: GitHub re-evaluates a running job's `if` on cancellation.
   resolve:
     name: GitHub environment protections (GitHub-hosted)
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
@@ -125,7 +128,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CCOF_ENV: ${{ steps.scope.outputs.environment }}
           CCOF_APPLY: ${{ inputs.apply }}
-          CCOF_GITHUB_PLAN: ${{ vars.CCOF_GITHUB_PLAN }}
         run: |
           $gates = if ($env:CCOF_APPLY -eq 'true') { 'apply,gate-privatelink' } else { '' }
           & ./scripts/cicd/Test-CicdGitHubEnvironments.ps1 -Repository $env:GITHUB_REPOSITORY -Environment $env:CCOF_ENV -ReviewedGate $gates
@@ -350,9 +352,9 @@ jobs:
     name: apply (region A, region B, descriptor, smoke)
     needs: [resolve, validate, preview, gate-privatelink]
     if: >-
-      always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply
+      always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply
       && needs.resolve.result == 'success' && needs.validate.result == 'success' && needs.preview.result == 'success'
-      && (needs.gate-privatelink.result == 'success' || needs.gate-privatelink.result == 'skipped')
+      && (needs.gate-privatelink.result == 'success' || (needs.gate-privatelink.result == 'skipped' && needs.validate.outputs.needs-privatelink-gate != 'true'))
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
     environment: ${{ needs.resolve.outputs.environment }}-apply
     timeout-minutes: 120
@@ -383,8 +385,10 @@ jobs:
           exit 1
 
       # Before any Azure call. Fails closed when <env>-apply has no required reviewers (private repositories
-      # need GitHub Enterprise), allows other branches, was bypassed, or this is a re-run attempt. The step
-      # runner refuses every -Apply without this record.
+      # need GitHub Enterprise), lets administrators bypass them (or bypass is unreadable), allows other
+      # branches, was bypassed, has more than one approval in this run, or this is a re-run attempt. The gate
+      # approval is re-read from this run's review history (no second review). The step runner refuses every
+      # -Apply without this record.
       - name: Verify the apply approval (and the private link gate approval when it was needed)
         env:
           CCOF_APPROVAL_TOKEN: ${{ github.token }}
