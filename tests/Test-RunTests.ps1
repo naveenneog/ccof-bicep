@@ -1,9 +1,11 @@
 #Requires -Version 7.0
 # Offline checks for scripts/run-tests.ps1 (the `npm test` runner) with fixture suites: failure and exit-code
-# semantics, output order, per-suite TEMP and Azure CLI profile isolation, parallel and sequential throttles.
+# semantics, fail-closed empty or missing suites and Bicep, output order, per-suite TEMP and logged-out Azure CLI
+# profile isolation (Node included), parallel and sequential throttles.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $runner = Join-Path $repo 'scripts/run-tests.ps1'
+$pwshExe = (Get-Process -Id $PID).Path
 $pass = 0; $fail = 0
 function Check([string]$Name, [bool]$Ok) { if ($Ok) { $script:pass++; Write-Host "ok   $Name" } else { $script:fail++; Write-Host "FAIL $Name" } }
 
@@ -38,12 +40,13 @@ function New-Fixture([string]$Name, [hashtable]$Suites, [switch]$Bicep) {
     if ($Bicep) { Set-Content -LiteralPath (Join-Path $cli 'bin/bicep.exe') -Value 'fake'; Set-Content -LiteralPath (Join-Path $cli 'bin/bicep') -Value 'fake' }
     @{ tests = $tests; cli = $cli; scratch = (Join-Path $dir 'scratch') }
 }
-function Invoke-Runner($Fx, [string]$Throttle) {
+function Invoke-Runner($Fx, [string]$Throttle, [switch]$WithNode, [string]$Path = $env:PATH, [string]$TestsDir = $Fx.tests) {
     Get-ChildItem -LiteralPath $out -File | Remove-Item -Force
-    $saved = @{ t = $env:CCOF_TEST_THROTTLE; c = $env:AZURE_CONFIG_DIR; o = $env:CCOF_RT_OUT }
+    $saved = @{ t = $env:CCOF_TEST_THROTTLE; c = $env:AZURE_CONFIG_DIR; o = $env:CCOF_RT_OUT; p = $env:PATH }
     $env:CCOF_TEST_THROTTLE = $Throttle; $env:AZURE_CONFIG_DIR = $Fx.cli; $env:CCOF_RT_OUT = $out
-    try { $text = (& pwsh -NoProfile -File $runner -TestsDir $Fx.tests -ScratchDir $Fx.scratch *>&1 | Out-String); $code = $LASTEXITCODE }
-    finally { $env:CCOF_TEST_THROTTLE = $saved.t; $env:AZURE_CONFIG_DIR = $saved.c; $env:CCOF_RT_OUT = $saved.o }
+    $extra = @(if (-not $WithNode) { '-NoNodeSuites' })
+    try { $env:PATH = $Path; $text = (& $pwshExe -NoProfile -File $runner -TestsDir $TestsDir -ScratchDir $Fx.scratch @extra *>&1 | Out-String); $code = $LASTEXITCODE }
+    finally { $env:CCOF_TEST_THROTTLE = $saved.t; $env:AZURE_CONFIG_DIR = $saved.c; $env:CCOF_RT_OUT = $saved.o; $env:PATH = $saved.p }
     $rec = @{}; Get-ChildItem -LiteralPath $out -Filter '*.json' | ForEach-Object { $j = Get-Content -Raw $_.FullName | ConvertFrom-Json; $rec[$j.name] = $j }
     @{ code = $code; text = $text; rec = $rec }
 }
@@ -86,11 +89,34 @@ try {
     Check 'throttle 1 runs the suites one at a time' ($r.rec.Count -eq 2 -and -not (Test-Overlap $r.rec 'Test-A', 'Test-B'))
     Check 'a clean run removes its scratch' (-not (Get-ChildItem -LiteralPath $fx.scratch -Directory -Filter 'run-*'))
 
-    # 3. No Bicep binary in the operator profile: keep that profile and run one suite at a time, as before.
+    # 3. No Bicep binary in the operator profile or on PATH: stop before any suite, never fall back to that profile.
     $fx = New-Fixture 'nobicep' @{ 'Test-A' = $probe; 'Test-B' = $probe }
+    $r = Invoke-Runner $fx '4' -Path (Split-Path $pwshExe)
+    Check 'without a Bicep binary the run exits 1 with the reason' ($r.code -eq 1 -and $r.text -match 'no Bicep binary')
+    Check 'without a Bicep binary no suite runs against the operator profile' ($r.rec.Count -eq 0)
+
+    # 4. Nothing to run is a failure, not a green run.
+    $fx = New-Fixture 'empty' @{}
+    $r = Invoke-Runner $fx '4' -WithNode
+    Check 'an empty tests directory exits 1' ($r.code -eq 1 -and $r.text -match 'no Node suites')
     $r = Invoke-Runner $fx '4'
-    Check 'without a Bicep binary the suites use the operator profile' ($r.code -eq 0 -and @($r.rec.Values | Where-Object cli -ne $fx.cli).Count -eq 0)
-    Check 'without a Bicep binary the suites run one at a time' ($r.rec.Count -eq 2 -and -not (Test-Overlap $r.rec 'Test-A', 'Test-B'))
+    Check 'zero PowerShell suites exits 1 even without Node suites' ($r.code -eq 1 -and $r.text -match 'no PowerShell suites')
+    $r = Invoke-Runner $fx '4' -WithNode -TestsDir (Join-Path $base 'missing-dir')
+    Check 'a missing tests directory exits 1' ($r.code -eq 1 -and $r.text -match 'tests directory not found')
+    $fx = New-Fixture 'psonly' @{ 'Test-A' = $probe } -Bicep
+    $r = Invoke-Runner $fx '4' -WithNode
+    Check 'by default, missing Node suites fail the run' ($r.code -eq 1 -and $r.text -match 'no Node suites')
+
+    # 5. Node suites run, their failure counts, and they also get an isolated profile.
+    $nodeProbe = "import { test } from 'node:test'; import { writeFileSync } from 'node:fs'; import { join } from 'node:path';`ntest('probe', () => { writeFileSync(join(process.env.CCOF_RT_OUT!, 'node.json'), JSON.stringify({ name: 'node', cli: process.env.AZURE_CONFIG_DIR, temp: process.env.TEMP })); });`n"
+    $fx = New-Fixture 'node' @{ 'Test-A' = $probe } -Bicep
+    Set-Content -LiteralPath (Join-Path $fx.tests 'probe.test.ts') -Value $nodeProbe
+    $r = Invoke-Runner $fx '4' -WithNode
+    Check 'Node and PowerShell suites pass together' ($r.code -eq 0 -and $r.rec.ContainsKey('node') -and $r.rec.ContainsKey('Test-A'))
+    Check 'the Node suites use an isolated profile, not the operator profile' ($r.rec['node'].cli -and $r.rec['node'].cli -ne $fx.cli -and $r.rec['node'].cli -ne $r.rec['Test-A'].cli)
+    Set-Content -LiteralPath (Join-Path $fx.tests 'fail.test.ts') -Value "import { test } from 'node:test'; test('fails', () => { throw new Error('fixture'); });"
+    $r = Invoke-Runner $fx '4' -WithNode
+    Check 'a failing Node suite makes the run exit 1' ($r.code -eq 1 -and $r.text -match 'NODE SUITES FAILED')
 } finally {
     Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue
 }

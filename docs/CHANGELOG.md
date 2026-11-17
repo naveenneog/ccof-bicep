@@ -24,8 +24,10 @@
 - Windows runner: `Install-CcofRunner.ps1 register` writes the tool `PATH` to the runner `.env` (the Windows
   runner service does not read `.path`); new `print-env` command. Smoke workflow input `windows`.
 - `npm test` runs the PowerShell suites in parallel (`CCOF_TEST_THROTTLE`, default half the processors, at most
-  8), each with its own `TEMP` and token-free Azure CLI profile; full run about 280 s instead of about 1170 s on
-  16 logical processors. New `tests/Test-RunTests.ps1` covers exit codes, output order and isolation.
+  8), each with its own `TEMP`; every suite, Node included, gets its own logged-out Azure CLI profile (config and
+  Bicep binary, no tokens). The run fails before any suite when the test directory, the Node or PowerShell
+  suites, or a Bicep binary are missing. Full run about 280 s instead of about 1170 s on 16 logical processors.
+  New `tests/Test-RunTests.ps1` covers exit codes, empty runs, output order and isolation.
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
