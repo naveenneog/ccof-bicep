@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-18 - Nested test TEMP root
+
+- Nested test-runner fixtures receive the original TEMP root while each suite keeps its
+  separate TEMP. This avoids Windows Git path-length failures in nested fixture tests.
+
 ## 2026-11-18 - Isolated short TEMP for Node tests
 
 - Node suites now use their own short TEMP, outside a deep workspace. A failed Node run retains that

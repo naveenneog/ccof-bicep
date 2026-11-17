@@ -112,7 +112,7 @@ $done = @($jobs | ForEach-Object -ThrottleLimit $throttle -Parallel {
         try {
             $q = { param($v) "'" + ($v -replace "'", "''") + "'" }
             # The suite environment is set inside a wrapper process: $env is shared by all runspaces of this process.
-            $cmd = "`$env:TEMP = $(& $q $temp); `$env:TMP = `$env:TEMP; `$env:AZURE_CONFIG_DIR = $(& $q $job.cli); & $(& $q $pwshExe) -NoProfile -File $(& $q $job.suite.FullName) *> $(& $q $log); exit `$LASTEXITCODE"
+            $cmd = "`$env:CCOF_TEST_ROOT_TEMP = $(& $q $using:sysTemp); `$env:TEMP = $(& $q $temp); `$env:TMP = `$env:TEMP; `$env:AZURE_CONFIG_DIR = $(& $q $job.cli); & $(& $q $pwshExe) -NoProfile -File $(& $q $job.suite.FullName) *> $(& $q $log); exit `$LASTEXITCODE"
             $wrapper = & $pwshExe -NoProfile -NonInteractive -Command $cmd 2>&1 | Out-String
             $code = $LASTEXITCODE
             if ($wrapper.Trim()) { $failure = "runner wrapper output: $($wrapper.Trim())" }

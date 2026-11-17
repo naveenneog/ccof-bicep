@@ -1,5 +1,17 @@
 # Current work
 
+## CI/CD nested test TEMP root
+
+**Packet:** CICD-NESTED-TEST-TEMP (2026-11-18). A test-runner fixture executed inside the
+packet gate must retain the original TEMP root without sharing per-suite TEMP directories.
+RED: the normalized-path propagation assertion fails on the original runner (37 passed, 1
+failed). The candidate passes 38 checks directly and in a simulated nested TEMP. The packet
+gate passed in a detached worktree with the separately tested Foundry asset fix overlaid:
+23 passed, 2 warned, 1 skipped; `npm test` 580.4 seconds. It does not validate the unfinished
+runner security work or the runner branch alone. Council: Architect PASS, Coder PASS, QA
+PASS-WITH-NOTES (asset overlay), UX PASS-WITH-NOTES (test runner only), Security PASS for
+the test runner change; runner registration and startup remain separately blocked.
+
 ## CI/CD Node test TEMP isolation
 
 **Packet:** CICD-NODE-SHORT-TEMP (2026-11-18). Node suites share a short, run-owned TEMP distinct

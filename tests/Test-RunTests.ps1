@@ -10,7 +10,8 @@ $pwshExe = (Get-Process -Id $PID).Path
 $pass = 0; $fail = 0
 function Check([string]$Name, [bool]$Ok) { if ($Ok) { $script:pass++; Write-Host "ok   $Name" } else { $script:fail++; Write-Host "FAIL $Name" } }
 
-$base = Join-Path ([IO.Path]::GetTempPath()) ('rt-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
+$fixtureRoot = if ($env:CCOF_TEST_ROOT_TEMP) { $env:CCOF_TEST_ROOT_TEMP } else { [IO.Path]::GetTempPath() }
+$base = Join-Path $fixtureRoot ('rt-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
 $out = Join-Path $base 'out'
 # The runner's own TEMP: the run creates its per-suite TEMP directories under it. The decoy must survive every run.
 $sysTemp = Join-Path $base 's'
@@ -28,7 +29,7 @@ $file = Join-Path $env:TEMP 'same-name.txt'
 Set-Content -LiteralPath $file -Value $name
 Start-Sleep -Seconds 3
 $seen = (Get-Content -LiteralPath $file -Raw).Trim()
-[ordered]@{ name = $name; temp = $env:TEMP; cli = $env:AZURE_CONFIG_DIR; start = $start; end = [DateTime]::UtcNow.Ticks; seen = $seen;
+[ordered]@{ name = $name; temp = $env:TEMP; rootTemp = $env:CCOF_TEST_ROOT_TEMP; cli = $env:AZURE_CONFIG_DIR; start = $start; end = [DateTime]::UtcNow.Ticks; seen = $seen;
     files = @(if ($env:AZURE_CONFIG_DIR -and (Test-Path $env:AZURE_CONFIG_DIR)) { Get-ChildItem -LiteralPath $env:AZURE_CONFIG_DIR -Recurse -File -Name }) } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:CCOF_RT_OUT "$name.json")
 Write-Host "probe output from $name"
@@ -79,6 +80,7 @@ try {
     Check 'all three probe suites ran and passed' ($r.rec.Count -eq 3 -and $r.text -notmatch 'SUITE FAILED: Test-[ABC]\.ps1')
     $temps = @($r.rec.Values | ForEach-Object temp | Sort-Object -Unique)
     Check 'each suite has its own TEMP' ($temps.Count -eq 3 -and -not ($r.rec.Values | Where-Object { $_.seen -ne $_.name }))
+    Check 'nested runner fixtures receive the original TEMP root, not a per-suite TEMP' (@($r.rec.Values | Where-Object { -not $_.rootTemp -or $_.rootTemp.TrimEnd('\', '/') -ne $sysTemp.TrimEnd('\', '/') }).Count -eq 0)
     $clis = @($r.rec.Values | ForEach-Object cli | Sort-Object -Unique)
     Check 'each suite has its own Azure CLI profile, not the operator profile' ($clis.Count -eq 3 -and $clis -notcontains $fx.cli)
     $files = @($r.rec['Test-A'].files)
