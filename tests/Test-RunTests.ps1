@@ -128,6 +128,8 @@ try {
     Set-Content -LiteralPath (Join-Path $fx.tests 'fail.test.ts') -Value "import { test } from 'node:test'; test('fails', () => { throw new Error('fixture'); });"
     $r = Invoke-Runner $fx '4' -WithNode
     Check 'a failing Node suite makes the run exit 1' ($r.code -eq 1 -and $r.text -match 'NODE SUITES FAILED')
+    $nkept = [regex]::Match($r.text, 'NODE SUITES FAILED [^\r\n]*TEMP kept in (\S+)').Groups[1].Value
+    Check 'a failed Node run keeps its TEMP under the runner TEMP and reports where' ($nkept -and (Test-Path -LiteralPath $nkept) -and $nkept.StartsWith((Join-Path $sysTemp 'ccof-t-'), [StringComparison]::OrdinalIgnoreCase))
     Get-RunTemps | Remove-Item -Recurse -Force
 
     # 6. A long workspace, like the deep Git worktree of the packet gate: each suite's TEMP is a short directory owned
@@ -145,12 +147,33 @@ try {
         'if ($init -or $add) { exit 1 }'
     ) -join "`n"
     $fx = New-Fixture ('long-' + ('w' * [Math]::Max(1, 116 - $base.Length))) @{ 'Test-CicdStateLike' = $gitProbe } -Bicep
-    $r = Invoke-Runner $fx '2'
-    $g = $r.rec['Test-CicdStateLike']
+    # The Node suites share one TEMP: the same kind of nested repository from os.tmpdir(), with a work-tree path that
+    # passes 260 characters from the scratch directory but not from a short TEMP.
+    $nodeGit = @'
+import { test } from 'node:test'; import { writeFileSync, mkdtempSync, mkdirSync } from 'node:fs'; import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os'; import { spawnSync } from 'node:child_process';
+test('git repository in tmpdir', () => {
+  const t = tmpdir(); const repo = join(mkdtempSync(join(t, 'ccof-cicd-state-0123456789abcdef0123456789abcdef-')), 'a');
+  const rel = 'deploy/prod/.dr-state/' + 'r'.repeat(40) + '/' + 's'.repeat(40) + '/frontdoor-state.json';
+  mkdirSync(dirname(join(repo, rel)), { recursive: true }); writeFileSync(join(repo, rel), '{}');
+  const init = spawnSync('git', ['-c', 'init.defaultBranch=main', 'init', '-q', repo]).status;
+  const add = spawnSync('git', ['-C', repo, 'add', '--', rel]).status;
+  writeFileSync(join(process.env.CCOF_RT_OUT!, 'nodegit.json'), JSON.stringify({ name: 'nodegit', temp: t, init, add, path: join(repo, rel).length }));
+  if (init !== 0 || add !== 0) throw new Error('git failed in tmpdir');
+});
+'@
+    Set-Content -LiteralPath (Join-Path $fx.tests 'nodegit.test.ts') -Value $nodeGit
+    $r = Invoke-Runner $fx '2' -WithNode
+    $g = $r.rec['Test-CicdStateLike']; $ng = $r.rec['nodegit']
     Check "the long-workspace fixture is as deep as the gate worktree (scratch: $($fx.scratch.Length) characters)" ($fx.scratch.Length -ge 124)
     Check 'a suite that creates nested Git repositories in TEMP passes from a long workspace' ($r.code -eq 0 -and $g -and $g.init -eq 0 -and $g.add -eq 0)
     Check "the suite TEMP is short ($($g.temp.Length) characters), under the runner's TEMP, outside the scratch directory" ($g -and $g.temp.Length -le 120 -and
         $g.temp.StartsWith((Join-Path $sysTemp 'ccof-t-'), [StringComparison]::OrdinalIgnoreCase) -and -not $g.temp.StartsWith($fx.scratch, [StringComparison]::OrdinalIgnoreCase))
+    Check "the Node suites also get a short TEMP of their own ($($ng.temp.Length) characters), outside the scratch directory" ($ng -and $ng.temp.Length -le 120 -and $ng.temp -ne $g.temp -and
+        $ng.temp.StartsWith((Join-Path $sysTemp 'ccof-t-'), [StringComparison]::OrdinalIgnoreCase) -and -not $ng.temp.StartsWith($fx.scratch, [StringComparison]::OrdinalIgnoreCase))
+    Check "a Node suite that creates a nested Git repository in os.tmpdir() passes from a long workspace (scratch + work tree would be $($fx.scratch.Length + $ng.path - $ng.temp.Length) characters)" (
+        $ng -and $ng.init -eq 0 -and $ng.add -eq 0 -and ($fx.scratch.Length + $ng.path - $ng.temp.Length) -gt 260)
+    Check 'the Node TEMP of a passing run is removed' ($ng -and -not (Test-Path -LiteralPath $ng.temp))
     Check 'the decoy directory next to the run TEMP is untouched' ((Test-Path -LiteralPath (Join-Path $decoy 'keep.txt')) -and (Get-RunTemps).Count -eq 0)
 
     # 7. A runner TEMP so long that a suite TEMP would exceed the budget: on Windows, stop before any suite and create

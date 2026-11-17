@@ -13,7 +13,8 @@ at most 8; 1 runs them one at a time), each with its own TEMP/TMP. Output is pri
 after all suites end. The exit code is 1 when any suite exits non-zero or its result cannot be read. A failed
 suite's files are kept for inspection.
 
-Each suite's TEMP is a short directory (ccof-t-<8 hex>\<n>) that the run creates under the runner's own TEMP, not
+Each suite's TEMP is a short directory (ccof-t-<8 hex>\<n>; 0 for the Node suites, which share one node --test run)
+that the run creates under the runner's own TEMP, not
 under the scratch directory, so the suite path depth does not grow with the workspace path: Git for Windows fails on
 paths over 260 characters, and some suites build nested Git repositories in TEMP. On Windows the run exits 1 before
 any suite if that TEMP would exceed 120 characters. The run deletes only the directory it created, never an existing
@@ -71,18 +72,22 @@ function New-SuiteProfile([string]$Dir) {
 }
 
 $result = 0
+$nodeFailed = $false
 if ($nodeSuites.Count) {
     Write-Host '=== exported Node integration and unit suites ==='
     $nodeDir = Join-Path $run 'node'
-    $saved = $env:AZURE_CONFIG_DIR
+    $nodeTemp = Join-Path $tempRoot '0'
+    $saved = @{ cli = $env:AZURE_CONFIG_DIR; temp = $env:TEMP; tmp = $env:TMP; tmpdir = $env:TMPDIR }
     try {
         $env:AZURE_CONFIG_DIR = New-SuiteProfile $nodeDir
+        New-Item -ItemType Directory -Path $nodeTemp -ErrorAction Stop | Out-Null
+        $env:TEMP = $nodeTemp; $env:TMP = $nodeTemp; $env:TMPDIR = $nodeTemp
         node --test (Join-Path $TestsDir '*.test.ts')
         $nodeCode = $LASTEXITCODE
     } catch { Write-Host "$_"; $nodeCode = $null }
-    finally { $env:AZURE_CONFIG_DIR = $saved }
-    if ($nodeCode -isnot [int] -or $nodeCode -ne 0) { $result = 1; Write-Host "NODE SUITES FAILED (exit code $nodeCode)" }
-    else { Remove-Item -LiteralPath $nodeDir -Recurse -Force -ErrorAction SilentlyContinue }
+    finally { $env:AZURE_CONFIG_DIR = $saved.cli; $env:TEMP = $saved.temp; $env:TMP = $saved.tmp; $env:TMPDIR = $saved.tmpdir }
+    if ($nodeCode -isnot [int] -or $nodeCode -ne 0) { $result = 1; $nodeFailed = $true; Write-Host "NODE SUITES FAILED (exit code $nodeCode); files kept in $nodeDir, TEMP kept in $nodeTemp" }
+    else { Remove-Item -LiteralPath $nodeDir, $nodeTemp -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 $throttle = 0
@@ -133,6 +138,6 @@ foreach ($s in $suites) {
 }
 if ($failed.Count) { $result = 1 }
 if (-not $result) { Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue }
-if (-not $failed.Count) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+if (-not $failed.Count -and -not $nodeFailed) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 Write-Host "`n$($suites.Count) PowerShell suite(s) in $([int]$clock.Elapsed.TotalSeconds)s, up to $throttle at a time; failed: $(if ($failed.Count) { $failed -join ', ' } else { 'none' })"
 exit $result

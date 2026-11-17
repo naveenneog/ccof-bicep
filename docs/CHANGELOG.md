@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-18 - Isolated short TEMP for Node tests
+
+- Node suites now use their own short TEMP, outside a deep workspace. A failed Node run retains that
+  TEMP for diagnosis; successful runs remove it without touching other directories.
+
 ## 2026-11-17 - Self-hosted CI/CD runners with managed identities
 
 - New add-on [CICD-SETUP.md](runbooks/CICD-SETUP.md): `infra/cicd/` (two user-assigned identities, optional

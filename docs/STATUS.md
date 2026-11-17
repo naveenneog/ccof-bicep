@@ -1,5 +1,13 @@
 # Current work
 
+## CI/CD Node test TEMP isolation
+
+**Packet:** CICD-NODE-SHORT-TEMP (2026-11-18). Node suites share a short, run-owned TEMP distinct
+from the PowerShell suite TEMPs, even in a deep Windows workspace; failed runs retain it and successful
+runs clean it. RED against `aca8df4`: 5 Node-isolation checks failed. GREEN on the isolated harness:
+`tests/Test-RunTests.ps1` 37/37. Packet gate pending. This does not resolve the separately blocked
+runner hook and registration work.
+
 ## Standby Cosmos read region (decision only)
 
 **Packet:** DR-COSMOS-READ-REGION (2026-11-07), lab finding on 94aeafa: resolver B reads Cosmos from
