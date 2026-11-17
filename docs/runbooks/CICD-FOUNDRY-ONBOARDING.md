@@ -185,8 +185,10 @@ come from configuration fields; the configuration is the source of truth, and a 
 overwritten.
 
 Without a previous Stage 5 record (`.staged-state`), the guard cannot know what Stage 5 last wrote. It
-then treats every live setting that is not a Stage 5 template name, and every known operator setting, as a
-removal on all four apps, so the apply refuses until each is configured or acknowledged.
+then counts as a removal every live setting that the Stage 5 template block of that app does not always
+write, unless the configuration makes Stage 5 write it now (for example
+`RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS` only with `reconciler.ledgerGatewayResourceIds`), and every known
+operator setting. The apply refuses until each is configured or acknowledged.
 
 ## Smoke test
 

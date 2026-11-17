@@ -15,7 +15,8 @@
 # whose live value differs would change. Preview warns; apply refuses unless the field is set or the
 # change is acknowledged in stage5.allowChangedSettings. Carried settings keep their exact live value.
 # Without a Stage 5 record the guard cannot know which names the last apply left, so every live name
-# that the Stage 5 templates never write counts as a drop (fail closed). Setting values are read into
+# that the app's Stage 5 template block does not always write (and the configuration does not make it
+# write now) counts as a drop (fail closed). Setting values are read into
 # memory only; evidence and messages hold names, except the non-secret flags of the defaulted table.
 
 # Admin settings that code reads and Stage 5 does not write: the fallback when no Stage 5 record holds
@@ -119,17 +120,50 @@ function Get-StgStage5CarriedSettings {
     return $carried
 }
 
-# Setting names the Stage 5 templates can write: object keys and quoted upper-case names in the two
-# templates. Used only when no Stage 5 record exists; a live name outside this set would be dropped.
+# Settings that the Stage 5 templates write only under a condition on the configuration
+# (infra/quickstart/modules/app-settings.bicep, infra/staged/stage5-config.bicep). Without a Stage 5 record
+# such a live setting counts as written only when its condition holds now.
+$script:StgStage5ConditionalSettings = @(
+    @{ app = 'resolver'; keys = @('RESOLVER_BUDGET_STATE_GRACE_SECONDS', 'RESOLVER_BUDGET_STATE_HARD_LIMIT_SECONDS'); when = { param($c) $c.resolver -is [Collections.IDictionary] -and "$($c.resolver.budgetEnforcement)" -ceq 'budget-state' } }
+    @{ app = 'reconciler'; keys = @('RECONCILER_SOFT_LIMIT_PERCENT', 'RECONCILER_PACING_WINDOW_MINUTES'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('softLimitPercent') -and $c.reconciler.Contains('pacingWindowMinutes') } }
+    @{ app = 'reconciler'; keys = @('RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('ledgerGatewayResourceIds') } }
+    @{ app = 'reconciler'; keys = @('RECONCILER_CONTINUITY_GATE'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('continuityGate') } }
+    @{ app = 'reconciler'; keys = @('RECONCILER_LEDGER_COVERAGE_START_AT'); when = { param($c) $c.reconciler -is [Collections.IDictionary] -and $c.reconciler.Contains('ledgerCoverageStartAt') } }
+    @{ app = 'sync'; keys = @('SYNC_LIMITS_CONTAINER'); when = { param($c, $adminEnabled) $adminEnabled } }
+    @{ app = 'admin'; keys = @('ADMIN_GATEWAY_RESOURCE_IDS'); when = { param($c) $c.admin -is [Collections.IDictionary] -and @($c.admin.gatewayResourceIds | Where-Object { $_ }).Count -gt 0 } })
+
+# Setting names each Stage 5 template block writes whatever the configuration says: the object keys of
+# resolverSettings, syncSettings and reconcilerSettings (app-settings.bicep) and of the admin properties
+# object (stage5-config.bicep), minus the conditional names above. Used only when no Stage 5 record exists.
 function Get-StgStage5TemplateSettingNames {
     $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($rel in 'infra/staged/stage5-config.bicep', 'infra/quickstart/modules/app-settings.bicep') {
-        $text = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
-        foreach ($m in [regex]::Matches($text, "(?m)^\s*'?([A-Za-z_][A-Za-z0-9_.]*)'?\s*:")) { $null = $names.Add($m.Groups[1].Value) }
-        foreach ($m in [regex]::Matches($text, "'([A-Z][A-Z0-9_]{3,})'")) { $null = $names.Add($m.Groups[1].Value) }
+    $quick = Get-Content -LiteralPath (Join-Path $root 'infra/quickstart/modules/app-settings.bicep') -Raw
+    $stage5 = Get-Content -LiteralPath (Join-Path $root 'infra/staged/stage5-config.bicep') -Raw
+    $blocks = @{
+        resolver = [regex]::Match($quick, '(?ms)^var resolverSettings = \{(.*?)^\}').Groups[1].Value
+        sync = [regex]::Match($quick, '(?ms)^var syncSettings = \{(.*?)^\}').Groups[1].Value
+        reconciler = [regex]::Match($quick, '(?ms)^var reconcilerSettings = \{(.*?)^\}').Groups[1].Value
+        admin = [regex]::Match($stage5, '(?ms)^resource adminSettings .*?adminOptionalFlags, \{(.*?)^  \}\)').Groups[1].Value
+    }
+    $conditional = @($script:StgStage5ConditionalSettings | ForEach-Object { $_.keys })
+    $names = @{}
+    foreach ($app in $blocks.Keys) {
+        if (-not $blocks[$app]) { throw "stage5_settings_unreadable: the $app settings block was not found in the Stage 5 templates; the guard cannot tell which settings Stage 5 writes. Nothing was changed." }
+        $set = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($m in [regex]::Matches($blocks[$app], "(?m)^\s*'?([A-Za-z_][A-Za-z0-9_.]*)'?\s*:")) { if ($conditional -cnotcontains $m.Groups[1].Value) { $null = $set.Add($m.Groups[1].Value) } }
+        $names[$app] = $set
     }
     return $names
+}
+
+# Conditional names that the current configuration makes Stage 5 write, per app.
+function Get-StgStage5ConditionalWritten {
+    param($Cfg, [bool]$AdminEnabled)
+    $out = @{}
+    foreach ($c in $script:StgStage5ConditionalSettings) {
+        if ($Cfg -is [Collections.IDictionary] -and (& $c.when $Cfg $AdminEnabled)) { $out[$c.app] = @($out[$c.app]) + @($c.keys) | Where-Object { $_ } }
+    }
+    return $out
 }
 
 function Get-StgStage5SettingDrops {
@@ -140,9 +174,12 @@ function Get-StgStage5SettingDrops {
         [Collections.IDictionary]$Previous,
         [hashtable]$Configured = @{},
         [Parameter(Mandatory)] [scriptblock]$ListSettings,
-        [hashtable]$Live
+        [hashtable]$Live,
+        # Without a record: the configuration and admin switch decide the conditional names.
+        $Cfg,
+        [bool]$AdminEnabled
     )
-    $templateNames = $null
+    $templateNames = $null; $conditionalWritten = $null
     foreach ($k in @($Apps.Keys | Sort-Object)) {
         $functionApp = [string]$Apps[$k].functionApp
         if (-not $functionApp) { continue }
@@ -154,8 +191,9 @@ function Get-StgStage5SettingDrops {
             if ($written -ccontains $key) { continue }
             $drops = if ($null -ne $recorded) { $recorded -cnotcontains $key }
                      else {
-                         if ($null -eq $templateNames) { $templateNames = Get-StgStage5TemplateSettingNames }
-                         ($k -ceq 'admin' -and [bool]@($script:StgOperatorAdminSettings | Where-Object { $key -clike $_ }).Count) -or -not $templateNames.Contains($key)
+                         if ($null -eq $templateNames) { $templateNames = Get-StgStage5TemplateSettingNames; $conditionalWritten = Get-StgStage5ConditionalWritten -Cfg $Cfg -AdminEnabled $AdminEnabled }
+                         ($k -ceq 'admin' -and [bool]@($script:StgOperatorAdminSettings | Where-Object { $key -clike $_ }).Count) -or
+                         -not (($templateNames.Contains($k) -and $templateNames[$k].Contains($key)) -or @($conditionalWritten[$k]) -ccontains $key)
                      }
             if ($drops) { [ordered]@{ app = $k; functionApp = $functionApp; key = $key; hint = $script:StgSettingConfigHint[$key] } }
         }
@@ -207,7 +245,7 @@ function Assert-StgStage5SettingsKept {
     $configured = Get-StgStage5ConfiguredOptionalSettings -Admin $Admin
     foreach ($k in $Carried.Keys) { $configured[$k] = @($configured[$k]) + @($Carried[$k].Keys) }
     $live = @{}
-    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured $configured -ListSettings $ListSettings -Live $live)
+    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured $configured -ListSettings $ListSettings -Live $live -Cfg $Cfg -AdminEnabled ([bool]$Admin.enabled))
     $changes = @(Get-StgStage5SettingChanges -Cfg $Cfg -Apps $apps -Live $live -AdminEnabled ([bool]$Admin.enabled))
     $blocking = @($drops | Where-Object { -not (Test-StgSettingDropAllowed $Cfg $_) })
     $blockingChanges = @($changes | Where-Object { -not (Test-StgSettingDropAllowed $Cfg $_ 'allowChangedSettings') })

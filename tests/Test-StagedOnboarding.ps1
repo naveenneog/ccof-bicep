@@ -165,6 +165,22 @@ Check 'no record: acknowledged by key name' (-not $r.error -and $r.admin)
 $script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('COSMOS_ENDPOINT') }
 $r = Invoke-S5 (New-S5Cfg) -Apply
 Check 'no record: a deployment with only template names applies (first Stage 5 after an upgrade)' (-not $r.error -and $r.admin)
+# No record: names that a template writes only under a configuration condition, or only on another app, are drops.
+$stage1Apps = $script:stage1.names.apps
+$script:stage1 = @{ names = @{ apps = [ordered]@{ admin = @{ functionApp = 'fx-admin' }; resolver = @{ functionApp = 'fx-resolver' }; sync = @{ functionApp = 'fx-sync' }; reconciler = @{ functionApp = 'fx-reconciler' } } } }
+$script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('COSMOS_ENDPOINT', 'RESOLVER_BUDGET_STATE_GRACE_SECONDS'); 'fx-sync' = @('SYNC_SCHEDULE', 'SYNC_LIMITS_CONTAINER', 'RESOLVER_BUDGET_ENFORCEMENT')
+    'fx-reconciler' = @('RECONCILER_SCHEDULE', 'RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS', 'RECONCILER_CONTINUITY_GATE', 'RECONCILER_SOFT_LIMIT_PERCENT', 'RECONCILER_PACING_WINDOW_MINUTES') }
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'no record: conditional names are drops when the configuration does not write them' ($r.error -match 'reconciler:RECONCILER_LEDGER_GATEWAY_RESOURCE_IDS' -and $r.error -match 'reconciler:RECONCILER_CONTINUITY_GATE' -and $r.error -match 'reconciler:RECONCILER_SOFT_LIMIT_PERCENT' -and $r.error -match 'resolver:RESOLVER_BUDGET_STATE_GRACE_SECONDS' -and -not $r.admin)
+Check 'no record: a name that only another app writes is a drop' ($r.error -match 'sync:RESOLVER_BUDGET_ENFORCEMENT' -and $r.error -notmatch 'SYNC_SCHEDULE|RECONCILER_SCHEDULE|SYNC_LIMITS_CONTAINER')
+$script:live['fx-sync'] = @('SYNC_SCHEDULE', 'SYNC_LIMITS_CONTAINER')
+$cond = New-S5Cfg; $cond.resolver = @{ budgetEnforcement = 'budget-state' }; $cond.reconciler = @{ ledgerGatewayResourceIds = @('/a', '/b'); continuityGate = 'coverage'; softLimitPercent = 80; pacingWindowMinutes = 60 }
+$r = Invoke-S5 $cond -Apply
+Check 'no record: conditional names are kept when the configuration writes them' (-not $r.error -and $r.admin)
+$cond.reconciler.Remove('pacingWindowMinutes')
+$r = Invoke-S5 $cond -Apply
+Check 'no record: the pacing pair needs both fields' ($r.error -match 'reconciler:RECONCILER_SOFT_LIMIT_PERCENT' -and $r.error -match 'reconciler:RECONCILER_PACING_WINDOW_MINUTES' -and $r.error -notmatch 'LEDGER_GATEWAY|CONTINUITY|BUDGET_STATE')
+$script:stage1 = @{ names = @{ apps = $stage1Apps } }
 # Values: a defaulted setting whose live value differs would change silently (ADMIN_V3_ENABLED = admin.v3Enabled ?? true).
 $script:record = @{ outputs = @{ verify = @{ settings = @{ admin = $adminBase; resolver = @('A') } } } }
 $script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('A') }
@@ -270,4 +286,4 @@ Check 'Backends phase clears prior evidence only after its scope and writer chec
 Check 'Backends phase does not touch admin redirects, network or code' ($body -and $body -notmatch 'Invoke-DrAdminRedirects|Invoke-Stage6|New-StgQsContext')
 
 Write-Host "Test-StagedOnboarding: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 90) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 94) { exit 1 }
