@@ -154,7 +154,13 @@ if ($Child) {
         }
         if ($cmd -match '^functionapp config show ') { return '{"ftpsState":"Disabled"}' }
         if ($cmd -match '^functionapp config appsettings list ') {
-            $settings = @('AzureWebJobsStorage__accountName', 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'COSMOS_ENDPOINT', 'AzureWebJobs.syncEntitlement.Disabled', 'AzureWebJobs.reconcileBudgets.Disabled')
+            # Each writer switch lives only on its own app, as on the deployed lab standby (sync: syncEntitlement and
+            # registrySeed; reconciler: reconcileBudgets). mock.foreignWriterKeys puts both writer switches on every app.
+            $name = & $arg '--name'
+            $settings = @('AzureWebJobsStorage__accountName', 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'COSMOS_ENDPOINT', 'COSMOS_DATABASE')
+            if ($mock.foreignWriterKeys) { $settings += 'AzureWebJobs.syncEntitlement.Disabled', 'AzureWebJobs.reconcileBudgets.Disabled' }
+            elseif ($name -match '-sync$') { $settings += 'AzureWebJobs.syncEntitlement.Disabled', 'AzureWebJobs.registrySeed.Disabled' }
+            elseif ($name -match '-reconciler$') { $settings += 'AzureWebJobs.reconcileBudgets.Disabled' }
             return (ConvertTo-Json -InputObject @($settings | ForEach-Object { @{ name = $_; value = $(if ($_ -like '*.Disabled') { 'true' } else { 'fixture' }) } }) -Compress)
         }
         if ($cmd -match '^rest --method (\S+) ') {
@@ -289,6 +295,15 @@ try {
     $ledgerIds = @(if ($bCfg.reconciler) { $bCfg.reconciler.ledgerGatewayResourceIds })
     Check 'standby reads both gateways, primary from apim.existing' ($ledgerIds.Count -eq 2 -and $ledgerIds -icontains $existingApimId -and @($ledgerIds | Where-Object { $_ -match '-b-apim$' }).Count -eq 1)
     Check 'Grants verifies the Foundry grant in the backend subscription' (@($grants.calls | Where-Object { $_ -match "/subscriptions/$($primary.backends[0].subscriptionId)/.*/roleAssignments" }).Count -ge 1)
+
+    $setMock = { param($key, $value) $m = Get-Content -LiteralPath (Join-Path $scratch 'mock.json') -Raw | ConvertFrom-Json -AsHashtable; $m[$key] = $value; $m | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'mock.json') }
+    # Negative control: a writer switch on an app Stage 5 does not write it to would be removed by the settings
+    # rewrite; Config must refuse before any deployment and record nothing.
+    & $setMock 'foreignWriterKeys' $true
+    $foreign = Invoke-Shape 'Config'
+    & $setMock 'foreignWriterKeys' $false
+    Check 'Config refuses to drop a writer switch on another app' ($foreign.code -ne 0 -and $foreign.output -match 'resolver:AzureWebJobs\.syncEntitlement\.Disabled' -and $foreign.output -match 'Nothing was changed') "(exit $($foreign.code)): $(($foreign.output -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -Last 3) -join ' | ')"
+    Check 'refused Config deploys nothing and records no phase' (-not @($foreign.calls | Where-Object { $_ -match '^deployment group create |appsettings (set|delete)|^rest --method (put|patch|post|delete) ' }).Count -and -not ((Get-Content -LiteralPath (Join-Path $standbyDir 'standby.state.json') -Raw | ConvertFrom-Json -AsHashtable -Depth 100).phases.Contains('Config')))
 
     $config = Invoke-Shape 'Config'
     Check-Run 'Config apply' $config
