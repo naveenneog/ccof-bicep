@@ -23,6 +23,7 @@ param(
     [string]$BaseConfigPath,
     [switch]$RequirePrivateLink,
     [string]$ApplyPrincipalId,
+    [switch]$Offline,
     [switch]$PrintOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,7 @@ $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Import-Module (Join-Path $PSScriptRoot 'CicdOnboarding.psm1') -Force
 try {
     $cmd = Get-CicdOnboardingCommand -Step $Step -Environment $Environment -RepoRoot $repo -Apply:$Apply -BackendIds $BackendIds `
-        -BaseConfigPath $BaseConfigPath -RequirePrivateLink:$RequirePrivateLink -ApplyPrincipalId $ApplyPrincipalId
+        -BaseConfigPath $BaseConfigPath -RequirePrivateLink:$RequirePrivateLink -ApplyPrincipalId $ApplyPrincipalId -Offline:$Offline
 } catch { [Console]::Error.WriteLine("refused: $($_.Exception.Message)"); exit 2 }
 if ($env:GITHUB_ACTIONS -eq 'true' -and $cmd.Mode -ne 'preview' -and $env:CCOF_RUNNER_ROLE -ne 'apply') {
     [Console]::Error.WriteLine("refused: runner_role_mismatch: $Step apply needs the ccof-apply runner (CCOF_RUNNER_ROLE=apply), found '$($env:CCOF_RUNNER_ROLE)'")

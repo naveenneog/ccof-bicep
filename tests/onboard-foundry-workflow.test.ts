@@ -26,23 +26,27 @@ test("onboard-foundry signs in with the runner managed identity only", () => {
   }
 });
 
-test("pull requests stay on the read-only preview runner and never write", () => {
+test("pull request code never runs on a self-hosted runner or gets a managed identity", () => {
   const text = workflow();
-  const validate = job(text, "validate");
-  assert.match(validate, /runs-on: \[self-hosted, ccof-vnet, ccof-preview\]/);
-  assert.match(validate, /expected-role: preview/);
-  assert.match(validate, /persist-credentials: false/);
-  assert.doesNotMatch(validate, /-Apply|Action Save|\n {4}environment:/);
-  for (const name of ["preview", "apply"]) {
+  const pr = job(text, "pr-check");
+  assert.match(pr, /if: github\.event_name == 'pull_request'\n {4}runs-on: ubuntu-latest\n/);
+  assert.match(pr, /persist-credentials: false/);
+  assert.match(pr, /-Step validate -BaseConfigPath \$base -Offline/);
+  assert.doesNotMatch(pr, /self-hosted|azure-login-mi|Sync-CicdState|environment:|-Apply|az /);
+  const jobs = [...text.slice(text.indexOf("\njobs:\n")).matchAll(/\n {2}([a-z][a-z-]*):\n/g)].map((m) => m[1]);
+  assert.deepEqual(jobs, ["pr-check", "validate", "preview", "gate-privatelink", "apply"]);
+  for (const name of jobs.filter((n) => n !== "pr-check")) {
     const body = job(text, name);
-    assert.match(body, /runs-on: \[self-hosted, ccof-vnet, ccof-apply\]/);
-    assert.match(body, /github\.ref == 'refs\/heads\/main'/, `${name} runs only from main`);
+    assert.match(body, /runs-on: \[self-hosted, ccof-vnet, ccof-(preview|apply)\]/, `${name} is self-hosted`);
+    assert.match(body, /\n {4}if: (?:>-\n {6})?.*github\.ref == 'refs\/heads\/main'/, `${name} runs only from main`);
+    assert.match(body, /\n {4}environment: \$\{\{ [a-z.-]+ \}\}-(preview|gate-privatelink|apply)\n/, `${name} runs in a main-only GitHub environment`);
+    assert.doesNotMatch(body, /pull_request'(?! \|\|)/, `${name} is not a pull request job`);
   }
-  assert.match(job(text, "preview"), /if: github\.event_name == 'workflow_dispatch'/);
+  assert.match(job(text, "validate"), /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\n {4}runs-on: \[self-hosted, ccof-vnet, ccof-preview\]/);
+  assert.match(job(text, "preview"), /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\n {4}runs-on: \[self-hosted, ccof-vnet, ccof-apply\]/);
   assert.match(job(text, "gate-privatelink"), /runs-on: \[self-hosted, ccof-vnet, ccof-preview\]/);
   assert.equal(text.match(/ccof-apply\]/g)?.length, 2, "only preview and apply use the apply runner");
 });
-
 test("every apply-runner job runs inside its GitHub environment and only apply saves state", () => {
   const text = workflow();
   assert.match(job(text, "preview"), /environment: \$\{\{ needs\.validate\.outputs\.environment \}\}-preview/);
@@ -54,6 +58,16 @@ test("every apply-runner job runs inside its GitHub environment and only apply s
   assert.match(apply, /needs\.gate-privatelink\.result == 'success' \|\| needs\.gate-privatelink\.result == 'skipped'/);
   assert.match(apply, /if: failure\(\)\n {8}run: \|\n {10}Import-Module \.\/scripts\/cicd\/CicdOnboarding\.psm1/);
   assert.equal(text.match(/-Action Save/g)?.length, 1, "previews and the gate never save state");
+  // Jobs without stored checkout credentials pass the job token; the apply job (which pushes state) must not
+  // add it on top of the stored credentials: two Authorization headers are rejected.
+  for (const name of ["validate", "preview", "gate-privatelink", "apply"]) {
+    const body = job(text, name);
+    const restore = body.match(/\n( {6}- name: Restore driver state[^\n]*\n(?: {8}[^\n]*\n)+)/)?.[1] ?? "";
+    assert.match(restore, /Sync-CicdState\.ps1 -Action Restore/, `${name} restores state`);
+    const stored = !/persist-credentials: false/.test(body);
+    assert.equal(/CCOF_STATE_TOKEN: \$\{\{ github\.token \}\}/.test(restore), !stored, `${name}: token only without stored credentials`);
+    assert.equal(stored, name === "apply", `${name}: only apply keeps checkout credentials`);
+  }
   assert.match(text, /group: .*format\('ccof-env-\{0\}', inputs\.environment\)/);
   assert.match(text, /cancel-in-progress: false/);
 });

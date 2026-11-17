@@ -25,6 +25,8 @@ param resolver object
 param sync object
 @description('Cosmos container with the admin console\'s removal-limit override (adminConfig); empty when the admin app is not deployed.')
 param syncLimitsContainer string = ''
+@description('Sync settings owned by later steps that a settings rewrite keeps (Stage 5: AzureWebJobs.snapshotApply.Disabled after a delegated snapshot). Empty by default.')
+param syncCarriedSettings object = {}
 param reconciler object
 param budgetState object
 
@@ -161,7 +163,7 @@ resource resolverAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: syncSite
   name: 'appsettings'
-  properties: empty(syncLimitsContainer) ? syncSettings : union(syncSettings, { SYNC_LIMITS_CONTAINER: syncLimitsContainer })
+  properties: union(empty(syncLimitsContainer) ? syncSettings : union(syncSettings, { SYNC_LIMITS_CONTAINER: syncLimitsContainer }), syncCarriedSettings)
 }
 
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {

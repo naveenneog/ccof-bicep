@@ -251,8 +251,8 @@ For each full-setup admin integration, the post-Stage-5 settings handoff also re
 
 | Setting | Value |
 | --- | --- |
-| `ADMIN_GRAPH_ENABLED` | `true`, after `GroupMember.Read.All` consent |
-| `ADMIN_USER_NAMES_ENABLED` | `true`, after `User.Read.All` consent |
+| `ADMIN_GRAPH_ENABLED` | `true`, after `GroupMember.Read.All` consent; set `admin.graphEnabled: true` in the staged JSON so Stage 5 writes it |
+| `ADMIN_USER_NAMES_ENABLED` | `true`, after `User.Read.All` consent; set `admin.userNamesEnabled: true` so Stage 5 writes it |
 | `ADMIN_RESOURCE_IDS` | Comma-separated APIM/Foundry ARM IDs approved for inventory |
 | `ADMIN_DISCOVERY_SCOPES` | Approved subscription/RG ARM scopes for inventory discovery, where used |
 | `ADMIN_CONFIG_CONTAINER` | `adminConfig`; Stage 5 sets this |
@@ -331,8 +331,10 @@ per checkout; concurrent dependency restores/publishing are refused.
 
 1. The admin identity's Graph grants and inventory Reader access are read back.
    `ADMIN_GRAPH_ENABLED` and `ADMIN_USER_NAMES_ENABLED` are set on the admin app.
-   Stage 5 writes a **complete settings set** and currently does not preserve these manually
-   added feature switches; reapplication includes restoring the approved switches afterwards.
+   Stage 5 writes a **complete settings set**: record the switches as `admin.graphEnabled` and
+   `admin.userNamesEnabled` in the staged JSON. Stage 5 refuses an apply that would remove a live
+   setting it does not write (`stage5_settings_would_drop`,
+   [CICD-FOUNDRY-ONBOARDING.md](CICD-FOUNDRY-ONBOARDING.md#stage-5-and-live-settings)).
 2. Application-permission sync is tested with its required Graph roles and actual group reads.
    `syncTimerEnabled` then becomes `true` in the private form and Stage 5 is reapplied.
    `reconciler.timerEnabled` is enabled only when its ledger/rate-card/budget prerequisites pass.

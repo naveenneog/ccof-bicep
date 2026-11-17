@@ -178,7 +178,8 @@ function Get-CicdOnboardingCommand {
         [string[]]$BackendIds = @(),
         [string]$BaseConfigPath,
         [switch]$RequirePrivateLink,
-        [string]$ApplyPrincipalId
+        [string]$ApplyPrincipalId,
+        [switch]$Offline
     )
     if ($Environment -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$Environment'" }
     $ids = @($BackendIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -189,11 +190,14 @@ function Get-CicdOnboardingCommand {
     $mode = if ($Apply) { 'apply' } else { 'preview' }
     if ($Apply -and $Step -cnotin 'stage3', 'stage5', 'stage6', 'standby-backends', 'descriptor') { throw "$Step is read-only; -Apply is refused" }
     if ($Step -cin 'standby-backends', 'descriptor', 'smoke' -and -not $ids.Count) { throw "$Step needs backend ids" }
+    if ($Offline -and $Step -cne 'validate') { throw 'only validate runs offline' }
     switch ($Step) {
         'validate' {
             if (-not $BaseConfigPath -and -not $ids.Count) { throw 'validate needs a base configuration or backend ids' }
             $file = Join-Path $RepoRoot 'scripts/cicd/Test-CicdBackendOnboarding.ps1'
-            $a = @('-ConfigPath', $cfg, '-ResolveDns', '-EvidencePath', (Join-Path $evidence 'onboard-validate.json'))
+            # Offline: pull request checks on a GitHub-hosted runner (no Azure, no driver state, no private DNS).
+            $a = @('-ConfigPath', $cfg, '-EvidencePath', (Join-Path $evidence 'onboard-validate.json'))
+            $a += if ($Offline) { @('-SkipAzure') } else { @('-ResolveDns') }
             if ($BaseConfigPath) { $a += @('-BaseConfigPath', $BaseConfigPath) }
             if ($ids.Count) { $a += @('-BackendIds', ($ids -join ',')) }
             if ($RequirePrivateLink) { $a += '-RequirePrivateLink' }

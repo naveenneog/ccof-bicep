@@ -34,6 +34,8 @@ param sync object
 param reconciler object
 param budgetState object = { graceSeconds: 900, hardLimitSeconds: 3600 }
 param syncTimerEnabled bool = false
+@description('Sync settings that Stage 5 keeps from the live app (Staged.SettingsGuard.ps1); empty by default.')
+param syncCarriedSettings object = {}
 
 param resolverApiAppId string
 param apimIdentityAppId string
@@ -84,6 +86,7 @@ module settings '../quickstart/modules/app-settings.bicep' = {
     resolver: resolver
     sync: sync
     syncLimitsContainer: (admin.?enabled ?? false) ? 'adminConfig' : ''
+    syncCarriedSettings: syncCarriedSettings
     reconciler: reconciler
     budgetState: budgetState
     syncTimerEnabled: syncTimerEnabled

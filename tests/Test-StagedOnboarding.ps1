@@ -147,7 +147,8 @@ Check 'Stage 5 apply still requires the verified Stage 3' ($r.error -match '^sta
 $script:stage3Error = 'stage_order: stage 3 has not completed'
 $r = Invoke-S5 (New-S5Cfg)
 Check 'Stage 5 preview still requires a completed Stage 3' ($r.error -match '^stage_order' -and -not $r.admin)
-$script:stage3Error = $null# Without a Stage 5 record (older state), only known operator admin settings count as drops.
+$script:stage3Error = $null
+# Without a Stage 5 record (older state), only known operator admin settings count as drops.
 $script:record = $null
 $script:live = @{ 'fx-admin' = $adminBase + @('ADMIN_PROBE_KEY_EUS2', 'WEBSITE_X'); 'fx-resolver' = @('A', 'CUSTOM_RESOLVER') }
 $r = Invoke-S5 (New-S5Cfg) -Apply
@@ -156,7 +157,18 @@ $r = Invoke-S5 (New-S5Cfg @{} @{ allowDroppedSettings = @('ADMIN_PROBE_KEY_EUS2'
 Check 'no record: acknowledged by key name' (-not $r.error -and $r.admin)
 # A disabled admin app adds nothing to the configured settings.
 Check 'disabled admin: no configured optional settings' (@((Get-StgStage5ConfiguredOptionalSettings -Admin @{ enabled = $false; graphEnabled = $true }).admin).Count -eq 0)
-# No Stage 1 apps (fresh deployment preview): no listing.
+# Stage 7 leaves AzureWebJobs.snapshotApply.Disabled=true on sync after a delegated snapshot; Stage 5 keeps it disabled.
+$script:stage1.names.apps['sync'] = @{ functionApp = 'fx-sync' }
+$script:record = @{ outputs = @{ verify = @{ settings = @{ admin = $adminBase; resolver = @('A'); sync = @('S') } } } }
+$script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('A'); 'fx-sync' = @('S', 'AzureWebJobs.snapshotApply.Disabled') }
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'after Stage 7: the snapshotApply toggle is carried, not dropped' (-not $r.error -and -not $r.warnings -and $script:captured.syncCarriedSettings.'AzureWebJobs.snapshotApply.Disabled' -ceq 'true')
+$script:live['fx-sync'] = @('S')
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'before Stage 7: nothing is carried (parameters unchanged)' (-not $r.error -and $script:captured -and -not $script:captured.ContainsKey('syncCarriedSettings'))
+$script:stage1.names.apps.Remove('sync')
+$syncModule = @(Get-Resources $s5 | Where-Object { $_.type -ceq 'Microsoft.Resources/deployments' -and "$($_.properties.parameters.syncCarriedSettings)" -match "parameters\('syncCarriedSettings'\)" })
+Check 'Stage 5 template passes syncCarriedSettings to the app settings module (default empty)' ($syncModule.Count -eq 1 -and @($s5.parameters.syncCarriedSettings.defaultValue.PSObject.Properties).Count -eq 0)# No Stage 1 apps (fresh deployment preview): no listing.
 $script:listCalls = 0
 Check 'no apps: guard is a no-op' (@(Assert-StgStage5SettingsKept -Cfg @{} -Stage1 @{ names = @{ apps = @{} } } -Admin @{ enabled = $true }).Count -eq 0 -and $script:listCalls -eq 0)
 } finally {
@@ -184,6 +196,12 @@ Check 'Backends: naming every backend is refused' ("$(Get-DrStandbyBackendsScope
 Check 'Backends: empty ids are refused' ("$(Get-DrStandbyBackendsScopeProblem -Cfg $bNew -BackendIds @('') -Records $records -HashOf $hashOf)" -match '^standby_backends_ids_required')
 Check 'Backends: missing Stage 5 record is refused' ("$(Get-DrStandbyBackendsScopeProblem -Cfg $bNew -BackendIds @('be2') -Records @{ '3' = $records['3'] } -HashOf $hashOf)" -match '^standby_backends_order:.*Stage 5')
 Check 'Backends: the input configuration is not modified' (@($bNew.backends).Count -eq 2)
+# Lab finding: a JSON round trip turned reconciler.ledgerCoverageStartAt into a DateTime and changed the Stage 5 hash.
+$dated = @{ reconciler = @{ ledgerCoverageStartAt = '2026-11-01T00:00:00Z' }; backends = @(@{ id = 'be1' }, @{ id = 'be2' }) }
+$datedOld = @{ reconciler = @{ ledgerCoverageStartAt = '2026-11-01T00:00:00Z' }; backends = @(@{ id = 'be1' }) }
+$datedRecords = @{ '3' = @{ configHash = (& $hashOf $datedOld 3) }; '5' = @{ configHash = (& $hashOf $datedOld 5) } }
+Check 'Backends: date-like strings keep their text in the comparison copy' ((Remove-DrStandbyBackends -Cfg $dated -BackendIds @('be2')).reconciler.ledgerCoverageStartAt -is [string])
+Check 'Backends: a config with a date-like string and only an added backend is accepted' ($null -eq (Get-DrStandbyBackendsScopeProblem -Cfg $dated -BackendIds @('be2') -Records $datedRecords -HashOf $hashOf))
 Check 'Backends: standby writers off is accepted' ($null -eq (Get-DrStandbyWritersProblem -Sync @{ 'AzureWebJobs.syncEntitlement.Disabled' = 'true' } -Reconciler @{ 'AzureWebJobs.reconcileBudgets.Disabled' = 'True' }))
 Check 'Backends: a region B serving after failover is refused' ("$(Get-DrStandbyWritersProblem -Sync @{ 'AzureWebJobs.syncEntitlement.Disabled' = 'false' } -Reconciler @{ 'AzureWebJobs.reconcileBudgets.Disabled' = 'true' })" -match '^standby_backends_region_active')
 Check 'Backends: unknown writer state is refused' ($null -ne (Get-DrStandbyWritersProblem -Sync @{} -Reconciler @{}))
@@ -198,7 +216,8 @@ Check 'Front Door readiness ignores the Backends phase' ($null -eq (Get-DrFrontD
 $driver = Get-Content -Raw (Join-Path $root 'infra/dr/Invoke-DrStandby.ps1')
 $body = [regex]::Match($driver, "(?s)'Backends' \{.*?\n\}").Value
 Check 'Backends phase stops on scope and writer problems before Stage 3 and Stage 5' ($body -match '(?s)Get-DrStandbyBackendsScopeProblem.*if \(\$scope\) \{ Stop-Dr \$scope 3 \}.*Get-DrStandbyWritersProblem.*if \(\$active\) \{ Stop-Dr \$active 3 \}.*Invoke-Stage3.*Invoke-Stage5')
+Check 'Backends phase clears prior evidence only after its scope and writer checks pass' ($driver -match '(?m)^if \(\(\$Apply -or \$Phase -ceq ''Verify''\) -and \$Phase -cne ''Backends''\) \{ \. \$clearDrEvidence \}' -and $body -match '(?s)if \(\$active\) \{ Stop-Dr \$active 3 \}\s*if \(\$Apply\) \{ \. \$clearDrEvidence \}.*Invoke-Stage3')
 Check 'Backends phase does not touch admin redirects, network or code' ($body -and $body -notmatch 'Invoke-DrAdminRedirects|Invoke-Stage6|New-StgQsContext')
 
 Write-Host "Test-StagedOnboarding: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 66) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 72) { exit 1 }

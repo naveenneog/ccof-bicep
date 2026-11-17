@@ -5,10 +5,18 @@
 # evidence stays; Verify must run again.
 Set-StrictMode -Version Latest
 
+# Deep copy without a JSON round trip, which would turn ISO date strings into DateTime and change the hash.
+function Copy-DrStandbyValue {
+    param($Value)
+    if ($Value -is [Collections.IDictionary]) { $o = [ordered]@{}; foreach ($k in $Value.Keys) { $o[$k] = Copy-DrStandbyValue $Value[$k] }; return $o }
+    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) { return , @($Value | ForEach-Object { Copy-DrStandbyValue $_ }) }
+    return $Value
+}
+
 # The configuration without the named backends: the shape that region B was last verified with.
 function Remove-DrStandbyBackends {
     param([Parameter(Mandatory)] [Collections.IDictionary]$Cfg, [Parameter(Mandatory)] [string[]]$BackendIds)
-    $copy = $Cfg | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
+    $copy = Copy-DrStandbyValue $Cfg
     $copy['backends'] = @($copy['backends'] | Where-Object { $BackendIds -inotcontains [string]$_.id })
     return $copy
 }
@@ -21,7 +29,11 @@ function Get-DrStandbyBackendsScopeProblem {
         [Parameter(Mandatory)] [AllowEmptyString()] [string[]]$BackendIds,
         [Parameter(Mandatory)] [Collections.IDictionary]$Records,
         [Parameter(Mandatory)] [scriptblock]$HashOf,
-        [int[]]$Stages = @(3, 5)
+        [int[]]$Stages = @(3, 5),
+        # Wording for other callers (the onboarding validate checks region A with the same rule).
+        [string]$Region = 'region B',
+        [string]$Remedy = 'use -Phase Grants and Config (then Code and Verify)',
+        [string]$OrderRemedy = 'run the full standby phases first'
     )
     $ids = @($BackendIds | Where-Object { $_ })
     if (-not $ids.Count) { return 'standby_backends_ids_required: name the added backends with -BackendIds.' }
@@ -32,11 +44,11 @@ function Get-DrStandbyBackendsScopeProblem {
     $without = Remove-DrStandbyBackends -Cfg $Cfg -BackendIds $ids
     foreach ($n in $Stages) {
         $record = $Records["$n"]
-        if (-not ($record -is [Collections.IDictionary]) -or -not $record['configHash']) { return "standby_backends_order: region B Stage $n has no verified record; run the full standby phases first." }
+        if (-not ($record -is [Collections.IDictionary]) -or -not $record['configHash']) { return "standby_backends_order: $Region Stage $n has no verified record; $OrderRemedy." }
         $current = & $HashOf $Cfg $n
         if ($record['configHash'] -ceq $current) { continue }
         if ($record['configHash'] -cne (& $HashOf $without $n)) {
-            return "standby_backends_scope: region B Stage $n inputs changed beyond the backends $($ids -join ', '); review the change and use -Phase Grants and Config (then Code and Verify)."
+            return "standby_backends_scope: $Region Stage $n inputs changed beyond the backends $($ids -join ', '); review the change and $Remedy."
         }
     }
     return $null

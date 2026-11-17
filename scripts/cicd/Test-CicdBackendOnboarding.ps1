@@ -44,6 +44,7 @@ $cicdArgs = @{ ConfigPath = $ConfigPath; BaseConfigPath = $BaseConfigPath; Backe
 . (Join-Path $repo 'infra/staged/Invoke-StagedDeployment.ps1') -DotSourceOnly
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'CicdOnboarding.psm1') -Force
+Import-Module (Join-Path $repo 'infra/dr/DrStandbyBackends.psm1') -Force
 $a = $cicdArgs
 function Read-CicdJson([string]$Path) { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -Depth 100 }
 
@@ -85,7 +86,10 @@ if (Test-Path -LiteralPath $drPath) {
     }
 }
 $coverage = Get-CicdStandbyCoverage -DrConfig $dr -StandbyState $standbyState
-foreach ($p in $coverage.problems) { $problems.Add($p) }
+# Pull request checks run offline on a GitHub-hosted runner without the driver state: region B readiness
+# is then checked by the trusted workflow_dispatch validate on the private runner.
+if ($a.SkipAzure -and $dr -and -not $standbyState) { $warnings.Add('standby_state_not_checked: no region B standby state here (offline check); the dispatch validate checks it.') }
+else { foreach ($p in $coverage.problems) { $problems.Add($p) } }
 $report.regionB = [ordered]@{ hasStandby = $coverage.hasStandby; note = $coverage.note }
 
 # APIM identities that Stage 3 grants Cognitive Services User (region A, region B).
@@ -96,6 +100,13 @@ if (Test-Path -LiteralPath $stateFile) {
     $stages = (Read-CicdJson $stateFile)['stages']
     $apimPrincipal = @(foreach ($n in '3', '1') { if ($stages[$n] -and $stages[$n]['outputs']['apimPrincipalId']) { [string]$stages[$n]['outputs']['apimPrincipalId'] } })
     if ($apimPrincipal.Count) { $principals += $apimPrincipal[0] }
+    # Region A: the Stage 3, 5 and 6 records must match this configuration, or this configuration minus the
+    # named backends (a rerun after a partial apply passes). Any other pending change is refused: the
+    # onboarding applies would deploy it without its own review.
+    if ($ids.Count -and -not @($problems | Where-Object { $_ -like 'config_invalid:*' }).Count) {
+        $scope = Get-DrStandbyBackendsScopeProblem -Cfg (Read-StgConfig $configFull) -BackendIds $ids -Records $stages -HashOf { param($c, $n) Get-StgStageInput $c $n } -Stages 3, 5, 6 -Region 'region A' -Remedy 'apply it with Invoke-StagedDeployment.ps1 under its own review first' -OrderRemedy 'deploy region A with the staged driver first'
+        if ($scope) { $problems.Add("primary_scope: $scope") }
+    }
 } else { $warnings.Add("primary_state_missing: $stateFile (restore the driver state first); the region A role prerequisite is not checked.") }
 if ($standbyState -and $standbyState['phases'].Contains('Shells')) { $principals += [string]$standbyState['phases']['Shells']['outputs']['apimPrincipalId'] }
 

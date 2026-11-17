@@ -196,6 +196,13 @@ No-op project edits do not create change records.
 The Foundry console page is inventory only. This task crosses Azure provisioning, network,
 APIM, registry and project administration; a console editor cannot complete it alone.
 
+**Pipeline path.** Where the deployment runs from GitHub Actions with the private runners, use
+[CICD-FOUNDRY-ONBOARDING.md](CICD-FOUNDRY-ONBOARDING.md): a pull request appends the backend, then
+`onboard-foundry.yml` validates, previews and (after approval) applies Stages 3, 5 and 6, adds the
+backend to the region B standby (`Invoke-DrStandby.ps1 -Phase Backends`) and writes the descriptor.
+The same steps can run by hand with `scripts/cicd/Invoke-CicdOnboardingStep.ps1`. Sections A and C
+below still apply; the pipeline replaces the manual steps 2-5 in section B.
+
 ### Required change sheet
 
 | Value | Source / approval |
@@ -255,14 +262,20 @@ For the supported staged configuration path:
 2. Stage 3 preview/apply adds the Foundry role and verifies it. Cross-subscription scope
    permissions belong to the access owner.
 3. Stage 5 preview/apply renders and deploys the expanded APIM backend/policy/workbook metadata.
-   It writes complete app settings; approved manually enabled admin feature settings are
-   restored afterwards as described in the deployment guide.
+   It writes complete app settings. Set `admin.graphEnabled` / `admin.userNamesEnabled` in the
+   staged JSON when those features are on; Stage 5 refuses an apply that would remove a live setting
+   it does not write (`stage5_settings_would_drop`; see
+   [Stage 5 and live settings](CICD-FOUNDRY-ONBOARDING.md#stage-5-and-live-settings)).
+   With a region B standby, also run `infra/dr/Invoke-DrStandby.ps1 -Phase Backends -BackendIds <id>` (preview,
+   then `-Apply`), then `-Phase Verify`. Region B shares the Cosmos registry; the descriptor is written once.
 4. Stage 6 in `verify` mode checks the customer network. The endpoint for a different
    subscription/RG is created by the customer; the automatic endpoint modes have a narrower
    target restriction.
 5. The backend descriptor below is created through an approved Cosmos data-plane session from
    the private operator host, in the existing `backends` container (`/backendId`). It is a
    **new-item** operation; an existing different descriptor needs reviewed ETag-based replacement.
+   `scripts/cicd/Set-CicdBackendDescriptor.ps1 -ConfigPath <staged.json> -BackendIds <id> [-Apply]` does
+   the same create-or-verify for an identity listed in `automation.backendWriterPrincipalIds`.
 6. Only after that, a new project selects this backend, or an existing project's Settings
    changes backend ID **and** designated subscription, followed by sync and functional tests.
 

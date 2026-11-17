@@ -106,7 +106,9 @@ function Write-DrStandbyJson([string]$Path, $Value) {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
     }
 }
-if ($Apply -or $Phase -ceq 'Verify') {
+# Clears prior readiness evidence before work that changes region B. Dot-sourced so its variables stay in script scope;
+# Backends runs it only after its scope and writer checks, so a refused run leaves the evidence intact.
+$clearDrEvidence = {
     $fdPath = Join-Path $standbyStateDir 'frontdoor-state.json'
     Import-Module (Join-Path $here 'DrFrontDoorState.psm1') -Force
     $fdStartHash = 'absent'
@@ -135,6 +137,7 @@ if ($Apply -or $Phase -ceq 'Verify') {
         }
     }
 }
+if (($Apply -or $Phase -ceq 'Verify') -and $Phase -cne 'Backends') { . $clearDrEvidence }
 $script:StateDir = $primaryStateDir
 $pS1 = Get-StgStage $primaryCfg 1; $pS2 = Get-StgStage $primaryCfg 2; $pS4 = Get-StgStage $primaryCfg 4
 $names = Get-DrStandbyNames $pS1.names $dr.standby.nameSuffix
@@ -452,6 +455,7 @@ switch ($Phase) {
     $appSettings = { param($app) $h = @{}; foreach ($s in @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $sub, '--resource-group', $rg, '--name', $app))) { $h[$s.name] = $s.value }; $h }
     $active = Get-DrStandbyWritersProblem -Sync (& $appSettings $s1.names.apps.sync.functionApp) -Reconciler (& $appSettings $s1.names.apps.reconciler.functionApp)
     if ($active) { Stop-Dr $active 3 }
+    if ($Apply) { . $clearDrEvidence }
     Write-Host "Region B backends to add: $($ids -join ', '). Grants and Config inputs differ from the verified ones by these backends only."
     $o3 = Invoke-Stage3 $bCfg -Apply:$Apply
     if ($Apply) { Save-StgStage $bCfg 3 $o3 }

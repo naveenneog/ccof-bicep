@@ -1,5 +1,28 @@
 # Change log
 
+## 2026-11-17 - Pipeline onboarding of a Foundry backend; Stage 5 keeps live settings
+
+- New `.github/workflows/onboard-foundry.yml` adds a Foundry account to region A and the region B
+  standby: offline pull request check on a GitHub-hosted runner; validate, preview, private link gate and
+  apply only for `workflow_dispatch` on `main` on the private runners, inside `<env>-preview`,
+  `<env>-gate-privatelink` and `<env>-apply` environments. Runbook
+  [CICD-FOUNDRY-ONBOARDING.md](runbooks/CICD-FOUNDRY-ONBOARDING.md), [ADR 0040](adr/0040-pipeline-foundry-onboarding.md).
+- Stage 5 lists live app settings first and refuses an apply that would remove a live setting it does
+  not write (`stage5_settings_would_drop`); preview warns. New optional fields `admin.graphEnabled` and
+  `admin.userNamesEnabled` write `ADMIN_GRAPH_ENABLED` / `ADMIN_USER_NAMES_ENABLED`;
+  `stage5.allowDroppedSettings` acknowledges a removal. Configurations without them deploy the same settings.
+- `automation.backendWriterPrincipalIds`: Stage 3 grants create-and-read on the Cosmos `backends`
+  container only. `scripts/cicd/Set-CicdBackendDescriptor.ps1` creates or verifies a descriptor; it never replaces.
+- `infra/dr/Invoke-DrStandby.ps1 -Phase Backends -BackendIds` adds backends to region B (Stage 3 and
+  Stage 5 only) when the region B inputs differ from the verified ones by those backends alone and region
+  B writers are off.
+- New scripts in `scripts/cicd/`: `Test-CicdBackendOnboarding.ps1` (validate), `Test-CicdBackendSmoke.ps1`,
+  `Invoke-CicdOnboardingStep.ps1` (step runner used by the workflow). Validate refuses (`primary_scope`) when the region A
+  Stage 3, 5 or 6 record differs from the configuration by more than the named backends.
+- Stage 5 writes the sync `AzureWebJobs.snapshotApply.Disabled=true` that Stage 7 sets in delegated snapshot
+  mode when it is live, instead of removing it.
+- DR `-Phase Backends` compares configurations without a JSON round trip (date-like strings such as
+  `reconciler.ledgerCoverageStartAt` no longer change the hash) and clears prior evidence only after its checks pass.
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

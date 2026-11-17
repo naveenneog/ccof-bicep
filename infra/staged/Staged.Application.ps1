@@ -90,7 +90,12 @@ function Invoke-Stage5 {
         workbook = $Cfg.workbook; workbookContent = $report.workbookContent.value; workbookContentTags = $report.contentTags.value
     }
     # A setting added by hand since the last Stage 5 apply would be removed: warn in preview, refuse in apply.
-    $null = Assert-StgStage5SettingsKept -Cfg $Cfg -Stage1 $s1 -Admin $admin -Apply:$Apply
+    # One lister for both checks, created here so it resolves the driver's (or a test's) Invoke-StgAzJson.
+    $listSettings = { param($name) @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $name) | ForEach-Object { [string]$_.name }) }
+    $carried = @{}
+    if ($s1.names.apps -is [Collections.IDictionary]) { $carried = Get-StgStage5CarriedSettings -Apps $s1.names.apps -ListSettings $listSettings }
+    if ($carried.Contains('sync')) { $params.syncCarriedSettings = $carried.sync }
+    $null = Assert-StgStage5SettingsKept -Cfg $Cfg -Stage1 $s1 -Admin $admin -Apply:$Apply -Carried $carried -ListSettings $listSettings
     # Opted-in gateway diagnostics on an existing APIM; a conflicting setting stops the stage before any write.
     $apimDiagnostics = Invoke-StgExistingApimDiagnostics -Cfg $Cfg -Stage1 $s1 -Apply:$Apply
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name (Get-StgDeploymentName $Cfg 'stage5-config') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 5 $params)

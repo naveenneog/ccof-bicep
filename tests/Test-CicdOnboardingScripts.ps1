@@ -35,9 +35,19 @@ $head = Copy-Deep $base; $head.backends += @(New-Backend 'be2' 'acct2')
 $env1 = Join-Path $scratch 'deploy\lab'
 $basePath = Join-Path $scratch 'base.json'; $cfgPath = Join-Path $env1 'staged.config.json'
 Save-Json $basePath $base; Save-Json $cfgPath $head
-Save-Json (Join-Path $env1 '.staged-state\state.json') @{ stages = @{
-    '1' = @{ outputs = @{ apimId = $apimA; apimPrincipalId = $pA; cosmosEndpoint = 'https://cosmos1.documents.azure.com:443/'; cosmosAccountId = "/subscriptions/$sub/resourceGroups/rg-new/providers/Microsoft.DocumentDB/databaseAccounts/cosmos1" } }
-    '3' = @{ outputs = @{ apimPrincipalId = $pA } } } }
+# The staged driver's Stage 3, 5 and 6 input hashes, computed in a child process (the driver is dot-sourced there).
+function Get-StageHashes([string]$Path) {
+    $cmd = ". '$root/infra/staged/Invoke-StagedDeployment.ps1' -DotSourceOnly; `$c = Read-StgConfig '$Path'; @{ '3' = (Get-StgStageInput `$c 3); '5' = (Get-StgStageInput `$c 5); '6' = (Get-StgStageInput `$c 6) } | ConvertTo-Json -Compress"
+    (& pwsh -NoProfile -Command $cmd) | ConvertFrom-Json -AsHashtable
+}
+$baseHash = Get-StageHashes $basePath; $headHash = Get-StageHashes $cfgPath
+$statePath = Join-Path $env1 '.staged-state\state.json'
+function Save-PrimaryState([hashtable]$Hashes) {
+    Save-Json $statePath @{ stages = @{
+        '1' = @{ outputs = @{ apimId = $apimA; apimPrincipalId = $pA; cosmosEndpoint = 'https://cosmos1.documents.azure.com:443/'; cosmosAccountId = "/subscriptions/$sub/resourceGroups/rg-new/providers/Microsoft.DocumentDB/databaseAccounts/cosmos1" } }
+        '3' = @{ configHash = $Hashes['3']; outputs = @{ apimPrincipalId = $pA } }; '5' = @{ configHash = $Hashes['5'] }; '6' = @{ configHash = $Hashes['6'] } } }
+}
+Save-PrimaryState $baseHash
 Save-Json (Join-Path $env1 'dr-standby.config.json') @{ standby = @{ stagedConfigPath = 'staged.config.json'; stagedStateDirectory = '.staged-state'; stateDirectory = '.dr-state' } }
 $standby = @{ schema = 'ccof.dr.standby.v1'; phases = @{ Shells = @{ outputs = @{ apimId = $apimB; apimPrincipalId = $pB } }; Grants = @{ outputs = @{} }; Config = @{ outputs = @{} }; Code = @{ outputs = @{} } } }
 Save-Json (Join-Path $env1 '.dr-state\standby.state.json') $standby
@@ -98,6 +108,20 @@ Check 'validate: dispatch mode with -BackendIds passes' ($r.code -eq 0)
 $r = Invoke-Validate @{ BackendIds = @('be1') }
 Check 'validate: -BackendIds that differ from the change are refused' ($r.code -eq 3 -and (Problems $r) -match 'backend_ids_mismatch')
 
+# --- validate: region A scope (the Stage 3, 5 and 6 records) -------------------------------------------
+Check 'region A: fixture hashes differ only because of the added backend' ($baseHash['3'] -cne $headHash['3'] -and $baseHash['6'] -cne $headHash['6'])
+Save-PrimaryState @{ '3' = $headHash['3']; '5' = $baseHash['5']; '6' = $baseHash['6'] }
+Check 'region A: a rerun after a partial apply (Stage 3 done) passes' ((Invoke-Validate @{ SkipAzure = $true; Arm = { throw 'called' } }).code -eq 0)
+Save-PrimaryState $baseHash
+$pending = Copy-Deep $head; $pending.sync.schedule = '0 */5 * * * *'; $pendingPath = Join-Path $env1 'pending.config.json'; Save-Json $pendingPath $pending
+$r = Invoke-Validate @{ ConfigPath = $pendingPath; BaseConfigPath = $null; BackendIds = @('be2'); SkipAzure = $true; Arm = { throw 'called' } }
+Check 'region A: a config with another unapplied change is refused in dispatch mode' ($r.code -eq 3 -and (Problems $r) -match 'primary_scope: standby_backends_scope: region A Stage 5')
+Remove-Item $pendingPath
+Save-PrimaryState @{ '3' = $baseHash['3']; '5' = $baseHash['5'] }
+$r = Invoke-Validate @{ SkipAzure = $true; Arm = { throw 'called' } }
+Check 'region A: a missing Stage 6 record is refused' ($r.code -eq 3 -and (Problems $r) -match 'region A Stage 6 has no verified record')
+Save-PrimaryState $baseHash
+
 # --- validate: fields ---------------------------------------------------------------------------------
 foreach ($bad in @(
     @{ n = 'url of another account'; k = 'url'; v = 'https://acct9.services.ai.azure.com/anthropic'; m = 'url must be' }
@@ -144,6 +168,10 @@ Check 'validate: -SkipAzure makes no Azure read' ($r.code -eq 0 -and (@($r.repor
 $sbPath = Join-Path $env1 '.dr-state\standby.state.json'
 $partial = Copy-Deep $standby; $partial.phases.Remove('Code'); Save-Json $sbPath $partial
 Check 'region B: an unfinished standby is refused' ((Problems (Invoke-Validate @{})) -match 'standby_incomplete: region B has not completed Code')
+Remove-Item $sbPath
+$r = Invoke-Validate @{ SkipAzure = $true; Arm = { throw 'called' } }
+Check 'region B: offline (-SkipAzure) without standby state warns instead of refusing' ($r.code -eq 0 -and (@($r.report.warnings) -join ';') -match 'standby_state_not_checked')
+Check 'region B: online without standby state is refused' ((Problems (Invoke-Validate @{})) -match 'standby_incomplete')
 Save-Json $sbPath $standby
 $drPath = Join-Path $env1 'dr-standby.config.json'; $drKeep = Get-Content $drPath -Raw
 Save-Json $drPath @{ standby = @{ stagedConfigPath = '../other/staged.config.json'; stagedStateDirectory = '.staged-state'; stateDirectory = '.dr-state' } }
@@ -227,6 +255,9 @@ $c = & $cmdOf @{ Step = 'standby-backends'; BackendIds = @('be2, be3') }
 Check 'step: standby-backends previews -Phase Backends with the ids and no -Apply' (($c.Arguments -join ' ') -ceq "-Phase Backends -ConfigPath $(Join-Path $env1 'dr-standby.config.json') -BackendIds be2,be3" -and $c.Log -like '*onboard-standby-backends-preview.log')
 $c = & $cmdOf @{ Step = 'validate'; BaseConfigPath = $basePath }
 Check 'step: validate compares with the base configuration and resolves DNS' ($c.Arguments -contains '-BaseConfigPath' -and $c.Arguments -contains '-ResolveDns' -and $c.Arguments -notcontains '-Apply' -and $c.Arguments -notcontains '-RequirePrivateLink')
+$c = & $cmdOf @{ Step = 'validate'; BaseConfigPath = $basePath; Offline = $true }
+Check 'step: offline validate (pull requests) skips Azure and DNS' ($c.Arguments -contains '-SkipAzure' -and $c.Arguments -notcontains '-ResolveDns')
+Check 'step: only validate runs offline' (& $refused @{ Step = 'stage3'; Offline = $true })
 Check 'step: Stage 7 is not an onboarding step' (& $refused @{ Step = 'stage7'; Apply = $true })
 Check 'step: read-only steps refuse -Apply' ((& $refused @{ Step = 'smoke'; BackendIds = 'be2'; Apply = $true }) -and (& $refused @{ Step = 'validate'; BackendIds = 'be2'; Apply = $true }) -and (& $refused @{ Step = 'standby-verify'; Apply = $true }))
 Check 'step: backend steps refuse an empty id list' ((& $refused @{ Step = 'descriptor' }) -and (& $refused @{ Step = 'standby-backends'; BackendIds = ' , ' }) -and (& $refused @{ Step = 'validate' }))
@@ -252,7 +283,7 @@ try {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name CicdArm, CosmosDocs, CosmosCalls -Scope Global -ErrorAction SilentlyContinue
 }
-$floor = 60
+$floor = 68
 Write-Host "Test-CicdOnboardingScripts: $($script:pass) passed, $($script:fail) failed"
 if ($script:fail -or ($script:pass + $script:fail) -lt $floor) { Write-Host "expected at least $floor checks" -ForegroundColor Red; exit 1 }
 exit 0

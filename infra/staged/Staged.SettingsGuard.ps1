@@ -17,6 +17,10 @@ $script:StgOperatorAdminSettings = @(
     'ADMIN_CLIENT_SCOPE', 'ADMIN_CLIENT_TENANT_ID', 'ADMIN_COST_SCOPE', 'ADMIN_DISCOVERY_SCOPES', 'ADMIN_EDITOR_ROLE',
     'ADMIN_GRAPH_ENABLED', 'ADMIN_HEALTH_TARGETS', 'ADMIN_LOG_RETENTION_DAYS', 'ADMIN_MANAGED_IDENTITY_CLIENT_ID',
     'ADMIN_READER_ROLE', 'ADMIN_RESOURCE_IDS', 'ADMIN_RETAIL_PRICES_ENABLED', 'ADMIN_USER_NAMES_ENABLED', 'ADMIN_PROBE_KEY_*')
+# Settings that later steps own on an app and Stage 5 keeps with a fixed value when live: Stage 7's
+# delegated snapshot leaves AzureWebJobs.snapshotApply.Disabled=true on sync (Invoke-SnapshotApplyThroughFunction.ps1,
+# asserted by Stage 7 verify). Kept as 'true' so a rewrite never re-enables the function.
+$script:StgStage5CarriedSettings = @{ sync = @{ 'AzureWebJobs.snapshotApply.Disabled' = 'true' } }
 $script:StgSettingConfigHint = @{ ADMIN_GRAPH_ENABLED = 'admin.graphEnabled'; ADMIN_USER_NAMES_ENABLED = 'admin.userNamesEnabled'; ADMIN_GATEWAY_RESOURCE_IDS = 'admin.gatewayResourceIds' }
 
 # Read-StgConfig: optional fields added for pipeline onboarding (docs/runbooks/CICD-FOUNDRY-ONBOARDING.md).
@@ -64,6 +68,20 @@ function Get-StgStage5ConfiguredOptionalSettings {
     return @{ admin = @($keys) }
 }
 
+# Carried settings for the next Stage 5 apply, per app: only those live now (absent: parameters unchanged).
+function Get-StgStage5CarriedSettings {
+    param([Parameter(Mandatory)] [Collections.IDictionary]$Apps, [Parameter(Mandatory)] [scriptblock]$ListSettings)
+    $carried = @{}
+    foreach ($k in @($script:StgStage5CarriedSettings.Keys)) {
+        if (-not $Apps.Contains($k) -or -not $Apps[$k].functionApp) { continue }
+        $live = @(& $ListSettings ([string]$Apps[$k].functionApp))
+        $keep = [ordered]@{}
+        foreach ($name in $script:StgStage5CarriedSettings[$k].Keys) { if ($live -ccontains $name) { $keep[$name] = $script:StgStage5CarriedSettings[$k][$name] } }
+        if ($keep.Count) { $carried[$k] = $keep }
+    }
+    return $carried
+}
+
 function Get-StgStage5SettingDrops {
     <# Returns @{ app; functionApp; key; hint } for every live setting the next Stage 5 apply would remove. #>
     param(
@@ -95,7 +113,7 @@ function Test-StgSettingDropAllowed {
 }
 
 function Assert-StgStage5SettingsKept {
-    param($Cfg, $Stage1, [hashtable]$Admin, [switch]$Apply, [scriptblock]$ListSettings)
+    param($Cfg, $Stage1, [hashtable]$Admin, [switch]$Apply, [scriptblock]$ListSettings, [hashtable]$Carried = @{})
     $apps = $Stage1.names.apps
     if ($apps -isnot [Collections.IDictionary] -or -not $apps.Count) { return @() }
     if (-not $ListSettings) {
@@ -106,7 +124,9 @@ function Assert-StgStage5SettingsKept {
     }
     $record = (Read-StgState $Cfg).stages['5']
     $previous = if ($record -and $record.outputs -and $record.outputs.verify -and $record.outputs.verify.settings -is [Collections.IDictionary]) { $record.outputs.verify.settings } else { $null }
-    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured (Get-StgStage5ConfiguredOptionalSettings -Admin $Admin) -ListSettings $ListSettings)
+    $configured = Get-StgStage5ConfiguredOptionalSettings -Admin $Admin
+    foreach ($k in $Carried.Keys) { $configured[$k] = @($configured[$k]) + @($Carried[$k].Keys) }
+    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured $configured -ListSettings $ListSettings)
     $blocking = @($drops | Where-Object { -not (Test-StgSettingDropAllowed $Cfg $_) })
     $null = Write-StgEvidence 'stage5.settings-guard.json' ([ordered]@{ checkedAt = [DateTime]::UtcNow.ToString('o'); baseline = $(if ($previous) { 'stage5-record' } else { 'known-operator-settings' }); drops = $drops; blocking = @($blocking | ForEach-Object { "$($_.app):$($_.key)" }) })
     foreach ($d in $drops) {
