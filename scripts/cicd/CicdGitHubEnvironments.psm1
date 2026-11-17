@@ -116,60 +116,85 @@ function Test-CicdGhEnvironment {
     return $out.ToArray()
 }
 
-# Proves that every change to <Branch> is a pull request approved by someone other than the pusher, with no bypass:
-# protected:true alone only blocks force-push and deletion. One fully enforcing source suffices (classic protection
-# and rulesets aggregate; the most restrictive applies):
+# Proves that every change to <Branch> is a pull request approved by someone other than the pusher, with no bypass.
+# protected:true alone only blocks force-push and deletion for non-admins. Three requirements must each be proved:
+#  - review: a required, reviewed pull request (>= 1 approval, stale approvals dismissed or last push approved);
+#  - force-push block: a force push can point the branch at commits no pull request approved, and GitHub models
+#    "Block force pushes" as a separate ruleset rule (non_fast_forward), so a pull_request rule alone is not enough;
+#  - deletion block: deleting the branch and pushing it again would recreate it from unreviewed commits.
+# Each requirement may come from classic protection or any active ruleset (they aggregate; the most restrictive wins):
 #  - classic protection (GET .../branches/{b}/protection, repository Administration: read; GITHUB_TOKEN cannot read
-#    it): required reviews >= 1, stale approvals dismissed or last push approved, administrators included, no pull
-#    request bypass allowances, no force pushes;
-#  - an active ruleset pull_request rule (GET .../rules/branches/{b}) with the same review settings whose ruleset
-#    (GET .../rulesets/{id}) returns an empty bypass_actors list. GitHub returns bypass_actors only to callers with
-#    write access to the ruleset; when it is absent, "no bypass" cannot be proved.
+#    it): review = required reviews as above, administrators included, explicit empty bypass allowances; force-push
+#    block = allow_force_pushes.enabled false; deletion block = allow_deletions.enabled false;
+#  - a ruleset rule from GET .../rules/branches/{b} (pull_request with the review settings, non_fast_forward, deletion)
+#    whose ruleset (GET .../rulesets/{id}) is active and returns an empty bypass_actors list. GitHub returns
+#    bypass_actors only to callers with write access to the ruleset; when it is absent, "no bypass" cannot be proved.
+#    Each ruleset is checked on its own, so a force-push rule in another ruleset needs its own proof.
 # Anything unreadable or unknown fails. This is a detector run by a workflow on main, not an independent boundary: a
 # push to an unreviewed main could change the workflow itself, so the protection must be enforced before runners connect.
 function Test-CicdGhBranchReview {
     param([scriptblock]$Get, [string]$Repository, [string]$Branch)
     $subject = "$Branch review protection"
     $why = [Collections.Generic.List[string]]::new(); $b = [uri]::EscapeDataString($Branch)
+    $need = [ordered]@{ pull_request = $null; non_fast_forward = $null; deletion = $null }
     $c = Invoke-CicdGhGet $Get "/repos/$Repository/branches/$b/protection"
     if ($c.Ok) {
-        $gaps = @(Get-CicdGhClassicGaps $c.Body)
-        if (-not $gaps.Count) {
-            return New-CicdGhFinding $subject pass "classic protection: $($c.Body.required_pull_request_reviews.required_approving_review_count) approving review(s), stale approvals dismissed or last push approved, administrators included, no bypass allowances, no force pushes"
+        $g = Get-CicdGhClassicGaps $c.Body
+        foreach ($k in @($need.Keys)) {
+            if (-not $g[$k].Count) { $need[$k] = 'classic protection' } else { $why.Add("classic: $($g[$k] -join '; ')") }
         }
-        $why.Add("classic: $($gaps -join '; ')")
     } elseif ($c.Status -eq 404) { $why.Add('classic: none (HTTP 404)') }
     else { $why.Add("classic: cannot read ($($c.Error); needs repository Administration: read)") }
 
-    $rules = [Collections.Generic.List[object]]::new(); $readable = $true
-    for ($page = 1; $page -le 10; $page++) {
-        $r = Invoke-CicdGhGet $Get "/repos/$Repository/rules/branches/$b`?per_page=100&page=$page"
-        if (-not $r.Ok -or $r.Body -isnot [array]) { $readable = $false; $why.Add("rulesets: cannot read rules for $Branch ($($r.Error))"); break }
-        foreach ($x in $r.Body) { $rules.Add($x) }
-        if ($r.Body.Count -lt 100) { break }
-        if ($page -eq 10) { $readable = $false; $why.Add('rulesets: more than 1000 rules, not all read') }
+    if (@($need.Values | Where-Object { -not $_ }).Count) {
+        $rules = [Collections.Generic.List[object]]::new(); $readable = $true
+        for ($page = 1; $page -le 10; $page++) {
+            $r = Invoke-CicdGhGet $Get "/repos/$Repository/rules/branches/$b`?per_page=100&page=$page"
+            if (-not $r.Ok -or $r.Body -isnot [array]) { $readable = $false; $why.Add("rulesets: cannot read rules for $Branch ($($r.Error))"); break }
+            foreach ($x in $r.Body) { $rules.Add($x) }
+            if ($r.Body.Count -lt 100) { break }
+            if ($page -eq 10) { $readable = $false; $why.Add('rulesets: more than 1000 rules, not all read') }
+        }
+        if (-not $readable) { return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why) }
+        $proved = @{}
+        foreach ($k in @($need.Keys | Where-Object { -not $need[$_] })) {
+            $cand = @($rules | Where-Object { [string]$_.type -ceq $k })
+            if ($k -eq 'pull_request') {
+                $all = $cand.Count
+                $cand = @($cand | Where-Object {
+                        $q = $_.PSObject.Properties['parameters']?.Value
+                        if (-not $q) { return $false }
+                        $n = $q.PSObject.Properties['required_approving_review_count']?.Value
+                        ($n -is [int] -or $n -is [long]) -and $n -ge 1 -and ($q.PSObject.Properties['dismiss_stale_reviews_on_push']?.Value -eq $true -or $q.PSObject.Properties['require_last_push_approval']?.Value -eq $true)
+                    })
+                if (-not $cand.Count) { $why.Add("rulesets: no active pull_request rule with >= 1 approval and stale dismissal or last-push approval ($all pull_request rule(s))"); continue }
+            } elseif (-not $cand.Count) { $why.Add("rulesets: no active $k rule"); continue }
+            foreach ($id in @($cand | ForEach-Object { $_.PSObject.Properties['ruleset_id']?.Value } | Sort-Object -Unique)) {
+                if (-not $proved.ContainsKey("$id")) { $proved["$id"] = Test-CicdGhRulesetNoBypass $Get $Repository $id }
+                $v = $proved["$id"]
+                if ($v.Ok) { $need[$k] = $v.Name; break }
+                if (-not $why.Contains($v.Why)) { $why.Add($v.Why) }
+            }
+            if (-not $need[$k]) { $why.Add("rulesets: no $k rule in an active ruleset proved to have no bypass actors") }
+        }
     }
-    if (-not $readable) { return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why) }
-    $pr = @($rules | Where-Object { [string]$_.type -ceq 'pull_request' })
-    $good = @($pr | Where-Object {
-            $q = $_.PSObject.Properties['parameters']?.Value
-            if (-not $q) { return $false }
-            $n = $q.PSObject.Properties['required_approving_review_count']?.Value
-            ($n -is [int] -or $n -is [long]) -and $n -ge 1 -and ($q.PSObject.Properties['dismiss_stale_reviews_on_push']?.Value -eq $true -or $q.PSObject.Properties['require_last_push_approval']?.Value -eq $true)
-        })
-    if (-not $good.Count) { $why.Add("rulesets: no active pull_request rule with >= 1 approval and stale dismissal or last-push approval ($($pr.Count) pull_request rule(s))") }
-    foreach ($id in @($good | ForEach-Object { $_.PSObject.Properties['ruleset_id']?.Value } | Sort-Object -Unique)) {
-        if ("$id" -notmatch '^\d+$') { $why.Add("rulesets: invalid ruleset_id '$id'"); continue }
-        $s = Invoke-CicdGhGet $Get "/repos/$Repository/rulesets/$id`?includes_parents=true"
-        if (-not $s.Ok) { $why.Add("ruleset ${id}: cannot read ($($s.Error))"); continue }
-        $n = [string]$s.Body.name
-        if ([string]$s.Body.enforcement -cne 'active') { $why.Add("ruleset $n (${id}): enforcement '$($s.Body.enforcement)'"); continue }
-        $bp = $s.Body.PSObject.Properties['bypass_actors']
-        if (-not $bp -or $null -eq $bp.Value -or $bp.Value -isnot [array]) { $why.Add("ruleset $n (${id}): bypass_actors not readable (returned only with write access to the ruleset); no bypass cannot be proved"); continue }
-        if ($bp.Value.Count) { $why.Add("ruleset $n (${id}): bypass actors $(($bp.Value | ForEach-Object { "$($_.actor_type):$($_.actor_id)/$($_.bypass_mode)" }) -join ', ')"); continue }
-        return New-CicdGhFinding $subject pass "ruleset $n ($id, $($s.Body.source_type)): active pull_request rule, no bypass actors"
-    }
-    return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why)
+    if (@($need.Values | Where-Object { -not $_ }).Count) { return New-CicdGhFinding $subject fail (Get-CicdGhReviewFailText $Branch $why) }
+    $src = ($need.Keys | ForEach-Object { "$_ from $($need[$_])" }) -join '; '
+    $n = if ($need.pull_request -eq 'classic protection') { "$($c.Body.required_pull_request_reviews.required_approving_review_count) approving review(s), administrators included, no bypass allowances" } else { 'active pull_request rule, no bypass actors' }
+    return New-CicdGhFinding $subject pass "reviewed pull request ($n), force pushes blocked, deletion blocked: $src"
+}
+
+function Test-CicdGhRulesetNoBypass {
+    param([scriptblock]$Get, [string]$Repository, $Id)
+    if ("$Id" -notmatch '^\d+$') { return @{ Ok = $false; Why = "rulesets: invalid ruleset_id '$Id'" } }
+    $s = Invoke-CicdGhGet $Get "/repos/$Repository/rulesets/$Id`?includes_parents=true"
+    if (-not $s.Ok) { return @{ Ok = $false; Why = "ruleset ${Id}: cannot read ($($s.Error))" } }
+    $n = [string]$s.Body.name
+    if ([string]$s.Body.enforcement -cne 'active') { return @{ Ok = $false; Why = "ruleset $n (${Id}): enforcement '$($s.Body.enforcement)'" } }
+    $bp = $s.Body.PSObject.Properties['bypass_actors']
+    if (-not $bp -or $null -eq $bp.Value -or $bp.Value -isnot [array]) { return @{ Ok = $false; Why = "ruleset $n (${Id}): bypass_actors not readable (returned only with write access to the ruleset); no bypass cannot be proved" } }
+    if ($bp.Value.Count) { return @{ Ok = $false; Why = "ruleset $n (${Id}): bypass actors $(($bp.Value | ForEach-Object { "$($_.actor_type):$($_.actor_id)/$($_.bypass_mode)" }) -join ', ')" } }
+    return @{ Ok = $true; Name = "ruleset $n ($Id, $($s.Body.source_type))" }
 }
 
 function Get-CicdGhReviewFailText([string]$Branch, $Why) {
@@ -178,7 +203,7 @@ function Get-CicdGhReviewFailText([string]$Branch, $Why) {
 
 function Get-CicdGhClassicGaps {
     param($P)
-    $gaps = [Collections.Generic.List[string]]::new()
+    $gaps = [Collections.Generic.List[string]]::new(); $fpg = [Collections.Generic.List[string]]::new(); $dg = [Collections.Generic.List[string]]::new()
     $rv = $P.PSObject.Properties['required_pull_request_reviews']?.Value
     if (-not $rv) { $gaps.Add('no required pull request reviews') }
     else {
@@ -207,8 +232,10 @@ function Get-CicdGhClassicGaps {
     if (-not $ea -or $ea.enabled -isnot [bool]) { $gaps.Add('cannot read enforce_admins') }
     elseif (-not $ea.enabled) { $gaps.Add('administrators are not included (they can push without review)') }
     $fp = $P.PSObject.Properties['allow_force_pushes']?.Value
-    if (-not $fp -or $fp.enabled -ne $false) { $gaps.Add('force pushes allowed or unreadable') }
-    return $gaps.ToArray()
+    if (-not $fp -or $fp.enabled -isnot [bool] -or $fp.enabled) { $fpg.Add('force pushes allowed or unreadable') }
+    $dl = $P.PSObject.Properties['allow_deletions']?.Value
+    if (-not $dl -or $dl.enabled -isnot [bool] -or $dl.enabled) { $dg.Add('branch deletion allowed or unreadable') }
+    return @{ pull_request = $gaps.ToArray(); non_fast_forward = $fpg.ToArray(); deletion = $dg.ToArray() }
 }
 
 # All findings for <stem>-preview (branch policy) and each gate (branch policy + reviewers + enforceable plan).

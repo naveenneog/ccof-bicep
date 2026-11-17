@@ -354,7 +354,7 @@ jobs:
     if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
     permissions: { contents: write, actions: read }
     uses: ./.github/workflows/ccof-step.yml
-    with: { environment: '${{ inputs.environment }}', step: standby-Data, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+    with: { environment: '${{ inputs.environment }}', step: standby-Data, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true }
   standby-data-apply:
     needs: [resolve, standby-data-preview]
     if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}

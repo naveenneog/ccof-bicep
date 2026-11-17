@@ -36,6 +36,11 @@
   unrecognised plan name is reported as unknown.
 - `ccof-step.yml` saves state only when the driver step started (`id: driver`, outcome success, failure or
   cancelled). A failed prerequisite check or build, or a cancel before the driver, no longer saves.
+- `main` review protection also requires a force-push block and a deletion block, each proved from classic protection
+  or an active ruleset rule (`non_fast_forward`, `deletion`) whose ruleset has no bypass actors. A ruleset with only a
+  pull request rule no longer passes; rules split across rulesets are checked one ruleset at a time.
+- DR standby: `standby-data-preview` saves state, so the reviewed Cosmos preview digest reaches `standby-data-apply`.
+  Before, a new deployment failed with `cosmos_preview_required` because preview and apply run in separate jobs.
 
 ## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
 

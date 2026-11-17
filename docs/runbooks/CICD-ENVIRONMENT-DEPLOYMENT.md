@@ -138,8 +138,10 @@ administrators to bypass".
 
 **Reviewed `main` (required before connecting runners).** Every job of this pipeline, previews included, runs code from `main` on a private runner with a managed identity. `main` must therefore accept only pull requests approved by another person, with no bypass. `protected: true` alone is not enough: a branch protection rule only blocks force pushes and deletion unless reviews are configured, and required reviews and their application to administrators are optional ([GitHub: about protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)). Configure one of:
 
-- a branch protection rule on `main`: require a pull request with at least 1 approval; dismiss stale approvals (or require approval of the most recent push); include administrators (`enforce_admins`); no users, teams or apps allowed to bypass pull requests; force pushes off; or
-- an active ruleset targeting `main` with a pull request rule (at least 1 approval; dismiss stale approvals or require approval of the most recent push) and an empty bypass list.
+- a branch protection rule on `main`: require a pull request with at least 1 approval; dismiss stale approvals (or require approval of the most recent push); include administrators (`enforce_admins`); no users, teams or apps allowed to bypass pull requests; force pushes off; deletions off; or
+- active rulesets targeting `main` with three rules: "Require a pull request before merging" (at least 1 approval; dismiss stale approvals or require approval of the most recent push), "Block force pushes" (`non_fast_forward`) and "Restrict deletions" (`deletion`), each in a ruleset with an empty bypass list. The rules may be in one ruleset or split across several; each ruleset that supplies one must have no bypass actors. A pull request rule alone is not enough: "Block force pushes" is a separate rule, and a force push can point `main` at commits that no pull request approved ([GitHub: available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#block-force-pushes)). Without a deletion block, `main` could be deleted and pushed again from unreviewed commits.
+
+Classic protection and rulesets combine; each of the three requirements may come from either. A rename of the default branch, or a ruleset that targets a pattern other than `main`, is not covered by this check.
 
 This must be enforced by a repository or organization administrator outside the pipeline. The pipeline's own check (below) is a detector, not a boundary: if `main` accepted unreviewed pushes, such a push could change the workflow and the check with it. The runner job-start hook (`docs/runbooks/CICD-SETUP.md`) restricts events and refs, not who changed `main`.
 
@@ -165,7 +167,7 @@ It fails when anything cannot be proved:
 | No branch policy, or **Protected branches only** (admits every branch while no protection rule exists, and any branch a pattern rule covers later) | fail |
 | Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
 | `main` not protected | fail |
-| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps) present or not returned (the API schema marks them optional, so absence is not proof of none), force pushes allowed, ruleset not active or with bypass actors, or any of it unreadable | fail. `protected: true` alone never passes |
+| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps) present or not returned (the API schema marks them optional, so absence is not proof of none), force pushes or deletions allowed (classic) or no active `non_fast_forward` or `deletion` ruleset rule, ruleset not active or with bypass actors (checked for each ruleset that supplies a rule), or any of it unreadable | fail. A pull request rule alone never passes. `protected: true` alone never passes |
 | Selected branch rule without `type` (or not `branch`) | fail |
 | Organization plan other than exactly `enterprise` (`plan.name` is a free string in the API, no enum) | fail; `free`, `team`, `pro` as below Enterprise, anything else as unknown |
 | Gate environment without a required reviewer | fail |
@@ -357,7 +359,7 @@ The drivers write their state into `deploy/<environment>/`:
 `cicd-state/<environment>`:
 
 - every job restores the state before it runs;
-- apply and verify jobs save it afterwards, even when the driver fails or the job is cancelled, but only when the
+- apply and verify jobs, and the DR standby Data preview (below), save it afterwards, even when the driver fails or the job is cancelled, but only when the
   Restore step of the same job succeeded (`steps.restore.outcome == 'success'`) and the driver step actually started
   (`steps.driver.outcome` is `success`, `failure` or `cancelled`). A failed checkout, host preflight, input guard,
   sign-in, Restore, prerequisite check or build, or a cancel before the driver, leaves the driver `skipped` and skips
@@ -388,6 +390,13 @@ digests are in `standby.state.json`), `.dr-state/generated/*.zip` (rebuilt on ev
 only while a phase runs), `node_modules/` and `.git/`. Other generated files (gateway policy XML, render and
 workbook JSON) are regenerated by Stage 5 or Config but are saved, for evidence. Tested with the complete lab DR
 state (38,730 files, 224 MB): 32 files saved and restored byte for byte, 38,698 excluded, nothing refused.
+
+**Cosmos Data preview.** `standby-data-preview` saves state so that `.dr-state/cosmos-throughput-preview.json` (the
+digest of the reviewed account, regions, failover setting and throughput plan) reaches the separate `standby-data-apply`
+job. Apply refuses with `cosmos_preview_required` when the file is missing, and with `cosmos_preview_stale` when it is
+unreadable, has another schema, or the account or plan changed since the preview; it removes the file before any write.
+The preview writes nothing to Azure. Tested across isolated job workspaces with the real state branch
+(`tests/Test-CicdCosmosPreviewHandoff.ps1`). No other preview hands a file to its apply job.
 
 The branch holds no secret. Protect it with a ruleset so that only GitHub Actions can push.
 

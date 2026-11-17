@@ -135,23 +135,55 @@ $m = Base; $m["/repos/$R/branches/main/protection"].Body.enforce_admins = $null;
 Check 'neg: enforce_admins unreadable fails closed' ((F $f $RP).Status -eq 'fail')
 # Rulesets (only when the ruleset and its bypass list are readable).
 function RsBase([object[]]$Rules, $Rs) { $m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 404; Body = $null }; $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 200; Body = @($Rules) }; if ($Rs) { $m["/repos/$R/rulesets/7?includes_parents=true"] = @{ Status = 200; Body = $Rs } }; $m }
+function Rule([string]$Type, [int]$Id = 7) { J @{ type = $Type; ruleset_id = $Id; ruleset_source_type = 'Repository'; ruleset_source = $R } }
+function Full([int]$Id = 7, $Pr = (PrRule)) { @($Pr, (Rule 'non_fast_forward' $Id), (Rule 'deletion' $Id)) }
+$f = Run (RsBase (Full) (Ruleset))
+Check 'ruleset: active pull_request + non_fast_forward + deletion rules, readable empty bypass list passes' ((F $f $RP).Status -eq 'pass' -and (F $f $RP).Evidence -match 'rs7' -and (F $f $RP).Evidence -match 'non_fast_forward' -and (F $f $RP).Evidence -match 'deletion')
+# Block force pushes is a separate ruleset rule; a force push can point main at commits no PR approved
+# (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#block-force-pushes).
 $f = Run (RsBase @((PrRule)) (Ruleset))
-Check 'ruleset: active pull_request rule, readable empty bypass list passes' ((F $f $RP).Status -eq 'pass' -and (F $f $RP).Evidence -match 'ruleset rs7')
-$f = Run (RsBase @((PrRule)) (Ruleset -Hidden))
+Check 'neg: PR-only ruleset (no non_fast_forward rule) fails (parent repro)' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'non_fast_forward')
+$f = Run (RsBase @((PrRule), (Rule 'deletion')) (Ruleset))
+Check 'neg: PR + deletion rules without non_fast_forward fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'non_fast_forward')
+$f = Run (RsBase @((PrRule), (Rule 'non_fast_forward')) (Ruleset))
+Check 'neg: PR + non_fast_forward without a deletion rule fails (delete and recreate bypasses review)' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'deletion')
+function Split($Rs8) { $m = RsBase @((PrRule), (Rule 'non_fast_forward' 8), (Rule 'deletion' 8)) (Ruleset); if ($Rs8) { $m["/repos/$R/rulesets/8?includes_parents=true"] = $Rs8 }; $m }
+$f = Run (Split @{ Status = 200; Body = (Ruleset -Id 8) })
+Check 'ruleset: split rulesets (PR in rs7, force-push/deletion in rs8), both active with no bypass, pass' ((F $f $RP).Status -eq 'pass' -and (F $f $RP).Evidence -match 'rs8')
+$f = Run (Split @{ Status = 200; Body = (Ruleset -Id 8 -Bypass @(@{ actor_id = 1; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })) })
+Check 'neg: split, force-push ruleset has a bypass actor fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'rs8.*OrganizationAdmin')
+$f = Run (Split @{ Status = 200; Body = (Ruleset -Id 8 -Hidden) })
+Check 'neg: split, force-push ruleset bypass list unreadable fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'rs8.*bypass_actors not readable')
+$f = Run (Split @{ Status = 200; Body = (Ruleset -Id 8 -Enforcement 'evaluate') })
+Check 'neg: split, force-push ruleset in evaluate mode fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'non_fast_forward')
+$f = Run (Split $null)
+Check 'neg: split, force-push ruleset unreadable (404) fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'ruleset 8: cannot read')
+$m = Split @{ Status = 200; Body = (Ruleset -Id 8) }; $m["/repos/$R/rules/branches/main?per_page=100&page=1"].Body = @((PrRule), (Rule 'non_fast_forward' 8), (Rule 'non_fast_forward' 9), (Rule 'deletion' 8)); $m["/repos/$R/rulesets/9?includes_parents=true"] = @{ Status = 200; Body = (Ruleset -Id 9 -Bypass @(@{ actor_id = 2; actor_type = 'Team'; bypass_mode = 'always' })) }; $f = Run $m
+Check 'ruleset: one no-bypass non_fast_forward rule suffices even if another ruleset has a bypass (most restrictive applies)' ((F $f $RP).Status -eq 'pass')
+# Classic and ruleset sources combine per requirement (GitHub applies the most restrictive).
+$m = RsBase @((Rule 'non_fast_forward'), (Rule 'deletion')) (Ruleset); $m["/repos/$R/branches/main/protection"] = @{ Status = 200; Body = (Classic -Force $true) }; $f = Run $m
+Check 'mixed: classic reviews + ruleset force-push/deletion block (no bypass) passes' ((F $f $RP).Status -eq 'pass')
+$m = RsBase @((Rule 'non_fast_forward'), (Rule 'deletion')) (Ruleset -Hidden); $m["/repos/$R/branches/main/protection"] = @{ Status = 200; Body = (Classic -Force $true) }; $f = Run $m
+Check 'neg: mixed, classic allows force pushes and the ruleset bypass list is unreadable fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'force')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body.allow_deletions.enabled = $true; $f = Run $m
+Check 'neg: classic allows deletions fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'deletion')
+$m = Base; $m["/repos/$R/branches/main/protection"].Body.PSObject.Properties.Remove('allow_deletions'); $f = Run $m
+Check 'neg: classic allow_deletions not returned fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'deletion')
+$f = Run (RsBase (Full) (Ruleset -Hidden))
 Check 'neg: ruleset bypass list not returned (no write access) fails closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'bypass_actors not readable')
-$f = Run (RsBase @((PrRule)) (Ruleset -Bypass @(@{ actor_id = 1; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })))
+$f = Run (RsBase (Full) (Ruleset -Bypass @(@{ actor_id = 1; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })))
 Check 'neg: ruleset with an admin bypass actor fails' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'OrganizationAdmin')
-$f = Run (RsBase @((PrRule)) (Ruleset -Bypass @(@{ actor_id = 5; actor_type = 'RepositoryRole'; bypass_mode = 'pull_request' })))
+$f = Run (RsBase (Full) (Ruleset -Bypass @(@{ actor_id = 5; actor_type = 'RepositoryRole'; bypass_mode = 'pull_request' })))
 Check 'neg: ruleset with a pull_request-mode bypass actor fails' ((F $f $RP).Status -eq 'fail')
-$f = Run (RsBase @((PrRule)) (Ruleset -Enforcement 'evaluate'))
+$f = Run (RsBase (Full) (Ruleset -Enforcement 'evaluate'))
 Check 'neg: ruleset not active fails' ((F $f $RP).Status -eq 'fail')
-$f = Run (RsBase @((PrRule -Count 0)) (Ruleset))
+$f = Run (RsBase (Full -Pr (PrRule -Count 0)) (Ruleset))
 Check 'neg: ruleset rule with 0 approvals fails' ((F $f $RP).Status -eq 'fail')
-$f = Run (RsBase @((PrRule -Stale $false)) (Ruleset))
+$f = Run (RsBase (Full -Pr (PrRule -Stale $false)) (Ruleset))
 Check 'neg: ruleset approval survives later pushes fails' ((F $f $RP).Status -eq 'fail')
 $f = Run (RsBase @((J @{ type = 'deletion'; ruleset_id = 7 }), (J @{ type = 'non_fast_forward'; ruleset_id = 7 })) (Ruleset))
 Check 'neg: ruleset with only deletion/non-fast-forward rules fails' ((F $f $RP).Status -eq 'fail')
-$f = Run (RsBase @((PrRule)) $null)
+$f = Run (RsBase (Full) $null)
 Check 'neg: ruleset unreadable (404) fails closed' ((F $f $RP).Status -eq 'fail')
 $m = RsBase @() $null; $m["/repos/$R/rules/branches/main?per_page=100&page=1"] = @{ Status = 403; Body = $null }; $f = Run $m
 Check 'neg: rules and classic protection both unreadable fail closed' ((F $f $RP).Status -eq 'fail' -and (F $f $RP).Evidence -match 'cannot read')
@@ -317,8 +349,10 @@ try {
     Check 'neg http cli: main protected:true without review protection exit 1' ($c.Code -eq 1 -and $c.Text -match 'main review protection' -and $c.Text -match 'protected:true alone')
     $m = Base; $m["/repos/$R/branches/main/protection"] = @{ Status = 403; Body = $null }; Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
     Check 'neg http cli: protection unreadable with the job token exit 1 (no fallback)' ($c.Code -eq 1 -and $c.Text -match 'cannot read')
+    $m = RsBase (Full) (Ruleset); Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
+    Check 'http cli: ruleset proof over real JSON (pull_request + non_fast_forward + deletion, empty bypass list) exit 0' ($c.Code -eq 0 -and $c.Text -match 'ruleset rs7')
     $m = RsBase @((PrRule)) (Ruleset); Serve $m; $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs
-    Check 'http cli: ruleset proof over real JSON (one-item rules array, empty bypass list) exit 0' ($c.Code -eq 0 -and $c.Text -match 'ruleset rs7')
+    Check 'neg http cli: PR-only ruleset (one-item rules array) exit 1, names non_fast_forward' ($c.Code -eq 1 -and $c.Text -match 'no active non_fast_forward rule')
     $env:CCOF_GITHUB_PLAN = 'enterprise'; Serve (Base 'private' 'Organization' $null); $c = Child 'Test-CicdGitHubEnvironments.ps1' $cliArgs; Remove-Item env:CCOF_GITHUB_PLAN
     Check 'neg http cli: CCOF_GITHUB_PLAN=enterprise is ignored (plan deferred, never attested or pass)' ($c.Text -match '\| reviewer plan \| deferred \|' -and $c.Text -notmatch 'attested')
 } finally {
@@ -330,4 +364,4 @@ try {
 }
 
 Write-Host "Test-CicdGitHubEnvironments: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 108) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 122) { exit 1 }
