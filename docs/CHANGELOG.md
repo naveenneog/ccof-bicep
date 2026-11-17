@@ -8,7 +8,16 @@
   `scripts/cicd/`, and the shared sign-in action `.github/actions/azure-login-mi` (`az login --identity`).
   No GitHub secret, federated credential or Entra change.
 - `scripts/New-CustomerRepoFromZip.ps1`: customer ZIP from a commit with a secret scan, and ZIP to a
-  private GitHub repository.
+  private GitHub repository. Publish pushes only to the verified private repository, never force-pushes
+  (`-ReplaceMainAt <sha>` with a lease), refuses ZIPs with `.git` metadata or links before any git command, and
+  checks that the commit holds exactly the ZIP files. The scan reads UTF-16/UTF-32, ZIP containers and PNG
+  text, fails on unscanned files, and takes exceptions only from an exact operator allow-list (`-AllowList`).
+- Both runners refuse, in a root-owned job-started hook, every job that is not `push`, `workflow_dispatch` or
+  `schedule` of a listed workflow on a protected branch (`github.previewWorkflows`, `github.applyWorkflows`);
+  pull request validation runs on GitHub-hosted runners. The bootstrap only uses dedicated directories, acts
+  only on its own runner service, refuses root runner users and proxy URLs with credentials, keeps the CA bundle
+  and tools runner-scoped, and protects the runner `.env`. The role assignment condition is documented as
+  type-only (`ServicePrincipal`); `roles.assignablePrincipalIds` limits it to exact identities.
 - `roles.foundryRolesBy: foundry-owner` hands the Foundry role assignments to the Foundry owner; dispatch-only
   workflow `ccof-runner-smoke.yml` proves sign-in, VNet reach and the negative cases on the runners (lab results
   in CICD-SETUP.md section 10).

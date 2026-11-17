@@ -25,7 +25,7 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
 
 | Runner | Labels | Identity | Roles | Jobs |
 | --- | --- | --- | --- | --- |
-| ccof-preview | `self-hosted`, `ccof-vnet`, `ccof-preview` | `<prefix>-preview-id` | Read only (section 5) | Pull requests, read-only checks, reports |
+| ccof-preview | `self-hosted`, `ccof-vnet`, `ccof-preview` | `<prefix>-preview-id` | Read only (section 5) | Read-only checks and reports from protected branches |
 | ccof-apply | `self-hosted`, `ccof-vnet`, `ccof-apply` | `<prefix>-deploy-id` | Deploy (section 5) | `environment: <env>-apply` jobs from `main`; what-if previews from `main` |
 
 - **Why a managed identity.** Any job on a runner can use the identity of its VM, so nothing needs to be stored
@@ -38,12 +38,19 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
   ([IMDS](https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service)). A job that does
   not run on the apply runner cannot get the deploy identity. The Attach phase refuses a VM that has any other
   identity.
-- **Job policy on the apply runner.** `Install-CcofRunner register` installs a root-owned
+- **Job policy on both runners.** Both runners reach IMDS and the VNet, so both are fail-closed.
+  `Install-CcofRunner register` installs a root-owned (Windows: administrator-only)
   [job-started hook](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/running-scripts-before-or-after-a-job)
-  and policy file (`/etc/ccof-runner/policy`). On the apply runner the hook fails the job before any step unless
-  the event is `push`, `workflow_dispatch` or `schedule`, the repository is the configured one, the ref is in
-  `github.applyBranches` (default `refs/heads/main`) and, when `github.applyWorkflows` is set, the workflow is
-  listed. The runner user cannot change the hook or policy.
+  and policy file (`/etc/ccof-runner/policy`). The hook fails the job before any step unless all of these hold:
+  the event is `push`, `workflow_dispatch` or `schedule`; the repository is the configured one; the ref is a
+  branch in `github.applyBranches` (default `main`); `GITHUB_HEAD_REF` is empty; the workflow file is listed in
+  `github.previewWorkflows` (preview runner) or `github.applyWorkflows` (apply runner) and comes from the same
+  branch and commit as the job (`GITHUB_WORKFLOW_REF`, `GITHUB_WORKFLOW_SHA`). `pull_request`,
+  `pull_request_target` and every other event are refused, and an empty or missing policy refuses everything.
+  The runner user cannot change the hook or policy. The hook trusts the listed workflows only as far as the
+  branch is protected: it cannot check branch protection, so protect the branches (below).
+- **Pull request validation** (tests, lint, Bicep build) runs on GitHub-hosted runners, offline: no Azure
+  sign-in and no VNet access. Pull request code never runs on a CCOF runner.
 - **Workflows** sign in with the shared action: `uses: ./.github/actions/azure-login-mi` with
   `expected-role: preview` or `apply` at the start, and `mode: logout` under `if: always()` at the end. It
   creates a per-job `AZURE_CONFIG_DIR` under `RUNNER_TEMP`, runs `az login --identity --client-id <client id>`
@@ -65,8 +72,8 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
 `az deployment group what-if` needs the same permissions as the deployment itself
 ([What-if, required permissions](https://learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deploy-what-if)).
 The preview identity (Reader) therefore cannot run the staged drivers' previews. Lab result: section 10.
-Run what-if previews of `main` on the apply runner in environment `<env>-preview`; keep pull request jobs on
-the preview runner (lint, tests, Bicep build, read-only queries).
+Run what-if previews of `main` on the apply runner in environment `<env>-preview`; the preview runner keeps
+read-only checks from protected branches. Pull request jobs run on GitHub-hosted runners (section 1).
 
 ### Runner groups and user-owned repositories
 
@@ -77,7 +84,7 @@ groups: the runner is registered to the repository and any workflow in it can ta
 (all needed in both cases):
 
 - No `pull_request` jobs from forks (private repository; "Run workflows from fork pull requests" off).
-- `pull_request` jobs never use `ccof-apply`; the job-started hook refuses them anyway.
+- `pull_request` jobs never use a CCOF runner; the job-started hook refuses them on both runners.
 - Branch protection on `main`: pull request, review, no force push.
 - CODEOWNERS for `.github/workflows/**`, `.github/actions/**` and `deploy/**`, with code owner review required.
 - `<env>-apply` and `<env>-gate-*` environments with required reviewers and deployment branch `main`.
@@ -132,12 +139,13 @@ VMs have no outbound access in new subnets
 | Constraint | What the bootstrap does |
 | --- | --- |
 | No internet, only an allow-list or a mirror | `--stage <dir or mirror URL>` takes `actions-runner-linux-x64-<v>.tar.gz`, `node-v<v>-linux-x64.tar.gz`, `powershell-<v>-linux-x64.tar.gz` and `bicep-linux-x64` from there; `--az-package <file> --az-sha256 <sum>` installs a downloaded Azure CLI package. Every file is checked against its pinned SHA-256; a mismatch stops the install |
-| HTTP proxy | `--proxy http://proxy:port` sets `HTTPS_PROXY`/`HTTP_PROXY` for the install and in the runner `.env` ([runner proxy](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/using-a-proxy-server-with-self-hosted-runners)). `NO_PROXY` always contains `localhost`, `127.0.0.1`, `169.254.169.254`, `168.63.129.16` and the private endpoint suffixes (`.documents.azure.com`, `.azurewebsites.net`, `.azure-api.net`, `.vaultcore.azure.net`, `.cognitiveservices.azure.com`, `.services.ai.azure.com`, `.openai.azure.com`); `--no-proxy` adds more |
-| TLS inspection | `--ca-cert <pem>` adds the CA to the system trust store and sets `REQUESTS_CA_BUNDLE` (Azure CLI), `NODE_EXTRA_CA_CERTS` (Node.js) and git `http.sslCAInfo` |
+| HTTP proxy | `--proxy http://proxy:port` (no user name or password: a proxy URL with credentials is refused and never printed; use an IP- or Kerberos-authenticated proxy) sets `HTTPS_PROXY`/`HTTP_PROXY` for the install and in the runner `.env` ([runner proxy](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/using-a-proxy-server-with-self-hosted-runners)). `NO_PROXY` always contains `localhost`, `127.0.0.1`, `169.254.169.254`, `168.63.129.16` and the private endpoint suffixes (`.documents.azure.com`, `.azurewebsites.net`, `.azure-api.net`, `.vaultcore.azure.net`, `.cognitiveservices.azure.com`, `.services.ai.azure.com`, `.openai.azure.com`); `--no-proxy` adds more |
+| TLS inspection | `--ca-cert <pem>` writes `<tools>/ca/ccof-ca-bundle.pem` (system bundle plus the CA) and sets `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` in the runner `.env` only. The system trust store and the system git configuration are not changed (Windows: `GIT_CONFIG_*` variables in `.env`, no certificate import) |
 | `noexec` on `/tmp` | The bootstrap uses `/var/lib/ccof-runner/tmp`; jobs get `TMPDIR=<runner>/_work/_tmp` |
-| SELinux enforcing | Labels the runner entry points `bin_t` with `semanage fcontext` (or `chcon` when `semanage` is missing) and runs `restorecon -RF` on the runner and tool directories, so the systemd service can start. After moving or restoring the runner directory, run `restorecon -RF /opt/actions-runner /opt/ccof-tools /usr/local/bin` |
+| SELinux enforcing | Labels the runner entry points `bin_t` with `semanage fcontext` (or `chcon` when `semanage` is missing) and runs `restorecon -RF` on the runner and tool directories only, so the systemd service can start. After moving or restoring the runner directory, run `restorecon -RF /opt/actions-runner /opt/ccof-tools` |
 | FIPS mode | Detected and reported. Not lab-tested: Node.js 22 official builds and the Azure CLI may need the distribution's FIPS-validated OpenSSL; check with the preflight before use |
-| No sudo for the runner user | The admin runs the bootstrap; the runner service runs as `ghrunner`; the hook and policy are owned by root |
+| No sudo for the runner user | The admin runs the bootstrap; the runner service runs as `ghrunner`; the hook, policy and `.env` (mode 640, group `ghrunner`) are owned by root. The runner user must be a dedicated non-root account (uid 1000 or higher, not in `wheel`, `sudo`, `admin`, `root` or `docker`) |
+| Existing host, other services | Tools go to `<tools>/bin` (default `/opt/ccof-tools/bin`), on the runner `PATH` only; nothing is written to `/usr/local/bin`. `--runner-dir` and `--tools-dir` must be dedicated: absolute, at least two levels deep, not a system directory, no symbolic link in the path, parent not writable by others, and empty or already marked as CCOF-owned. Service commands act only on the service recorded in `<runner dir>/.service` after checking that its unit (Windows: service binary path) points to that directory; other `actions.runner.*` services are never stopped, removed or restarted. `Install-CcofRunner.sh check` (or `-Command check`) prints these checks without changing anything |
 | IMDS blocked | Checked first; the install stops with the reason when IMDS does not answer |
 
 ## 5. Roles
@@ -197,7 +205,8 @@ and network resource groups and on each Foundry account.
    sudo bash Install-CcofRunner.sh install --role apply [--stage /mnt/ccof-stage] [--proxy http://proxy:8080] [--ca-cert /etc/pki/corp.pem]
    read -rs RUNNER_TOKEN && sudo env RUNNER_TOKEN="$RUNNER_TOKEN" bash Install-CcofRunner.sh register --role apply \
      --client-id <deploy identity client id> --subscription-id <sub> --tenant-id <tenant> \
-     --repository <owner>/<repo> --labels ccof-vnet,ccof-apply --allowed-refs refs/heads/main
+     --repository <owner>/<repo> --labels ccof-vnet,ccof-apply --allowed-refs refs/heads/main \
+     --allowed-workflows ".github/workflows/deploy.yml"
    sudo bash Install-CcofRunner.sh status --role apply
    ```
 
@@ -230,19 +239,35 @@ assignments (`az role assignment delete --assignee <principal id>` per scope) an
 
 `scripts/New-CustomerRepoFromZip.ps1`:
 
-- `-Mode Build -Ref <commit> -OutFile <zip>`: `git archive` of the commit, then a secret scan. gitleaks
-  (`gitleaks dir --redact`) is used when installed, else the rules in `scripts/SecretScan.psm1` (private keys,
-  GitHub tokens, Entra client secrets, storage and Cosmos keys, SAS signatures, connection string keys, AWS
-  keys, Slack tokens, JWTs, runner tokens). Any finding deletes the ZIP and exits 3; findings show file, line
-  and rule, never the value. Customer names and resource IDs are allowed. `<zip>.manifest.json` records the
-  commit, the SHA-256 and the scanner.
-- `-Mode Publish -ZipPath <zip> -Repository <owner>/<name>`: checks the manifest SHA-256, scans again, then
-  (with `-Apply`) creates the repository as private when missing, commits the contents to `main` and pushes
-  with the `gh` credential. A public or internal repository is refused. A repository with commits is refused
-  unless `-Force`, which replaces `main` (re-creating a lab repository from a newer ZIP).
-- A false positive is allowed with a `.secretscan-allow` file at the tree root (one regex per line against
-  `path:line:rule`).
-
+- `-Mode Build -Ref <commit> -OutFile <zip>`: `git archive` of the commit, the ZIP entry check and the secret
+  scan. `<zip>.manifest.json` records the commit, the SHA-256, the file count and the scanner.
+- `-Mode Publish -ZipPath <zip> -Repository <owner>/<name>`: checks the manifest SHA-256 and the ZIP entries,
+  extracts, scans again, then (with `-Apply`) creates the repository as private when missing, commits the
+  files to `main` and pushes with the `gh` credential.
+- **Entry check** (before any git or gh command): no `.git` path component (any case, trailing dot or space,
+  `GIT~1`), no symbolic link entry, no absolute, `..`, backslash or duplicate path. Such a ZIP is refused
+  (exit 2) before it is committed anywhere.
+- **Remote.** The push goes only to `https://github.com/<owner>/<name>.git`, after `gh repo view` reports that
+  same repository (no rename or redirect) as private. A different `-RemoteUrl` is refused.
+- **Existing history.** An empty repository gets `main` with a lease that `main` does not exist. A repository
+  with commits is refused and the current `main` commit is printed; to replace it, check the repository and
+  re-run with `-ReplaceMainAt <that sha>`. The push uses `--force-with-lease=refs/heads/main:<sha>`, so a `main`
+  that moved in the meantime is not overwritten. There is no plain force push.
+- **Commit.** Extraction goes to a new work directory next to the ZIP that only this run uses and deletes.
+  Local git commands run without system or global git configuration, hooks, filters or templates, with the
+  git directory outside the files. The commit must hold exactly the extracted files with identical bytes
+  (`.gitignore` does not drop files).
+- **Secret scan.** `scripts/SecretScan.psm1` always runs; gitleaks (`gitleaks dir --redact`) runs as well when
+  installed. Rules: private keys, GitHub tokens, Entra client secrets, storage and Cosmos keys, SAS
+  signatures, connection string keys, AWS keys, Slack tokens, JWTs, runner tokens. Text is read as UTF-8,
+  UTF-16 or UTF-32 (with or without BOM); ZIP-based files (`.docx`, `.xlsx`, nested ZIPs) and PNG text chunks
+  are scanned inside. A file that cannot be scanned (unknown binary type, over 20 MB, link) fails the scan like
+  a finding. Findings show file, line, rule and the SHA-256 of the value, never the value. Customer names and
+  resource IDs are allowed. Exit 3 deletes the built ZIP or stops the publish.
+- **Exceptions** come only from `-AllowList <file>`, kept by the operator outside the ZIP and outside the
+  scanned tree, with exact entries: `finding:<path>:<line>:<rule>:<sha256>` or `file:<path>:<sha256>` (values
+  as printed by the scan). No patterns; a changed value or file is reported again. A `.secretscan-allow` file
+  in the tree has no effect.
 ## 10. Lab results
 
 Lab: a replica of the STG network (two peered VNets, private endpoints, Cosmos public access disabled), runners
