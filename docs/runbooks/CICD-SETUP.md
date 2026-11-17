@@ -284,6 +284,10 @@ in a dedicated `/27` subnet without public IP, workflow `.github/workflows/ccof-
 | Deploy identity from the preview runner | `az login --identity --client-id <deploy>` fails: identity not found (not attached to that VM) |
 | Role mismatch | `azure-login-mi` with `expected-role: apply` on the preview runner fails |
 | Job from a non-`main` ref on the apply runner | Refused by the job-started hook before any step |
+| Job-started hook, both runners (allow-listed workflow file modified on a feature branch) | `push` and `workflow_dispatch` on the branch: refused, ref not in `refs/heads/main`; `pull_request` (same repository): refused, event not allowed. The same workflow from `main`: accepted on both. Hook context logged from the live job (`GITHUB_WORKFLOW_REF`, `GITHUB_WORKFLOW_SHA` equal to `GITHUB_SHA`) |
+| Pull request validation (`public-ci`) | Ran on GitHub-hosted runners, not on the CCOF runners |
+| DNS from the VNet | Private `azurewebsites.net` record resolved to its private endpoint address; a host without a private record fell back to its public address |
+| ZIP publish | Second publish refused until `-ReplaceMainAt` gave the current `main` commit; then pushed with a lease |
 | What-if with the preview identity (Reader) | Denied on `Microsoft.Resources/deployments/whatIf/action`. With a custom role adding `whatIf/action` and `validate/action`, an empty template passes but any resource fails with "Authorization failed for template resource": what-if needs write on each resource |
 | What-if with the deploy identity | Succeeded |
 | RHEL 9.8 (`RedHat:RHEL:9-lvm-gen2`), SELinux enforcing, `/tmp` remounted `noexec` | Install succeeded; preflight first failed on disk (2 GB `rootlv`), passed after a 20 GB volume at `_work`; runner service in `unconfined_service_t`; runner user without sudo; Cosmos read, write denied, Bicep build passed. VM deleted after the test |
