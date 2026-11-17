@@ -9,6 +9,14 @@
 # the current configuration would be dropped. Preview warns; apply refuses unless the configuration
 # writes the setting (admin.graphEnabled, admin.userNamesEnabled) or acknowledges the drop in
 # stage5.allowDroppedSettings ("KEY" or "app:KEY").
+#
+# Values: a setting that Stage 5 writes with a default when the configuration omits its field
+# ($script:StgStage5DefaultedSettings, for example ADMIN_V3_ENABLED = admin.v3Enabled ?? true) and
+# whose live value differs would change. Preview warns; apply refuses unless the field is set or the
+# change is acknowledged in stage5.allowChangedSettings. Carried settings keep their exact live value.
+# Without a Stage 5 record the guard cannot know which names the last apply left, so every live name
+# that the Stage 5 templates never write counts as a drop (fail closed). Setting values are read into
+# memory only; evidence and messages hold names, except the non-secret flags of the defaulted table.
 
 # Admin settings that code reads and Stage 5 does not write: the fallback when no Stage 5 record holds
 # the names that the last apply left (state from before the record existed).
@@ -17,10 +25,18 @@ $script:StgOperatorAdminSettings = @(
     'ADMIN_CLIENT_SCOPE', 'ADMIN_CLIENT_TENANT_ID', 'ADMIN_COST_SCOPE', 'ADMIN_DISCOVERY_SCOPES', 'ADMIN_EDITOR_ROLE',
     'ADMIN_GRAPH_ENABLED', 'ADMIN_HEALTH_TARGETS', 'ADMIN_LOG_RETENTION_DAYS', 'ADMIN_MANAGED_IDENTITY_CLIENT_ID',
     'ADMIN_READER_ROLE', 'ADMIN_RESOURCE_IDS', 'ADMIN_RETAIL_PRICES_ENABLED', 'ADMIN_USER_NAMES_ENABLED', 'ADMIN_PROBE_KEY_*')
-# Settings that later steps own on an app and Stage 5 keeps with a fixed value when live: Stage 7's
-# delegated snapshot leaves AzureWebJobs.snapshotApply.Disabled=true on sync (Invoke-SnapshotApplyThroughFunction.ps1,
-# asserted by Stage 7 verify). Kept as 'true' so a rewrite never re-enables the function.
-$script:StgStage5CarriedSettings = @{ sync = @{ 'AzureWebJobs.snapshotApply.Disabled' = 'true' } }
+# Settings that later steps own on an app and Stage 5 keeps when live: Stage 7's delegated snapshot leaves
+# AzureWebJobs.snapshotApply.Disabled=true on sync (Invoke-SnapshotApplyThroughFunction.ps1, asserted by
+# Stage 7 verify). The exact live value is carried, so a rewrite neither re-enables nor disables it.
+$script:StgStage5CarriedSettings = @{ sync = @('AzureWebJobs.snapshotApply.Disabled') }
+# Settings Stage 5 writes with a default when the configuration does not set the field
+# (infra/staged/stage5-config.bicep, infra/quickstart/modules/app-settings.bicep). Boolean values compare
+# case-insensitively. A DR standby configuration sets syncTimerEnabled explicitly (DrStandby.psm1).
+$script:StgStage5DefaultedSettings = @(
+    @{ app = 'admin'; key = 'ADMIN_V3_ENABLED'; field = 'admin.v3Enabled'; default = 'true'; boolean = $true }
+    @{ app = 'admin'; key = 'ADMIN_PROJECT_HEADER'; field = 'gateway.projectHeaderName'; default = 'x-ccof-project'; boolean = $false }
+    @{ app = 'sync'; key = 'AzureWebJobs.syncEntitlement.Disabled'; field = 'syncTimerEnabled'; default = 'true'; boolean = $true }
+    @{ app = 'reconciler'; key = 'AzureWebJobs.reconcileBudgets.Disabled'; field = 'reconciler.timerEnabled'; default = 'true'; boolean = $true })
 $script:StgSettingConfigHint = @{ ADMIN_GRAPH_ENABLED = 'admin.graphEnabled'; ADMIN_USER_NAMES_ENABLED = 'admin.userNamesEnabled'; ADMIN_GATEWAY_RESOURCE_IDS = 'admin.gatewayResourceIds' }
 
 # Read-StgConfig: optional fields added for pipeline onboarding (docs/runbooks/CICD-FOUNDRY-ONBOARDING.md).
@@ -35,6 +51,11 @@ function Get-StgOptionalFieldProblems {
         if ($C.stage5 -isnot [Collections.IDictionary] -or ($C.stage5.Contains('allowDroppedSettings') -and
             ($allowed -isnot [Collections.IList] -or @($allowed | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^([a-z]+:)?[A-Za-z0-9_.*-]+$' }).Count))) {
             'stage5.allowDroppedSettings must be a list of setting names ("KEY" or "app:KEY")'
+        }
+        $changed = $null; if ($C.stage5 -is [Collections.IDictionary]) { $changed = $C.stage5.allowChangedSettings }
+        if ($C.stage5 -is [Collections.IDictionary] -and $C.stage5.Contains('allowChangedSettings') -and
+            ($changed -isnot [Collections.IList] -or @($changed | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^([a-z]+:)?[A-Za-z0-9_.-]+$' }).Count)) {
+            'stage5.allowChangedSettings must be a list of setting names ("KEY" or "app:KEY")'
         }
     }
     if ($C.Contains('automation')) {
@@ -68,47 +89,106 @@ function Get-StgStage5ConfiguredOptionalSettings {
     return @{ admin = @($keys) }
 }
 
-# Carried settings for the next Stage 5 apply, per app: only those live now (absent: parameters unchanged).
+# Live settings of one app as an ordered name -> value map. The lister returns az's {name, value} objects
+# (or a map); names alone are refused, because the guard compares values.
+function Get-StgLiveSettingMap {
+    param([Parameter(Mandatory)] [scriptblock]$ListSettings, [Parameter(Mandatory)] [string]$FunctionApp)
+    $out = @(& $ListSettings $FunctionApp)
+    $map = [ordered]@{}
+    if ($out.Count -eq 1 -and $out[0] -is [Collections.IDictionary] -and -not $out[0].Contains('name')) { foreach ($k in $out[0].Keys) { $map[[string]$k] = $out[0][$k] }; return $map }
+    foreach ($s in $out) {
+        $name = if ($s -is [Collections.IDictionary]) { $s['name'] } elseif ($s -and $s.PSObject.Properties['name']) { $s.name } else { $null }
+        if (-not $name) { throw "stage5_settings_unreadable: the settings of $FunctionApp were listed without name and value; the guard cannot compare them. Nothing was changed." }
+        $map[[string]$name] = if ($s -is [Collections.IDictionary]) { $s['value'] } else { $s.value }
+    }
+    return $map
+}
+
+# Carried settings for the next Stage 5 apply, per app: only those live now, with their exact live value
+# (absent: parameters unchanged).
 function Get-StgStage5CarriedSettings {
     param([Parameter(Mandatory)] [Collections.IDictionary]$Apps, [Parameter(Mandatory)] [scriptblock]$ListSettings)
     $carried = @{}
     foreach ($k in @($script:StgStage5CarriedSettings.Keys)) {
         if (-not $Apps.Contains($k) -or -not $Apps[$k].functionApp) { continue }
-        $live = @(& $ListSettings ([string]$Apps[$k].functionApp))
+        $live = Get-StgLiveSettingMap -ListSettings $ListSettings -FunctionApp ([string]$Apps[$k].functionApp)
         $keep = [ordered]@{}
-        foreach ($name in $script:StgStage5CarriedSettings[$k].Keys) { if ($live -ccontains $name) { $keep[$name] = $script:StgStage5CarriedSettings[$k][$name] } }
+        foreach ($name in $script:StgStage5CarriedSettings[$k]) { if ($live.Contains($name)) { $keep[$name] = [string]$live[$name] } }
         if ($keep.Count) { $carried[$k] = $keep }
     }
     return $carried
 }
 
+# Setting names the Stage 5 templates can write: object keys and quoted upper-case names in the two
+# templates. Used only when no Stage 5 record exists; a live name outside this set would be dropped.
+function Get-StgStage5TemplateSettingNames {
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($rel in 'infra/staged/stage5-config.bicep', 'infra/quickstart/modules/app-settings.bicep') {
+        $text = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
+        foreach ($m in [regex]::Matches($text, "(?m)^\s*'?([A-Za-z_][A-Za-z0-9_.]*)'?\s*:")) { $null = $names.Add($m.Groups[1].Value) }
+        foreach ($m in [regex]::Matches($text, "'([A-Z][A-Z0-9_]{3,})'")) { $null = $names.Add($m.Groups[1].Value) }
+    }
+    return $names
+}
+
 function Get-StgStage5SettingDrops {
-    <# Returns @{ app; functionApp; key; hint } for every live setting the next Stage 5 apply would remove. #>
+    <# Returns @{ app; functionApp; key; hint } for every live setting the next Stage 5 apply would remove.
+       $Live (optional) receives each app's live map, so the value checks reuse one listing. #>
     param(
         [Parameter(Mandatory)] [Collections.IDictionary]$Apps,
         [Collections.IDictionary]$Previous,
         [hashtable]$Configured = @{},
-        [Parameter(Mandatory)] [scriptblock]$ListSettings
+        [Parameter(Mandatory)] [scriptblock]$ListSettings,
+        [hashtable]$Live
     )
+    $templateNames = $null
     foreach ($k in @($Apps.Keys | Sort-Object)) {
         $functionApp = [string]$Apps[$k].functionApp
         if (-not $functionApp) { continue }
-        $live = @(& $ListSettings $functionApp)
+        $liveMap = Get-StgLiveSettingMap -ListSettings $ListSettings -FunctionApp $functionApp
+        if ($null -ne $Live) { $Live[$k] = $liveMap }
         $written = @($Configured[$k])
         $recorded = if ($Previous -and $Previous.Contains($k)) { @($Previous[$k]) } else { $null }
-        foreach ($key in $live) {
+        foreach ($key in @($liveMap.Keys)) {
             if ($written -ccontains $key) { continue }
             $drops = if ($null -ne $recorded) { $recorded -cnotcontains $key }
-                     elseif ($k -ceq 'admin') { [bool]@($script:StgOperatorAdminSettings | Where-Object { $key -clike $_ }).Count }
-                     else { $false }
+                     else {
+                         if ($null -eq $templateNames) { $templateNames = Get-StgStage5TemplateSettingNames }
+                         ($k -ceq 'admin' -and [bool]@($script:StgOperatorAdminSettings | Where-Object { $key -clike $_ }).Count) -or -not $templateNames.Contains($key)
+                     }
             if ($drops) { [ordered]@{ app = $k; functionApp = $functionApp; key = $key; hint = $script:StgSettingConfigHint[$key] } }
         }
     }
 }
 
+# Whether the configuration sets the field behind a defaulted setting (dotted path, a null value is unset).
+function Test-StgConfigFieldSet {
+    param($Cfg, [Parameter(Mandatory)] [string]$Field)
+    $node = $Cfg
+    foreach ($part in $Field.Split('.')) {
+        if ($node -isnot [Collections.IDictionary] -or -not $node.Contains($part)) { return $false }
+        $node = $node[$part]
+    }
+    return $null -ne $node
+}
+
+function Get-StgStage5SettingChanges {
+    <# Returns @{ app; functionApp; key; live; written; hint } for every defaulted setting whose live value the
+       next Stage 5 apply would change because the configuration leaves its field unset. #>
+    param($Cfg, [Parameter(Mandatory)] [Collections.IDictionary]$Apps, [Parameter(Mandatory)] [hashtable]$Live, [bool]$AdminEnabled)
+    foreach ($d in $script:StgStage5DefaultedSettings) {
+        if (-not $Apps.Contains($d.app) -or -not $Live.Contains($d.app) -or -not $Live[$d.app].Contains($d.key)) { continue }
+        if ($d.app -ceq 'admin' -and -not $AdminEnabled) { continue }
+        if (Test-StgConfigFieldSet $Cfg $d.field) { continue }
+        $value = [string]$Live[$d.app][$d.key]
+        $same = if ($d.boolean) { $value.Trim() -ieq $d.default } else { $value -ceq $d.default }
+        if (-not $same) { [ordered]@{ app = $d.app; functionApp = [string]$Apps[$d.app].functionApp; key = $d.key; live = $value; written = $d.default; hint = $d.field } }
+    }
+}
 function Test-StgSettingDropAllowed {
-    param($Cfg, [Parameter(Mandatory)] $Drop)
-    $allowed = @(if ($Cfg -is [Collections.IDictionary] -and $Cfg.stage5 -is [Collections.IDictionary]) { $Cfg.stage5.allowDroppedSettings })
+    param($Cfg, [Parameter(Mandatory)] $Drop, [string]$List = 'allowDroppedSettings')
+    $allowed = @(if ($Cfg -is [Collections.IDictionary] -and $Cfg.stage5 -is [Collections.IDictionary]) { $Cfg.stage5[$List] })
     return [bool]($allowed -ccontains $Drop.key -or $allowed -ccontains "$($Drop.app):$($Drop.key)")
 }
 
@@ -119,20 +199,31 @@ function Assert-StgStage5SettingsKept {
     if (-not $ListSettings) {
         $ListSettings = {
             param($name)
-            @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $name) | ForEach-Object { [string]$_.name })
+            @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $name))
         }.GetNewClosure()
     }
     $record = (Read-StgState $Cfg).stages['5']
     $previous = if ($record -and $record.outputs -and $record.outputs.verify -and $record.outputs.verify.settings -is [Collections.IDictionary]) { $record.outputs.verify.settings } else { $null }
     $configured = Get-StgStage5ConfiguredOptionalSettings -Admin $Admin
     foreach ($k in $Carried.Keys) { $configured[$k] = @($configured[$k]) + @($Carried[$k].Keys) }
-    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured $configured -ListSettings $ListSettings)
+    $live = @{}
+    $drops = @(Get-StgStage5SettingDrops -Apps $apps -Previous $previous -Configured $configured -ListSettings $ListSettings -Live $live)
+    $changes = @(Get-StgStage5SettingChanges -Cfg $Cfg -Apps $apps -Live $live -AdminEnabled ([bool]$Admin.enabled))
     $blocking = @($drops | Where-Object { -not (Test-StgSettingDropAllowed $Cfg $_) })
-    $null = Write-StgEvidence 'stage5.settings-guard.json' ([ordered]@{ checkedAt = [DateTime]::UtcNow.ToString('o'); baseline = $(if ($previous) { 'stage5-record' } else { 'known-operator-settings' }); drops = $drops; blocking = @($blocking | ForEach-Object { "$($_.app):$($_.key)" }) })
+    $blockingChanges = @($changes | Where-Object { -not (Test-StgSettingDropAllowed $Cfg $_ 'allowChangedSettings') })
+    $null = Write-StgEvidence 'stage5.settings-guard.json' ([ordered]@{ checkedAt = [DateTime]::UtcNow.ToString('o'); baseline = $(if ($previous) { 'stage5-record' } else { 'stage5-templates' }); drops = $drops; blocking = @($blocking | ForEach-Object { "$($_.app):$($_.key)" })
+        changes = $changes; blockingChanges = @($blockingChanges | ForEach-Object { "$($_.app):$($_.key)" }) })
+    foreach ($c in $changes) {
+        $note = if (Test-StgSettingDropAllowed $Cfg $c 'allowChangedSettings') { ' (acknowledged in stage5.allowChangedSettings)' } else { '' }
+        Write-Warning "Stage 5 would change $($c.key) on $($c.functionApp) from '$($c.live)' to the default '$($c.written)'$note; set $($c.hint) in the configuration to keep the live value, or acknowledge the change in stage5.allowChangedSettings."
+    }
     foreach ($d in $drops) {
         $how = if ($d.hint) { "set $($d.hint) in the configuration" } else { "add it to the configuration" }
         $note = if (Test-StgSettingDropAllowed $Cfg $d) { ' (acknowledged in stage5.allowDroppedSettings)' } else { '' }
         Write-Warning "Stage 5 would remove $($d.key) from $($d.functionApp)$note; $how, or acknowledge the removal in stage5.allowDroppedSettings."
+    }
+    if ($Apply -and $blockingChanges.Count) {
+        throw "stage5_settings_would_change: Stage 5 would rewrite $(@($blockingChanges | ForEach-Object { "$($_.app):$($_.key) (set $($_.hint))" }) -join ', ') to its default, which differs from the live value. Set the field in the configuration or list the setting in stage5.allowChangedSettings, then rerun. Nothing was changed."
     }
     if ($Apply -and $blocking.Count) {
         throw "stage5_settings_would_drop: Stage 5 replaces the whole settings set and would remove $(@($blocking | ForEach-Object { "$($_.app):$($_.key)" }) -join ', '). Set the matching configuration field (admin.graphEnabled, admin.userNamesEnabled) or list the setting in stage5.allowDroppedSettings, then rerun. Nothing was changed."

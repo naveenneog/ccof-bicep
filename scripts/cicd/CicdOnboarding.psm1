@@ -151,21 +151,104 @@ function Get-CicdStandbyCoverage {
     return @{ hasStandby = $true; problems = @(); note = 'region B gets the backend with Invoke-DrStandby.ps1 -Phase Backends' }
 }
 
-# Smoke checks after apply: the APIM backend entity (Stage 5 apim-api.bicep, name = backend id) and the
-# policy, whose %%BACKEND_IDS%% list holds the id in double quotes, in one region.
+# ARM response body to an object. Some ARM responses (APIM policies) can start with a UTF-8 byte order mark,
+# which ConvertFrom-Json rejects: it is removed here, whatever the platform.
+function ConvertFrom-CicdArmBody {
+    param([AllowNull()] $Body)
+    $text = if ($Body -is [byte[]]) { [Text.Encoding]::UTF8.GetString($Body) } else { [string]$Body }
+    $text = $text.TrimStart([char]0xFEFF)
+    if (-not $text.Trim()) { return $null }
+    return ConvertFrom-Json -InputObject $text -AsHashtable -Depth 100
+}
+
+# GET https://management.azure.com<Path> with the signed-in az identity. The token stays in memory: it is
+# never printed, logged or put on a command line. HTTP errors throw with the status and ARM error code only.
+function Invoke-CicdArmGet {
+    param([Parameter(Mandatory)] [string]$Path, [scriptblock]$Token = { az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv --only-show-errors })
+    $tok = (& $Token | Select-Object -Last 1)
+    if ($LASTEXITCODE -or -not $tok) { throw 'arm_token_unavailable: az account get-access-token failed (sign in first)' }
+    $r = Invoke-WebRequest -Uri "https://management.azure.com$Path" -Headers @{ Authorization = "Bearer $tok" } -Method Get -SkipHttpErrorCheck
+    $bytes = $r.RawContentStream.ToArray()
+    if ([int]$r.StatusCode -ge 300) {
+        $code = try { (ConvertFrom-CicdArmBody $bytes).error.code } catch { '' }
+        throw "HTTP $([int]$r.StatusCode) $code"
+    }
+    return ConvertFrom-CicdArmBody $bytes
+}
+
+# The API policy with every <include-fragment> replaced by the fragment's policy, XML entities decoded (the
+# default format escapes quotes as &quot;; format=rawxml does not). Nested includes up to 5 levels; a
+# missing or cyclic fragment is reported, never skipped.
+function Get-CicdApimEffectivePolicy {
+    param([Parameter(Mandatory)] [string]$ApimId, [Parameter(Mandatory)] [string]$ApiId, [Parameter(Mandatory)] [scriptblock]$Arm)
+    $problems = [Collections.Generic.List[string]]::new(); $fragments = [Collections.Generic.List[string]]::new()
+    $read = { param($path) $o = & $Arm $path; [Net.WebUtility]::HtmlDecode([string]$o.properties.value) }
+    $text = $null
+    try { $text = & $read "$ApimId/apis/$ApiId/policies/policy?api-version=2024-05-01&format=rawxml" } catch { $problems.Add("apim_policy_unreadable: $ApimId api $ApiId ($($_.Exception.Message)).") }
+    if ($null -eq $text) { return @{ text = $null; fragments = @(); problems = @($problems) } }
+    $include = [regex]'<include-fragment\s+fragment-id="([^"]+)"\s*/>'
+    for ($depth = 0; $depth -le 5 -and $include.IsMatch($text); $depth++) {
+        if ($depth -eq 5) { $problems.Add("apim_policy_fragment_depth: includes nest deeper than 5 levels."); break }
+        $text = $include.Replace($text, {
+            param($m) $fid = $m.Groups[1].Value
+            if ($fragments -ccontains $fid -and $depth -gt 0) { $problems.Add("apim_policy_fragment_cycle: $fid"); return '' }
+            $fragments.Add($fid)
+            try { return (& $read "$ApimId/policyFragments/$fid`?api-version=2024-05-01&format=rawxml") }
+            catch { $problems.Add("apim_policy_fragment_missing: $ApimId policy fragment $fid ($($_.Exception.Message))."); return '' }
+        })
+    }
+    return @{ text = $text; fragments = @($fragments); problems = @($problems) }
+}
+
+# Whether the effective policy admits and routes backend $Id (infra/gateway/policy/claude-messages.template.xml):
+# ccofBackendAllowed admits it by the static list (%%BACKEND_IDS%%, credential backends) or, for registry
+# backends, by the resolver's descriptor auth mode; the managed-identity branch then sets the APIM backend
+# ccofBackendId. Returns @{ problems; warnings; routing = static|registry }.
+function Get-CicdPolicyRouting {
+    param([AllowNull()] [string]$Policy, [Parameter(Mandatory)] [string]$Id, [Collections.IDictionary]$InferenceGeo)
+    $problems = [Collections.Generic.List[string]]::new(); $warnings = [Collections.Generic.List[string]]::new(); $routing = $null
+    $allow = [regex]::Match("$Policy", '<set-variable\s+name="ccofBackendAllowed"\s+value="@\((.*?)\)"\s*/>', 'Singleline')
+    if (-not $allow.Success) {
+        $problems.Add('apim_policy_unrecognized: no ccofBackendAllowed decision in the effective policy (fragments followed); the routing cannot be proven.')
+    } else {
+        $expr = $allow.Groups[1].Value
+        $list = [regex]::Match($expr, 'Array\.IndexOf\(new string\[\]\s*\{([^}]*)\}\s*,\s*\(string\)context\.Variables\["ccofBackendId"\]\)\s*>=\s*0')
+        $static = if ($list.Success) { @([regex]::Matches($list.Groups[1].Value, '"([^"]*)"') | ForEach-Object { $_.Groups[1].Value }) } else { @() }
+        $registry = $expr -match '\|\|\s*\(string\)context\.Variables\["ccofBackendAuthMode"\]\s*!=\s*""'
+        if ($static -ccontains $Id) { $routing = 'static' } elseif ($registry) { $routing = 'registry' }
+        else { $problems.Add("apim_policy_backend_not_allowed: $Id is not in the static backend list and the policy has no registry (descriptor auth mode) admission.") }
+    }
+    $route = '<when\s+condition="@\(\(string\)context\.Variables\["ccofBackendAuthMode"\]\s*==\s*"managed-identity"\)">(?:(?!</when>).)*?<set-backend-service\s+backend-id="@\((?:(?!/>).)*?context\.Variables\["ccofBackendId"\]'
+    if (-not [regex]::IsMatch("$Policy", $route, 'Singleline')) { $problems.Add('apim_policy_no_route: no managed-identity branch sets the APIM backend to ccofBackendId.') }
+    if ($InferenceGeo) {
+        foreach ($dep in @($InferenceGeo.Keys | Sort-Object)) {
+            if (-not "$Policy".Contains("""$Id|$dep=$($InferenceGeo[$dep])""")) { $warnings.Add("apim_policy_geo: no inference geo entry $Id|$dep=$($InferenceGeo[$dep]) (the gateway then sends no geo hint for that deployment).") }
+        }
+    }
+    return @{ problems = @($problems); warnings = @($warnings); routing = $routing }
+}
+
+# Smoke checks after apply in one region: the APIM backend entity (Stage 5 apim-api.bicep, name = backend id,
+# configured URL) and the effective policy's admission and routing for the id. Registry routing also needs
+# the active descriptor, which the smoke script checks separately. $Detail receives routing, fragments, warnings.
 function Get-CicdApimBackendFindings {
-    param([Parameter(Mandatory)] [string]$ApimId, [Parameter(Mandatory)] [string]$ApiId, [Parameter(Mandatory)] [Collections.IDictionary]$Backend, [Parameter(Mandatory)] [scriptblock]$Arm)
+    param([Parameter(Mandatory)] [string]$ApimId, [Parameter(Mandatory)] [string]$ApiId, [Parameter(Mandatory)] [Collections.IDictionary]$Backend, [Parameter(Mandatory)] [scriptblock]$Arm, [hashtable]$Detail)
     $problems = [Collections.Generic.List[string]]::new(); $id = [string]$Backend['id']
     $entity = $null
     try { $entity = & $Arm "$ApimId/backends/$id`?api-version=2024-05-01" } catch { $problems.Add("apim_backend_missing: $ApimId has no backend $id ($($_.Exception.Message)).") }
     $expectedUrl = ([string]$Backend['url']).TrimEnd('/')
     if ($entity -and ([string]$entity.properties.url).TrimEnd('/') -cne $expectedUrl) { $problems.Add("apim_backend_url: $ApimId backend $id url is $($entity.properties.url), expected $expectedUrl.") }
-    $policy = $null
-    try { $policy = [string](& $Arm "$ApimId/apis/$ApiId/policies/policy?api-version=2024-05-01").properties.value } catch { $problems.Add("apim_policy_unreadable: $ApimId api $ApiId ($($_.Exception.Message)).") }
-    if ($null -ne $policy -and -not $policy.Contains("""$id""")) { $problems.Add("apim_policy_backend: the $ApiId policy on $ApimId does not name backend $id.") }
+    $eff = Get-CicdApimEffectivePolicy -ApimId $ApimId -ApiId $ApiId -Arm $Arm
+    foreach ($p in $eff.problems) { $problems.Add($p) }
+    $route = $null
+    if ($null -ne $eff.text) {
+        $geo = $Backend['deploymentInferenceGeo']; if ($geo -isnot [Collections.IDictionary]) { $geo = $null }
+        $route = Get-CicdPolicyRouting -Policy $eff.text -Id $id -InferenceGeo $geo
+        foreach ($p in $route.problems) { $problems.Add($p) }
+    }
+    if ($null -ne $Detail) { $Detail.routing = $route.routing; $Detail.fragments = @($eff.fragments); $Detail.warnings = @($route.warnings) }
     return @(foreach ($p in $problems) { $p })
 }
-
 # The command for one onboarding workflow step (.github/workflows/onboard-foundry.yml). Only these steps
 # exist: Stage 7 (code, seed, client) and Stage 8 are never part of onboarding, and standby phases other
 # than Backends and Verify are refused. Returns @{ File; Arguments; Mode; Log }.
@@ -245,4 +328,59 @@ function Get-CicdOnboardingRollback {
     )
 }
 
-Export-ModuleMember -Function Get-CicdOnboardingCommand, Get-CicdOnboardingRollback, Get-CicdBackendChange, Get-CicdBackendFieldProblems, Get-CicdBackendAzureFindings, Get-CicdStandbyCoverage, Get-CicdApimBackendFindings, Get-CicdJson, Test-CicdPrivateAddress
+# Whether a reviewer approval was enforced for this run in GitHub environment $Name (Assert-CicdApproval.ps1).
+# $Environment: GET /repos/{repo}/environments/{name} ($null when it does not exist); $BranchPolicies: names and
+# types from .../deployment-branch-policies; $Approvals: GET /repos/{repo}/actions/runs/{run}/approvals.
+# Required reviewers on a private repository need GitHub Enterprise (Free, Pro and Team: public repositories
+# only), so on those plans the rule is absent and this fails closed. GitHub creates a missing environment
+# without protection when a job references it, so 'exists' alone is not enough. Returns @{ problems; warnings; approvers }.
+function Get-CicdApprovalProblems {
+    param([Parameter(Mandatory)] [string]$Name, $Environment, $BranchPolicies = @(), $Approvals = @(), [string]$Actor, [int]$RunAttempt = 1)
+    $problems = [Collections.Generic.List[string]]::new(); $warnings = [Collections.Generic.List[string]]::new()
+    $approvers = @()
+    if (-not $Environment) {
+        $problems.Add("environment_missing: GitHub environment '$Name' does not exist; create it with required reviewers")
+        return @{ problems = @($problems); warnings = @($warnings); approvers = $approvers }
+    }
+    $rules = @($Environment.protection_rules | Where-Object { $_ })
+    $reviewRule = @($rules | Where-Object { $_.type -ceq 'required_reviewers' -and @($_.reviewers | Where-Object { $_ }).Count -gt 0 }) | Select-Object -First 1
+    if (-not $reviewRule) {
+        $problems.Add("no_required_reviewers: '$Name' has no required reviewers. For a private repository they need GitHub Enterprise (on Free, Pro and Team plans they exist for public repositories only); the apply does not run without them")
+    } elseif (-not $reviewRule.prevent_self_review) {
+        $warnings.Add("self_review_allowed: enable 'Prevent self-review' on '$Name' so the person who starts the run cannot approve it")
+    }
+    $dbp = $Environment.deployment_branch_policy
+    if (-not $dbp) {
+        $problems.Add("no_branch_policy: '$Name' allows every branch; set deployment branches to the selected branch main only")
+    } elseif ($dbp.protected_branches -or -not $dbp.custom_branch_policies) {
+        $problems.Add("branch_policy_not_main_only: '$Name' must use selected branches with main as the only rule")
+    } else {
+        $names = @($BranchPolicies | Where-Object { $_ } | ForEach-Object { "$($_.type)`:$($_.name)" })
+        if ($names.Count -ne 1 -or $names[0] -cne 'branch:main') { $problems.Add("branch_policy_not_main_only: '$Name' branch rules are [$($names -join ', ')]; expected [branch:main]") }
+    }
+    if ($Environment.can_admins_bypass) { $warnings.Add("admins_can_bypass: disable 'Allow administrators to bypass' on '$Name'; a bypassed run has no approval and is refused here") }
+    # The review history is per run, not per attempt: an approval of attempt 1 would also satisfy a rerun.
+    if ($RunAttempt -gt 1) { $problems.Add("rerun_attempt: attempt $RunAttempt of this run cannot be bound to its own approval (the review history is per run); dispatch a new run instead of re-running") }
+    $forEnv = @($Approvals | Where-Object { $_ -and @($_.environments | Where-Object { $_ -and $_.name -ceq $Name }).Count })
+    $approved = @($forEnv | Where-Object { $_.state -ceq 'approved' })
+    $approvers = @($approved | ForEach-Object { "$($_.user.login)" } | Sort-Object -Unique)
+    if (@($forEnv | Where-Object { $_.state -ceq 'rejected' }).Count) { $problems.Add("rejected: a reviewer rejected '$Name' in this run") }
+    elseif (-not $approved.Count) { $problems.Add("not_approved: this run has no reviewer approval for '$Name' (bypassed, or no reviewers)") }
+    elseif ($Actor -and $approvers.Count -eq 1 -and $approvers[0] -ceq $Actor) { $warnings.Add("self_approved: '$Name' was approved by the run's own actor $Actor") }
+    return @{ problems = @($problems); warnings = @($warnings); approvers = $approvers }
+}
+
+# An apply step in GitHub Actions needs the approval record written by Assert-CicdApproval.ps1 for this run
+# attempt. Returns '' when it is valid, otherwise the reason.
+function Test-CicdApprovalRecord {
+    param([Parameter(Mandatory)] [string]$Path, [Parameter(Mandatory)] [string]$Name, [string]$RunId, [string]$RunAttempt)
+    if (-not (Test-Path -LiteralPath $Path)) { return "no approval record $Path (run scripts/cicd/Assert-CicdApproval.ps1 first)" }
+    try { $r = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json } catch { return "approval record $Path is not JSON" }
+    if ($r.verified -ne $true) { return "approval for '$Name' was not verified: $(@($r.problems) -join '; ')" }
+    if ("$($r.environment)" -cne $Name -or "$($r.runId)" -cne $RunId -or "$($r.runAttempt)" -cne $RunAttempt) {
+        return "approval record is for '$($r.environment)' run $($r.runId)/$($r.runAttempt), not '$Name' run $RunId/$RunAttempt"
+    }
+    return ''
+}
+
+Export-ModuleMember -Function Get-CicdOnboardingCommand, Get-CicdOnboardingRollback, Get-CicdBackendChange, Get-CicdBackendFieldProblems, Get-CicdBackendAzureFindings, Get-CicdStandbyCoverage, Get-CicdApimBackendFindings, Get-CicdJson, Test-CicdPrivateAddress, ConvertFrom-CicdArmBody, Invoke-CicdArmGet, Get-CicdApimEffectivePolicy, Get-CicdPolicyRouting, Get-CicdApprovalProblems, Test-CicdApprovalRecord

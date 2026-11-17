@@ -7,7 +7,8 @@
     Builds the command with Get-CicdOnboardingCommand (CicdOnboarding.psm1), prints it, runs it in a child
     pwsh from the repository root, writes the output to evidence/<env>/onboard-<step>-<mode>.log and exits
     with the child's exit code. In GitHub Actions an -Apply step refuses to run unless the runner role
-    (CCOF_RUNNER_ROLE, set on the runner host by infra/cicd) is "apply". The same command runs by hand
+    (CCOF_RUNNER_ROLE, set on the runner host by infra/cicd) is "apply" and Assert-CicdApproval.ps1 recorded
+    an enforced reviewer approval of <env>-apply for this run attempt. The same command runs by hand
     from a runner shell (docs/runbooks/CICD-FOUNDRY-ONBOARDING.md).
 
 .EXAMPLE
@@ -36,6 +37,11 @@ try {
 if ($env:GITHUB_ACTIONS -eq 'true' -and $cmd.Mode -ne 'preview' -and $env:CCOF_RUNNER_ROLE -ne 'apply') {
     [Console]::Error.WriteLine("refused: runner_role_mismatch: $Step apply needs the ccof-apply runner (CCOF_RUNNER_ROLE=apply), found '$($env:CCOF_RUNNER_ROLE)'")
     exit 2
+}
+if ($env:GITHUB_ACTIONS -eq 'true' -and $cmd.Mode -eq 'apply') {
+    $approvalEnv = "$Environment-apply"
+    $why = Test-CicdApprovalRecord -Path (Join-Path $repo "evidence/$Environment/approval-$approvalEnv.json") -Name $approvalEnv -RunId "$env:GITHUB_RUN_ID" -RunAttempt "$env:GITHUB_RUN_ATTEMPT"
+    if ($why) { [Console]::Error.WriteLine("refused: approval_not_enforced: $why"); exit 2 }
 }
 $quoted = @($cmd.Arguments | ForEach-Object { if ("$_" -match '\s') { "'$_'" } else { "$_" } })
 Write-Host "== $Environment $Step ($($cmd.Mode))"

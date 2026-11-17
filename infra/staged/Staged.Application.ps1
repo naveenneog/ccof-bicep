@@ -91,7 +91,7 @@ function Invoke-Stage5 {
     }
     # A setting added by hand since the last Stage 5 apply would be removed: warn in preview, refuse in apply.
     # One lister for both checks, created here so it resolves the driver's (or a test's) Invoke-StgAzJson.
-    $listSettings = { param($name) @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $name) | ForEach-Object { [string]$_.name }) }
+    $listSettings = { param($name) @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--name', $name)) }
     $carried = @{}
     if ($s1.names.apps -is [Collections.IDictionary]) { $carried = Get-StgStage5CarriedSettings -Apps $s1.names.apps -ListSettings $listSettings }
     if ($carried.Contains('sync')) { $params.syncCarriedSettings = $carried.sync }

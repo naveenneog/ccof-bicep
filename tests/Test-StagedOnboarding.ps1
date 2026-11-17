@@ -85,7 +85,10 @@ $script:fakeEntra = @{ groups = @{}; admin = @{ appId = '00000000-0000-4000-8000
 $script:stage1 = @{ names = @{ apps = [ordered]@{ admin = @{ functionApp = 'fx-admin' }; resolver = @{ functionApp = 'fx-resolver' } } } }
 function Get-StgStage { param($Cfg, $Stage) if ($Stage -eq 3 -and $script:stage3Error) { throw $script:stage3Error }; if ($Stage -eq 4) { return $script:fakeEntra }; if ($Stage -eq 1) { return $script:stage1 }; return @{ clientIds = @{} } }
 function Read-StgState { param($Cfg) @{ stages = @{ '5' = $script:record } } }
-function Invoke-StgAzJson { param([string[]]$Arguments) $script:listCalls++; @($script:live[$Arguments[-1]] | ForEach-Object { @{ name = $_; value = 'x' } }) }
+# Live values: $script:liveValues["app|KEY"], else the value Stage 5 writes by default (neutral), else 'x'.
+$script:liveValues = @{}
+function Invoke-StgAzJson { param([string[]]$Arguments) $script:listCalls++; $app = $Arguments[-1]
+    @($script:live[$app] | ForEach-Object { $v = if ($script:liveValues.ContainsKey("$app|$_")) { $script:liveValues["$app|$_"] } elseif ($_ -like '*.Disabled' -or $_ -ceq 'ADMIN_V3_ENABLED') { 'true' } else { 'x' }; @{ name = $_; value = $v } }) }
 function New-StgQsContext { param($Cfg) return $script:fakeContext }
 function Get-StgManagedIdentityClientId { return '00000000-0000-4000-8000-000000000004' }
 function npx { $global:LASTEXITCODE = 0 }
@@ -148,13 +151,51 @@ $script:stage3Error = 'stage_order: stage 3 has not completed'
 $r = Invoke-S5 (New-S5Cfg)
 Check 'Stage 5 preview still requires a completed Stage 3' ($r.error -match '^stage_order' -and -not $r.admin)
 $script:stage3Error = $null
-# Without a Stage 5 record (older state), only known operator admin settings count as drops.
+# Without a Stage 5 record (older state) the names the last apply left are unknown: every live name the
+# Stage 5 templates never write counts as a drop, on every app (fail closed), plus known operator settings.
 $script:record = $null
-$script:live = @{ 'fx-admin' = $adminBase + @('ADMIN_PROBE_KEY_EUS2', 'WEBSITE_X'); 'fx-resolver' = @('A', 'CUSTOM_RESOLVER') }
+$script:live = @{ 'fx-admin' = $adminBase + @('ADMIN_PROBE_KEY_EUS2', 'WEBSITE_X'); 'fx-resolver' = @('COSMOS_ENDPOINT', 'CUSTOM_RESOLVER') }
 $r = Invoke-S5 (New-S5Cfg) -Apply
-Check 'no record: known operator admin settings (wildcards) are protected' ($r.error -match 'admin:ADMIN_PROBE_KEY_EUS2' -and $r.error -notmatch 'WEBSITE_X|CUSTOM_RESOLVER')
-$r = Invoke-S5 (New-S5Cfg @{} @{ allowDroppedSettings = @('ADMIN_PROBE_KEY_EUS2') }) -Apply
+Check 'no record: known operator admin settings (wildcards) are protected' ($r.error -match 'admin:ADMIN_PROBE_KEY_EUS2')
+Check 'no record: unknown names on any app are protected, template names are not' ($r.error -match 'admin:WEBSITE_X' -and $r.error -match 'resolver:CUSTOM_RESOLVER' -and $r.error -notmatch 'COSMOS_ENDPOINT|ADMIN_V3_ENABLED|ADMIN_ALLOWED_CLIENT_IDS')
+$guardEvidence = Get-Content $guardPath -Raw | ConvertFrom-Json -AsHashtable
+Check 'no record: the evidence names the template baseline' ($guardEvidence.baseline -ceq 'stage5-templates')
+$r = Invoke-S5 (New-S5Cfg @{} @{ allowDroppedSettings = @('ADMIN_PROBE_KEY_EUS2', 'WEBSITE_X', 'resolver:CUSTOM_RESOLVER') }) -Apply
 Check 'no record: acknowledged by key name' (-not $r.error -and $r.admin)
+$script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('COSMOS_ENDPOINT') }
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'no record: a deployment with only template names applies (first Stage 5 after an upgrade)' (-not $r.error -and $r.admin)
+# Values: a defaulted setting whose live value differs would change silently (ADMIN_V3_ENABLED = admin.v3Enabled ?? true).
+$script:record = @{ outputs = @{ verify = @{ settings = @{ admin = $adminBase; resolver = @('A') } } } }
+$script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('A') }
+$script:liveValues = @{ 'fx-admin|ADMIN_V3_ENABLED' = 'false' }
+$r = Invoke-S5 (New-S5Cfg)
+Check 'values: preview warns that ADMIN_V3_ENABLED=false would become true' (-not $r.error -and $r.warnings -match "ADMIN_V3_ENABLED on fx-admin from 'false' to the default 'true'" -and $r.warnings -match 'admin\.v3Enabled')
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'values: apply refuses before any deployment when a live value would change' ($r.error -match '^stage5_settings_would_change' -and $r.error -match 'admin:ADMIN_V3_ENABLED \(set admin\.v3Enabled\)' -and $null -eq $r.admin)
+$guardEvidence = Get-Content $guardPath -Raw | ConvertFrom-Json -AsHashtable
+Check 'values: the evidence records the blocking change' ((@($guardEvidence.blockingChanges) -join ',') -ceq 'admin:ADMIN_V3_ENABLED')
+$r = Invoke-S5 (New-S5Cfg @{ v3Enabled = $false }) -Apply
+Check 'values: setting admin.v3Enabled keeps the live value and applies' (-not $r.error -and -not $r.warnings -and $r.admin.v3Enabled -eq $false)
+$r = Invoke-S5 (New-S5Cfg @{} @{ allowChangedSettings = @('admin:ADMIN_V3_ENABLED') }) -Apply
+Check 'values: an acknowledged change applies and is still reported' (-not $r.error -and $r.warnings -match 'acknowledged in stage5.allowChangedSettings' -and $r.admin)
+$r = Invoke-S5 (New-S5Cfg @{} @{ allowDroppedSettings = @('ADMIN_V3_ENABLED') }) -Apply
+Check 'values: a drop acknowledgement does not acknowledge a change' ($r.error -match '^stage5_settings_would_change')
+$script:liveValues = @{ 'fx-admin|ADMIN_V3_ENABLED' = 'True' }
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'values: boolean values compare case-insensitively' (-not $r.error -and -not $r.warnings)
+$script:liveValues = @{ 'fx-admin|ADMIN_PROJECT_HEADER' = 'x-custom' }; $script:live['fx-admin'] = $adminBase + @('ADMIN_PROJECT_HEADER'); $script:record.outputs.verify.settings.admin = $script:live['fx-admin']
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'values: a live project header differing from the default is refused' ($r.error -match 'admin:ADMIN_PROJECT_HEADER \(set gateway\.projectHeaderName\)')
+$cfgNull = New-S5Cfg; $cfgNull.gateway = @{ projectHeaderName = $null }; $r = Invoke-S5 $cfgNull -Apply
+Check 'values: a null field is unset (the default is written)' ($r.error -match 'admin:ADMIN_PROJECT_HEADER')
+$cfgHeader = New-S5Cfg; $cfgHeader.gateway = @{ projectHeaderName = 'x-custom' }
+$r = Invoke-S5 $cfgHeader -Apply
+Check 'values: a configured project header is the operator''s choice' (-not $r.error)
+$script:liveValues = @{}; $script:live['fx-admin'] = $adminBase; $script:record.outputs.verify.settings.admin = $adminBase
+$namesOnly = try { $null = Get-StgLiveSettingMap -ListSettings { param($n) @('A', 'B') } -FunctionApp fx; 'accepted' } catch { "$_" }
+Check 'a lister that returns names without values is refused (values cannot be compared)' ($namesOnly -match '^stage5_settings_unreadable')
+Check 'optional field: allowChangedSettings must be a list of names' ((@(Get-StgOptionalFieldProblems @{ stage5 = @{ allowChangedSettings = 'ADMIN_V3_ENABLED' } }) -join ';') -match 'allowChangedSettings' -and -not @(Get-StgOptionalFieldProblems @{ stage5 = @{ allowChangedSettings = @('admin:ADMIN_V3_ENABLED') } }).Count)
 # A disabled admin app adds nothing to the configured settings.
 Check 'disabled admin: no configured optional settings' (@((Get-StgStage5ConfiguredOptionalSettings -Admin @{ enabled = $false; graphEnabled = $true }).admin).Count -eq 0)
 # Stage 7 leaves AzureWebJobs.snapshotApply.Disabled=true on sync after a delegated snapshot; Stage 5 keeps it disabled.
@@ -163,7 +204,16 @@ $script:record = @{ outputs = @{ verify = @{ settings = @{ admin = $adminBase; r
 $script:live = @{ 'fx-admin' = $adminBase; 'fx-resolver' = @('A'); 'fx-sync' = @('S', 'AzureWebJobs.snapshotApply.Disabled') }
 $r = Invoke-S5 (New-S5Cfg) -Apply
 Check 'after Stage 7: the snapshotApply toggle is carried, not dropped' (-not $r.error -and -not $r.warnings -and $script:captured.syncCarriedSettings.'AzureWebJobs.snapshotApply.Disabled' -ceq 'true')
-$script:live['fx-sync'] = @('S')
+$script:liveValues = @{ 'fx-sync|AzureWebJobs.snapshotApply.Disabled' = 'false' }
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'carried: a live snapshotApply.Disabled=false is carried as false, not forced to true' (-not $r.error -and $script:captured.syncCarriedSettings.'AzureWebJobs.snapshotApply.Disabled' -ceq 'false')
+$script:liveValues = @{ 'fx-sync|AzureWebJobs.syncEntitlement.Disabled' = 'false' }; $script:live['fx-sync'] = @('S', 'AzureWebJobs.syncEntitlement.Disabled'); $script:record.outputs.verify.settings.sync = $script:live['fx-sync']
+$r = Invoke-S5 (New-S5Cfg) -Apply
+Check 'values: a timer enabled by hand is not silently disabled' ($r.error -match 'sync:AzureWebJobs.syncEntitlement.Disabled \(set syncTimerEnabled\)')
+$cfgTimer = New-S5Cfg; $cfgTimer.syncTimerEnabled = $true
+$r = Invoke-S5 $cfgTimer -Apply
+Check 'values: an explicit syncTimerEnabled is the operator''s choice' (-not $r.error)
+$script:liveValues = @{}; $script:live['fx-sync'] = @('S'); $script:record.outputs.verify.settings.sync = @('S')
 $r = Invoke-S5 (New-S5Cfg) -Apply
 Check 'before Stage 7: nothing is carried (parameters unchanged)' (-not $r.error -and $script:captured -and -not $script:captured.ContainsKey('syncCarriedSettings'))
 $script:stage1.names.apps.Remove('sync')
@@ -220,4 +270,4 @@ Check 'Backends phase clears prior evidence only after its scope and writer chec
 Check 'Backends phase does not touch admin redirects, network or code' ($body -and $body -notmatch 'Invoke-DrAdminRedirects|Invoke-Stage6|New-StgQsContext')
 
 Write-Host "Test-StagedOnboarding: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 72) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 90) { exit 1 }

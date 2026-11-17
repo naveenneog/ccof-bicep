@@ -10,6 +10,11 @@ name: onboard-foundry
 #   gate if needed and the apply. Every self-hosted job runs in a GitHub environment whose deployment
 #   branch policy allows main only; <env>-gate-privatelink and <env>-apply also need reviewers.
 # Steps run through scripts/cicd/Invoke-CicdOnboardingStep.ps1, which never runs Stage 7 or Stage 8.
+# The job conditions below come from the dispatched branch, which its author can edit, so they are not the
+# control: the runner host's job-started hook (scripts/cicd/Install-CcofRunner.*, both runners) refuses any
+# job that is not workflow_dispatch of an allow-listed workflow on refs/heads/main, and the environments
+# allow main only. Keep the triggers to pull_request and workflow_dispatch, with no chained or reusable
+# workflows (tests/onboard-foundry-workflow.test.ts).
 
 on:
   pull_request:
@@ -94,9 +99,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Runner host preflight
+      # The preflight matching the host OS (docs/runbooks/CICD-SETUP.md): a hardened Windows host needs no Bash.
+      - name: Runner host preflight (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
+      - name: Runner host preflight (unsupported OS)
+        if: runner.os != 'Linux' && runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          Write-Error "Runner OS $env:RUNNER_OS has no CCOF preflight; only Linux and Windows hosts are supported."
+          exit 1
 
       - name: Scope
         id: scope
@@ -157,9 +174,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Runner host preflight
+      # The preflight matching the host OS (docs/runbooks/CICD-SETUP.md): a hardened Windows host needs no Bash.
+      - name: Runner host preflight (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
+      - name: Runner host preflight (unsupported OS)
+        if: runner.os != 'Linux' && runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          Write-Error "Runner OS $env:RUNNER_OS has no CCOF preflight; only Linux and Windows hosts are supported."
+          exit 1
 
       - name: Azure sign-in (runner managed identity)
         uses: ./.github/actions/azure-login-mi
@@ -201,10 +230,13 @@ jobs:
   gate-privatelink:
     name: private link approved (gate)
     needs: [validate, preview]
-    if: inputs.apply && github.ref == 'refs/heads/main' && needs.validate.outputs.needs-privatelink-gate == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply && needs.validate.outputs.needs-privatelink-gate == 'true'
     runs-on: [self-hosted, ccof-vnet, ccof-preview]
     environment: ${{ needs.validate.outputs.environment }}-gate-privatelink
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
     env:
       CCOF_ENV: ${{ needs.validate.outputs.environment }}
       CCOF_IDS: ${{ needs.validate.outputs.backend-ids }}
@@ -213,9 +245,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Runner host preflight
+      # The preflight matching the host OS (docs/runbooks/CICD-SETUP.md): a hardened Windows host needs no Bash.
+      - name: Runner host preflight (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
+      - name: Runner host preflight (unsupported OS)
+        if: runner.os != 'Linux' && runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          Write-Error "Runner OS $env:RUNNER_OS has no CCOF preflight; only Linux and Windows hosts are supported."
+          exit 1
+
+      # Before any Azure call: the reviewer approval of this environment must have been enforced in this run.
+      - name: Verify the gate approval
+        env:
+          CCOF_APPROVAL_TOKEN: ${{ github.token }}
+        run: pwsh scripts/cicd/Assert-CicdApproval.ps1 -Environment $env:CCOF_ENV -GitHubEnvironment "$env:CCOF_ENV-gate-privatelink"
 
       - name: Checklist
         run: |
@@ -251,7 +301,7 @@ jobs:
     name: apply (region A, region B, descriptor, smoke)
     needs: [validate, preview, gate-privatelink]
     if: >-
-      always() && inputs.apply && github.ref == 'refs/heads/main'
+      always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply
       && needs.validate.result == 'success' && needs.preview.result == 'success'
       && (needs.gate-privatelink.result == 'success' || needs.gate-privatelink.result == 'skipped')
     runs-on: [self-hosted, ccof-vnet, ccof-apply]
@@ -259,6 +309,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write
+      actions: read
     env:
       CCOF_ENV: ${{ needs.validate.outputs.environment }}
       CCOF_IDS: ${{ needs.validate.outputs.backend-ids }}
@@ -266,9 +317,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Runner host preflight
+      # The preflight matching the host OS (docs/runbooks/CICD-SETUP.md): a hardened Windows host needs no Bash.
+      - name: Runner host preflight (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/cicd/Test-RunnerHost.sh
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
+      - name: Runner host preflight (unsupported OS)
+        if: runner.os != 'Linux' && runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          Write-Error "Runner OS $env:RUNNER_OS has no CCOF preflight; only Linux and Windows hosts are supported."
+          exit 1
+
+      # Before any Azure call. Fails closed when <env>-apply has no required reviewers (private repositories
+      # need GitHub Enterprise), allows other branches, was bypassed, or this is a re-run attempt. The step
+      # runner refuses every -Apply without this record.
+      - name: Verify the apply approval (and the private link gate approval when it was needed)
+        env:
+          CCOF_APPROVAL_TOKEN: ${{ github.token }}
+          CCOF_GATE_NEEDED: ${{ needs.validate.outputs.needs-privatelink-gate }}
+        run: |
+          pwsh scripts/cicd/Assert-CicdApproval.ps1 -Environment $env:CCOF_ENV -GitHubEnvironment "$env:CCOF_ENV-apply"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($env:CCOF_GATE_NEEDED -eq 'true') {
+            pwsh scripts/cicd/Assert-CicdApproval.ps1 -Environment $env:CCOF_ENV -GitHubEnvironment "$env:CCOF_ENV-gate-privatelink"
+            exit $LASTEXITCODE
+          }
 
       - name: Azure sign-in (runner managed identity)
         uses: ./.github/actions/azure-login-mi

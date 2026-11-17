@@ -5,8 +5,10 @@
 
 .DESCRIPTION
   For each backend id, in region A and (when dr-standby.config.json is next to the configuration)
-  region B: the APIM backend entity exists with the configured URL, and the API policy names the id
-  (%%BACKEND_IDS%%). Then the Cosmos `backends` descriptor is present and equal to the expected one
+  region B: the APIM backend entity exists with the configured URL, and the effective API policy (included
+  fragments followed, XML decoded) admits the id - by the static %%BACKEND_IDS%% list or by the registry
+  descriptor's auth mode - and routes managed-identity requests to the backend entity. Then the Cosmos
+  `backends` descriptor is present, active and equal to the expected one
   (Set-CicdBackendDescriptor.ps1 without -Apply; needs the in-VNet runner and Cosmos read).
   Exit 0 = all present, 3 = something missing (listed). Nothing is changed.
 
@@ -36,7 +38,8 @@ $configDir = Split-Path $configFull -Parent
 $cfg = Read-CicdJson $configFull
 $ids = @($BackendIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if (-not $ids.Count) { Stop-Smoke 'smoke_ids_required: name at least one backend id.' 2 }
-if (-not $Arm) { $Arm = { param($p) $o = az rest --method get --url "https://management.azure.com$p" --only-show-errors 2>&1; if ($LASTEXITCODE) { throw (@($o) -join ' ') }; @($o) -join "`n" | ConvertFrom-Json -AsHashtable -Depth 100 } }
+# Not az rest: a policy body with a UTF-8 byte order mark breaks its JSON parsing on Windows (Invoke-CicdArmGet strips it).
+if (-not $Arm) { $Arm = { param($p) Invoke-CicdArmGet -Path $p } }
 
 $stateFile = Join-Path $configDir '.staged-state/state.json'
 if (-not (Test-Path -LiteralPath $stateFile)) { Stop-Smoke "smoke_state_missing: $stateFile" 2 }
@@ -64,21 +67,33 @@ foreach ($r in $regions.Keys) {
     foreach ($id in $ids) {
         $backend = @($cfg['backends'] | Where-Object { $_ -is [Collections.IDictionary] -and [string]$_['id'] -ceq $id })
         if ($backend.Count -ne 1) { $problems.Add("smoke_backend_unknown: $id"); continue }
-        $found = @(Get-CicdApimBackendFindings -ApimId $regions[$r] -ApiId $apiId -Backend $backend[0] -Arm $Arm)
-        $report.regions[$r].backends[$id] = if ($found.Count) { $found } else { 'ok' }
+        $detail = @{}
+        $found = @(Get-CicdApimBackendFindings -ApimId $regions[$r] -ApiId $apiId -Backend $backend[0] -Arm $Arm -Detail $detail)
+        $report.regions[$r].backends[$id] = [ordered]@{ result = $(if ($found.Count) { 'problems' } else { 'ok' }); problems = $found; routing = $detail.routing; fragments = $detail.fragments; warnings = $detail.warnings }
+        foreach ($w in @($detail.warnings)) { Write-Warning "region ${r}: $w" }
+        if ($detail.routing -ceq 'registry' -and $SkipDescriptor) { $report.regions[$r].backends[$id].note = 'registry routing also needs the active descriptor, which -SkipDescriptor did not check' }
         foreach ($p in $found) { $problems.Add("region ${r}: $p") }
     }
 }
 if (-not $SkipDescriptor) {
-    $descriptorEvidence = if ($EvidencePath) { Join-Path (Split-Path $EvidencePath -Parent) 'descriptor-smoke.json' } else { $null }
-    if (-not $Descriptor) { $Descriptor = { param($c, $i, $e) $x = @{ ConfigPath = $c; BackendIds = $i }; if ($e) { $x.EvidencePath = $e }; & (Join-Path $PSScriptRoot 'Set-CicdBackendDescriptor.ps1') @x; $LASTEXITCODE } }
-    $code = & $Descriptor $configFull $ids $descriptorEvidence | Select-Object -Last 1
-    $report.descriptor = [ordered]@{ exitCode = $code; evidence = $descriptorEvidence }
-    if ($code -ne 0) { $problems.Add("smoke_descriptor: Set-CicdBackendDescriptor.ps1 exited $code.") }
-    elseif ($descriptorEvidence -and (Test-Path -LiteralPath $descriptorEvidence)) {
-        $missing = @((Read-CicdJson $descriptorEvidence)['results'] | Where-Object { $_['outcome'] -cne 'present' } | ForEach-Object { "$($_['backendId'])=$($_['outcome'])" })
-        if ($missing.Count) { $problems.Add("smoke_descriptor: not present: $($missing -join ', ').") }
+    # The preview exits 0 for would_create too, so the outcome per id is read from its evidence, always.
+    $tempDir = $null
+    $descriptorEvidence = if ($EvidencePath) { Join-Path (Split-Path $EvidencePath -Parent) 'descriptor-smoke.json' } else {
+        $base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+        $tempDir = Join-Path $base "ccof-smoke-$([guid]::NewGuid().ToString('N'))"; $null = New-Item -ItemType Directory -Path $tempDir
+        Join-Path $tempDir 'descriptor-smoke.json'
     }
+    if (Test-Path -LiteralPath $descriptorEvidence) { Remove-Item -LiteralPath $descriptorEvidence -Force }
+    if (-not $Descriptor) { $Descriptor = { param($c, $i, $e) & (Join-Path $PSScriptRoot 'Set-CicdBackendDescriptor.ps1') -ConfigPath $c -BackendIds $i -EvidencePath $e; $LASTEXITCODE } }
+    try {
+        $code = & $Descriptor $configFull $ids $descriptorEvidence | Select-Object -Last 1
+        $outcomes = [ordered]@{}
+        if (Test-Path -LiteralPath $descriptorEvidence) { foreach ($x in @((Read-CicdJson $descriptorEvidence)['results'])) { if ($x -is [Collections.IDictionary]) { $outcomes[[string]$x['backendId']] = [string]$x['outcome'] } } }
+    } finally { if ($tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue } }
+    $report.descriptor = [ordered]@{ exitCode = $code; evidence = $(if ($tempDir) { $null } else { $descriptorEvidence }); outcomes = $outcomes }
+    if ($code -ne 0) { $problems.Add("smoke_descriptor: Set-CicdBackendDescriptor.ps1 exited $code.") }
+    $missing = @($ids | Where-Object { $outcomes[$_] -cne 'present' } | ForEach-Object { "$_=$(if ($outcomes.Contains($_)) { $outcomes[$_] } else { 'no result' })" })
+    if ($missing.Count) { $problems.Add("smoke_descriptor: not present and active: $($missing -join ', ').") }
 }
 $report.problems = @($problems)
 if ($EvidencePath) {

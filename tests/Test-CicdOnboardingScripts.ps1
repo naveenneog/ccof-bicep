@@ -54,8 +54,20 @@ Save-Json (Join-Path $env1 '.dr-state\standby.state.json') $standby
 
 # --- fake ARM ---------------------------------------------------------------------------------------
 $acct2 = "/subscriptions/$fsub/resourceGroups/foundry-rg/providers/Microsoft.CognitiveServices/accounts/acct2"
-function Reset-Arm {
-    $global:CicdArm = @{
+# Policy fixtures modelled on infra/gateway/policy/claude-messages.template.xml: the legacy inline policy
+# with a static list, and the split form (the infsim lab today) whose API policy only includes fragments and
+# whose inbound fragment admits registry backends by the descriptor auth mode.
+$miRoute = '<choose><when condition="@((string)context.Variables["ccofBackendAuthMode"] == "managed-identity")"><authentication-managed-identity id="x" resource="@((string)context.Variables["ccofBackendAuthResource"])" /><!-- ADR 0034 --><set-backend-service backend-id="@((string)context.Variables["ccofRouteBackendId"] != "" ? (string)context.Variables["ccofRouteBackendId"] : (string)context.Variables["ccofBackendId"])" /></when></choose>'
+function Get-AllowXml([string]$Ids, [switch]$Registry) { '<set-variable name="ccofBackendAllowed" value="@(Array.IndexOf(new string[] { ' + $Ids + ' }, (string)context.Variables["ccofBackendId"]) >= 0' + $(if ($Registry) { ' || (string)context.Variables["ccofBackendAuthMode"] != ""' }) + ')" />' }
+function Get-InlinePolicy([string]$Ids) { "<policies><inbound>$(Get-AllowXml $Ids)$miRoute</inbound><backend /><outbound /></policies>" }
+$splitApi = '<policies><inbound><include-fragment fragment-id="claude-messages-inbound" /></inbound><backend><include-fragment fragment-id="claude-messages-backend" /></backend><outbound><include-fragment fragment-id="claude-messages-outbound" /></outbound></policies>'
+function Set-SplitPolicy([string]$Apim, [string]$Inbound = "<fragment>$(Get-AllowXml '' -Registry)$miRoute</fragment>") {
+    $global:CicdArm["$Apim/apis/claude-messages/policies/policy?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = $splitApi } }
+    $global:CicdArm["$Apim/policyFragments/claude-messages-inbound?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = $Inbound } }
+    $global:CicdArm["$Apim/policyFragments/claude-messages-backend?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = '<fragment><forward-request /></fragment>' } }
+    $global:CicdArm["$Apim/policyFragments/claude-messages-outbound?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = '<fragment>"be2|claude-haiku-4-5=global"</fragment>' } }
+}
+function Reset-Arm {    $global:CicdArm = @{
         "$acct2`?api-version=2024-10-01" = @{ kind = 'AIServices'; location = 'eastus2'; properties = @{ provisioningState = 'Succeeded'; publicNetworkAccess = 'Disabled'; customSubDomainName = 'acct2'
             privateEndpointConnections = @(@{ properties = @{ privateEndpoint = @{ id = '/pe/1' }; privateLinkServiceConnectionState = @{ status = 'Approved' } } }) } }
         "$acct2/deployments?api-version=2024-10-01" = @{ value = @(@{ name = 'claude-haiku-4-5'; properties = @{ provisioningState = 'Succeeded'; model = @{ format = 'Anthropic'; name = 'claude-haiku-4-5'; version = '1' } } }) }
@@ -65,7 +77,7 @@ function Reset-Arm {
     }
     foreach ($apim in $apimA, $apimB) {
         $global:CicdArm["$apim/backends/be2?api-version=2024-05-01"] = @{ properties = @{ url = 'https://acct2.services.ai.azure.com/anthropic' } }
-        $global:CicdArm["$apim/apis/claude-messages/policies/policy?api-version=2024-05-01"] = @{ properties = @{ value = '<x value="@(new string[] { "be1", "be2" })" />' } }
+        $global:CicdArm["$apim/apis/claude-messages/policies/policy?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = (Get-InlinePolicy '"be1", "be2"') } }
     }
 }
 $arm = { param($p) if (-not $global:CicdArm.ContainsKey($p)) { throw "404 $p" }; $global:CicdArm[$p] }
@@ -183,26 +195,50 @@ Set-Content -LiteralPath $drPath -Value $drKeep -NoNewline
 
 # --- smoke ----------------------------------------------------------------------------------------------
 $smokeEv = Join-Path $scratch 'smoke\smoke.json'
-function Invoke-Smoke([scriptblock]$Descriptor = { param($c, $i, $e) 0 }) {
+$descriptorPresent = { param($c, $i, $e) Save-Json $e @{ results = @($i | ForEach-Object { @{ backendId = $_; outcome = 'present' } }) }; 0 }
+function Invoke-Smoke([scriptblock]$Descriptor = $descriptorPresent) {
     Remove-Item -LiteralPath $smokeEv -ErrorAction SilentlyContinue
-    $code = Invoke-Quiet { $null = & (Join-Path $cicd 'Test-CicdBackendSmoke.ps1') -ConfigPath $cfgPath -BackendIds be2 -Arm $arm -Descriptor $Descriptor -EvidencePath $smokeEv 6>$null 2>$null; $LASTEXITCODE }
+    $code = Invoke-Quiet { $null = & (Join-Path $cicd 'Test-CicdBackendSmoke.ps1') -ConfigPath $cfgPath -BackendIds be2 -Arm $arm -Descriptor $Descriptor -EvidencePath $smokeEv 6>$null 2>$null 3>$null; $LASTEXITCODE }
     @{ code = $code; report = (Read-Json $smokeEv) }
 }
+function SmokeProblems($s) { @($s.report.problems) -join ';' }
+$polA = "$apimA/apis/claude-messages/policies/policy?api-version=2024-05-01&format=rawxml"
 Reset-Arm; $s = Invoke-Smoke
-Check 'smoke: entity and policy in A and B with a present descriptor pass' ($s.code -eq 0 -and (@($s.report.regions.Keys) -join ',') -ceq 'A,B')
+Check 'smoke: inline policy with the id in the static list, entities in A and B and a present descriptor pass' ($s.code -eq 0 -and (@($s.report.regions.Keys) -join ',') -ceq 'A,B' -and $s.report.regions.A.backends.be2.routing -ceq 'static')
 $global:CicdArm.Remove("$apimB/backends/be2?api-version=2024-05-01"); $s = Invoke-Smoke
-Check 'smoke: a missing region B backend entity fails' ($s.code -eq 3 -and (@($s.report.problems) -join ';') -match 'region B: apim_backend_missing')
-Reset-Arm; $global:CicdArm["$apimA/apis/claude-messages/policies/policy?api-version=2024-05-01"].properties.value = '<x value="@(new string[] { "be1", "be22" })" />'; $s = Invoke-Smoke
-Check 'smoke: a policy without the exact quoted id fails' ($s.code -eq 3 -and (@($s.report.problems) -join ';') -match 'region A: apim_policy_backend')
+Check 'smoke: a missing region B backend entity fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region B: apim_backend_missing')
+Reset-Arm; $global:CicdArm[$polA].properties.value = Get-InlinePolicy '"be1", "be22"'; $s = Invoke-Smoke
+Check 'smoke: a static list without the exact id and no registry admission fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_backend_not_allowed')
 Reset-Arm; $global:CicdArm["$apimA/backends/be2?api-version=2024-05-01"].properties.url = 'https://acct1.services.ai.azure.com/anthropic'; $s = Invoke-Smoke
-Check 'smoke: an entity with another URL fails' ($s.code -eq 3 -and (@($s.report.problems) -join ';') -match 'apim_backend_url')
+Check 'smoke: an entity with another URL fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'apim_backend_url')
+Reset-Arm; Set-SplitPolicy $apimA; Set-SplitPolicy $apimB; $s = Invoke-Smoke
+Check 'smoke: split policy (fragments) with an empty static list admits the id by registry auth mode' ($s.code -eq 0 -and $s.report.regions.A.backends.be2.routing -ceq 'registry' -and (@($s.report.regions.B.backends.be2.fragments) -join ',') -ceq 'claude-messages-inbound,claude-messages-backend,claude-messages-outbound')
+Reset-Arm; Set-SplitPolicy $apimA ([Net.WebUtility]::HtmlEncode("<fragment>$(Get-AllowXml '' -Registry)$miRoute</fragment>")); $s = Invoke-Smoke
+Check 'smoke: an XML-escaped (&quot;) fragment is decoded and passes' ($s.code -eq 0 -and $s.report.regions.A.backends.be2.routing -ceq 'registry')
+Reset-Arm; Set-SplitPolicy $apimA; $global:CicdArm.Remove("$apimA/policyFragments/claude-messages-inbound?api-version=2024-05-01&format=rawxml"); $s = Invoke-Smoke
+Check 'smoke: a missing included fragment fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_fragment_missing: .* claude-messages-inbound' -and (SmokeProblems $s) -match 'apim_policy_unrecognized')
+Reset-Arm; Set-SplitPolicy $apimA "<fragment>$(Get-AllowXml '')$miRoute</fragment>"; $s = Invoke-Smoke
+Check 'smoke: a split policy with an empty static list and no registry admission fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_backend_not_allowed')
+$cmRoute = $miRoute.Replace('== "managed-identity"', '== "credential-manager"'); Reset-Arm; Set-SplitPolicy $apimB "<fragment>$(Get-AllowXml '' -Registry)$cmRoute</fragment>"; $s = Invoke-Smoke
+Check 'smoke: a policy without the managed-identity route to ccofBackendId fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region B: apim_policy_no_route')
+Reset-Arm; $global:CicdArm[$polA].properties.value = '<policies><inbound><x value="@(new string[] { &quot;be2&quot; })" /></inbound></policies>'; $s = Invoke-Smoke
+Check 'smoke: a policy that only mentions the id without the admission decision fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_unrecognized')
+Reset-Arm; Set-SplitPolicy $apimA '<fragment><include-fragment fragment-id="claude-messages-inbound" /></fragment>'; $s = Invoke-Smoke
+Check 'smoke: a cyclic fragment include fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_fragment_(cycle|depth)')
 Reset-Arm; $s = Invoke-Smoke { param($c, $i, $e) 3 }
-Check 'smoke: a missing or different descriptor fails' ($s.code -eq 3 -and (@($s.report.problems) -join ';') -match 'smoke_descriptor')
-Save-Json (Join-Path $scratch 'smoke\descriptor-smoke.json') @{ results = @(@{ backendId = 'be2'; outcome = 'would_create' }) }
+Check 'smoke: a descriptor script failure fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'smoke_descriptor: Set-CicdBackendDescriptor.ps1 exited 3')
+$s = Invoke-Smoke { param($c, $i, $e) Save-Json $e @{ results = @(@{ backendId = 'be2'; outcome = 'would_create' }) }; 0 }
+Check 'smoke: a descriptor that would still be created fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'not present and active: be2=would_create')
 $s = Invoke-Smoke { param($c, $i, $e) 0 }
-Check 'smoke: a descriptor that would still be created fails' ($s.code -eq 3 -and (@($s.report.problems) -join ';') -match 'not present: be2=would_create')
-Remove-Item (Join-Path $scratch 'smoke\descriptor-smoke.json')
-
+Check 'smoke: a descriptor step that reports no outcome fails' ($s.code -eq 3 -and (SmokeProblems $s) -match 'be2=no result')
+$bomJson = '{"properties":{"value":"<policies />"}}'
+$bomBytes = [byte[]](@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes($bomJson))
+$bomOk = try { (ConvertFrom-CicdArmBody $bomBytes).properties.value -ceq '<policies />' -and (ConvertFrom-CicdArmBody ([string][char]0xFEFF + $bomJson)).properties.value -ceq '<policies />' } catch { $false }
+Check 'ARM reader: a body with a UTF-8 byte order mark parses (bytes and string)' $bomOk
+Reset-Arm; Set-SplitPolicy $apimA '<fragment><include-fragment fragment-id="n1" /></fragment>'; foreach ($k in 1..6) { $global:CicdArm["$apimA/policyFragments/n$k`?api-version=2024-05-01&format=rawxml"] = @{ properties = @{ value = ('<fragment><include-fragment fragment-id="n{0}" /></fragment>' -f ($k + 1)) } } }; $s = Invoke-Smoke
+Check 'smoke: includes nested deeper than 5 levels fail' ($s.code -eq 3 -and (SmokeProblems $s) -match 'region A: apim_policy_fragment_depth')
+$geo = Get-CicdPolicyRouting -Policy "$(Get-AllowXml '' -Registry)$miRoute" -Id be2 -InferenceGeo @{ 'claude-haiku-4-5' = 'global' }
+Check 'smoke: a missing inference geo entry is a warning, not a failure' (@($geo.problems).Count -eq 0 -and (@($geo.warnings) -join ';') -match 'be2\|claude-haiku-4-5=global')
 # --- descriptor --------------------------------------------------------------------------------------
 $global:CosmosDocs = @{}; $global:CosmosCalls = [Collections.Generic.List[object]]::new()
 $fakeHttp = {
@@ -236,6 +272,17 @@ Check 'descriptor: a second apply is a no-op (present, read only)' ($d.code -eq 
 $global:CosmosDocs['be2'] = @{ id = 'be2'; backendId = 'be2'; status = 'disabled'; apiFormat = 'anthropic-messages'; auth = @{ mode = 'managed-identity'; resource = 'https://cognitiveservices.azure.com' } }
 $d = Invoke-Descriptor -Apply
 Check 'descriptor: a different existing document fails and is not overwritten' ($d.code -eq 3 -and $d.report.results[0].outcome -ceq 'mismatch' -and ($d.methods -join ',') -ceq 'GET' -and $global:CosmosDocs['be2'].status -ceq 'disabled')
+# Smoke without -EvidencePath still reads each descriptor outcome (the preview exits 0 for would_create).
+$global:CosmosDocs.Clear(); Reset-Arm
+$runnerTemp = Join-Path $scratch 'runner-temp'; $null = New-Item -ItemType Directory -Force -Path $runnerTemp; $keepRunnerTemp = $env:RUNNER_TEMP; $env:RUNNER_TEMP = $runnerTemp
+$realDescriptor = { param($c, $i, $e) & (Join-Path $cicd 'Set-CicdBackendDescriptor.ps1') -ConfigPath $c -BackendIds $i -EvidencePath $e -GetToken $token -Http $fakeHttp; $global:DescriptorExit = $global:LASTEXITCODE; $global:DescriptorExit }.GetNewClosure()
+function Invoke-SmokeNoEvidence { Invoke-Quiet { $null = & (Join-Path $cicd 'Test-CicdBackendSmoke.ps1') -ConfigPath $cfgPath -BackendIds be2 -Arm $arm -Descriptor $realDescriptor 6>$null 2>$null 3>$null; $LASTEXITCODE } }
+$global:DescriptorExit = $null; $code = Invoke-SmokeNoEvidence
+Check 'smoke without -EvidencePath: a descriptor 404 (would_create, exit 0) fails' ($code -eq 3 -and $global:DescriptorExit -eq 0 -and -not $global:CosmosDocs.Count)
+$global:CosmosDocs['be2'] = @{ id = 'be2'; backendId = 'be2'; status = 'active'; apiFormat = 'anthropic-messages'; auth = @{ mode = 'managed-identity'; resource = 'https://cognitiveservices.azure.com' } }
+$code = Invoke-SmokeNoEvidence
+Check 'smoke without -EvidencePath: a present descriptor passes and the temporary evidence is removed' ($code -eq 0 -and -not @(Get-ChildItem -LiteralPath $runnerTemp).Count)
+$env:RUNNER_TEMP = $keepRunnerTemp
 $global:CosmosDocs.Clear()
 $raceHttp = { param($request) if ($request.Method -eq 'POST') { $global:CosmosDocs['be2'] = $request.Body | ConvertFrom-Json -AsHashtable; return @{ StatusCode = 409; Content = ''; Headers = @{} } }; & $fakeHttp $request }
 $code = Invoke-Quiet { $null = & (Join-Path $cicd 'Set-CicdBackendDescriptor.ps1') -ConfigPath $cfgPath -BackendIds be2 -Apply -EvidencePath $dEv -GetToken $token -Http $raceHttp 6>$null 2>$null; $LASTEXITCODE }
@@ -278,12 +325,81 @@ try {
     $env:CCOF_RUNNER_ROLE = 'apply'
     $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage8 -Apply -PrintOnly 2>&1
     Check 'step script: an unknown step is refused with exit 2' ($LASTEXITCODE -eq 2 -and "$o" -match 'refused')
-} finally { $env:GITHUB_ACTIONS = $keepGa; $env:CCOF_RUNNER_ROLE = $keepRole }
+
+    # Approval enforcement (private repositories need GitHub Enterprise for required reviewers).
+    $env:GITHUB_RUN_ID = '901'; $env:GITHUB_RUN_ATTEMPT = '1'; $env:GITHUB_REPOSITORY = 'octo/ccof'; $env:GITHUB_ACTOR = 'starter'
+    $okEnv = { [pscustomobject]@{ can_admins_bypass = $false
+        protection_rules = @([pscustomobject]@{ type = 'required_reviewers'; prevent_self_review = $true; reviewers = @([pscustomobject]@{ type = 'User' }) }, [pscustomobject]@{ type = 'branch_policy' })
+        deployment_branch_policy = [pscustomobject]@{ protected_branches = $false; custom_branch_policies = $true } } }
+    $main = @([pscustomobject]@{ name = 'main'; type = 'branch' })
+    $approved = { param($envName = 'lab-apply', $state = 'approved', $who = 'reviewer') @([pscustomobject]@{ state = $state; user = [pscustomobject]@{ login = $who }; environments = @([pscustomobject]@{ name = $envName }) }) }
+    $ap = { param($E, $B = $main, $A = (& $approved)) Get-CicdApprovalProblems -Name 'lab-apply' -Environment $E -BranchPolicies $B -Approvals $A -Actor 'starter' }
+    $r = & $ap (& $okEnv)
+    Check 'approval: reviewers, main-only branches and an approval in this run pass' ($r.problems.Count -eq 0 -and $r.warnings.Count -eq 0 -and "$($r.approvers)" -ceq 'reviewer')
+    $e = & $okEnv; $e.protection_rules = @([pscustomobject]@{ type = 'branch_policy' })
+    $r = & $ap $e
+    Check 'approval: no required reviewers (private repo below Enterprise) fails and names the plan' ("$($r.problems)" -match '^no_required_reviewers' -and "$($r.problems)" -match 'GitHub Enterprise')
+    $e = & $okEnv; $e.protection_rules[0].reviewers = @()
+    Check 'approval: a reviewers rule with nobody in it fails' ("$((& $ap $e).problems)" -match 'no_required_reviewers')
+    Check 'approval: a missing environment fails' ("$((& $ap $null).problems)" -match '^environment_missing')
+    $e = & $okEnv; $e.deployment_branch_policy = $null
+    Check 'approval: no deployment branch policy fails' ("$((& $ap $e).problems)" -match 'no_branch_policy')
+    $e = & $okEnv; $e.deployment_branch_policy = [pscustomobject]@{ protected_branches = $true; custom_branch_policies = $false }
+    Check 'approval: protected-branches policy is not main only' ("$((& $ap $e).problems)" -match 'branch_policy_not_main_only')
+    Check 'approval: an extra branch rule is not main only' ("$((& $ap (& $okEnv) @(@($main) + [pscustomobject]@{ name = 'feat/*'; type = 'branch' })).problems)" -match 'branch_policy_not_main_only')
+    Check 'approval: a tag rule named main is not main only' ("$((& $ap (& $okEnv) @([pscustomobject]@{ name = 'main'; type = 'tag' })).problems)" -match 'branch_policy_not_main_only')
+    Check 'approval: no approval in this run (bypass) fails' ("$((& $ap (& $okEnv) $main @()).problems)" -match '^not_approved')
+    Check 'approval: an approval of another environment does not count' ("$((& $ap (& $okEnv) $main (& $approved 'lab-gate-privatelink')).problems)" -match '^not_approved')
+    Check 'approval: a rejection fails' ("$((& $ap (& $okEnv) $main @(@(& $approved) + @(& $approved 'lab-apply' 'rejected' 'other'))).problems)" -match '^rejected')
+    $e = & $okEnv; $e.protection_rules[0].prevent_self_review = $false; $e.can_admins_bypass = $true
+    $r = & $ap $e $main (& $approved 'lab-apply' 'approved' 'starter')
+    Check 'approval: self-review, admin bypass and self-approval are warnings' ($r.problems.Count -eq 0 -and "$($r.warnings)" -match 'self_review_allowed' -and "$($r.warnings)" -match 'admins_can_bypass' -and "$($r.warnings)" -match 'self_approved')
+
+    $assert = Join-Path $cicd 'Assert-CicdApproval.ps1'
+    $record = Join-Path $root 'evidence/lab/approval-lab-apply.json'
+    $fixture = Join-Path $scratch 'approval-fixture.json'
+    @{ environment = (& $okEnv); branchPolicies = $main; approvals = (& $approved) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixture
+    $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
+    $rec = Get-Content -Raw -LiteralPath $record | ConvertFrom-Json
+    Check 'approval script: an enforced approval exits 0 and records this run attempt' ($LASTEXITCODE -eq 0 -and $rec.verified -eq $true -and $rec.runId -ceq '901' -and $rec.runAttempt -ceq '1')
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage3 -Apply -PrintOnly 2>&1
+    Check 'step script: an apply with this run''s verified approval runs' ($LASTEXITCODE -eq 0 -and "$o" -match '-Stage 3 .*-Apply')
+    $env:GITHUB_RUN_ATTEMPT = '3'
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage3 -Apply -PrintOnly 2>&1
+    Check 'step script: an approval from another run attempt is refused' ($LASTEXITCODE -eq 2 -and "$o" -match 'approval_not_enforced')
+    $env:GITHUB_RUN_ATTEMPT = '1'
+    $e = & $okEnv; $e.protection_rules = @()
+    @{ environment = $e; branchPolicies = $main; approvals = @() } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixture
+    $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
+    Check 'approval script: no reviewers exits 4 and records verified false' ($LASTEXITCODE -eq 4 -and (Get-Content -Raw -LiteralPath $record | ConvertFrom-Json).verified -eq $false -and "$o" -match 'no_required_reviewers')
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step stage5 -Apply -PrintOnly 2>&1
+    Check 'step script: an unverified approval record refuses the apply' ($LASTEXITCODE -eq 2 -and "$o" -match 'approval_not_enforced.*not verified')
+    Remove-Item -LiteralPath $record
+    $o = & $pwsh -NoProfile -File $stepScript -Environment lab -Step descriptor -BackendIds be2 -Apply -PrintOnly 2>&1
+    Check 'step script: an apply without an approval record is refused; a preview needs none' ($LASTEXITCODE -eq 2 -and "$o" -match 'approval_not_enforced: no approval record' -and $(& $pwsh -NoProfile -File $stepScript -Environment lab -Step stage3 -PrintOnly *>$null; $LASTEXITCODE -eq 0))
+    $auto = [pscustomobject]@{ can_admins_bypass = $true; protection_rules = @(); deployment_branch_policy = $null }
+    $r = & $ap $auto $main @()
+    Check 'approval: an auto-created (unprotected) environment fails on reviewers, branches and approval' ("$($r.problems)" -match 'no_required_reviewers' -and "$($r.problems)" -match 'no_branch_policy' -and "$($r.problems)" -match 'not_approved')
+    $r = Get-CicdApprovalProblems -Name 'lab-apply' -Environment (& $okEnv) -BranchPolicies $main -Approvals (& $approved) -RunAttempt 2
+    Check 'approval: a rerun attempt fails closed (approvals are per run, not per attempt)' ("$($r.problems)" -match '^rerun_attempt')
+    @{ environment = (& $okEnv); branchPolicies = $main; approvals = (& $approved) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixture
+    $env:GITHUB_RUN_ATTEMPT = '2'
+    $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
+    Check 'approval script: a rerun attempt exits 4 even with an approval in the run' ($LASTEXITCODE -eq 4 -and "$o" -match 'rerun_attempt')
+    $env:GITHUB_RUN_ATTEMPT = '1'
+    $env:GITHUB_RUN_ID = ''
+    $o = & $pwsh -NoProfile -File $assert -Environment lab -GitHubEnvironment lab-apply -FixturePath $fixture 2>&1
+    Check 'approval script: without the run context it refuses (exit 2)' ($LASTEXITCODE -eq 2)
+} finally {
+    $env:GITHUB_ACTIONS = $keepGa; $env:CCOF_RUNNER_ROLE = $keepRole
+    foreach ($n in 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_REPOSITORY', 'GITHUB_ACTOR') { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath (Join-Path $root 'evidence/lab/approval-lab-apply.json') -Force -ErrorAction SilentlyContinue
+}
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name CicdArm, CosmosDocs, CosmosCalls -Scope Global -ErrorAction SilentlyContinue
 }
-$floor = 68
+$floor = 103
 Write-Host "Test-CicdOnboardingScripts: $($script:pass) passed, $($script:fail) failed"
 if ($script:fail -or ($script:pass + $script:fail) -lt $floor) { Write-Host "expected at least $floor checks" -ForegroundColor Red; exit 1 }
 exit 0
