@@ -1,0 +1,489 @@
+name: deploy-environment
+
+# Complete deployment of one CCOF environment from deploy/<environment>/, then the same run manages it
+# (a rerun previews NoChange and re-applies idempotently). Runbook: docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md.
+# Sign-in: runner host managed identity (.github/actions/azure-login-mi). No Azure secret, no federated credential.
+# Runners: ccof-preview (read-only identity) for pull requests and read-only checks; ccof-apply (deploy identity)
+# only inside a GitHub environment. What-if needs deployment permissions, so main-branch previews run on ccof-apply
+# in <env>-preview (branch policy main; no reviewers). Every change runs in <env>-apply or <env>-gate-<name>.
+# Manual steps that stay outside: Entra changes (Entra team), sites private endpoints, Front Door Lockdown,
+# DrainPrimary/RestorePrimary, failover Fence/Promote/Failback and Stage 8 smoke tests.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Folder deploy/<environment> and GitHub environments <environment>-preview/-apply/-gate-*'
+        type: string
+        required: true
+      apply:
+        description: 'Apply after each preview (each apply waits for its environment approval)'
+        type: boolean
+        default: false
+      scope:
+        description: 'all = primary, Front Door primary-only, DR standby, health alerts. frontdoor-full only after the standby is ready.'
+        type: choice
+        default: all
+        options: [all, primary, frontdoor-primary, standby, frontdoor-full, health]
+      fd_reviewed_ids:
+        description: 'Front Door Approve: comma-separated private endpoint connection IDs reviewed by the resource owners (empty = stop after the Approve preview)'
+        type: string
+        default: ''
+      approvals:
+        description: 'Extra apply approvals (comma-separated): ExistingVnetUpdate, CosmosThroughputReduction, PublicFunctionAccess'
+        type: string
+        default: ''
+      health_test_notification:
+        description: 'Send the health alert test e-mail after the health apply'
+        type: boolean
+        default: false
+  pull_request:
+    paths: ['deploy/**', 'infra/**', 'scripts/cicd/**', '.github/workflows/deploy-environment.yml', '.github/workflows/ccof-step.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ccof-env-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------- pull request: read-only checks
+  pr-environments:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    outputs:
+      environments: ${{ steps.list.outputs.environments }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: list
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          $changed = @(git diff --name-only "$env:BASE_SHA...HEAD")
+          $envs = @($changed | Where-Object { $_ -match '^deploy/([a-z0-9][a-z0-9-]{0,30})/' } | ForEach-Object { $Matches[1] } | Where-Object { $_ -ne 'example' -and (Test-Path "deploy/$_/staged.config.json") } | Sort-Object -Unique)
+          "environments=$(ConvertTo-Json -Compress -InputObject @($envs))" | Add-Content $env:GITHUB_OUTPUT
+          "Environments changed: $($envs -join ', ')" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+  pr-checks:
+    needs: pr-environments
+    if: needs.pr-environments.outputs.environments != '[]' && needs.pr-environments.outputs.environments != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.pr-environments.outputs.environments) }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ matrix.environment }}', step: staged-0, runner: preview, prereq_scope: 'primary,frontdoor,standby,health', prereq_mode: preview }
+
+  # ---------------------------------------------------------------- dispatch: inputs and protections
+  resolve:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, ccof-vnet, ccof-preview]
+    permissions: { contents: read, actions: read }
+    outputs:
+      fd_mode: ${{ steps.fdmode.outputs.mode }}
+      health_b: ${{ steps.fdmode.outputs.health_b }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Environment folder and GitHub environment protections
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCOF_ENV: ${{ inputs.environment }}
+          CCOF_APPLY: ${{ inputs.apply }}
+          CCOF_SCOPE: ${{ inputs.scope }}
+          CCOF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          $e = $env:CCOF_ENV
+          if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$' -or $e -eq 'example') { throw "invalid environment '$e'" }
+          if ($env:GITHUB_REF -ne "refs/heads/$env:CCOF_DEFAULT_BRANCH") { throw "dispatch from $env:GITHUB_REF refused; run from the default branch" }
+          $need = switch ($env:CCOF_SCOPE) {
+            'all' { 'staged.config.json', 'dr-standby.config.json', 'health-a.json' }
+            'primary' { 'staged.config.json' }
+            'health' { 'staged.config.json', 'health-a.json' }
+            default { 'staged.config.json', 'dr-standby.config.json' }
+          }
+          foreach ($f in $need) { if (-not (Test-Path "deploy/$e/$f")) { throw "deploy/$e/$f is missing (needed by scope $env:CCOF_SCOPE)" } }
+          $gates = @('preview')
+          if ($env:CCOF_APPLY -eq 'true') { $gates += 'apply', 'gate-network', 'gate-entra', 'gate-privatelink', 'gate-security', 'gate-frontdoor' }
+          $h = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json' }
+          $bad = @()
+          foreach ($g in $gates) {
+            $name = "$e-$g"
+            try { $envObj = Invoke-RestMethod -Headers $h -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/environments/$name" } catch { $bad += "$name missing (create it before the run; an unknown name would be created without protection)"; continue }
+            $reviewers = @($envObj.protection_rules | Where-Object { $_.type -eq 'required_reviewers' })
+            if ($g -ne 'preview' -and -not $reviewers.Count) { $bad += "$name has no required reviewers" }
+            if (-not $envObj.deployment_branch_policy) { $bad += "$name has no deployment branch policy (main only)" }
+            "- $name : reviewers $($reviewers.Count), branch policy $([bool]$envObj.deployment_branch_policy)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          if ($bad.Count) { $bad | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+          "Run: $e, scope $env:CCOF_SCOPE, apply $env:CCOF_APPLY" | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Restore driver state (read only)
+        shell: pwsh
+        env:
+          CCOF_ENV: ${{ inputs.environment }}
+          CCOF_STATE_TOKEN: ${{ github.token }}
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+      - name: Saved Front Door mode
+        id: fdmode
+        shell: pwsh
+        env:
+          CCOF_ENV: ${{ inputs.environment }}
+        run: |
+          # After a full (two-region) Front Door deployment the driver refuses -PrimaryOnly, so the primary-only jobs are skipped.
+          $p = "deploy/$env:CCOF_ENV/.dr-state/frontdoor-state.json"
+          $mode = if (Test-Path $p) { [string](Get-Content $p -Raw | ConvertFrom-Json).mode } else { 'none' }
+          if ($mode -cnotmatch '^(none|primaryOnly|full)$') { throw "unexpected Front Door mode '$mode' in $p" }
+          "mode=$mode" | Add-Content $env:GITHUB_OUTPUT
+          # health-b.json is optional: the health driver cannot target a DR standby (no <stem>-cosmos in region B).
+          "health_b=$([string](Test-Path "deploy/$env:CCOF_ENV/health-b.json")).ToLower()" | Add-Content $env:GITHUB_OUTPUT
+          "Saved Front Door mode: $mode" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+  prereqs:
+    needs: resolve
+    if: ${{ !cancelled() && !failure() && github.event_name == 'workflow_dispatch' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with:
+      environment: '${{ inputs.environment }}'
+      runner: apply
+      gh_environment: '${{ inputs.environment }}-preview'
+      prereq_scope: ${{ inputs.scope == 'all' && 'primary,frontdoor,standby,health' || inputs.scope == 'primary' && 'primary' || inputs.scope == 'standby' && 'standby' || inputs.scope == 'health' && 'health' || 'frontdoor' }}
+      prereq_mode: apply
+
+  gate-network:
+    needs: prereqs
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', runner: preview, gh_environment: '${{ inputs.environment }}-gate-network', checklist: docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md, prereq_scope: 'primary', prereq_mode: preview }
+
+  # ---------------------------------------------------------------- primary region (staged stages 0-7)
+  stage0:
+    needs: gate-network
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-0, runner: preview }
+
+  stage1-preview:
+    needs: stage0
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-1, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  stage1-apply:
+    needs: stage1-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-1, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  stage2-preview:
+    needs: stage1-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-2, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  stage2-apply:
+    needs: stage2-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-2, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  stage3-preview:
+    needs: stage2-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-3, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  stage3-apply:
+    needs: stage3-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-3, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  # Stage 4 never writes to Entra: the Entra team makes the changes; the gate approver confirms them; the job
+  # re-reads what it can (Graph GET only when the identity may) and records the manual confirmation.
+  stage4-preview:
+    needs: stage3-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-4, runner: preview, checklist: docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md }
+  gate-entra:
+    needs: stage4-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-4, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-gate-entra', prereq_scope: 'primary', prereq_mode: apply, save_state: true }
+
+  stage5-preview:
+    needs: gate-entra
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-5, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  stage5-apply:
+    needs: stage5-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-5, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  stage6-preview:
+    needs: stage5-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-6, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  stage6-apply:
+    needs: stage6-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-6, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  stage7-preview:
+    needs: stage6-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-7, runner: apply, gh_environment: '${{ inputs.environment }}-preview', node_build: true }
+  stage7-apply:
+    needs: stage7-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: staged-7, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true, node_build: true, timeout: 180 }
+
+  # ---------------------------------------------------------------- Front Door, primary only (docs/runbooks/DR-FRONT-DOOR.md)
+  fd-primary-deploy-preview:
+    needs: [resolve, stage7-apply]
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Deploy, primary_only: true, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  fd-primary-deploy-apply:
+    needs: [resolve, fd-primary-deploy-preview]
+    if: ${{ !cancelled() && !failure() && inputs.apply && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Deploy, primary_only: true, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+  fd-primary-approve-preview:
+    needs: [resolve, fd-primary-deploy-apply]
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, primary_only: true, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  fd-primary-approve-apply:
+    needs: [resolve, fd-primary-approve-preview]
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.fd_reviewed_ids != '' && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, primary_only: true, apply: true, reviewed_ids: '${{ inputs.fd_reviewed_ids }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-privatelink', save_state: true }
+  fd-primary-verify:
+    needs: [resolve, fd-primary-approve-apply]
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.fd_mode != 'full' && (inputs.scope == 'all' || inputs.scope == 'frontdoor-primary') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Verify, primary_only: true, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true, timeout: 60 }
+
+  # ---------------------------------------------------------------- DR standby, region B (docs/runbooks/DR-STANDBY-CLOUD-SHELL.md)
+  dr-discover:
+    needs: fd-primary-verify
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: drprereq-Discover, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true }
+  dr-bootstrap-preview:
+    needs: dr-discover
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: drprereq-Bootstrap, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  dr-bootstrap-apply:
+    needs: dr-bootstrap-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: drprereq-Bootstrap, apply: true, approve: "${{ contains(inputs.approvals, 'ExistingVnetUpdate') && 'ExistingVnetUpdate' || '' }}", runner: apply, gh_environment: '${{ inputs.environment }}-gate-network', save_state: true }
+  dr-verify-prereqs:
+    needs: dr-bootstrap-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: drprereq-Verify, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true }
+
+  standby-data-preview:
+    needs: dr-verify-prereqs
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Data, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-data-apply:
+    needs: standby-data-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Data, apply: true, approve: "${{ contains(inputs.approvals, 'CosmosThroughputReduction') && 'CosmosThroughputReduction' || '' }}", runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true, timeout: 360 }
+
+  standby-shells-preview:
+    needs: standby-data-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Shells, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-shells-apply:
+    needs: standby-shells-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Shells, apply: true, approve: "${{ contains(inputs.approvals, 'PublicFunctionAccess') && 'PublicApimBootstrap,PublicFunctionAccess' || 'PublicApimBootstrap' }}", runner: apply, gh_environment: '${{ inputs.environment }}-gate-security', save_state: true }
+
+  standby-grants-preview:
+    needs: standby-shells-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Grants, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-grants-apply:
+    needs: standby-grants-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Grants, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  standby-config-preview:
+    needs: standby-grants-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Config, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-config-apply:
+    needs: standby-config-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Config, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+
+  standby-network-preview:
+    needs: standby-config-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Network, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-network-apply:
+    needs: standby-network-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Network, apply: true, approve: PrivateNetworkChanges, runner: apply, gh_environment: '${{ inputs.environment }}-gate-network', save_state: true }
+
+  # DR 7.3 (Entra handoff for region B) and 7.4 (sites private endpoints and DNS by the network team) are manual.
+  gate-standby-handoff:
+    needs: standby-network-apply
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', runner: preview, gh_environment: '${{ inputs.environment }}-gate-privatelink', checklist: docs/runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md, prereq_scope: standby, prereq_mode: preview }
+
+  standby-code-preview:
+    needs: gate-standby-handoff
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Code, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  standby-code-apply:
+    needs: standby-code-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Code, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true, node_build: true, timeout: 120 }
+  standby-verify:
+    needs: standby-code-apply
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'standby') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: standby-Verify, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true }
+
+  # ---------------------------------------------------------------- Front Door with the standby (only scope frontdoor-full)
+  fd-full-deploy-preview:
+    needs: standby-verify
+    if: ${{ !cancelled() && !failure() && inputs.scope == 'frontdoor-full' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Deploy, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  fd-full-deploy-apply:
+    needs: fd-full-deploy-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.scope == 'frontdoor-full' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Deploy, apply: true, approve: StandbyReady, runner: apply, gh_environment: '${{ inputs.environment }}-gate-frontdoor', save_state: true }
+  fd-full-approve-preview:
+    needs: fd-full-deploy-apply
+    if: ${{ !cancelled() && !failure() && inputs.scope == 'frontdoor-full' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  fd-full-approve-apply:
+    needs: fd-full-approve-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.fd_reviewed_ids != '' && inputs.scope == 'frontdoor-full' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Approve, apply: true, approve: StandbyReady, reviewed_ids: '${{ inputs.fd_reviewed_ids }}', runner: apply, gh_environment: '${{ inputs.environment }}-gate-privatelink', save_state: true }
+  fd-full-verify:
+    needs: fd-full-approve-apply
+    if: ${{ !cancelled() && !failure() && inputs.scope == 'frontdoor-full' }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: frontdoor-Verify, runner: apply, gh_environment: '${{ inputs.environment }}-preview', save_state: true, timeout: 60 }
+
+  # ---------------------------------------------------------------- health alerts, region A and B if health-b.json exists (docs/runbooks/HEALTH-ALERTS.md)
+  health-a-preview:
+    needs: fd-full-verify
+    if: ${{ !cancelled() && !failure() && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: health-a, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  health-a-apply:
+    needs: health-a-preview
+    if: ${{ !cancelled() && !failure() && inputs.apply && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: health-a, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+  health-b-preview:
+    needs: [resolve, health-a-apply]
+    if: ${{ !cancelled() && !failure() && needs.resolve.outputs.health_b == 'true' && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: health-b, runner: apply, gh_environment: '${{ inputs.environment }}-preview' }
+  health-b-apply:
+    needs: [resolve, health-b-preview]
+    if: ${{ !cancelled() && !failure() && inputs.apply && needs.resolve.outputs.health_b == 'true' && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: health-b, apply: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply', save_state: true }
+  health-test:
+    needs: [resolve, health-b-apply]
+    if: ${{ !cancelled() && !failure() && inputs.apply && inputs.health_test_notification && (inputs.scope == 'all' || inputs.scope == 'health') }}
+    strategy:
+      matrix:
+        region: ${{ fromJSON(needs.resolve.outputs.health_b == 'true' && '["a","b"]' || '["a"]') }}
+    permissions: { contents: write, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: 'health-${{ matrix.region }}', apply: true, test_notification: true, runner: apply, gh_environment: '${{ inputs.environment }}-apply' }
+
+  # ---------------------------------------------------------------- final read-only verification
+  final:
+    needs: health-test
+    if: ${{ !cancelled() && !failure() && github.event_name == 'workflow_dispatch' }}
+    permissions: { contents: read, actions: read }
+    uses: ./.github/workflows/ccof-step.yml
+    with: { environment: '${{ inputs.environment }}', step: "${{ (inputs.scope == 'all' || inputs.scope == 'standby' || inputs.scope == 'frontdoor-full') && 'failover-Status' || '' }}", runner: apply, gh_environment: '${{ inputs.environment }}-preview', prereq_scope: "${{ inputs.scope == 'primary' && 'primary' || inputs.scope == 'frontdoor-primary' && 'primary,frontdoor' || inputs.scope == 'health' && 'primary,health' || 'primary,frontdoor,standby,health' }}", prereq_mode: preview }

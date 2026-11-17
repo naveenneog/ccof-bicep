@@ -51,6 +51,16 @@ function Invoke-Stage0 {
         Assert-Stg (-not $missing.Count) "backend $($b.id) lacks deployments: $($missing -join ', ')"
         $report.backends += [ordered]@{ id = $b.id; account = $acct.name; publicNetworkAccess = $acct.properties.publicNetworkAccess; deployments = @($b.deploymentInferenceGeo.Keys) }
     }
+    # entra.manualVerification: the operator (for example a pipeline managed identity) has no Graph token,
+    # as in Stage 4 and Stage 7. The groups are confirmed by the Entra administrator instead.
+    if ($Cfg.entra -is [Collections.IDictionary] -and $Cfg.entra.Contains('manualVerification')) {
+        $report.operator = @{ id = $null; upn = $null; signedIn = $account.user.name; graph = 'not read (entra.manualVerification)' }
+        $report.groups = @($Cfg.groups | ForEach-Object { [ordered]@{ group = "$($_.projectId)/$($_.classification)"; groupId = $_.groupId; verification = 'manual' } })
+        Write-Host 'Stage 0: no Microsoft Graph call (entra.manualVerification); the Entra administrator confirms the security groups.'
+        $null = Write-StgEvidence 'stage0.json' $report
+        $report | ConvertTo-Json -Depth 10 | Write-Host
+        return $report
+    }
     $me = Get-StgGraph 'me?$select=id,userPrincipalName'
     $report.operator = @{ id = $me.id; upn = $me.userPrincipalName }
     foreach ($g in @($Cfg.groups | Where-Object { $_.groupId })) {

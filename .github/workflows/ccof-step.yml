@@ -1,0 +1,148 @@
+name: ccof-step
+
+# One step of deploy-environment.yml / drift-check.yml on a self-hosted CCOF runner (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md).
+# Sign-in is the runner host's managed identity (.github/actions/azure-login-mi); there is no Azure secret in GitHub.
+# The runner is chosen from the inputs: the apply runner only for non-pull_request runs inside a GitHub environment.
+# Anything else lands on the read-only preview runner, where azure-login-mi and Invoke-CicdDriver.ps1 refuse writes.
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true, description: 'deploy/<environment> folder' }
+      step: { type: string, default: '', description: 'Invoke-CicdDriver.ps1 -Step; empty = no driver' }
+      apply: { type: boolean, default: false }
+      approve: { type: string, default: '', description: 'comma-separated Invoke-CicdDriver.ps1 -Approve names' }
+      primary_only: { type: boolean, default: false }
+      reviewed_ids: { type: string, default: '' }
+      test_notification: { type: boolean, default: false }
+      region: { type: string, default: 'A' }
+      runner: { type: string, default: 'preview', description: 'preview | apply' }
+      gh_environment: { type: string, default: '', description: 'GitHub environment (approval gate)' }
+      prereq_scope: { type: string, default: '', description: 'Test-CicdPrerequisites.ps1 -Scope before the driver; empty = none' }
+      prereq_mode: { type: string, default: 'apply' }
+      checklist: { type: string, default: '', description: 'Markdown file shown in the job summary (gates)' }
+      save_state: { type: boolean, default: false }
+      drift: { type: boolean, default: false, description: 'Run Get-CicdDrift.ps1 on this job evidence' }
+      node_build: { type: boolean, default: false, description: 'npm ci and tsc before the driver (code publication)' }
+      timeout: { type: number, default: 120 }
+
+# No permissions block: a called workflow inherits the caller job's token permissions (read for pull requests,
+# contents: write for jobs that save driver state).
+jobs:
+  run:
+    name: ${{ inputs.step || 'checks' }} (${{ inputs.test_notification && 'test' || inputs.apply && 'apply' || 'preview' }})
+    runs-on: ${{ (inputs.runner == 'apply' && github.event_name != 'pull_request' && inputs.gh_environment != '') && fromJSON('["self-hosted","ccof-vnet","ccof-apply"]') || fromJSON('["self-hosted","ccof-vnet","ccof-preview"]') }}
+    environment: ${{ inputs.gh_environment }}
+    timeout-minutes: ${{ inputs.timeout }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CCOF_ENV: ${{ inputs.environment }}
+      CCOF_STEP: ${{ inputs.step }}
+      CCOF_APPLY: ${{ inputs.apply }}
+      CCOF_TEST_NOTIFICATION: ${{ inputs.test_notification }}
+      CCOF_PRIMARY_ONLY: ${{ inputs.primary_only }}
+      CCOF_REGION: ${{ inputs.region }}
+      CCOF_GH_ENV: ${{ inputs.gh_environment }}
+      CCOF_CHECKLIST: ${{ inputs.checklist }}
+      CCOF_PREREQ_SCOPE: ${{ inputs.prereq_scope }}
+      CCOF_PREREQ_MODE: ${{ inputs.prereq_mode }}
+      CCOF_EXPECTED_ROLE: ${{ (inputs.runner == 'apply' && github.event_name != 'pull_request' && inputs.gh_environment != '') && 'apply' || 'preview' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: ${{ github.event_name != 'pull_request' }}
+
+      - name: Runner host preflight
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Guard inputs
+        run: |
+          $e = $env:CCOF_ENV; $g = $env:CCOF_GH_ENV
+          if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$e'" }
+          if (-not (Test-Path "deploy/$e/staged.config.json")) { throw "deploy/$e/staged.config.json is missing" }
+          $writes = $env:CCOF_APPLY -eq 'true' -or $env:CCOF_TEST_NOTIFICATION -eq 'true'
+          if ($writes -and $env:GITHUB_EVENT_NAME -eq 'pull_request') { throw 'pull_request runs never apply' }
+          if ($writes -and $g -cnotmatch "^$e-(apply|gate-[a-z]+)$") { throw "an apply runs only in environment $e-apply or $e-gate-<name>, not '$g'" }
+          if ($g -and $g -cnotmatch "^$e-(preview|apply|gate-[a-z]+)$") { throw "GitHub environment '$g' does not belong to $e" }
+
+      - name: Approval checklist
+        if: inputs.checklist != ''
+        run: Get-Content -LiteralPath $env:CCOF_CHECKLIST | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Record approvals of this run
+        if: inputs.gh_environment != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $h = @{ Authorization = ('Bearer', $env:GH_TOKEN -join ' '); Accept = 'application/vnd.github+json' }
+          $a = @(Invoke-RestMethod -Headers $h -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/approvals")
+          $rows = @($a | Where-Object { @($_.environments.name) -contains $env:CCOF_GH_ENV } | ForEach-Object { "- $($_.state) by $($_.user.login): $($_.comment)" })
+          @("### Environment $env:CCOF_GH_ENV", '') + $(if ($rows.Count) { $rows } else { '- no required reviewer on this environment' }) + '' | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Azure sign-in (runner managed identity)
+        if: inputs.step != '' || inputs.prereq_scope != ''
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: ${{ env.CCOF_EXPECTED_ROLE }}
+
+      - name: Restore driver state (cicd-state/${{ inputs.environment }})
+        if: inputs.step != '' || inputs.prereq_scope != ''
+        env:
+          # Pull request checkouts keep no credentials; the read-only job token fetches the state branch.
+          CCOF_STATE_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+
+      - name: Prerequisite checks
+        if: inputs.prereq_scope != ''
+        run: ./scripts/cicd/Test-CicdPrerequisites.ps1 -DeployDirectory "deploy/$env:CCOF_ENV" -OutputDirectory "evidence/$env:CCOF_ENV" -Mode $env:CCOF_PREREQ_MODE -Scope ($env:CCOF_PREREQ_SCOPE -split ',')
+
+      - name: Build (npm ci, tsc) for code publication
+        if: inputs.node_build && inputs.step != ''
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx tsc -p tsconfig.json
+          exit $LASTEXITCODE
+
+      - name: Driver ${{ inputs.step }}
+        if: inputs.step != ''
+        env:
+          CCOF_REVIEWED_IDS: ${{ inputs.reviewed_ids }}
+          CCOF_APPROVE: ${{ inputs.approve }}
+        run: |
+          $p = @{ Environment = $env:CCOF_ENV; Step = $env:CCOF_STEP; Region = $env:CCOF_REGION }
+          if ($env:CCOF_APPLY -eq 'true') { $p.Apply = $true }
+          if ($env:CCOF_PRIMARY_ONLY -eq 'true') { $p.PrimaryOnly = $true }
+          if ($env:CCOF_TEST_NOTIFICATION -eq 'true') { $p.TestNotification = $true }
+          if ($env:CCOF_APPROVE) { $p.Approve = $env:CCOF_APPROVE -split ',' }
+          if ($env:CCOF_REVIEWED_IDS) { $p.ReviewedConnectionIds = $env:CCOF_REVIEWED_IDS }
+          & ./scripts/cicd/Invoke-CicdDriver.ps1 @p
+          exit $LASTEXITCODE
+
+      - name: Drift report
+        if: inputs.drift
+        run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV"
+
+      - name: Save driver state
+        if: always() && inputs.save_state && github.event_name != 'pull_request' && inputs.step != ''
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "$env:CCOF_STEP run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ inputs.environment }}-${{ inputs.step || 'checks' }}-${{ inputs.apply && 'apply' || 'preview' }}${{ inputs.test_notification && '-test' || '' }}-${{ github.run_attempt }}
+          path: |
+            evidence/${{ inputs.environment }}/
+            deploy/${{ inputs.environment }}/.dr-evidence/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Azure sign-out
+        if: always() && (inputs.step != '' || inputs.prereq_scope != '')
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout

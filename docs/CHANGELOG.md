@@ -1,5 +1,20 @@
 # Change log
 
+## 2026-11-17 - CI/CD pipeline for a complete environment (deploy-environment)
+
+- `.github/workflows/deploy-environment.yml` deploys `deploy/<environment>/` end to end: prerequisite checks,
+  gate network, Stages 0-7 (preview then apply each), gate entra (Stage 4 manual verification only),
+  Front Door, DR standby phases, health alerts A (and B when `health-b.json` exists; a DR standby has no
+  region B Cosmos account for the health driver), final status. A rerun manages the environment.
+  Sign-in is the runner host managed identity; previews on `ccof-apply` in `<env>-preview`, writes in
+  `<env>-apply` or `<env>-gate-<name>`. Reusable job: `.github/workflows/ccof-step.yml`.
+- `scripts/cicd/`: read-only prerequisite checks (`Test-CicdPrerequisites.ps1`, JSON and Markdown
+  checklist), driver command builder with guards (`Invoke-CicdDriver.ps1`), drift report
+  (`Get-CicdDrift.ps1`), driver state on branch `cicd-state/<environment>` (`Sync-CicdState.ps1`).
+- `.github/workflows/drift-check.yml`: scheduled read-only previews; opens an issue on drift.
+- Stage 0 makes no Microsoft Graph call when `entra.manualVerification` is set.
+- Docs: [CICD-ENVIRONMENT-DEPLOYMENT.md](runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md),
+  [CICD-NETWORK-ENTRA-CHECKLIST.md](runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md), `deploy/example/`.
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

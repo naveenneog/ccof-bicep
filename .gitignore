@@ -22,3 +22,11 @@ infra/quickstart/.generated/
 
 # Prevent concurrent Stage 7 package builds in one worktree
 .staged-stage7.lock
+
+# CI/CD environment folders (deploy/<env>/): driver state is kept on the cicd-state/<env> branch (scripts/cicd/Sync-CicdState.ps1)
+deploy/*/.staged-state/
+deploy/*/.dr-state/
+deploy/*/.dr-evidence/
+deploy/*/.health-alerts-a/
+deploy/*/.health-alerts-b/
+deploy/*/.cicd-state-restored
