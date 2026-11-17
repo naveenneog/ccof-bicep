@@ -3,13 +3,16 @@
 #   <step>-preview.result.json   ccof.driver-result.v1: the driver's exit code
 #   <step>-preview.whatif.jsonl  ccof.whatif.v1 records: what-if changes (Staged.Common.ps1 Write-StgWhatIfResult,
 #                                Invoke-HealthAlerts.ps1), or kind deploymentRecordMatch (Stage 1 after completion)
-# Fail closed: a step is clean only when its preview succeeded and every change it measured is NoChange or Ignore.
+# Fail closed: a step is clean only when its preview succeeded and every change it measured is NoChange or Ignore,
+# or a Modify whose every property verdict (infra/staged/Staged.WhatIf.ps1) is noise or matched. A Modify with
+# any drift verdict, or without verdicts, is drift; with any unmeasured verdict it needs review.
 # Log text is never parsed, so a log that says nothing cannot pass.
 Set-StrictMode -Version Latest
 
 $script:Clean = @('NoChange', 'Ignore')
 $script:Drift = @('Create', 'Delete', 'Modify')
 $script:Unverifiable = @('Deploy', 'Unsupported')
+$script:Verdicts = @('noise', 'matched', 'drift', 'unmeasured')
 
 function Read-CicdDriftStep {
     param([string]$Directory, [string]$Step)
@@ -40,8 +43,22 @@ function Read-CicdDriftStep {
                 foreach ($c in $changes) {
                     $type = [string]$c.PSObject.Properties['change']?.Value; $id = [string]$c.PSObject.Properties['id']?.Value
                     if (-not $id -or $type -cnotin ($script:Clean + $script:Drift + $script:Unverifiable)) { return & $row 'Unmeasured' "what-if $source has an unrecognised change '$type'" }
+                    $item = [pscustomobject]@{ Step = $Step; Source = $source; Change = $type; Id = $id; Detail = '' }
+                    $props = $c.PSObject.Properties['properties']
+                    if ($type -ceq 'Modify' -and $props) {
+                        $verdicts = @($props.Value | Where-Object { $null -ne $_ })
+                        foreach ($p in $verdicts) {
+                            if ($p -isnot [pscustomobject] -or [string]$p.PSObject.Properties['verdict']?.Value -cnotin $script:Verdicts -or $p.PSObject.Properties['path']?.Value -isnot [string]) {
+                                return & $row 'Unmeasured' "what-if $source has an unrecognised property verdict on $id"
+                            }
+                        }
+                        $bad = @($verdicts | Where-Object { $_.verdict -ceq 'drift' }); $open = @($verdicts | Where-Object { $_.verdict -ceq 'unmeasured' })
+                        $item.Detail = (@($bad + $open) | ForEach-Object { "$($_.verdict) $($_.path) $($_.rule) $($_.detail)".Trim() }) -join '; '
+                        if (-not $verdicts.Count) { $item.Detail = 'no property verdicts' }
+                        elseif (-not $bad.Count -and $open.Count) { $counts[$type] = 1 + [int]$counts[$type]; $review.Add($item); continue }
+                        elseif (-not $bad.Count) { $counts['ModifyExplained'] = 1 + [int]$counts['ModifyExplained']; continue }
+                    }
                     $counts[$type] = 1 + [int]$counts[$type]
-                    $item = [pscustomobject]@{ Step = $Step; Source = $source; Change = $type; Id = $id }
                     if ($type -cin $script:Drift) { $drift.Add($item) } elseif ($type -cin $script:Unverifiable) { $review.Add($item) }
                 }
             }
@@ -49,8 +66,8 @@ function Read-CicdDriftStep {
         }
     }
     $r = if ($drift.Count) { & $row 'Drift' "$($drift.Count) Create, Delete or Modify" $drift $review }
-    elseif ($review.Count) { & $row 'Unverifiable' "$($review.Count) Deploy or Unsupported: what-if cannot evaluate them" $drift $review }
-    elseif ($counts.Count) { & $row 'Clean' 'every resource NoChange or Ignore' }
+    elseif ($review.Count) { & $row 'Unverifiable' "$($review.Count) Deploy, Unsupported or unmeasured Modify: what-if cannot evaluate them" $drift $review }
+    elseif ($counts.Count) { & $row 'Clean' $(if ($counts.Contains('ModifyExplained')) { "every resource NoChange or Ignore, or Modify fully explained by property verdicts ($($counts['ModifyExplained']))" } else { 'every resource NoChange or Ignore' }) }
     else { & $row 'RecordMatch' "parameters match the recorded deployment ($($matched -join ', ')); resource what-if not run" }
     $r.Counts = ($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ', '
     return $r

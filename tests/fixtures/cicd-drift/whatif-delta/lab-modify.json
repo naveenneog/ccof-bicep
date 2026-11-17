@@ -1,0 +1,368 @@
+{
+  "_source": "Real what-if Modify changes and read-only read-backs from the unchanged infsim lab (2026-11-17), sanitised: subscription and every GUID replaced consistently; workbook content shortened (the real 309 KB workbook compared equal). Only changeType, resourceId and delta are kept.",
+  "changes": [
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": {
+            "autoscaleSettings": {
+              "maxThroughput": 1000
+            }
+          },
+          "before": null,
+          "children": null,
+          "path": "properties.options",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.DocumentDB/databaseAccounts/infsim-5dnel4x4647ag-cosmos/sqlDatabases/ccof"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": null,
+          "before": "/_ts",
+          "children": null,
+          "path": "properties.resource.conflictResolutionPolicy.conflictResolutionPath",
+          "propertyChangeType": "Delete"
+        },
+        {
+          "after": null,
+          "before": true,
+          "children": null,
+          "path": "properties.resource.indexingPolicy.automatic",
+          "propertyChangeType": "Delete"
+        },
+        {
+          "after": null,
+          "before": [
+            {
+              "path": "/\"_etag\"/?"
+            }
+          ],
+          "children": null,
+          "path": "properties.resource.indexingPolicy.excludedPaths",
+          "propertyChangeType": "Delete"
+        },
+        {
+          "after": null,
+          "before": [
+            {
+              "path": "/*"
+            }
+          ],
+          "children": null,
+          "path": "properties.resource.indexingPolicy.includedPaths",
+          "propertyChangeType": "Delete"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.DocumentDB/databaseAccounts/infsim-5dnel4x4647ag-cosmos/sqlDatabases/ccof/containers/projects"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": null,
+          "before": false,
+          "children": null,
+          "path": "properties.isAgent",
+          "propertyChangeType": "Delete"
+        },
+        {
+          "after": null,
+          "before": "Ocp-Apim-Subscription-Key",
+          "children": null,
+          "path": "properties.subscriptionKeyParameterNames.header",
+          "propertyChangeType": "Delete"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim/apis/claude-messages"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": "rawxml",
+          "before": "xml",
+          "children": null,
+          "path": "properties.format",
+          "propertyChangeType": "Modify"
+        },
+        {
+          "after": "<policies><inbound><base /><include-fragment fragment-id=\"claude-messages-inbound\" /></inbound><backend><include-fragment fragment-id=\"claude-messages-backend\" /></backend><outbound><base /><include-fragment fragment-id=\"claude-messages-outbound\" /></outbound><on-error><base /><include-fragment fragment-id=\"claude-messages-on-error\" /></on-error></policies>",
+          "before": "<policies>\r\n\t<inbound>\r\n\t\t<base />\r\n\t\t<include-fragment fragment-id=\"claude-messages-inbound\" />\r\n\t</inbound>\r\n\t<backend>\r\n\t\t<include-fragment fragment-id=\"claude-messages-backend\" />\r\n\t</backend>\r\n\t<outbound>\r\n\t\t<base />\r\n\t\t<include-fragment fragment-id=\"claude-messages-outbound\" />\r\n\t</outbound>\r\n\t<on-error>\r\n\t\t<base />\r\n\t\t<include-fragment fragment-id=\"claude-messages-on-error\" />\r\n\t</on-error>\r\n</policies>",
+          "children": null,
+          "path": "properties.value",
+          "propertyChangeType": "Modify"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim/apis/claude-messages/policies/policy"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": "<fragment>\n    <!-- Forwarding. A streamed request (\"stream\": true) is relayed chunk by chunk (buffer-response\n         false, owner approval (d)); any other request is forwarded as the service scope's bare\n         forward-request does, with the platform defaults. This section does not inherit the service\n         scope, so a change there does not reach this API. -->\n    <choose>\n      <when condition=\"@(context.Variables.GetValueOrDefault<bool>(\"ccofStream\", false))\">\n        <forward-request buffer-response=\"false\" />\n      </when>\n      <otherwise>\n        <forward-request />\n      </otherwise>\n    </choose>\n  </fragment>",
+          "before": "<fragment>\r\n\t<!-- Forwarding. A streamed request (\"stream\": true) is relayed chunk by chunk (buffer-response\r\n         false, owner approval (d)); any other request is forwarded as the service scope's bare\r\n         forward-request does, with the platform defaults. This section does not inherit the service\r\n         scope, so a change there does not reach this API. -->\r\n\t<choose>\r\n\t\t<when condition=\"@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;ccofStream&quot;, false))\">\r\n\t\t\t<forward-request buffer-response=\"false\" />\r\n\t\t</when>\r\n\t\t<otherwise>\r\n\t\t\t<forward-request />\r\n\t\t</otherwise>\r\n\t</choose>\r\n</fragment>",
+          "children": null,
+          "path": "properties.value",
+          "propertyChangeType": "Modify"
+        },
+        {
+          "after": "rawxml",
+          "before": null,
+          "children": null,
+          "path": "properties.format",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim/policyFragments/claude-messages-backend"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": "<fragment>\n    \n    <!-- 12. Errors raised by a policy, answered in Anthropic's error shape. The limits are told apart by\n         policy id; nothing from context.LastError.Message reaches the caller. A request that matches no\n         operation of the API (APIM's built-in step: source configuration, reason OperationNotFound), such\n         as Claude Code's HEAD /api/hello connection-warming probe, comes here before any other policy\n         has run: it is answered 404 not_found_error, with nothing forwarded and nothing counted. -->\n    <set-variable name=\"ccofErrorKind\" value=\"@{\n        var source = context.LastError.Source ?? \"\";\n        var policy = context.LastError.PolicyId ?? \"\";\n        var reason = context.LastError.Reason ?? \"\";\n        var status = context.Response.StatusCode;\n        if (source == \"validate-jwt\") { return \"jwt\"; }\n        if (policy == \"ccof-admission-person\") { return \"admission_person\"; }\n        if (policy == \"ccof-admission-resolver\" || policy == \"ccof-admission-resolver-concurrency\") { return \"admission_resolver\"; }\n        if (policy.StartsWith(\"ccof-limit-family-group-\", StringComparison.Ordinal)) { return status != 429 && (status == 403 || reason.Contains(\"Quota\")) ? \"family_group_quota_exceeded\" : \"family_group_rate_exceeded\"; }\n        if (policy.StartsWith(\"ccof-limit-family-person-\", StringComparison.Ordinal)) { return status != 429 && (status == 403 || reason.Contains(\"Quota\")) ? \"family_person_quota_exceeded\" : \"family_person_rate_exceeded\"; }\n        if (policy.StartsWith(\"ccof-limit-group\", StringComparison.Ordinal)) { return status == 403 || reason.Contains(\"Quota\") ? \"group_quota\" : \"group_rate\"; }\n        if (policy.StartsWith(\"ccof-limit-person\", StringComparison.Ordinal)) { return status == 403 || reason.Contains(\"Quota\") ? \"person_quota\" : \"person_rate\"; }\n        if (policy.StartsWith(\"ccof-backend-credential\", StringComparison.Ordinal)) { return \"backend_credential\"; }\n        if (reason == \"BackendConnectionFailure\") { return \"backend_unreachable\"; }\n        if (reason == \"Timeout\") { return \"backend_timeout\"; }\n        if (source == \"configuration\" && reason == \"OperationNotFound\") { return \"not_found\"; }\n        return \"unexpected\";\n    }\" />\n    <choose>\n      <when condition=\"@(context.Variables.GetValueOrDefault<bool>(\"ccofResolverCalled\", false) && !context.Variables.GetValueOrDefault<bool>(\"ccofResolverTraced\", false) && context.Variables.ContainsKey(\"ccofResolverOutcome\"))\">\n        <trace source=\"ccof.resolver.v1\" severity=\"information\">\n          <message><![CDATA[@{\n              var budget = context.Variables.GetValueOrDefault<string>(\"ccofResolverBudgetState\", \"\");\n              return new JObject(\n                  new JProperty(\"schemaVersion\", 1),\n                  new JProperty(\"requestId\", context.RequestId.ToString()),\n                  new JProperty(\"observedAt\", DateTime.UtcNow.ToString(\"o\")),\n                  new JProperty(\"resolverOutcome\", (string)context.Variables[\"ccofResolverOutcome\"]),\n                  new JProperty(\"resolverDurationMs\", context.Variables.GetValueOrDefault<long>(\"ccofResolverMs\", 0)),\n                  new JProperty(\"budgetState\", budget == \"\" ? null : budget),\n                  new JProperty(\"served\", false)).ToString(Newtonsoft.Json.Formatting.None);\n          }]]></message>\n        </trace>\n      </when>\n    </choose>\n    <set-variable name=\"ccofErrorStatus\" value=\"@{\n        var kind = (string)context.Variables[\"ccofErrorKind\"];\n        if (kind == \"jwt\") { return 401; }\n        if (kind == \"admission_person\" || kind == \"admission_resolver\" || kind == \"group_rate\" || kind == \"person_rate\") { return 429; }\n        if (kind == \"family_group_rate_exceeded\" || kind == \"family_person_rate_exceeded\") { return 429; }\n        if (kind == \"group_quota\" || kind == \"person_quota\") { return 403; }\n        if (kind == \"family_group_quota_exceeded\" || kind == \"family_person_quota_exceeded\") { return 403; }\n        if (kind == \"backend_credential\") { return 503; }\n        if (kind == \"backend_unreachable\") { return 502; }\n        if (kind == \"backend_timeout\") { return 504; }\n        if (kind == \"not_found\") { return 404; }\n        return 500;\n    }\" />\n    <set-variable name=\"ccofErrorRetryAfter\" value=\"@{\n        var kind = (string)context.Variables[\"ccofErrorKind\"];\n        if (kind == \"admission_resolver\" || kind == \"backend_credential\") { return \"5\"; }\n        if ((kind == \"admission_person\" || kind.EndsWith(\"_rate\") || kind.EndsWith(\"_quota\") || kind.EndsWith(\"_rate_exceeded\") || kind.EndsWith(\"_quota_exceeded\")) && context.Variables.ContainsKey(\"ccofRetryAfter\")) {\n            return Convert.ToString(context.Variables[\"ccofRetryAfter\"]);\n        }\n        return \"\";\n    }\" />\n    <set-variable name=\"ccofErrorBody\" value=\"@{\n        var kind = (string)context.Variables[\"ccofErrorKind\"];\n        var reason = context.LastError.Reason ?? \"\";\n        var project = context.Variables.GetValueOrDefault<string>(\"ccofProjectId\", \"\");\n        var classification = context.Variables.GetValueOrDefault<string>(\"ccofClassification\", \"\");\n        var period = kind == \"group_quota\" ? context.Variables.GetValueOrDefault<string>(\"ccofGroupPeriod\", \"\") : context.Variables.GetValueOrDefault<string>(\"ccofPersonPeriod\", \"\");\n        var unit = period == \"Hourly\" ? \"hour\" : period == \"Daily\" ? \"day\" : period == \"Weekly\" ? \"week\" : period == \"Monthly\" ? \"month\" : period == \"Yearly\" ? \"year\" : \"period\";\n        var adjective = period == \"\" ? \"\" : period.ToLowerInvariant() + \" \";\n        string type = \"api_error\";\n        string message;\n        switch (kind) {\n            case \"jwt\":\n                type = \"authentication_error\";\n                if (reason.Contains(\"NotPresent\")) { message = \"No access token was sent. Sign in to the gateway and send the token as a Bearer token in the Authorization header.\"; }\n                else if (reason.Contains(\"Expired\")) { message = \"Your access token has expired. Sign in again to get a new one.\"; }\n                else if (reason.Contains(\"Audience\")) { message = \"The access token is for a different application. Request a token for this gateway's API.\"; }\n                else if (reason.Contains(\"Issuer\") || reason.Contains(\"Claim\")) { message = \"The access token was not issued by your organisation's Microsoft Entra tenant. Sign in with your organisation account.\"; }\n                else { message = \"The access token is not valid. Sign in again.\"; }\n                break;\n            case \"admission_person\":\n                type = \"rate_limit_error\";\n                message = \"You sent more than 120 requests in 60 seconds. Wait for the time in the Retry-After header, then retry.\";\n                break;\n            case \"admission_resolver\":\n                type = \"rate_limit_error\";\n                message = \"The gateway is busy checking access. Retry in 5 seconds; your access has not changed.\";\n                break;\n            case \"person_rate\":\n                type = \"rate_limit_error\";\n                message = \"You have reached your tokens-per-minute limit for project \" + project + \". Retry after the time in the Retry-After header.\";\n                break;\n            case \"person_quota\":\n                type = \"permission_error\";\n                message = \"Your \" + adjective + \"token quota for project \" + project + \" is used up. It resets at the start of the next \" + unit + \" (UTC). Your access is otherwise unchanged.\";\n                break;\n            case \"group_rate\":\n                type = \"rate_limit_error\";\n                message = \"The tokens-per-minute limit shared by classification \" + classification + \" in project \" + project + \" is reached. Retry after the time in the Retry-After header.\";\n                break;\n            case \"group_quota\":\n                type = \"permission_error\";\n                message = \"The \" + adjective + \"token quota shared by classification \" + classification + \" in project \" + project + \" is used up. It resets at the start of the next \" + unit + \" (UTC). Your own access is unchanged.\";\n                break;\n            case \"family_person_rate_exceeded\":\n                type = \"rate_limit_error\";\n                message = \"Your token rate limit for this model family is exceeded. Retry after the indicated interval.\";\n                break;\n            case \"family_group_rate_exceeded\":\n                type = \"rate_limit_error\";\n                message = \"Your group's token rate limit for this model family is exceeded. Retry after the indicated interval.\";\n                break;\n            case \"family_person_quota_exceeded\":\n                type = \"permission_error\";\n                message = \"Your token quota for this model family is used up for this quota period.\";\n                break;\n            case \"family_group_quota_exceeded\":\n                type = \"permission_error\";\n                message = \"Your group's token quota for this model family is used up for this quota period.\";\n                break;\n            case \"backend_credential\":\n                message = \"The gateway could not get a credential for the model service. Your access is unaffected. Retry in 5 seconds; if this continues, tell your platform team.\";\n                break;\n            case \"backend_unreachable\":\n                message = \"The model service could not be reached. Retry shortly.\";\n                break;\n            case \"backend_timeout\":\n                message = \"The model service did not answer in time. Retry shortly.\";\n                break;\n            case \"not_found\":\n                type = \"not_found_error\";\n                message = \"This gateway does not serve the requested path or method. Check the endpoint path.\";\n                break;\n            default:\n                message = \"The gateway hit an unexpected error. Retry; if this continues, tell your platform team.\";\n                break;\n        }\n        return new JObject(\n            new JProperty(\"type\", \"error\"),\n            new JProperty(\"error\", new JObject(\n                new JProperty(\"type\", type),\n                new JProperty(\"message\", message + \" Request id: \" + context.RequestId.ToString() + \".\")))).ToString(Newtonsoft.Json.Formatting.None);\n    }\" />\n    <choose>\n      <when condition=\"@((string)context.Variables[\"ccofErrorRetryAfter\"] != \"\")\">\n        <return-response>\n          <set-status code=\"@((int)context.Variables[\"ccofErrorStatus\"])\" reason=\"@((int)context.Variables[\"ccofErrorStatus\"] == 403 ? \"Forbidden\" : ((int)context.Variables[\"ccofErrorStatus\"] == 429 ? \"Too Many Requests\" : \"Service Unavailable\"))\" />\n          <set-header name=\"Retry-After\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"ccofErrorRetryAfter\"])</value>\n          </set-header>\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-header name=\"x-ccof-request-id\" exists-action=\"override\">\n            <value>@(context.RequestId.ToString())</value>\n          </set-header>\n          <set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\n        </return-response>\n      </when>\n      <when condition=\"@((string)context.Variables[\"ccofErrorKind\"] == \"jwt\")\">\n        <return-response>\n          <set-status code=\"401\" reason=\"Unauthorized\" />\n          <set-header name=\"WWW-Authenticate\" exists-action=\"override\">\n            <value>Bearer</value>\n          </set-header>\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-header name=\"x-ccof-request-id\" exists-action=\"override\">\n            <value>@(context.RequestId.ToString())</value>\n          </set-header>\n          <set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\n        </return-response>\n      </when>\n      <otherwise>\n        <return-response>\n          <set-status code=\"@((int)context.Variables[\"ccofErrorStatus\"])\" reason=\"@{\n              switch ((int)context.Variables[\"ccofErrorStatus\"]) {\n                  case 403: return \"Forbidden\";\n                  case 404: return \"Not Found\";\n                  case 429: return \"Too Many Requests\";\n                  case 502: return \"Bad Gateway\";\n                  case 503: return \"Service Unavailable\";\n                  case 504: return \"Gateway Timeout\";\n                  default: return \"Internal Server Error\";\n              }\n          }\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-header name=\"x-ccof-request-id\" exists-action=\"override\">\n            <value>@(context.RequestId.ToString())</value>\n          </set-header>\n          <set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\n        </return-response>\n      </otherwise>\n    </choose>\n  </fragment>",
+          "before": "<fragment>\r\n\t<!-- 12. Errors raised by a policy, answered in Anthropic's error shape. The limits are told apart by\r\n         policy id; nothing from context.LastError.Message reaches the caller. A request that matches no\r\n         operation of the API (APIM's built-in step: source configuration, reason OperationNotFound), such\r\n         as Claude Code's HEAD /api/hello connection-warming probe, comes here before any other policy\r\n         has run: it is answered 404 not_found_error, with nothing forwarded and nothing counted. -->\r\n\t<set-variable name=\"ccofErrorKind\" value=\"@{&#xA;        var source = context.LastError.Source ?? &quot;&quot;;&#xA;        var policy = context.LastError.PolicyId ?? &quot;&quot;;&#xA;        var reason = context.LastError.Reason ?? &quot;&quot;;&#xA;        var status = context.Response.StatusCode;&#xA;        if (source == &quot;validate-jwt&quot;) { return &quot;jwt&quot;; }&#xA;        if (policy == &quot;ccof-admission-person&quot;) { return &quot;admission_person&quot;; }&#xA;        if (policy == &quot;ccof-admission-resolver&quot; || policy == &quot;ccof-admission-resolver-concurrency&quot;) { return &quot;admission_resolver&quot;; }&#xA;        if (policy.StartsWith(&quot;ccof-limit-family-group-&quot;, StringComparison.Ordinal)) { return status != 429 &amp;&amp; (status == 403 || reason.Contains(&quot;Quota&quot;)) ? &quot;family_group_quota_exceeded&quot; : &quot;family_group_rate_exceeded&quot;; }&#xA;        if (policy.StartsWith(&quot;ccof-limit-family-person-&quot;, StringComparison.Ordinal)) { return status != 429 &amp;&amp; (status == 403 || reason.Contains(&quot;Quota&quot;)) ? &quot;family_person_quota_exceeded&quot; : &quot;family_person_rate_exceeded&quot;; }&#xA;        if (policy.StartsWith(&quot;ccof-limit-group&quot;, StringComparison.Ordinal)) { return status == 403 || reason.Contains(&quot;Quota&quot;) ? &quot;group_quota&quot; : &quot;group_rate&quot;; }&#xA;        if (policy.StartsWith(&quot;ccof-limit-person&quot;, StringComparison.Ordinal)) { return status == 403 || reason.Contains(&quot;Quota&quot;) ? &quot;person_quota&quot; : &quot;person_rate&quot;; }&#xA;        if (policy.StartsWith(&quot;ccof-backend-credential&quot;, StringComparison.Ordinal)) { return &quot;backend_credential&quot;; }&#xA;        if (reason == &quot;BackendConnectionFailure&quot;) { return &quot;backend_unreachable&quot;; }&#xA;        if (reason == &quot;Timeout&quot;) { return &quot;backend_timeout&quot;; }&#xA;        if (source == &quot;configuration&quot; &amp;&amp; reason == &quot;OperationNotFound&quot;) { return &quot;not_found&quot;; }&#xA;        return &quot;unexpected&quot;;&#xA;    }\" />\r\n\t<choose>\r\n\t\t<when condition=\"@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;ccofResolverCalled&quot;, false) &amp;&amp; !context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;ccofResolverTraced&quot;, false) &amp;&amp; context.Variables.ContainsKey(&quot;ccofResolverOutcome&quot;))\">\r\n\t\t\t<trace source=\"ccof.resolver.v1\" severity=\"information\">\r\n\t\t\t\t<message><![CDATA[@{\r\n              var budget = context.Variables.GetValueOrDefault<string>(\"ccofResolverBudgetState\", \"\");\r\n              return new JObject(\r\n                  new JProperty(\"schemaVersion\", 1),\r\n                  new JProperty(\"requestId\", context.RequestId.ToString()),\r\n                  new JProperty(\"observedAt\", DateTime.UtcNow.ToString(\"o\")),\r\n                  new JProperty(\"resolverOutcome\", (string)context.Variables[\"ccofResolverOutcome\"]),\r\n                  new JProperty(\"resolverDurationMs\", context.Variables.GetValueOrDefault<long>(\"ccofResolverMs\", 0)),\r\n                  new JProperty(\"budgetState\", budget == \"\" ? null : budget),\r\n                  new JProperty(\"served\", false)).ToString(Newtonsoft.Json.Formatting.None);\r\n          }]]></message>\r\n\t\t\t</trace>\r\n\t\t</when>\r\n\t</choose>\r\n\t<set-variable name=\"ccofErrorStatus\" value=\"@{&#xA;        var kind = (string)context.Variables[&quot;ccofErrorKind&quot;];&#xA;        if (kind == &quot;jwt&quot;) { return 401; }&#xA;        if (kind == &quot;admission_person&quot; || kind == &quot;admission_resolver&quot; || kind == &quot;group_rate&quot; || kind == &quot;person_rate&quot;) { return 429; }&#xA;        if (kind == &quot;family_group_rate_exceeded&quot; || kind == &quot;family_person_rate_exceeded&quot;) { return 429; }&#xA;        if (kind == &quot;group_quota&quot; || kind == &quot;person_quota&quot;) { return 403; }&#xA;        if (kind == &quot;family_group_quota_exceeded&quot; || kind == &quot;family_person_quota_exceeded&quot;) { return 403; }&#xA;        if (kind == &quot;backend_credential&quot;) { return 503; }&#xA;        if (kind == &quot;backend_unreachable&quot;) { return 502; }&#xA;        if (kind == &quot;backend_timeout&quot;) { return 504; }&#xA;        if (kind == &quot;not_found&quot;) { return 404; }&#xA;        return 500;&#xA;    }\" />\r\n\t<set-variable name=\"ccofErrorRetryAfter\" value=\"@{&#xA;        var kind = (string)context.Variables[&quot;ccofErrorKind&quot;];&#xA;        if (kind == &quot;admission_resolver&quot; || kind == &quot;backend_credential&quot;) { return &quot;5&quot;; }&#xA;        if ((kind == &quot;admission_person&quot; || kind.EndsWith(&quot;_rate&quot;) || kind.EndsWith(&quot;_quota&quot;) || kind.EndsWith(&quot;_rate_exceeded&quot;) || kind.EndsWith(&quot;_quota_exceeded&quot;)) &amp;&amp; context.Variables.ContainsKey(&quot;ccofRetryAfter&quot;)) {&#xA;            return Convert.ToString(context.Variables[&quot;ccofRetryAfter&quot;]);&#xA;        }&#xA;        return &quot;&quot;;&#xA;    }\" />\r\n\t<set-variable name=\"ccofErrorBody\" value=\"@{&#xA;        var kind = (string)context.Variables[&quot;ccofErrorKind&quot;];&#xA;        var reason = context.LastError.Reason ?? &quot;&quot;;&#xA;        var project = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;ccofProjectId&quot;, &quot;&quot;);&#xA;        var classification = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;ccofClassification&quot;, &quot;&quot;);&#xA;        var period = kind == &quot;group_quota&quot; ? context.Variables.GetValueOrDefault&lt;string&gt;(&quot;ccofGroupPeriod&quot;, &quot;&quot;) : context.Variables.GetValueOrDefault&lt;string&gt;(&quot;ccofPersonPeriod&quot;, &quot;&quot;);&#xA;        var unit = period == &quot;Hourly&quot; ? &quot;hour&quot; : period == &quot;Daily&quot; ? &quot;day&quot; : period == &quot;Weekly&quot; ? &quot;week&quot; : period == &quot;Monthly&quot; ? &quot;month&quot; : period == &quot;Yearly&quot; ? &quot;year&quot; : &quot;period&quot;;&#xA;        var adjective = period == &quot;&quot; ? &quot;&quot; : period.ToLowerInvariant() + &quot; &quot;;&#xA;        string type = &quot;api_error&quot;;&#xA;        string message;&#xA;        switch (kind) {&#xA;            case &quot;jwt&quot;:&#xA;                type = &quot;authentication_error&quot;;&#xA;                if (reason.Contains(&quot;NotPresent&quot;)) { message = &quot;No access token was sent. Sign in to the gateway and send the token as a Bearer token in the Authorization header.&quot;; }&#xA;                else if (reason.Contains(&quot;Expired&quot;)) { message = &quot;Your access token has expired. Sign in again to get a new one.&quot;; }&#xA;                else if (reason.Contains(&quot;Audience&quot;)) { message = &quot;The access token is for a different application. Request a token for this gateway's API.&quot;; }&#xA;                else if (reason.Contains(&quot;Issuer&quot;) || reason.Contains(&quot;Claim&quot;)) { message = &quot;The access token was not issued by your organisation's Microsoft Entra tenant. Sign in with your organisation account.&quot;; }&#xA;                else { message = &quot;The access token is not valid. Sign in again.&quot;; }&#xA;                break;&#xA;            case &quot;admission_person&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;You sent more than 120 requests in 60 seconds. Wait for the time in the Retry-After header, then retry.&quot;;&#xA;                break;&#xA;            case &quot;admission_resolver&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;The gateway is busy checking access. Retry in 5 seconds; your access has not changed.&quot;;&#xA;                break;&#xA;            case &quot;person_rate&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;You have reached your tokens-per-minute limit for project &quot; + project + &quot;. Retry after the time in the Retry-After header.&quot;;&#xA;                break;&#xA;            case &quot;person_quota&quot;:&#xA;                type = &quot;permission_error&quot;;&#xA;                message = &quot;Your &quot; + adjective + &quot;token quota for project &quot; + project + &quot; is used up. It resets at the start of the next &quot; + unit + &quot; (UTC). Your access is otherwise unchanged.&quot;;&#xA;                break;&#xA;            case &quot;group_rate&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;The tokens-per-minute limit shared by classification &quot; + classification + &quot; in project &quot; + project + &quot; is reached. Retry after the time in the Retry-After header.&quot;;&#xA;                break;&#xA;            case &quot;group_quota&quot;:&#xA;                type = &quot;permission_error&quot;;&#xA;                message = &quot;The &quot; + adjective + &quot;token quota shared by classification &quot; + classification + &quot; in project &quot; + project + &quot; is used up. It resets at the start of the next &quot; + unit + &quot; (UTC). Your own access is unchanged.&quot;;&#xA;                break;&#xA;            case &quot;family_person_rate_exceeded&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;Your token rate limit for this model family is exceeded. Retry after the indicated interval.&quot;;&#xA;                break;&#xA;            case &quot;family_group_rate_exceeded&quot;:&#xA;                type = &quot;rate_limit_error&quot;;&#xA;                message = &quot;Your group's token rate limit for this model family is exceeded. Retry after the indicated interval.&quot;;&#xA;                break;&#xA;            case &quot;family_person_quota_exceeded&quot;:&#xA;                type = &quot;permission_error&quot;;&#xA;                message = &quot;Your token quota for this model family is used up for this quota period.&quot;;&#xA;                break;&#xA;            case &quot;family_group_quota_exceeded&quot;:&#xA;                type = &quot;permission_error&quot;;&#xA;                message = &quot;Your group's token quota for this model family is used up for this quota period.&quot;;&#xA;                break;&#xA;            case &quot;backend_credential&quot;:&#xA;                message = &quot;The gateway could not get a credential for the model service. Your access is unaffected. Retry in 5 seconds; if this continues, tell your platform team.&quot;;&#xA;                break;&#xA;            case &quot;backend_unreachable&quot;:&#xA;                message = &quot;The model service could not be reached. Retry shortly.&quot;;&#xA;                break;&#xA;            case &quot;backend_timeout&quot;:&#xA;                message = &quot;The model service did not answer in time. Retry shortly.&quot;;&#xA;                break;&#xA;            case &quot;not_found&quot;:&#xA;                type = &quot;not_found_error&quot;;&#xA;                message = &quot;This gateway does not serve the requested path or method. Check the endpoint path.&quot;;&#xA;                break;&#xA;            default:&#xA;                message = &quot;The gateway hit an unexpected error. Retry; if this continues, tell your platform team.&quot;;&#xA;                break;&#xA;        }&#xA;        return new JObject(&#xA;            new JProperty(&quot;type&quot;, &quot;error&quot;),&#xA;            new JProperty(&quot;error&quot;, new JObject(&#xA;                new JProperty(&quot;type&quot;, type),&#xA;                new JProperty(&quot;message&quot;, message + &quot; Request id: &quot; + context.RequestId.ToString() + &quot;.&quot;)))).ToString(Newtonsoft.Json.Formatting.None);&#xA;    }\" />\r\n\t<choose>\r\n\t\t<when condition=\"@((string)context.Variables[&quot;ccofErrorRetryAfter&quot;] != &quot;&quot;)\">\r\n\t\t\t<return-response>\r\n\t\t\t\t<set-status code=\"@((int)context.Variables[&quot;ccofErrorStatus&quot;])\" reason=\"@((int)context.Variables[&quot;ccofErrorStatus&quot;] == 403 ? &quot;Forbidden&quot; : ((int)context.Variables[&quot;ccofErrorStatus&quot;] == 429 ? &quot;Too Many Requests&quot; : &quot;Service Unavailable&quot;))\" />\r\n\t\t\t\t<set-header name=\"Retry-After\" exists-action=\"override\">\r\n\t\t\t\t\t<value>@((string)context.Variables[\"ccofErrorRetryAfter\"])</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-header name=\"Content-Type\" exists-action=\"override\">\r\n\t\t\t\t\t<value>application/json</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-header name=\"x-ccof-request-id\" exists-action=\"override\">\r\n\t\t\t\t\t<value>@(context.RequestId.ToString())</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\r\n\t\t\t</return-response>\r\n\t\t</when>\r\n\t\t<when condition=\"@((string)context.Variables[&quot;ccofErrorKind&quot;] == &quot;jwt&quot;)\">\r\n\t\t\t<return-response>\r\n\t\t\t\t<set-status code=\"401\" reason=\"Unauthorized\" />\r\n\t\t\t\t<set-header name=\"WWW-Authenticate\" exists-action=\"override\">\r\n\t\t\t\t\t<value>Bearer</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-header name=\"Content-Type\" exists-action=\"override\">\r\n\t\t\t\t\t<value>application/json</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-header name=\"x-ccof-request-id\" exists-action=\"override\">\r\n\t\t\t\t\t<value>@(context.RequestId.ToString())</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\r\n\t\t\t</return-response>\r\n\t\t</when>\r\n\t\t<otherwise>\r\n\t\t\t<return-response>\r\n\t\t\t\t<set-status code=\"@((int)context.Variables[&quot;ccofErrorStatus&quot;])\" reason=\"@{&#xA;              switch ((int)context.Variables[&quot;ccofErrorStatus&quot;]) {&#xA;                  case 403: return &quot;Forbidden&quot;;&#xA;                  case 404: return &quot;Not Found&quot;;&#xA;                  case 429: return &quot;Too Many Requests&quot;;&#xA;                  case 502: return &quot;Bad Gateway&quot;;&#xA;                  case 503: return &quot;Service Unavailable&quot;;&#xA;                  case 504: return &quot;Gateway Timeout&quot;;&#xA;                  default: return &quot;Internal Server Error&quot;;&#xA;              }&#xA;          }\" />\r\n\t\t\t\t<set-header name=\"Content-Type\" exists-action=\"override\">\r\n\t\t\t\t\t<value>application/json</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-header name=\"x-ccof-request-id\" exists-action=\"override\">\r\n\t\t\t\t\t<value>@(context.RequestId.ToString())</value>\r\n\t\t\t\t</set-header>\r\n\t\t\t\t<set-body>@((string)context.Variables[\"ccofErrorBody\"])</set-body>\r\n\t\t\t</return-response>\r\n\t\t</otherwise>\r\n\t</choose>\r\n</fragment>",
+          "children": null,
+          "path": "properties.value",
+          "propertyChangeType": "Modify"
+        },
+        {
+          "after": "rawxml",
+          "before": null,
+          "children": null,
+          "path": "properties.format",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim/policyFragments/claude-messages-on-error"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": {
+            "APPLICATIONINSIGHTS_AUTHENTICATION_STRING": "Authorization=AAD;ClientId=00000002-0000-4000-8000-000000000002",
+            "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference('/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-sync-ai', '2020-02-02').ConnectionString]",
+            "AzureWebJobs.registrySeed.Disabled": "true",
+            "AzureWebJobs.syncEntitlement.Disabled": "false",
+            "AzureWebJobsStorage__accountName": "infsim5dnel4x4647agsyn",
+            "AzureWebJobsStorage__clientId": "00000002-0000-4000-8000-000000000002",
+            "AzureWebJobsStorage__credential": "managedidentity",
+            "CCOF_APP_ROLE": "sync",
+            "COSMOS_DATABASE": "ccof",
+            "COSMOS_ENDPOINT": "https://infsim-5dnel4x4647ag-cosmos.documents.azure.com:443/",
+            "SYNC_ENTITLEMENT_CONTAINER": "entitlement",
+            "SYNC_GRAPH_MAX_RETRIES": "3",
+            "SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS": "30",
+            "SYNC_GRAPH_TIMEOUT_SECONDS": "30",
+            "SYNC_LEASE_CONTAINER": "syncLease",
+            "SYNC_LEASE_SECONDS": "300",
+            "SYNC_LIMITS_CONTAINER": "adminConfig",
+            "SYNC_MANAGED_IDENTITY_CLIENT_ID": "00000002-0000-4000-8000-000000000002",
+            "SYNC_MAX_REMOVALS_PER_RUN": "5",
+            "SYNC_MAX_REMOVAL_FRACTION": "0.1",
+            "SYNC_MEMBER_TYPES": "user",
+            "SYNC_PROJECTS_CONTAINER": "projects",
+            "SYNC_SCHEDULE": "0 */5 * * * *",
+            "SYNC_TENANT_ID": "00000003-0000-4000-8000-000000000003",
+            "SYNC_WRITE_MODE": "apply"
+          },
+          "before": null,
+          "children": null,
+          "path": "properties",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-sync/config/appsettings"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": {
+            "ADMIN_ALLOWED_CLIENT_IDS": "00000004-0000-4000-8000-000000000004",
+            "ADMIN_AUDIENCE": "00000004-0000-4000-8000-000000000004",
+            "ADMIN_CLIENT_ID": "00000005-0000-4000-8000-000000000005",
+            "ADMIN_CONFIG_CONTAINER": "adminConfig",
+            "ADMIN_GATEWAY_RESOURCE_ID": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim",
+            "ADMIN_GATEWAY_URL": "https://infsim-apim.azure-api.net/anthropic",
+            "ADMIN_LOG_RESOURCE_IDS": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-reconciler,/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-admin-ai,/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-admin",
+            "ADMIN_PROJECTS_CONTAINER": "projects",
+            "ADMIN_PROJECT_HEADER": "x-ccof-project",
+            "ADMIN_RECONCILER_INTERVAL_MINUTES": "2",
+            "ADMIN_RECONCILER_RESOURCE_ID": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-reconciler",
+            "ADMIN_SCOPE": "Projects.Manage",
+            "ADMIN_TENANT_ID": "00000003-0000-4000-8000-000000000003",
+            "ADMIN_UI_CLIENT_ID": "00000004-0000-4000-8000-000000000004",
+            "ADMIN_UI_SCOPE": "api://00000004-0000-4000-8000-000000000004/Projects.Manage",
+            "ADMIN_V3_ENABLED": "true",
+            "ADMIN_WORKSPACE_ID": "[reference('/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.OperationalInsights/workspaces/infsim-5dnel4x4647ag-law', '2023-09-01').customerId]",
+            "APPLICATIONINSIGHTS_AUTHENTICATION_STRING": "Authorization=AAD",
+            "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference('/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-admin-ai', '2020-02-02').ConnectionString]",
+            "AzureWebJobsStorage__accountName": "infsim5dnel4x4647agadm",
+            "AzureWebJobsStorage__credential": "managedidentity",
+            "COSMOS_DATABASE": "ccof",
+            "COSMOS_ENDPOINT": "https://infsim-5dnel4x4647ag-cosmos.documents.azure.com:443/"
+          },
+          "before": null,
+          "children": null,
+          "path": "properties",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-admin/config/appsettings"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": "{\"version\":\"Notebook/1.0\",\"items\":[{\"type\":1,\"content\":{\"json\":\"## CCOF usage é\"},\"name\":\"title\"}]}",
+          "before": null,
+          "children": null,
+          "path": "properties.serializedData",
+          "propertyChangeType": "Create"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/workbooks/00000006-0000-4000-8000-000000000006"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": null,
+          "before": false,
+          "children": null,
+          "path": "properties.isIPv6EnabledPrivateEndpoint",
+          "propertyChangeType": "Delete"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe"
+    },
+    {
+      "changeType": "Modify",
+      "delta": [
+        {
+          "after": null,
+          "before": null,
+          "children": [
+            {
+              "after": null,
+              "before": null,
+              "children": [
+                {
+                  "after": null,
+                  "before": "W/\"0000000a-0000-4000-8000-00000000000a\"",
+                  "children": null,
+                  "path": "etag",
+                  "propertyChangeType": "Delete"
+                },
+                {
+                  "after": null,
+                  "before": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe/privateDnsZoneGroups/default/privateDnsZoneConfigs/documents",
+                  "children": null,
+                  "path": "id",
+                  "propertyChangeType": "Delete"
+                },
+                {
+                  "after": null,
+                  "before": "Succeeded",
+                  "children": null,
+                  "path": "properties.provisioningState",
+                  "propertyChangeType": "Delete"
+                },
+                {
+                  "after": null,
+                  "before": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups/privateDnsZoneConfigs",
+                  "children": null,
+                  "path": "type",
+                  "propertyChangeType": "Delete"
+                }
+              ],
+              "path": "0",
+              "propertyChangeType": "Modify"
+            }
+          ],
+          "path": "properties.privateDnsZoneConfigs",
+          "propertyChangeType": "Array"
+        }
+      ],
+      "resourceId": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Network/privateEndpoints/infsim-5dnel4x4647ag-cosmos-sql-pe/privateDnsZoneGroups/default"
+    }
+  ],
+  "readBacks": {
+    "appsettings|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-sync/config/appsettings": {
+      "AzureWebJobsStorage__accountName": "infsim5dnel4x4647agsyn",
+      "AzureWebJobsStorage__credential": "managedidentity",
+      "AzureWebJobsStorage__clientId": "00000002-0000-4000-8000-000000000002",
+      "CCOF_APP_ROLE": "sync",
+      "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=0000000b-0000-4000-8000-00000000000b;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=0000000c-0000-4000-8000-00000000000c",
+      "APPLICATIONINSIGHTS_AUTHENTICATION_STRING": "Authorization=AAD;ClientId=00000002-0000-4000-8000-000000000002",
+      "COSMOS_ENDPOINT": "https://infsim-5dnel4x4647ag-cosmos.documents.azure.com:443/",
+      "COSMOS_DATABASE": "ccof",
+      "SYNC_MANAGED_IDENTITY_CLIENT_ID": "00000002-0000-4000-8000-000000000002",
+      "SYNC_PROJECTS_CONTAINER": "projects",
+      "SYNC_ENTITLEMENT_CONTAINER": "entitlement",
+      "SYNC_LEASE_CONTAINER": "syncLease",
+      "SYNC_TENANT_ID": "00000003-0000-4000-8000-000000000003",
+      "SYNC_SCHEDULE": "0 */5 * * * *",
+      "SYNC_LEASE_SECONDS": "300",
+      "SYNC_MAX_REMOVALS_PER_RUN": "5",
+      "SYNC_MAX_REMOVAL_FRACTION": "0.1",
+      "SYNC_MEMBER_TYPES": "user",
+      "SYNC_GRAPH_MAX_RETRIES": "3",
+      "SYNC_GRAPH_MAX_RETRY_AFTER_SECONDS": "30",
+      "SYNC_GRAPH_TIMEOUT_SECONDS": "30",
+      "SYNC_WRITE_MODE": "apply",
+      "AzureWebJobs.syncEntitlement.Disabled": "false",
+      "AzureWebJobs.registrySeed.Disabled": "true",
+      "SYNC_LIMITS_CONTAINER": "adminConfig"
+    },
+    "reference|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-sync-ai|2020-02-02": {
+      "ConnectionString": "InstrumentationKey=0000000b-0000-4000-8000-00000000000b;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=0000000c-0000-4000-8000-00000000000c"
+    },
+    "appsettings|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-admin/config/appsettings": {
+      "AzureWebJobsStorage__accountName": "infsim5dnel4x4647agadm",
+      "AzureWebJobsStorage__credential": "managedidentity",
+      "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=0000000d-0000-4000-8000-00000000000d;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=0000000e-0000-4000-8000-00000000000e",
+      "APPLICATIONINSIGHTS_AUTHENTICATION_STRING": "Authorization=AAD",
+      "COSMOS_ENDPOINT": "https://infsim-5dnel4x4647ag-cosmos.documents.azure.com:443/",
+      "COSMOS_DATABASE": "ccof",
+      "ADMIN_PROJECTS_CONTAINER": "projects",
+      "ADMIN_CONFIG_CONTAINER": "adminConfig",
+      "ADMIN_TENANT_ID": "00000003-0000-4000-8000-000000000003",
+      "ADMIN_AUDIENCE": "00000004-0000-4000-8000-000000000004",
+      "ADMIN_SCOPE": "Projects.Manage",
+      "ADMIN_ALLOWED_CLIENT_IDS": "00000004-0000-4000-8000-000000000004",
+      "ADMIN_UI_CLIENT_ID": "00000004-0000-4000-8000-000000000004",
+      "ADMIN_UI_SCOPE": "api://00000004-0000-4000-8000-000000000004/Projects.Manage",
+      "ADMIN_READER_IDS": "",
+      "ADMIN_EDITOR_IDS": "",
+      "ADMIN_V3_ENABLED": "true",
+      "ADMIN_WORKSPACE_ID": "0000000f-0000-4000-8000-00000000000f",
+      "ADMIN_GATEWAY_RESOURCE_ID": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.ApiManagement/service/infsim-apim",
+      "ADMIN_LOG_RESOURCE_IDS": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-reconciler,/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-admin-ai,/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-admin",
+      "ADMIN_RECONCILER_RESOURCE_ID": "/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Web/sites/infsim-5dnel4x4647ag-reconciler",
+      "ADMIN_RECONCILER_INTERVAL_MINUTES": "2",
+      "ADMIN_CLIENT_ID": "00000005-0000-4000-8000-000000000005",
+      "ADMIN_GATEWAY_URL": "https://infsim-apim.azure-api.net/anthropic",
+      "ADMIN_PROJECT_HEADER": "x-ccof-project"
+    },
+    "reference|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.OperationalInsights/workspaces/infsim-5dnel4x4647ag-law|2023-09-01": {
+      "customerId": "0000000f-0000-4000-8000-00000000000f"
+    },
+    "reference|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-admin-ai|2020-02-02": {
+      "ConnectionString": "InstrumentationKey=0000000d-0000-4000-8000-00000000000d;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=0000000e-0000-4000-8000-00000000000e"
+    },
+    "throughput|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.DocumentDB/databaseAccounts/infsim-5dnel4x4647ag-cosmos/sqlDatabases/ccof": {
+      "autoscaleSettings": {
+        "maxThroughput": 1000
+      },
+      "throughput": 100
+    },
+    "workbook|/subscriptions/00000001-0000-4000-8000-000000000001/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/workbooks/00000006-0000-4000-8000-000000000006": "{\r\n  \"version\": \"Notebook/1.0\",\r\n  \"items\": [\r\n    {\r\n      \"type\": 1,\r\n      \"content\": {\r\n        \"json\": \"## CCOF usage é\"\r\n      },\r\n      \"name\": \"title\"\r\n    }\r\n  ]\r\n}"
+  }
+}

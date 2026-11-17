@@ -415,11 +415,18 @@ function Get-StgStage { param($Cfg, [int]$Number)
 
 # Structured what-if result for the CI/CD drift check: one JSON line per what-if (or per explicit
 # deployment-record check) appended to $env:CCOF_WHATIF_RESULTS, set by scripts/cicd/Invoke-CicdDriver.ps1.
-function Write-StgWhatIfResult { param([string]$Source, $Changes, [string]$Kind = 'whatIf')
+# $Verdicts (resource ID -> property verdicts from Staged.WhatIf.ps1) adds 'properties' to Modify changes.
+function Write-StgWhatIfResult { param([string]$Source, $Changes, [string]$Kind = 'whatIf', [hashtable]$Verdicts = @{})
     if (-not $env:CCOF_WHATIF_RESULTS) { return }
     $rec = [ordered]@{ schema = 'ccof.whatif.v1'; source = $Source; kind = $Kind }
-    if ($Kind -ceq 'whatIf') { $rec.changes = @(@($Changes) | Where-Object { $_ } | ForEach-Object { [ordered]@{ change = [string]$_.changeType; id = [string]$_.resourceId } }) }
-    [IO.File]::AppendAllText($env:CCOF_WHATIF_RESULTS, ($rec | ConvertTo-Json -Depth 6 -Compress) + "`n")
+    if ($Kind -ceq 'whatIf') {
+        $rec.changes = @(@($Changes) | Where-Object { $_ } | ForEach-Object {
+            $c = [ordered]@{ change = [string]$_.changeType; id = [string]$_.resourceId }
+            if ($Verdicts.ContainsKey($c.id)) { $c.properties = @($Verdicts[$c.id] | ForEach-Object { [ordered]@{ path = $_.path; change = $_.change; verdict = $_.verdict; rule = $_.rule; detail = $_.detail } }) }
+            $c
+        })
+    }
+    [IO.File]::AppendAllText($env:CCOF_WHATIF_RESULTS, ($rec | ConvertTo-Json -Depth 8 -Compress) + "`n")
 }
 
 function Write-StgEvidence { param([string]$Name, $Value)
@@ -543,10 +550,22 @@ function Invoke-StgBicep {
         $raw = Invoke-QsAz (@('deployment', 'group', 'what-if') + $common + @('--no-pretty-print', '--output', 'json'))
         $changes = @($raw.changes | ForEach-Object { [ordered]@{ change = $_.changeType; id = $_.resourceId } })
         $null = Write-StgEvidence "$Name.what-if.json" $changes
-        Write-StgWhatIfResult $Name @($raw.changes)
+        # Pipeline previews only: explain each Modify property (Staged.WhatIf.ps1) for the drift check.
+        $verdicts = @{}
+        if ($env:CCOF_WHATIF_RESULTS) {
+            foreach ($c in @($raw.changes | Where-Object { $_ -and $_.changeType -ceq 'Modify' })) { $verdicts[[string]$c.resourceId] = @(Get-StgModifyVerdicts $c { param($k, $t) Invoke-StgReadBack $k $t }) }
+        }
+        Write-StgWhatIfResult $Name @($raw.changes) -Verdicts $verdicts
         $byType = $changes | Group-Object { $_.change } | ForEach-Object { "$($_.Name)=$($_.Count)" }
         Write-Host "what-if $Name : $($byType -join ', ')"
-        foreach ($c in $changes) { Write-Host ("  {0,-8} {1}" -f $c.change, ($c.id -replace '^/subscriptions/[^/]+/resourceGroups/', '')) }
+        foreach ($c in $changes) {
+            Write-Host ("  {0,-8} {1}" -f $c.change, ($c.id -replace '^/subscriptions/[^/]+/resourceGroups/', ''))
+            if ($verdicts.ContainsKey([string]$c.id)) {
+                $v = @($verdicts[[string]$c.id])
+                Write-Host ("           properties: " + (($v | Group-Object verdict | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', '))
+                foreach ($x in $v | Where-Object { $_.verdict -cin 'drift', 'unmeasured' }) { Write-Host "           $($x.verdict) $($x.path) $($x.rule) $($x.detail)" }
+            }
+        }
         return $null
     }
     $started = [DateTime]::UtcNow

@@ -92,8 +92,67 @@ try {
         Check "neg: $kind is Unverifiable, not clean" ((Status $r 'staged-3') -eq 'Unverifiable' -and $r.Review.Count -eq 1 -and -not $r.Ok)
         Check "cli: $kind exit 1" ((Invoke-Cli $d @('staged-3')).Code -eq 1)
     }
+
+    # Property verdicts (infra/staged/Staged.WhatIf.ps1) on the real staged-6 Modify records.
+    function Set-Verdicts([string]$Dir, [scriptblock]$For) {
+        $j = Join-Path $Dir 'staged-6-preview.whatif.jsonl'; $rec = Get-Content $j -Raw | ConvertFrom-Json -Depth 20
+        $i = 0; foreach ($c in @($rec.changes | Where-Object change -eq 'Modify')) { $c | Add-Member -NotePropertyName properties -NotePropertyValue @(& $For $i $c) -Force; $i++ }
+        $rec | ConvertTo-Json -Depth 20 -Compress | Set-Content $j
+    }
+    $v = { param($verdict, $path = 'properties.isIPv6EnabledPrivateEndpoint') [pscustomobject]@{ path = $path; change = 'Delete'; verdict = $verdict; rule = 'r'; detail = '' } }
+    $d = New-Case 'verdict-noise' @('staged-6'); Set-Verdicts $d { param($i) & $v 'noise'; & $v 'matched' 'properties' }
+    $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-6'
+    Check 'verdicts: every Modify noise or matched is clean and counted' ((Status $r 'staged-6') -eq 'Clean' -and $r.Ok -and ($r.Steps | Where-Object Step -eq 'staged-6').Detail -match 'property verdicts \(10\)')
+    $x = Invoke-Cli $d @('staged-6')
+    Check 'cli: explained Modify exit 0' ($x.Code -eq 0 -and $x.Md -match 'No drift in 1 of 1')
+    $d = New-Case 'verdict-drift' @('staged-6'); Set-Verdicts $d { param($i) & $v 'noise'; if ($i -eq 3) { & $v 'drift' 'properties.customNetworkInterfaceName' } }
+    $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-6'
+    Check 'verdicts neg: one drift verdict makes exactly that Modify drift with its path' ((Status $r 'staged-6') -eq 'Drift' -and $r.Drift.Count -eq 1 -and $r.Drift[0].Detail -match 'customNetworkInterfaceName')
+    $x = Invoke-Cli $d @('staged-6')
+    Check 'cli: drift verdict exit 1, path in markdown' ($x.Code -eq 1 -and $x.Md -match 'drift properties\.customNetworkInterfaceName')
+    $d = New-Case 'verdict-open' @('staged-6'); Set-Verdicts $d { param($i) & $v 'matched'; if ($i -eq 0) { & $v 'unmeasured' 'properties.serializedData' } }
+    $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-6'
+    Check 'verdicts neg: unmeasured verdict is Unverifiable, not clean' ((Status $r 'staged-6') -eq 'Unverifiable' -and $r.Review.Count -eq 1 -and -not $r.Ok)
+    $d = New-Case 'verdict-both' @('staged-6'); Set-Verdicts $d { param($i) & $v 'unmeasured'; & $v 'drift' 'properties.x' }
+    Check 'verdicts neg: drift wins over unmeasured' ((Status (Get-CicdDrift -Directory $d -ExpectedStep 'staged-6') 'staged-6') -eq 'Drift')
+    $d = New-Case 'verdict-empty' @('staged-6'); Set-Verdicts $d { param($i) }
+    $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-6'
+    Check 'verdicts neg: empty properties is drift' ((Status $r 'staged-6') -eq 'Drift' -and $r.Drift.Count -eq 10)
+    $d = New-Case 'verdict-unknown' @('staged-6'); Set-Verdicts $d { param($i) & $v 'ignored' }
+    Check 'verdicts neg: unknown verdict is Unmeasured' ((Status (Get-CicdDrift -Directory $d -ExpectedStep 'staged-6') 'staged-6') -eq 'Unmeasured')
+    $d = New-Case 'verdict-nopath' @('staged-6'); Set-Verdicts $d { param($i) [pscustomobject]@{ verdict = 'noise' } }
+    Check 'verdicts neg: verdict without path is Unmeasured' ((Status (Get-CicdDrift -Directory $d -ExpectedStep 'staged-6') 'staged-6') -eq 'Unmeasured')
+    $d = New-Case 'verdict-create' @('health-b')
+    $j = Join-Path $d 'health-b-preview.whatif.jsonl'; $rec = Get-Content $j -Raw | ConvertFrom-Json -Depth 20
+    foreach ($c in $rec.changes) { $c | Add-Member -NotePropertyName properties -NotePropertyValue @(& $v 'noise') -Force }
+    $rec | ConvertTo-Json -Depth 20 -Compress | Set-Content $j
+    Check 'verdicts neg: noise verdicts never clean a Create' ((Status (Get-CicdDrift -Directory $d -ExpectedStep 'health-b') 'health-b') -eq 'Drift')
+
+    # End to end: Write-StgWhatIfResult with verdicts from the real classifier, read by Get-CicdDrift.
+    . (Join-Path $root 'infra\staged\Staged.Common.ps1'); . (Join-Path $root 'infra\staged\Staged.WhatIf.ps1')
+    # Hashtables, as Invoke-QsAz returns what-if output.
+    $fxPath = Join-Path $PSScriptRoot 'fixtures\cicd-drift\whatif-delta\lab-modify.json'
+    $rb = { param($k, $t) $fx = Get-Content $fxPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100; if (-not $fx.readBacks.Contains("$k|$t")) { throw "no read-back $k|$t" }; $fx.readBacks["$k|$t"] }
+    $d = Join-Path $scratch 'e2e'; New-Item -ItemType Directory -Force $d | Out-Null
+    $saved = $env:CCOF_WHATIF_RESULTS
+    try {
+        foreach ($case in @(@{ Name = 'clean'; Mutate = $false }, @{ Name = 'mutated'; Mutate = $true })) {
+            $changes = @((Get-Content $fxPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).changes)
+            if ($case.Mutate) { @($changes | Where-Object { $_.resourceId -match '/privateEndpoints/[^/]+$' })[0].delta[0].before = $true }
+            $env:CCOF_WHATIF_RESULTS = Join-Path $d "$($case.Name).jsonl"
+            $verdicts = @{}; foreach ($c in $changes) { $verdicts[[string]$c.resourceId] = @(Get-StgModifyVerdicts $c $rb) }
+            Write-StgWhatIfResult 'lab-modify' $changes -Verdicts $verdicts
+            Copy-Item $env:CCOF_WHATIF_RESULTS (Join-Path $d 'staged-5-preview.whatif.jsonl') -Force
+            $o = Get-Content (Join-Path $fixtures 'staged-3-preview.result.json') -Raw | ConvertFrom-Json; $o.step = 'staged-5'; $o | ConvertTo-Json | Set-Content (Join-Path $d 'staged-5-preview.result.json')
+            $r = Get-CicdDrift -Directory $d -ExpectedStep 'staged-5'
+            $want = if ($case.Mutate) { 'Drift' } else { 'Clean' }
+            Check "e2e $($case.Name): real lab Modify deltas through the writer give $want" ((Status $r 'staged-5') -eq $want)
+            if (-not $case.Mutate) { Check 'e2e clean: all 11 Modify explained, none reviewed' (($r.Steps | Where-Object Step -eq 'staged-5').Detail -match 'property verdicts \(11\)' -and -not $r.Review.Count -and -not $r.Drift.Count) }
+            else { Check 'e2e mutated: only the PE is drift' ($r.Drift.Count -eq 1 -and $r.Drift[0].Id -match '/privateEndpoints/') }
+        }
+    } finally { $env:CCOF_WHATIF_RESULTS = $saved }
 } finally {
     Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 }
 Write-Host "Test-CicdDrift: $($script:pass) passed, $($script:fail) failed"
-if ($script:fail -gt 0 -or $script:pass -lt 27) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 41) { exit 1 }

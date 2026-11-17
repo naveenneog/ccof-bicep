@@ -115,7 +115,7 @@ Assert-Contract ($apimZr.Count -eq 1 -and $apimZr[0].condition -ceq "[parameters
 # Driver: parses, every stage has an entry function, no az argument holds a cmd.exe metacharacter,
 # preview is the default, and later stages read earlier stage state.
 $driverPath = Join-Path $root 'infra\staged\Invoke-StagedDeployment.ps1'
-$driverFiles = @($driverPath) + @('Staged.Common.ps1', 'Staged.Resources.ps1', 'Staged.Entra.ps1', 'Staged.Application.ps1' | ForEach-Object { Join-Path $root "infra\staged\$_" })
+$driverFiles = @($driverPath) + @('Staged.Common.ps1', 'Staged.WhatIf.ps1', 'Staged.Resources.ps1', 'Staged.Entra.ps1', 'Staged.Application.ps1' | ForEach-Object { Join-Path $root "infra\staged\$_" })
 $functionAsts = @()
 foreach ($file in $driverFiles) {
     $tokens = $null; $errors = $null

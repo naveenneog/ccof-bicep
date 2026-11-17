@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-11-19 - Drift: property verdicts for what-if Modify
+
+- New `infra/staged/Staged.WhatIf.ps1`: pipeline previews give each Modify property a verdict (noise, matched,
+  drift, unmeasured) from exact path-and-value rules and read-only read-backs (app settings, Cosmos throughput,
+  workbook). `Get-CicdDrift.ps1` counts a Modify clean only when every property is noise or matched.
+- APIM policies are compared as XML tokens with only XML-equivalent normalisation; whitespace inside text,
+  attribute values, expressions or string literals is drift; uncertain parsing is unmeasured.
+- Unresolved `reference()` values, unknown or failed read-backs are unmeasured, never clean.
 ## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
 
 - Pull requests run only offline prerequisite checks on a GitHub-hosted runner (no self-hosted runner, managed

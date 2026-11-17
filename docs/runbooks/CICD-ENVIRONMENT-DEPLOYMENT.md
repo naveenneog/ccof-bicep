@@ -268,19 +268,45 @@ After Front Door with the standby (saved mode `full`), the driver refuses `-Prim
 
   | Status | Meaning | Clean |
   |---|---|---|
-  | Clean | What-if ran; only NoChange or Ignore | yes |
+  | Clean | What-if ran; only NoChange or Ignore, or Modify whose every property is noise or matched (below) | yes |
   | RecordMatch | Stage 1: the deployment record matches the template and parameters (resource what-if not run) | yes |
-  | Drift | What-if shows Create, Delete or Modify | no |
-  | Unverifiable | What-if shows Deploy or Unsupported (cannot be evaluated) | no, listed for review |
+  | Drift | What-if shows Create or Delete, or a Modify with a drift property or no property verdicts | no |
+  | Unverifiable | What-if shows Deploy or Unsupported, or a Modify with an unmeasured property | no, listed for review |
   | Unmeasured | The preview ran but produced no what-if result (for example "No what-if output was produced.") | no |
   | PreviewFailed | The preview exited non-zero | no |
   | NoResult | No result file for an expected step | no |
 
   Only when every expected step is Clean or RecordMatch does the report say "No drift in N of N expected previews".
   Otherwise it opens an issue `Drift: <environment>` with the label `ccof-drift`, or comments on the open one.
-  It never applies and never saves state. In the lab the steady state still shows Modify on Stages 2, 5 and 6
-  (Cosmos containers, APIM policies and app settings, private endpoint DNS zone groups); review and accept or
-  fix these before scheduling the check.
+  It never applies and never saves state.
+
+  **Modify on an unchanged environment.** What-if reports Modify for properties the templates do not send and
+  for write-only properties a GET does not return. For pipeline previews the driver
+  ([`Staged.WhatIf.ps1`](../../infra/staged/Staged.WhatIf.ps1)) gives every changed property one verdict, written
+  to `.whatif.jsonl` without values:
+
+  | Verdict | When |
+  |---|---|
+  | noise | Exact path and exact value of a service default or read-only field: Cosmos container conflict path `/_ts` and default indexing policy; private endpoint `isIPv6EnabledPrivateEndpoint` false; APIM API `isAgent` false and header `Ocp-Apim-Subscription-Key`; DNS zone group `etag`/`id`/`type`/`provisioningState`. APIM policy `format` xml to rawxml, and a policy value equal as XML tokens (below). |
+  | matched | A read-only read-back equals the template: app settings (`config/appsettings/list`, `reference()` values resolved by reading the referenced resource), Cosmos database throughput, workbook content. |
+  | drift | Any other path or value, a policy that differs, a read-back that differs (app setting names only). |
+  | unmeasured | The comparison is not certain: an unresolved expression, a read-back that failed or was denied, policy text that cannot be tokenised with certainty, workbook content that differs only in non-ASCII characters. |
+
+  APIM policies are compared as XML tokens, not as collapsed text. Only XML-equivalent differences are
+  ignored: line endings, the five predefined entities and numeric references in the stored (xml) form,
+  attribute order, `<x/>` against `<x></x>`, and whitespace-only text between two tags (not an element's only
+  content). Text, attribute values, C# policy expressions, string literals and comments must be identical, so
+  `Bearer A` to `Bearer  A` is drift. Template rawxml is not entity-decoded; its `@(...)`/`@{...}` expressions
+  are scanned with C# string rules only where they start an attribute value or a text run. An interpolated
+  string (`$"..."`), an entity inside rawxml, an entity name in other than lower case, a character XML 1.0
+  does not allow, or unbalanced input is unmeasured.
+
+  Limits: the app settings read-back needs the list permission, so on the preview (Reader) identity those
+  properties are unmeasured; drift runs on `ccof-apply`. On Windows, az drops non-ASCII characters from what-if
+  output, so a workbook containing them is unmeasured there; on a UTF-8 Linux runner it is compared (not yet
+  proven on a runner). Health alert records carry no property verdicts, so any Modify there is drift.
+  Lab evidence (unchanged infsim, read-only, 2026-11-18): Stage 2 Clean (10 Modify explained), Stage 6 Clean
+  (10), Stage 5 12 explained including all 6 APIM policies and fragments, and the workbook unmeasured on Windows.
 
 ## 8. Driver state
 

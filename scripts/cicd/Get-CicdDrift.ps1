@@ -6,8 +6,9 @@
 .DESCRIPTION
     Reads <step>-preview.result.json and <step>-preview.whatif.jsonl for every -ExpectedStep (CicdDrift.psm1).
     Writes drift.json and drift.md to -OutputDirectory and appends the Markdown to the job summary.
-    Exit 0 only when every expected step is Clean (all NoChange/Ignore) or RecordMatch (Stage 1 parameters match
-    its recorded deployment). Exit 1 on drift (Create/Delete/Modify), Unverifiable (Deploy/Unsupported),
+    Exit 0 only when every expected step is Clean (all NoChange/Ignore, or Modify whose every property verdict is
+    noise or matched) or RecordMatch (Stage 1 parameters match its recorded deployment). Exit 1 on drift
+    (Create/Delete/Modify, a drift verdict, or Modify without verdicts), Unverifiable (Deploy/Unsupported/unmeasured),
     PreviewFailed, NoResult or Unmeasured (no recognised what-if result). Log text is not used.
 
 .EXAMPLE
@@ -33,8 +34,8 @@ $md = @(if ($r.Ok) { "## Drift check: No drift in $good of $($steps.Count) expec
 $md += '| Step | Status | Changes | Detail |', '|---|---|---|---|'
 $md += $steps | ForEach-Object { "| $($_.Step) | $($_.Status) | $($_.Counts) | $($_.Detail) |" }
 if ($r.Drift.Count -or $r.Review.Count) {
-    $md += '', '| Step | Change | Resource |', '|---|---|---|'
-    $md += @($r.Drift) + @($r.Review) | ForEach-Object { "| $($_.Step) | $($_.Change) | ``$($_.Id)`` |" }
+    $md += '', '| Step | Change | Resource | Properties |', '|---|---|---|---|'
+    $md += @($r.Drift) + @($r.Review) | ForEach-Object { "| $($_.Step) | $($_.Change) | ``$($_.Id)`` | $(([string]$_.PSObject.Properties['Detail']?.Value) -replace '\|', '/') |" }
 }
 $md | Set-Content -LiteralPath (Join-Path $OutputDirectory 'drift.md') -Encoding utf8NoBOM
 if ($env:GITHUB_STEP_SUMMARY) { $md + '' | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8NoBOM }
