@@ -41,10 +41,10 @@ administrator selects it in the console (ADMIN-OPERATIONS section 7, step 6).
 6. **GitHub plan and environments.** Environments `<env>-preview`, `<env>-gate-privatelink` and
    `<env>-apply`, the last two with required reviewers, all three limited to the branch `main`. A private
    repository needs GitHub Enterprise for required reviewers (see [Approval check](#approval-check)).
-   Create all three before the first run, including `<env>-gate-privatelink` even if no backend needs a
-   private link: whether the gate is needed is only known after `validate`, so every apply run checks it.
-   For a private organization repository, set the repository variable `CCOF_GITHUB_PLAN` = `enterprise`
-   (an attestation; the token cannot read the plan).
+   All three exist before the first run. Every apply run checks `<env>-gate-privatelink`, even when no
+   backend needs a private link, because the need is only known after `validate`. The job token cannot
+   read an organization's plan; the repository variable `CCOF_GITHUB_PLAN` = `enterprise` is an
+   attestation, and the check reports it as attested, not proved.
 
 ## Run it
 
@@ -107,7 +107,9 @@ Steps: `validate`, `stage3`, `stage5`, `stage6`, `standby-backends`, `standby-ve
   checks the environment name and that the run is on the default branch, then runs
   `scripts/cicd/Test-CicdGitHubEnvironments.ps1` (shared with the deployment pipeline). It fails unless
   `<env>-preview` exists with a branch policy of exactly `main` and, for `apply` = true, `<env>-apply` and
-  `<env>-gate-privatelink` also exist with required reviewers on a plan that enforces them. Every other
+  `<env>-gate-privatelink` also exist with required reviewers. The reviewer plan passes for a public
+  repository; for a private organization repository with `CCOF_GITHUB_PLAN` = `enterprise` the check
+  currently passes on that attestation and reports the plan as not proved. Every other
   job needs `resolve`, so a missing environment (which GitHub would create without protection) never
   reaches the preview runner, which has the apply identity.
 - Previews run on the apply runner because Azure what-if needs the same permissions as a deployment
@@ -152,8 +154,8 @@ Without them the apply always fails, so it never runs unreviewed.
 The workflow uses files from the runner and state branches: `scripts/cicd/Test-RunnerHost.sh` and
 `.github/actions/azure-login-mi` (runner infrastructure), and `scripts/cicd/Sync-CicdState.ps1` with
 `CicdState.psm1`, and `scripts/cicd/Test-CicdGitHubEnvironments.ps1` with `CicdGitHubEnvironments.psm1`
-(deployment pipeline). Merge those first; until then `resolve` or the first step of each self-hosted job fails and nothing
-changes. `pr-check` does not use them.
+(deployment pipeline). Until those are merged, `resolve` or the first step of each self-hosted job fails
+and nothing changes. `pr-check` does not use them.
 
 ## Driver state
 
@@ -165,10 +167,11 @@ including after a driver failure so partial progress is kept. A job that failed 
 checkout or Restore saves nothing, so it cannot overwrite the branch with unrestored state.
 
 Runs for one environment share the concurrency group `ccof-env-<env>` and never run at the same time.
-The group uses `queue: max`: up to 100 runs wait in order (order not guaranteed) instead of a new run
-replacing the waiting one. A run beyond 100 pending is cancelled; start it again later
+The group uses `queue: max`: up to 100 runs wait (GitHub does not guarantee their order) instead of a new
+run replacing the waiting one. A run beyond 100 pending is cancelled and is not retried
 ([GitHub: concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)).
-Every workflow that uses the group should set the same `queue` value. actionlint 1.7.12 does not yet
+The workflows that share the group are meant to set the same `queue` value; GitHub does not document
+mixed values. actionlint 1.7.12 does not yet
 know the `queue` key (rhysd/actionlint#657) and reports it.
 
 ## Stage 5 and live settings
