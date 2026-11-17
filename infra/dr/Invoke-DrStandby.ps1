@@ -23,6 +23,10 @@
   -Phase Code      The same packages as region A, deployed to region B's apps. No seed and no snapshot:
                    region B reads the shared Cosmos account.
   -Phase Verify    Read-only: apps list their functions, both writers are off, APIM B has the API.
+  -Phase Backends  With -BackendIds: adds Foundry backends that were added to the primary configuration
+                   (Stage 3 and Stage 5 for region B, no admin redirects) after proving that nothing else
+                   changed and that region B is still standby. Clears Verify only; run Verify again.
+                   docs/runbooks/CICD-FOUNDRY-ONBOARDING.md.
 
   The primary's staged state (standby.stagedStateDirectory) is read, never written.
 
@@ -32,8 +36,9 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify')] [string]$Phase,
+    [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify', 'Backends')] [string]$Phase,
     [Parameter(Mandatory)] [string]$ConfigPath,
+    [string[]]$BackendIds = @(),
     [switch]$Apply,
     [switch]$ApprovePrivateNetworkChanges,
     [switch]$ApprovePublicApimBootstrap,
@@ -51,8 +56,10 @@ $dr = Get-Content -LiteralPath $drPath -Raw | ConvertFrom-Json
 Import-Module (Join-Path $here 'DrPrerequisites.psm1') -Force
 Import-Module (Join-Path $here 'DrStandby.psm1') -Force
 Import-Module (Join-Path $here 'DrCosmosThroughput.psm1') -Force
+Import-Module (Join-Path $here 'DrStandbyBackends.psm1') -Force
 $problems = @(Get-DrConfigProblems $dr) + @(Get-DrStandbyProblems $dr)
 if ($problems.Count) { Stop-Dr "Configuration refused: $($problems -join ', ')" 2 }
+if (($Phase -ceq 'Backends') -ne [bool]@($BackendIds | Where-Object { $_ }).Count) { Stop-Dr 'standby_backends_ids: -BackendIds is required with -Phase Backends and accepted only there.' 2 }
 if ($Phase -ceq 'Network' -and $Apply -and -not $ApprovePrivateNetworkChanges) {
     Stop-Dr 'network_changes_approval_required: Network creates private endpoints and DNS records and attaches services to subnets. Obtain network-team approval and rerun with -ApprovePrivateNetworkChanges.' 2
 }
@@ -434,6 +441,26 @@ switch ($Phase) {
     }
     Save-DrPhase 'Code' @{ code = $code; admin = $admin; adminSha256 = $(if ($admin -and $admin.Contains('sha256')) { $admin.sha256 } else { $null }); commit = (git -C $repo rev-parse HEAD) }
     try { if (Remove-DrBuildStaging -GeneratedDir $ctx.GeneratedDir) { Write-Host 'Removed Code build staging (.dr-state/generated/packages); package digests are recorded in standby.state.json.' } } catch { Write-Warning "build_staging_cleanup_failed: $($_.Exception.Message). Code is complete; delete $($ctx.GeneratedDir)/packages before Save-CcofDr to keep the archive small." }
+}
+'Backends' {
+    foreach ($n in 'Grants', 'Config', 'Code') { $null = Get-DrPhase $n }
+    $ids = @($BackendIds | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $bState = Read-StgState $bCfg
+    $scope = Get-DrStandbyBackendsScopeProblem -Cfg $bCfg -BackendIds $ids -Records $bState.stages -HashOf { param($c, $n) Get-StgStageInput $c $n }
+    if ($scope) { Stop-Dr $scope 3 }
+    $s1 = Get-StgStage $bCfg 1
+    $appSettings = { param($app) $h = @{}; foreach ($s in @(Invoke-StgAzJson @('functionapp', 'config', 'appsettings', 'list', '--subscription', $sub, '--resource-group', $rg, '--name', $app))) { $h[$s.name] = $s.value }; $h }
+    $active = Get-DrStandbyWritersProblem -Sync (& $appSettings $s1.names.apps.sync.functionApp) -Reconciler (& $appSettings $s1.names.apps.reconciler.functionApp)
+    if ($active) { Stop-Dr $active 3 }
+    Write-Host "Region B backends to add: $($ids -join ', '). Grants and Config inputs differ from the verified ones by these backends only."
+    $o3 = Invoke-Stage3 $bCfg -Apply:$Apply
+    if ($Apply) { Save-StgStage $bCfg 3 $o3 }
+    $o5 = Invoke-Stage5 $bCfg -Apply:$Apply
+    if ($Apply) {
+        Save-StgStage $bCfg 5 $o5
+        Save-DrPhase 'Backends' @{ backendIds = $ids; cosmosAssignments = @($o3.cosmosAssignmentIds).Count; gatewayUrl = $o5.gatewayUrl }
+        Write-Host 'Next: -Phase Verify, then the Front Door -Phase Verify.'
+    }
 }
 'Verify' {
     $s1 = Get-StgStage $bCfg 1

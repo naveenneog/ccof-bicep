@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 $script:AzureCliClientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
 $script:Guid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
-foreach ($part in 'Staged.Common.ps1', 'Staged.Resources.ps1', 'Staged.Entra.ps1', 'Staged.Application.ps1') { . (Join-Path $PSScriptRoot $part) }
+foreach ($part in 'Staged.Common.ps1', 'Staged.Resources.ps1', 'Staged.Entra.ps1', 'Staged.SettingsGuard.ps1', 'Staged.Application.ps1') { . (Join-Path $PSScriptRoot $part) }
 
 # ---------------------------------------------------------------- entry point
 

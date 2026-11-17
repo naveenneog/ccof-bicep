@@ -189,6 +189,7 @@ function Read-StgConfig {
         $problems.Add('a newly created admin registration requires at least one entra.adminEditors assignment; assignment-required is enabled')
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
+    foreach ($m in @(Get-StgOptionalFieldProblems $c)) { $problems.Add($m) }
     foreach ($p in @(Get-StgClientAliasProblems $c)) { $problems.Add($p) }
     if ($c.stage1 -is [Collections.IDictionary] -and $c.stage1.Contains('apimZoneRedundant')) {
         # Standard v2 / Premium v2 only, chosen at creation; one unit is allowed but two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
@@ -294,6 +295,8 @@ function Get-StgStageInput {
         8 { $input += @{ stage1=$Cfg.stage1; acceptance=$Cfg.acceptance; gateway=$Cfg.gateway; admin=$Cfg.admin } }
         default { throw "invalid stage number $Number" }
     }
+    # Pipeline backend writers enter the Stage 3 hash only when configured.
+    if ($Number -eq 3 -and @(Get-StgBackendWriterPrincipalIds $Cfg).Count) { $input.backendWriterPrincipalIds = @(Get-StgBackendWriterPrincipalIds $Cfg) }
     # Only an opted-in existing-APIM integration enters the Stage 6 hash, so completed deployments keep theirs.
     if ($Number -eq 6 -and $Cfg.apim.existing -is [Collections.IDictionary] -and $Cfg.apim.existing.integrateOutboundVnet -is [bool] -and $Cfg.apim.existing.integrateOutboundVnet) {
         $input.existingApimOutbound = [ordered]@{ subscriptionId = $Cfg.apim.existing.subscriptionId; resourceGroup = $Cfg.apim.existing.resourceGroup; name = $Cfg.apim.existing.name }

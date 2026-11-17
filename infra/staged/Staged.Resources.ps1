@@ -570,6 +570,8 @@ function Invoke-Stage3 {
     $params = @{ names = $s1.names; principals = $s1.principals; databaseName = $Cfg.cosmos.databaseName; roleNames = $Cfg.cosmos.roleNames
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
+    $writers = @(Get-StgBackendWriterPrincipalIds $Cfg)
+    if ($writers.Count) { $params.backendWriterPrincipalIds = $writers }
     $params = Add-StgStandbyParameters $Cfg 3 $params
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name (Get-StgDeploymentName $Cfg 'stage3-grants') -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
@@ -604,6 +606,14 @@ function Invoke-Stage3 {
         Assert-Stg ($matches.Count -eq 1) "expected exactly one Cosmos grant $($expected.roleDefinitionId) for $($expected.principalId) at $($expected.scope); found $($matches.Count)"
     }
     $v.cosmos = @($cosmos | ForEach-Object { $p = $_.principalId; $who = @($s1.principals.Keys | Where-Object { $s1.principals[$_] -ieq $p })[0]; "$who -> $($_.scope -replace '^.*/dbs/', 'dbs/')" } | Sort-Object)
+    if (@($out.backendWriterAssignments).Count) {
+        $all = @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
+        $v.backendWriters = @(foreach ($expected in $out.backendWriterAssignments) {
+            $matches = @($all | Where-Object { $_.principalId -ieq $expected.principalId -and $_.roleDefinitionId -ieq $expected.roleDefinitionId -and $_.scope -ieq $expected.scope })
+            Assert-Stg ($matches.Count -eq 1) "expected exactly one backends writer grant for pipeline principal $($expected.principalId); found $($matches.Count)"
+            "$($expected.principalId) -> colls/backends (read, create)"
+        })
+    }
     foreach ($b in $Cfg.backends) {
         $scope = "/subscriptions/$($b.subscriptionId)/resourceGroups/$($b.resourceGroup)/providers/Microsoft.CognitiveServices/accounts/$($b.accountName)"
         $ra = @((Get-StgArm "$scope/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { $_.properties.principalId -ieq $apim.principalId -and $_.properties.roleDefinitionId -like '*a97b65f3-24c7-4388-baec-2e87135dc908' })

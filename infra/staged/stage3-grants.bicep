@@ -34,6 +34,9 @@ param backends array = []
 @description('Empty for the primary region. A standby region (infra/dr) passes its own value, so its grants on the shared workspace and Cosmos account get their own names instead of replacing the primary region\'s.')
 param assignmentNameSalt string = ''
 
+@description('Principal (object) ids of pipeline identities that create Foundry backend descriptors (read + create on the backends container). Ignored in a standby region.')
+param backendWriterPrincipalIds array = []
+
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logReader = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -189,6 +192,23 @@ resource assignments 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2
   dependsOn: [roleDefinitions]
 }]
 
+// Pipeline identities that register Foundry backends (automation.backendWriterPrincipalIds; docs/runbooks/
+// CICD-FOUNDRY-ONBOARDING.md): read and create on the backends container only, the sync app's onboarding
+// role. No replace, upsert or delete, so an existing descriptor is never changed. The shared account
+// belongs to the primary region: a standby region (non-empty salt) never assigns these.
+var writers = empty(assignmentNameSalt) ? backendWriterPrincipalIds : []
+@batchSize(1)
+resource backendWriters 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = [for p in writers: {
+  parent: account
+  name: guid(account.id, 'ccof-staged', 'backends-writer', p)
+  properties: {
+    roleDefinitionId: '${account.id}/sqlRoleDefinitions/${guid(account.id, 'ccof-staged', 'onbProjectWriter')}'
+    principalId: p
+    scope: '${account.id}/dbs/${databaseName}/colls/backends'
+  }
+  dependsOn: [roleDefinitions, assignments]
+}]
+
 output storageOwnerAssignmentIds array = [for (k, i) in appKeys: storageOwner[i].id]
 output metricsPublisherAssignmentIds array = [for (k, i) in appKeys: publisher[i].id]
 output workspaceReaderAssignmentIds array = [for (k, i) in workspaceReaders: workspaceReader[i].id]
@@ -205,3 +225,9 @@ output storageOwnerDetails array = [for (k, i) in appKeys: { principalId: princi
 output metricsPublisherDetails array = [for (k, i) in appKeys: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', metricsPublisher), scope: insights[i].id }]
 output workspaceReaderDetails array = [for k in workspaceReaders: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', logReader), scope: workspace.id }]
 output foundryGrants array = [for b in backends: (!empty(apimPrincipalId) && (b.?assignCognitiveServicesUser ?? true)) ? b.id : '']
+output backendWriterAssignments array = [for p in writers: {
+  id: guid(account.id, 'ccof-staged', 'backends-writer', p)
+  principalId: p
+  roleDefinitionId: '${account.id}/sqlRoleDefinitions/${guid(account.id, 'ccof-staged', 'onbProjectWriter')}'
+  scope: '${account.id}/dbs/${databaseName}/colls/backends'
+}]

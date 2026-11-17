@@ -37,7 +37,14 @@ function Get-StgWorkbookGroups {
 
 function Invoke-Stage5 {
     param($Cfg, [switch]$Apply)
-    $s1 = Get-StgStage $Cfg 1; $null = Get-StgStage $Cfg 3; $entra = Get-StgStage $Cfg 4
+    $s1 = Get-StgStage $Cfg 1; $entra = Get-StgStage $Cfg 4
+    # Stage 5 reads Stage 3 only for order. A preview may run before pending Stage 3 changes (for example
+    # a new backend) are applied, so reviewers see both plans; apply still requires the verified Stage 3.
+    try { $null = Get-StgStage $Cfg 3 }
+    catch {
+        if ($Apply -or "$($_.Exception.Message)" -notmatch '^stage_config_changed:') { throw }
+        Write-Warning 'preview: Stage 3 inputs changed and are not applied yet; this Stage 5 preview assumes Stage 3 is applied first.'
+    }
     $ctx = New-StgQsContext $Cfg
     $apimSp = @{ appId = (Get-StgManagedIdentityClientId -ResourceId $ctx.Apim.id -PrincipalId $ctx.Apim.principalId) }
     # Gateway policy (infra/gateway/render.ts) and workbook (analytics/workbooks/chargeback.ts).
@@ -71,6 +78,7 @@ function Invoke-Stage5 {
             }
         }
         if ($gatewayResourceIds.Count) { $admin.gatewayResourceIds = $gatewayResourceIds }
+        foreach ($flag in 'graphEnabled', 'userNamesEnabled') { if ($Cfg.admin -is [Collections.IDictionary] -and $Cfg.admin[$flag] -is [bool]) { $admin[$flag] = $Cfg.admin[$flag] } }
     }
     $params = @{
         tenantId = $Cfg.tenantId; location = $Cfg.location; names = $ctx.P.names; cosmosEndpoint = $s1.cosmosEndpoint
@@ -81,6 +89,8 @@ function Invoke-Stage5 {
         apimIdentityAppId = $apimSp.appId; apimPrincipalId = $ctx.Apim.principalId; admin = $admin
         workbook = $Cfg.workbook; workbookContent = $report.workbookContent.value; workbookContentTags = $report.contentTags.value
     }
+    # A setting added by hand since the last Stage 5 apply would be removed: warn in preview, refuse in apply.
+    $null = Assert-StgStage5SettingsKept -Cfg $Cfg -Stage1 $s1 -Admin $admin -Apply:$Apply
     # Opted-in gateway diagnostics on an existing APIM; a conflicting setting stops the stage before any write.
     $apimDiagnostics = Invoke-StgExistingApimDiagnostics -Cfg $Cfg -Stage1 $s1 -Apply:$Apply
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage5-config.bicep' -Name (Get-StgDeploymentName $Cfg 'stage5-config') -Apply:$Apply -Parameters (Add-StgStandbyParameters $Cfg 5 $params)

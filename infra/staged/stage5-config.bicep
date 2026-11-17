@@ -39,7 +39,7 @@ param resolverApiAppId string
 param apimIdentityAppId string
 param apimPrincipalId string
 
-@description('Admin app: enabled, readerIds, editorIds, uiClientId (the admin registration), extraAllowedClientIds (default none; test clients only), gatewayUrl, clientId (developer registration), projectHeader, v3Enabled.')
+@description('Admin app: enabled, readerIds, editorIds, uiClientId (the admin registration), extraAllowedClientIds (default none; test clients only), gatewayUrl, clientId (developer registration), projectHeader, v3Enabled; optional gatewayResourceIds, graphEnabled, userNamesEnabled.')
 param admin object = { enabled: false }
 
 param workbook object = {}
@@ -142,10 +142,16 @@ resource adminInsights 'Microsoft.Insights/components@2020-02-02' existing = if 
 // Application Insights component.
 // Active/passive DR (DR-05): every gateway this deployment's usage can come from; absent for one region.
 var adminGatewayList = admin.?gatewayResourceIds ?? []
+// Optional Graph features (admin.graphEnabled / admin.userNamesEnabled in the staged config). Written
+// only when configured, so a configuration without them deploys exactly the earlier settings.
+var adminOptionalFlags = union(
+  contains(admin, 'graphEnabled') ? { ADMIN_GRAPH_ENABLED: admin.graphEnabled ? 'true' : 'false' } : {},
+  contains(admin, 'userNamesEnabled') ? { ADMIN_USER_NAMES_ENABLED: admin.userNamesEnabled ? 'true' : 'false' } : {}
+)
 resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnabled) {
   parent: adminSite
   name: 'appsettings'
-  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, {
+  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, adminOptionalFlags, {
     AzureWebJobsStorage__accountName: names.apps.?admin.?storageAccount ?? ''
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: adminInsights!.properties.ConnectionString

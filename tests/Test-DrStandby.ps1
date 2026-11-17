@@ -277,6 +277,9 @@ Check 'standby config: APIM zone redundancy from standby.apim, not the primary' 
 $zrDr = New-DrCfg; $zrDr.standby.apim | Add-Member -Force zoneRedundant $true
 Check 'standby config: standby.apim.zoneRedundant true reaches stage1.apimZoneRedundant' ((New-DrStandbyStagedConfig -Primary $primary -Dr $zrDr -VnetId '/v/standby' -ZoneIds $zones).stage1['apimZoneRedundant'] -eq $true)
 Check 'primary configuration not modified' ($primary.syncTimerEnabled -eq $true -and $primary.backends[0].privateEndpoint -eq $true -and $primary.location -ceq 'eastus2')
+$primary.automation = @{ backendWriterPrincipalIds = @('00000000-0000-4000-8000-0000000000aa') }
+Check 'standby config: pipeline backend writers are granted by the primary only' (-not (New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones).Contains('automation') -and $primary.Contains('automation'))
+$primary.Remove('automation')
 $gw = @('/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/a', '/subscriptions/x/resourceGroups/r/providers/Microsoft.ApiManagement/service/b')
 $b2 = New-DrStandbyStagedConfig -Primary $primary -Dr (New-DrCfg) -VnetId '/v/standby' -ZoneIds $zones -GatewayResourceIds $gw
 Check 'standby config: reconciler and admin read both gateways' ((@($b2.reconciler.ledgerGatewayResourceIds) -join ',') -ceq ($gw -join ',') -and (@($b2.admin.gatewayResourceIds) -join ',') -ceq ($gw -join ','))
@@ -335,4 +338,4 @@ Remove-Item -LiteralPath $gen -Recurse -Force -ErrorAction SilentlyContinue
 $driverText = Get-Content -Raw (Join-Path $repo 'infra/dr/Invoke-DrStandby.ps1')
 Check 'Code removes build staging only after it records the phase' ($driverText -match "(?s)Save-DrPhase 'Code'[^\n]*\n[^\n]*Remove-DrBuildStaging -GeneratedDir \`$ctx\.GeneratedDir")
 Write-Host "Test-DrStandby: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 86) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 87) { exit 1 }

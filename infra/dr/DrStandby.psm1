@@ -196,13 +196,17 @@ function Get-DrStandbyPhaseDependencies {
 function Clear-DrStandbyPhaseEvidence {
     param(
         [Parameter(Mandatory)] [Collections.IDictionary]$State,
-        [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify')] [string]$Phase
+        [Parameter(Mandatory)] [ValidateSet('Data', 'Shells', 'Grants', 'Config', 'Network', 'Code', 'Verify', 'Backends')] [string]$Phase
     )
     if (-not $State.Contains('phases') -or $State['phases'] -isnot [Collections.IDictionary]) {
         throw 'standby_phase_state_invalid: phases must be an object; inspect and restore the standby state before continuing.'
     }
     $dependencies = Get-DrStandbyPhaseDependencies
     $affected = @{}; $affected[$Phase] = $true
+    # Backends (a narrow Grants + Config rerun for added backends) is outside the readiness chain: it
+    # invalidates Verify, and any full Shells, Grants or Config rerun supersedes it.
+    if ($Phase -ceq 'Backends') { $affected['Verify'] = $true }
+    if ($Phase -cin 'Shells', 'Grants', 'Config') { $affected['Backends'] = $true }
     do {
         $changed = $false
         foreach ($name in $dependencies.Keys) {
@@ -289,6 +293,8 @@ function New-DrStandbyStagedConfig {
     }
     $b = $Primary | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
     $b.Remove('__path')
+    # Pipeline Cosmos grants belong to the shared account, which the primary's Stage 3 manages.
+    $b.Remove('automation')
     $sec = $Dr.secondary
     $b.location = [string]$sec.location
     $b.syncTimerEnabled = $false
