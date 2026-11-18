@@ -3,6 +3,7 @@ import { api, useQuery } from "../lib/api.ts";
 import { Button, CapabilityNotice, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, Review, Section, StatePill, diff, useToast } from "../components/ui.tsx";
 import { useSession } from "../components/shell.tsx";
 import { href } from "../lib/router.ts";
+import { BackendOnboarding } from "../components/backend-onboarding.tsx";
 
 // ADR 0034. A registered backend names one approved Foundry Anthropic endpoint. Registration authorizes no
 // project; an editor picks fallbacks per project (project Settings > Backend failover).
@@ -43,11 +44,15 @@ export function Backends() {
   const [review, setReview] = useState<{ before: any; body: any } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // ADR 0040: 404 when ADMIN_BACKEND_ONBOARDING is off, so the button stays hidden.
+  const onboardingInfo = useQuery("/api/v3/backend-onboarding");
+  const [onboarding, setOnboarding] = useState(false);
 
   if (q.loading && !q.data) return <div className="page"><PageHeader title="Backends" /><Loading rows={6} /></div>;
   if (q.error) return <div className="page"><PageHeader title="Backends" /><ErrorNote error={q.error} retry={q.reload} /></div>;
   const rows: any[] = q.data?.backends ?? [];
   const editable = Boolean(q.data?.editable && session.canWrite);
+  const canOnboard = Boolean(onboardingInfo.data?.enabled && onboardingInfo.data?.editable && session.canWrite);
 
   const d = draft ?? EMPTY;
   const ranges = parseRanges(d.breaker.ranges);
@@ -85,8 +90,12 @@ export function Backends() {
     <div className="page">
       <PageHeader title="Backends" subtitle="Approved Foundry endpoints that projects can use as failover targets. The circuit breaker is optional per backend."
         observedAt={q.observedAt} onRefresh={q.reload} busy={q.loading}
-        actions={editable && !draft && !review ? <Button variant="primary" icon="plus" onClick={() => { setEditing(null); setDraft(EMPTY); }}>Register backend</Button> : undefined} />
-      {review ? (
+        actions={editable && !draft && !review && !onboarding ? <>
+          {canOnboard && <Button icon="plus" onClick={() => setOnboarding(true)}>Onboard Foundry account</Button>}
+          <Button variant="primary" icon="plus" onClick={() => { setEditing(null); setDraft(EMPTY); }}>Register backend</Button></> : undefined} />
+      {onboarding && onboardingInfo.data ? (
+        <BackendOnboarding scope={onboardingInfo.data} onDone={q.reload} onCancel={() => setOnboarding(false)} />
+      ) : review ? (
         <Review title={editing ? `Review ${d.backendId}` : `Register ${d.backendId}`} changes={diff(review.before, review.body)} busy={busy} error={error} onConfirm={confirm} onCancel={() => setReview(null)}
           note="Written to the permanent change record before it is saved. Registration does not route any project." />
       ) : draft ? (
