@@ -2,7 +2,7 @@
 
 | ID | State | Question / evidence |
 | --- | --- | --- |
-| ONB-01 | RESOLVED | Cognitive Services account private endpoint state is `properties.privateEndpointConnections[].properties.privateLinkServiceConnectionState.status` (`Approved`/`Pending`/`Rejected`/`Disconnected`), with `properties.publicNetworkAccess` `Enabled`/`Disabled`. Read live 2026-11-08, api-version 2025-06-01, lab account `infsim-foundry2-93yhi` (Pending, Disabled). |
+| ONB-01 | RESOLVED | Cognitive Services account private endpoint state is `properties.privateEndpointConnections[].properties.privateLinkServiceConnectionState.status` (`Approved`/`Pending`/`Rejected`/`Disconnected`), with `properties.publicNetworkAccess` `Enabled`/`Disabled`. Read live 2026-11-08, api-version 2025-06-01, a second lab account (Pending, Disabled). |
 | ONB-02 | RESOLVED | APIM backend writes avoid `If-None-Match` (not relied on): GET first; 404 creates with PUT, same URL is a no-op, different URL is a 409 conflict. Body follows `infra/staged/modules/apim-api.bicep` (api-version 2024-05-01). |
 | ONB-03 | ASSUMED | `roleAssignments?$filter=principalId eq '<id>'` at the account scope returns assignments at, above and below the scope (as used by `Staged.Resources.ps1`); the preflight keeps only scopes that are a case-insensitive prefix of the account ID. Risk: a false "role missing" is a refusal, never a wrong write. |
 | ONB-04 | ASSUMED | Both admin apps (A and B) write the same Cosmos account; a console onboarding in either region is visible to both. Risk: during a Cosmos regional outage onboarding fails cleanly; retry is idempotent. |

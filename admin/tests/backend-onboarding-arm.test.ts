@@ -79,7 +79,7 @@ test("the APIM backend read and write; an upstream error is a ProviderError with
 });
 
 test("the Cosmos descriptor store reads by partition key and creates without upsert", async () => {
-  const docs = new Map<string, unknown>([["infsimbe", { id: "infsimbe", backendId: "infsimbe" }]]);
+  const docs = new Map<string, unknown>([["foundry-team01", { id: "foundry-team01", backendId: "foundry-team01" }]]);
   const container = {
     item: (id: string, pk: string) => ({ read: async () => {
       assert.equal(id, pk);
@@ -92,7 +92,7 @@ test("the Cosmos descriptor store reads by partition key and creates without ups
     } },
   } as unknown as Container;
   const store = createCosmosDescriptorStore(container);
-  assert.deepEqual(await store.read("infsimbe"), { id: "infsimbe", backendId: "infsimbe" });
+  assert.deepEqual(await store.read("foundry-team01"), { id: "foundry-team01", backendId: "foundry-team01" });
   assert.equal(await store.read("none"), null);
   assert.equal(await store.create({ id: "new", backendId: "new" }), "created");
   assert.equal(await store.create({ id: "new", backendId: "new" }), "conflict");

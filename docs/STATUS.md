@@ -12,7 +12,7 @@ with a different URL; (5) otherwise writes every APIM backend, the descriptor (r
 `active`) and the registry entry, idempotently, and reports per-step results on a partial failure;
 (6) one change-log entry and one audit line; (7) Stage 5 sets the flag from `admin.backendOnboarding`
 (default false) and Stage 3 grants the admin `backends` data role only when it is true; (8) lab:
-existing project `INFSIMPROJ` keeps working; a second account is onboarded from the console and a
+existing project (the lab's first project) keeps working; a second account is onboarded from the console and a
 project routed to it answers through both regions.
 ## Standby Cosmos read region (decision only)
 
