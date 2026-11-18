@@ -13,7 +13,7 @@ interface Preflight { ok: boolean; checks: Check[]; endpoint: string | null }
 interface Step { step: string; result: "created" | "exists" }
 
 const EMPTY: OnboardingDraft = { foundryResourceId: "", backendId: "", displayName: "", deployments: "", inferenceGeo: "global" };
-const CHECK_LABEL: Record<string, string> = { account_found: "Foundry account", deployments: "Deployments", network: "Private network", id_free: "Backend ID", plan: "Registry entry" };
+const CHECK_LABEL: Record<string, string> = { account_found: "Foundry account", deployments: "Deployments", network: "Private network", id_free: "Backend ID", existing_entry: "Existing registry entry", plan: "Registry entry" };
 const checkName = (id: string) => id.startsWith("roles:") ? `Gateway role (${id.split("/").pop()})` : CHECK_LABEL[id] ?? id;
 const stepName = (s: string) => s.startsWith("apim:") ? `APIM backend in ${s.split("/").pop()}` : s === "descriptor" ? "Gateway descriptor" : "Registry entry";
 const PILL = { pass: "available", warn: "warning", fail: "failed" } as const;
@@ -22,7 +22,7 @@ export function BackendOnboarding({ scope, onDone, onCancel }: { scope: Onboardi
   const [d, setD] = useState<OnboardingDraft>(EMPTY);
   const [idTouched, setIdTouched] = useState(false);
   const [checked, setChecked] = useState<Preflight | null>(null);
-  const [steps, setSteps] = useState<{ steps: Step[]; changed: boolean } | null>(null);
+  const [steps, setSteps] = useState<{ steps: Step[]; changed: boolean; differences?: string[] } | null>(null);
   const [busy, setBusy] = useState<"check" | "onboard" | null>(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -36,7 +36,7 @@ export function BackendOnboarding({ scope, onDone, onCancel }: { scope: Onboardi
     try {
       const r = await api(kind === "check" ? "/api/v3/backend-onboarding/preflight" : "/api/v3/backend-onboarding", { method: "POST", body: onboardingBody(d) });
       if (kind === "check") setChecked(r.data);
-      else { setSteps({ steps: r.data.steps, changed: r.data.changed }); onDone(); }
+      else { setSteps({ steps: r.data.steps, changed: r.data.changed, differences: r.data.differences }); onDone(); }
     } catch (e) {
       const body = e instanceof ApiFailure ? e.body : null;
       if (body?.preflight) setChecked(body.preflight as Preflight);
@@ -72,6 +72,7 @@ export function BackendOnboarding({ scope, onDone, onCancel }: { scope: Onboardi
           { key: "step", label: "Step", render: (r: Step) => stepName(r.step) },
           { key: "result", label: "Result", render: (r: Step) => <StatePill state={r.result === "created" ? "created" : "current"} label={r.result} /> },
         ]} />}
+      {steps?.differences?.length ? <div className="notice notice-warn" role="status"><div>The registry entry was kept as it is. It differs from these values: {steps.differences.join(", ")}. Change it on the Backends page if needed.</div></div> : null}
       {Boolean(error) && <ErrorNote error={error} />}
       <div className="form-actions">
         <Button variant={checked?.ok ? "default" : "primary"} disabled={!valid || busy !== null} busy={busy === "check"} onClick={() => run("check")}>Check</Button>

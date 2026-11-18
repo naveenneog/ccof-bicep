@@ -144,7 +144,7 @@ export function registeredBackendProblems(value: unknown): string[] {
   if (!isObject(value)) return ["backend:not_an_object"];
   const problems: string[] = [];
   if (Object.keys(value).some((k) => !REGISTRY_KEYS.includes(k))) problems.push("backend:unexpected_key");
-  if (typeof value.backendId !== "string" || !ID.test(value.backendId) || value.backendId.startsWith("ccof-")) problems.push("backendId:invalid");
+  if (typeof value.backendId !== "string" || !ID.test(value.backendId) || value.backendId.toLowerCase().startsWith("ccof-")) problems.push("backendId:invalid");
   if (typeof value.displayName !== "string" || !value.displayName.trim() || value.displayName.length > 120) problems.push("displayName:invalid");
   if (typeof value.url !== "string" || !FOUNDRY_URL.test(value.url)) problems.push("url:invalid");
   const d = value.deployments;

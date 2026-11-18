@@ -250,6 +250,33 @@ az functionapp config appsettings list -g <rg> -n <admin app> --subscription <su
 **Admin, per account:** Backends > Onboard Foundry account > paste the account resource ID >
 **Check** > fix any failed row in Azure and Check again > **Onboard**. Then open the project's
 Settings and pick the new backend. Reruns are safe: finished steps show `exists`.
+
+**Ownership and refusals (security fixes, ADR 0040):**
+
+| Case | Result |
+| --- | --- |
+| The backend ID already has a reservation for a different endpoint | `409`, Check shows `existing_entry` |
+| The APIM backend with that ID is a pool (`type` not `Single`) | `409`; a pool is never overwritten |
+| The backend ID is `onboarding-claim` (any case) | `422 backendId:reserved` |
+| The backend ID starts with `ccof-` (any case) | `422 backendId:invalid` (reserved for gateway pools) |
+| `ADMIN_GATEWAY_RESOURCE_IDS`, `ADMIN_RESOURCE_IDS`/discovery scopes, or `COSMOS_ENDPOINT` is missing or invalid | `503 onboarding_misconfigured` naming the setting |
+| A rerun whose stored descriptor differs from the request | `200 changed:false` with `differences`; the stored entry is not changed |
+| An APIM write returns `403` | The failed step and the missing action are in `problems` |
+
+The first Onboard writes a reservation document (`id: "onboarding-claim"`) in the backend's partition
+of the Cosmos `backends` container, with create-only semantics, so two admins cannot claim the same
+backend ID for different endpoints. To release a reservation (for example after deleting the
+backend), delete that document in that backend's partition:
+
+```powershell
+az cosmosdb sql container show -g <rg> -a <cosmos account> -d <database> -n backends --subscription <sub-id> --query id -o tsv
+# Data Explorer: backends > filter c.backendId = "<backend id>" > delete the item with id "onboarding-claim"
+```
+
+Bicep (`backendRegistry`) and the scripts in section 7B do not write or check the reservation. For a
+backend added that way, console onboarding refuses (`409`) when the APIM backend is a pool or points
+at another URL; with the same URL it takes the reservation and reports any descriptor `differences`
+without changing the stored entry.
 ### Required change sheet
 
 | Value | Source / approval |

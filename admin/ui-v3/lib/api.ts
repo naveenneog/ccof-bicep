@@ -107,6 +107,7 @@ export function errorMessage(err: unknown): string {
       onboarding_incomplete: "Onboarding stopped part way. Steps already done are kept; select Onboard again to finish.",
       invalid_onboarding_request: "The console refused the values.",
       backend_registry_not_configured: "Onboarding needs ADMIN_CONFIG_CONTAINER and a Cosmos data role for the backend registry.",
+      onboarding_misconfigured: "Onboarding is switched on (ADMIN_BACKEND_ONBOARDING) but an app setting is missing or invalid. Fix the named setting on the admin app and restart it.",
     };
     const base = known[err.code] ?? (err.detail ? err.detail : `The request failed (${err.code}).`);
     return err.problems.length ? `${base} ${err.problems.join(", ")}` : base;

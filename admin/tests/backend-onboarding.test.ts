@@ -8,6 +8,7 @@ import { createMemoryRegistryStore } from "../src/backend-routing.ts";
 import { createMemoryDescriptorStore } from "../src/backend-onboarding.ts";
 import type { FoundryAccount, OnboardingProvider } from "../src/backend-onboarding.ts";
 import type { Doc } from "../src/validation.ts";
+import { ProviderError } from "../src/operations.ts";
 import { checkBackendRecord } from "../../src/resolver/backend.ts";
 
 const NOW = new Date("2026-11-08T10:00:00.000Z");
@@ -27,32 +28,40 @@ function fakeProvider(over: Partial<{ account: FoundryAccount | null; deployment
     [PRINCIPAL[APIM_A], [{ roleDefinitionId: COGNITIVE_SERVICES_USER, scope: ACCOUNT }]],
     [PRINCIPAL[APIM_B], [{ roleDefinitionId: COGNITIVE_SERVICES_USER, scope: `/subscriptions/${SUB}/resourceGroups/foundry2-rg` }]],
   ]);
-  const account: FoundryAccount | null = "account" in over ? over.account ?? null
-    : { id: ACCOUNT, customSubDomainName: "foundry2", publicNetworkAccess: "Disabled", privateEndpointStatuses: ["Approved"] };
-  let failPut: string | null = null;
+  const pools = new Set<string>();
+  // By default every account in scope exists, and its subdomain is its name.
+  const accountFor = (id: string): FoundryAccount | null => "account" in over ? over.account ?? null
+    : { id, customSubDomainName: id.split("/").pop()!, publicNetworkAccess: "Disabled", privateEndpointStatuses: ["Approved"] };
+  let failPut: { id: string; status?: number } | null = null;
   const provider: OnboardingProvider = {
-    async account(id) { calls.push(`account ${id}`); return account; },
+    async account(id) { calls.push(`account ${id}`); return accountFor(id); },
     async deployments(id) { calls.push(`deployments ${id}`); return over.deployments ?? [{ name: "claude-haiku-4-5", provisioningState: "Succeeded" }, { name: "claude-sonnet-4-5", provisioningState: "Succeeded" }, { name: "old", provisioningState: "Failed" }]; },
     async apimPrincipal(apimId) { calls.push(`principal ${apimId}`); return PRINCIPAL[apimId] ?? null; },
     async roleAssignments(_accountId, principalId) { calls.push(`roles ${principalId}`); return roles.get(principalId) ?? []; },
-    async apimBackendUrl(apimId, backendId) { calls.push(`get-backend ${apimId}`); return apim.get(`${apimId}|${backendId}`) ?? null; },
+    async apimBackend(apimId, backendId) {
+      calls.push(`get-backend ${apimId}`);
+      const key = `${apimId}|${backendId}`;
+      if (pools.has(key)) return { url: null, type: "Pool" };
+      return apim.has(key) ? { url: apim.get(key)!, type: "Single" } : null;
+    },
     async putApimBackend(apimId, backendId, url) {
       calls.push(`put-backend ${apimId}`);
-      if (failPut === apimId) throw new Error("arm down");
+      if (failPut?.id === apimId) throw failPut.status ? new ProviderError(failPut.status, `upstream_${failPut.status}`) : new Error("arm down");
       apim.set(`${apimId}|${backendId}`, url);
     },
   };
-  return { provider, calls, apim, roles, failNextPut: (id: string | null) => { failPut = id; } };
+  return { provider, calls, apim, pools, roles, failNextPut: (id: string | null, status?: number) => { failPut = id ? { id, status } : null; } };
 }
 
-function setup(opts: { enabled?: boolean; provider?: ReturnType<typeof fakeProvider>; scopes?: string[]; ids?: string[] } = {}) {
+function setup(opts: { enabled?: boolean; misconfigured?: string; provider?: ReturnType<typeof fakeProvider>; scopes?: string[]; ids?: string[];
+  registry?: ReturnType<typeof createMemoryRegistryStore>; descriptors?: ReturnType<typeof createMemoryDescriptorStore> } = {}) {
   const fake = opts.provider ?? fakeProvider();
   const changeLog = createMemoryChangeLog();
-  const registry = createMemoryRegistryStore();
-  const descriptors = createMemoryDescriptorStore();
+  const registry = opts.registry ?? createMemoryRegistryStore();
+  const descriptors = opts.descriptors ?? createMemoryDescriptorStore();
   const logs: Doc[] = [];
   let id = 0;
-  const onboarding = opts.enabled === false ? null : {
+  const onboarding = opts.enabled === false ? null : opts.misconfigured ? { misconfigured: opts.misconfigured } : {
     provider: fake.provider, descriptors, targets: [APIM_A, APIM_B],
     resourceIds: opts.ids ?? [], discoveryScopes: opts.scopes ?? [`/subscriptions/${SUB}`],
   };
@@ -104,6 +113,8 @@ test("the body is validated: required fields, no unknown keys, a valid backend I
   for (const [b, problem] of [
     [{ foundryResourceId: ACCOUNT }, "backendId:invalid"],
     [body({ backendId: "ccof-reserved" }), "backendId:invalid"],
+    [body({ backendId: "CCOF-POOL-x" }), "backendId:invalid"],
+    [body({ backendId: "Onboarding-Claim" }), "backendId:reserved"],
     [body({ foundryResourceId: "/subscriptions/x/resourceGroups/r/providers/Microsoft.Storage/storageAccounts/s" }), "foundryResourceId:invalid"],
     [body({ extra: 1 }), "body:unexpected_key"],
     [body({ inferenceGeo: "mars" }), "inferenceGeo:invalid"],
@@ -232,9 +243,9 @@ test("a descriptor with another token audience is a conflict, not 'exists'", asy
 
 test("an APIM backend claimed for another URL after preflight stops the write", async () => {
   const fake = fakeProvider();
-  const real = fake.provider.apimBackendUrl;
+  const real = fake.provider.apimBackend;
   let reads = 0;
-  fake.provider.apimBackendUrl = async (apimId, id) => (++reads > 2 && apimId === APIM_B ? "https://other.services.ai.azure.com/anthropic" : real(apimId, id));
+  fake.provider.apimBackend = async (apimId, id) => (++reads > 2 && apimId === APIM_B ? { url: "https://other.services.ai.azure.com/anthropic", type: "Single" } : real(apimId, id));
   const { v3, registry, descriptors } = setup({ provider: fake });
   const r = await v3("POST", "backend-onboarding", body());
   assert.equal(r.status, 409);
@@ -246,9 +257,9 @@ test("an APIM backend claimed for another URL after preflight stops the write", 
 test("a registry entry claimed for another URL after preflight stops the write", async () => {
   const fake = fakeProvider();
   const { v3, registry } = setup({ provider: fake });
-  const real = fake.provider.apimBackendUrl;
+  const real = fake.provider.apimBackend;
   let reads = 0;
-  fake.provider.apimBackendUrl = async (apimId, id) => {
+  fake.provider.apimBackend = async (apimId, id) => {
     if (++reads === 2) await registry.save({ ...((await v3("POST", "backend-onboarding/preflight", body())).jsonBody as Doc).plan as never, url: "https://other.services.ai.azure.com/anthropic" } as never, null);
     return real(apimId, id);
   };
@@ -276,4 +287,95 @@ test("a rerun with nothing to change is still audited", async () => {
   const audits = logs.filter((l) => l.operation === "v3/backend-onboarding");
   assert.equal(audits.length, before + 1);
   assert.equal(audits.at(-1)?.outcome, "unchanged");
+});
+
+test("two onboardings of one ID for different endpoints: one wins, and both APIMs point at the winner", async () => {
+  const fake = fakeProvider();
+  fake.roles.set(PRINCIPAL[APIM_A], [{ roleDefinitionId: COGNITIVE_SERVICES_USER, scope: `/subscriptions/${SUB}/resourceGroups/foundry2-rg` }]);
+  const registry = createMemoryRegistryStore();
+  const descriptors = createMemoryDescriptorStore();
+  const first = setup({ provider: fake, registry, descriptors });
+  const second = setup({ provider: fake, registry, descriptors });
+  const ACCOUNT_3 = ACCOUNT.replace(/foundry2$/, "foundry3");
+  const URL_3 = "https://foundry3.services.ai.azure.com/anthropic";
+  const [a, b] = await Promise.all([
+    first.v3("POST", "backend-onboarding", body()),
+    second.v3("POST", "backend-onboarding", body({ foundryResourceId: ACCOUNT_3 })),
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), [201, 409], JSON.stringify([json(a), json(b)]));
+  const winner = a.status === 201 ? URL_2 : URL_3;
+  assert.equal(fake.apim.get(`${APIM_A}|foundry2`), winner);
+  assert.equal(fake.apim.get(`${APIM_B}|foundry2`), winner);
+  assert.equal(registry.entries.get("foundry2")!.doc.url, winner);
+});
+
+test("an ID reserved by an earlier onboarding for another endpoint is a conflict before any write", async () => {
+  const { v3, fake, descriptors } = setup();
+  assert.equal(await descriptors.claim("foundry2", "https://other.services.ai.azure.com/anthropic"), "https://other.services.ai.azure.com/anthropic");
+  const p = await v3("POST", "backend-onboarding/preflight", body());
+  assert.equal(check(p, "id_free")?.status, "fail");
+  assert.match(String(check(p, "id_free")?.detail), /reserved/);
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(fake.calls.filter((c) => c.startsWith("put-")).length, 0);
+});
+
+test("an APIM pool backend with the same ID is a conflict, never overwritten", async () => {
+  const fake = fakeProvider();
+  fake.pools.add(`${APIM_B}|foundry2`);
+  const { v3, registry } = setup({ provider: fake });
+  const p = await v3("POST", "backend-onboarding/preflight", body());
+  assert.equal(check(p, "id_free")?.status, "fail");
+  assert.match(String(check(p, "id_free")?.detail), /apim-b \(pool\)/);
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(fake.calls.filter((c) => c.startsWith("put-")).length, 0);
+  assert.equal(registry.entries.size, 0);
+});
+
+test("a pool created after preflight stops the write", async () => {
+  const fake = fakeProvider();
+  const real = fake.provider.apimBackend;
+  let reads = 0;
+  fake.provider.apimBackend = async (apimId, id) => (++reads > 2 && apimId === APIM_B ? { url: null, type: "Pool" } : real(apimId, id));
+  const { v3 } = setup({ provider: fake });
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(fake.calls.filter((c) => c.startsWith("put-")).length, 0);
+});
+
+test("an existing entry with other settings is kept and returned, and the differences are listed", async () => {
+  const { v3, registry } = setup();
+  assert.equal((await v3("POST", "backend-onboarding", body({ inferenceGeo: "us" }))).status, 201);
+  const pre = await v3("POST", "backend-onboarding/preflight", body({ inferenceGeo: "eu" }));
+  assert.equal(check(pre, "existing_entry")?.status, "warn");
+  assert.match(String(check(pre, "existing_entry")?.detail), /inferenceGeo/);
+  const r = await v3("POST", "backend-onboarding", body({ inferenceGeo: "eu" }));
+  assert.equal(r.status, 200);
+  assert.equal(json(r).changed, false);
+  assert.equal((json(r).backend as Doc).inferenceGeo, "us");
+  assert.deepEqual(json(r).differences, ["inferenceGeo"]);
+  assert.equal(registry.entries.get("foundry2")!.doc.inferenceGeo, "us");
+});
+
+test("the flag on with incomplete settings answers 503 naming the setting, and writes nothing", async () => {
+  const { v3, fake } = setup({ misconfigured: "ADMIN_GATEWAY_RESOURCE_IDS" });
+  for (const [method, path] of [["GET", "backend-onboarding"], ["POST", "backend-onboarding/preflight"], ["POST", "backend-onboarding"]]) {
+    const r = await v3(method, path, method === "POST" ? body() : undefined);
+    assert.equal(r.status, 503, `${method} ${path}`);
+    assert.equal(json(r).error, "onboarding_misconfigured");
+    assert.deepEqual(json(r).problems, ["setting:ADMIN_GATEWAY_RESOURCE_IDS"]);
+  }
+  assert.equal(fake.calls.length, 0);
+});
+
+test("an APIM write refused with 403 names the step, the upstream status and the missing permission", async () => {
+  const fake = fakeProvider();
+  fake.failNextPut(APIM_B, 403);
+  const { v3, logs } = setup({ provider: fake });
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 502);
+  assert.equal(json(r).error, "onboarding_incomplete");
+  assert.deepEqual(json(r).problems, [`failedStep:apim:${APIM_B}`, "upstreamStatus:403", "missingAction:Microsoft.ApiManagement/service/backends/write"]);
+  assert.ok(logs.some((l) => l.operation === "v3/backend-onboarding" && String(l.cause).includes("403")));
 });

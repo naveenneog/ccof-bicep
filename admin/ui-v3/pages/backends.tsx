@@ -59,7 +59,7 @@ export function Backends() {
   const ranges = parseRanges(d.breaker.ranges);
   const intIn = (v: string, min: number, max: number) => /^\d+$/.test(v) && Number(v) >= min && Number(v) <= max;
   const problems = {
-    backendId: ID.test(d.backendId) && !d.backendId.startsWith("ccof-") ? null : "Letters, digits, - and _, up to 80; not starting with ccof-.",
+    backendId: ID.test(d.backendId) && !d.backendId.toLowerCase().startsWith("ccof-") ? null : "Letters, digits, - and _, up to 80; not starting with ccof-.",
     displayName: d.displayName.trim() && d.displayName.length <= 120 ? null : "Required, up to 120 characters.",
     url: URL_RE.test(d.url) ? null : "https://<account>.services.ai.azure.com/anthropic",
     deployments: d.deployments.split(",").map((s) => s.trim()).filter(Boolean).length ? null : "At least one deployment name.",

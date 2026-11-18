@@ -1,7 +1,7 @@
 # ADR 0040: Onboard a Foundry backend from the admin console
 
 Status: accepted, 2026-11-08.
-Related: [ADR 0034](0034-backend-registry-and-per-project-failover.md), UNKNOWNS ONB-01 to ONB-05,
+Related: [ADR 0034](0034-dr-project-routing-and-prerequisites.md), UNKNOWNS ONB-01 to ONB-05,
 runbook `docs/runbooks/ADMIN-OPERATIONS.md` (Onboard a Foundry backend).
 
 ## Context
@@ -45,7 +45,13 @@ Option 2, off by default (`ADMIN_BACKEND_ONBOARDING=true` enables it).
   entry and one audit line record the request.
 - Target APIMs: `ADMIN_GATEWAY_RESOURCE_IDS` (both regions under DR), else
   `ADMIN_GATEWAY_RESOURCE_ID`.
-- The backend ID is owned by the admin: `ccof-` stays reserved for generated pool IDs.
+- The backend ID is owned by the admin: `ccof-` stays reserved for generated pool IDs, and
+  `onboarding-claim` is reserved for the reservation document; both are compared without letter case.
+- Ownership: Onboard first creates a reservation document (`id: "onboarding-claim"`, create-only) in
+  the backend's partition of the Cosmos `backends` container. A reservation held for another URL, an
+  APIM pool backend, or a single APIM backend with another URL is a `409` conflict; existing records
+  are never overwritten. A rerun whose stored descriptor differs returns `changed:false` with
+  `differences`. Missing settings return `503 onboarding_misconfigured`.
 - Moving a project to the new backend uses the existing project edit; sync propagates it.
   Publishing failover pools from the console stays a separate packet.
 
@@ -60,3 +66,6 @@ Option 2, off by default (`ADMIN_BACKEND_ONBOARDING=true` enables it).
 - The console cannot fix a missing private endpoint approval or role assignment; the preflight
   names the missing item and who fixes it.
 - A disabled feature changes nothing: no route, no setting value, no grant.
+- Residual risk: Bicep and the section 7B scripts do not write or check the reservation. The APIM
+  read-back still refuses a pool or another URL; releasing a reservation is a manual delete of the
+  `onboarding-claim` document (ADMIN-OPERATIONS section 7).

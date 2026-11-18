@@ -30,13 +30,21 @@ export interface OnboardingProvider {
   apimPrincipal(apimId: string): Promise<string | null>;
   // Assignments for the principal that apply at, above or below the account.
   roleAssignments(accountId: string, principalId: string): Promise<RoleAssignment[]>;
-  apimBackendUrl(apimId: string, backendId: string): Promise<string | null>;
+  // null when APIM has no backend with this ID. A pool backend has no URL.
+  apimBackend(apimId: string, backendId: string): Promise<ApimBackend | null>;
   putApimBackend(apimId: string, backendId: string, url: string): Promise<void>;
 }
+export interface ApimBackend { url: string | null; type: string | null }
 export interface DescriptorStore {
   read(backendId: string): Promise<Doc | null>;
   create(doc: Doc): Promise<"created" | "conflict">;
+  // Create-only reservation of the ID for one endpoint. Returns the endpoint that holds the reservation,
+  // so of two concurrent onboardings for different endpoints exactly one proceeds.
+  claim(backendId: string, url: string): Promise<string>;
+  readClaim(backendId: string): Promise<string | null>;
 }
+// The flag is on but a required setting is missing or invalid: routes answer 503 and name the setting.
+export interface OnboardingMisconfigured { misconfigured: string }
 export interface OnboardingDependencies {
   provider: OnboardingProvider;
   descriptors: DescriptorStore;
@@ -47,7 +55,7 @@ export interface OnboardingDependencies {
   discoveryScopes: string[];
 }
 export interface OnboardingContext {
-  onboarding?: OnboardingDependencies | null;
+  onboarding?: OnboardingDependencies | OnboardingMisconfigured | null;
   registry?: RegistryStore | null;
   changeLog?: ChangeLog | null;
   now(): Date;
@@ -66,6 +74,11 @@ export class OnboardingInvalid extends ApiError {
   readonly problems: string[];
   constructor(problems: string[]) { super(422, "invalid_onboarding_request"); this.problems = problems; }
 }
+class OnboardingNotConfigured extends ApiError {
+  readonly problems: string[];
+  constructor(setting: string) { super(503, "onboarding_misconfigured"); this.problems = [`setting:${setting}`]; }
+}
+const BACKEND_WRITE_ACTION = "Microsoft.ApiManagement/service/backends/write";
 
 type Status = "pass" | "warn" | "fail";
 interface Check { id: string; status: Status; detail: string }
@@ -84,11 +97,23 @@ const reason = (err: unknown) => {
   const e = err as { status?: number; code?: string; message?: string };
   return e?.status ? `${e.status} ${e.code ?? ""}`.trim() : e?.message ?? "error";
 };
+// A pool, or a single backend with another URL, is "other": onboarding never overwrites it.
+const apimState = (b: ApimBackend | null, url: string): "absent" | "same" | "pool" | "other" => {
+  if (!b) return "absent";
+  if (b.type && lower(b.type) !== "single") return "pool";
+  return b.url && sameUrl(b.url, url) ? "same" : "other";
+};
+const COMPARED = ["displayName", "deployments", "inferenceGeo", "status", "circuitBreaker"] as const;
+const differencesOf = (stored: RegisteredBackend, plan: RegisteredBackend) =>
+  COMPARED.filter((k) => JSON.stringify(stored[k] ?? null) !== JSON.stringify(plan[k] ?? null));
 
-export function createMemoryDescriptorStore(): DescriptorStore & { docs: Map<string, Doc> } {
+export function createMemoryDescriptorStore(): DescriptorStore & { docs: Map<string, Doc>; claims: Map<string, string> } {
   const docs = new Map<string, Doc>();
+  const claims = new Map<string, string>();
   return {
-    docs,
+    docs, claims,
+    async claim(backendId, url) { if (!claims.has(backendId)) claims.set(backendId, url); return claims.get(backendId)!; },
+    async readClaim(backendId) { return claims.get(backendId) ?? null; },
     async read(backendId) { const d = docs.get(backendId); return d ? structuredClone(d) : null; },
     async create(doc) {
       if (docs.has(String(doc.backendId))) return "conflict";
@@ -111,6 +136,8 @@ function readRequest(raw: string | null): Request {
   const problems: string[] = [];
   if (Object.keys(body).some((k) => !BODY_KEYS.includes(k))) problems.push("body:unexpected_key");
   if (typeof body.foundryResourceId !== "string" || !ACCOUNT_ID.test(body.foundryResourceId)) problems.push("foundryResourceId:invalid");
+  // The ID of the reservation document in the `backends` container.
+  if (typeof body.backendId === "string" && lower(body.backendId) === "onboarding-claim") problems.push("backendId:reserved");
   const request: Request = {
     backendId: body.backendId as string,
     foundryResourceId: body.foundryResourceId as string,
@@ -192,14 +219,20 @@ async function preflight(r: Request, deps: OnboardingDependencies, registry: Reg
   }
 
   const conflicts: string[] = [];
+  let stored: RegisteredBackend | null = null;
   const free = await attempt("id_free", checks, async () => {
     const entry = await registry.read(r.backendId);
     if (entry && !sameUrl(entry.doc.url, endpoint)) conflicts.push(`registry (${entry.doc.url})`);
+    else stored = entry?.doc ?? null;
     const descriptor = await deps.descriptors.read(r.backendId);
     if (descriptor && !sameDescriptor(descriptor, r.backendId)) conflicts.push("backend descriptor");
+    const claimed = await deps.descriptors.readClaim(r.backendId);
+    if (claimed && !sameUrl(claimed, endpoint)) conflicts.push(`reserved by an earlier onboarding (${claimed})`);
     for (const apimId of deps.targets) {
-      const url = await provider.apimBackendUrl(apimId, r.backendId);
-      if (url && !sameUrl(url, endpoint)) conflicts.push(`${nameOf(apimId)} (${url})`);
+      const b = await provider.apimBackend(apimId, r.backendId);
+      const state = apimState(b, endpoint);
+      if (state === "pool") conflicts.push(`${nameOf(apimId)} (pool)`);
+      if (state === "other") conflicts.push(`${nameOf(apimId)} (${b?.url ?? "no URL"})`);
     }
     return true;
   });
@@ -209,6 +242,11 @@ async function preflight(r: Request, deps: OnboardingDependencies, registry: Reg
       : { id: "id_free", status: "pass", detail: `Backend ID ${r.backendId} is free or already points at this endpoint.` });
   }
   const plan = entryFor(r, endpoint, deployments, r.displayName ?? nameOf(r.foundryResourceId));
+  const differences = stored ? differencesOf(stored, plan) : [];
+  if (differences.length) {
+    checks.push({ id: "existing_entry", status: "warn",
+      detail: `The registry entry exists and is kept as it is; these values differ from the request: ${differences.join(", ")}. Change them on the Backends page.` });
+  }
   const planProblems = registeredBackendProblems(plan);
   if (planProblems.length) checks.push({ id: "plan", status: "fail", detail: `The registry entry is invalid: ${planProblems.join(", ")}.` });
   return { ok: checks.every((c) => c.status !== "fail"), conflict: conflicts.length > 0, checks, endpoint, plan };
@@ -226,6 +264,7 @@ export async function onboardingRequest(path: string, method: string, url: URL, 
   if (!ONBOARDING_ROUTE.test(path)) return null;
   const deps = ctx.onboarding;
   if (!deps) throw new ApiError(404, "route_not_found");
+  if ("misconfigured" in deps) throw new OnboardingNotConfigured(deps.misconfigured);
   if ([...url.searchParams].length) throw new ApiError(400, "unknown_parameter");
   if (path === "backend-onboarding" && method === "GET") {
     return response(200, { enabled: true, targets: deps.targets, resourceIds: deps.resourceIds, discoveryScopes: deps.discoveryScopes,
@@ -266,10 +305,14 @@ async function write(r: Request, plan: RegisteredBackend, deps: OnboardingDepend
   if ((existingDescriptor && !sameDescriptor(existingDescriptor, r.backendId)) || (existingEntry && !sameUrl(existingEntry.doc.url, plan.url))) return conflict();
   const todo = { apim: [] as string[], descriptor: !existingDescriptor, registry: !existingEntry };
   for (const apimId of deps.targets) {
-    const url = await provider.apimBackendUrl(apimId, r.backendId);
-    if (url && !sameUrl(url, plan.url)) return conflict();
-    if (!url) todo.apim.push(apimId);
+    const state = apimState(await provider.apimBackend(apimId, r.backendId), plan.url);
+    if (state === "pool" || state === "other") return conflict();
+    if (state === "absent") todo.apim.push(apimId);
   }
+  // The reservation is created before any APIM write. It stays after a failed run, so a rerun with the same
+  // endpoint finishes the remaining steps, and a run for another endpoint is refused.
+  if (!sameUrl(await deps.descriptors.claim(r.backendId, plan.url), plan.url)) return conflict();
+  const stored = existingEntry?.doc ?? null;
   const changes = [
     ...todo.apim.map((id) => ({ path: `apim:${id}`, before: null, after: plan.url })),
     ...(todo.descriptor ? [{ path: "descriptor", before: null, after: descriptor }] : []),
@@ -279,29 +322,36 @@ async function write(r: Request, plan: RegisteredBackend, deps: OnboardingDepend
   if (!changes.length) {
     steps.push(...deps.targets.map((id) => ({ step: `apim:${id}`, result: "exists" as const })),
       { step: "descriptor", result: "exists" }, { step: "registry", result: "exists" });
-    audit({ outcome: "unchanged", steps });
-    return response(200, { backend: plan, steps, changed: false, requestId });
+    const differences = stored ? differencesOf(stored, plan) : [];
+    audit({ outcome: "unchanged", steps, differences });
+    return response(200, { backend: stored ?? plan, steps, changed: false, differences, requestId });
   }
   const pending = await beginChange(ctx.changeLog, { requestId, at: ctx.now().toISOString(), actorOid, operation: "v3/backend-onboarding",
     projectId: null, changes, details: { backendId: r.backendId, foundryResourceId: r.foundryResourceId } }, ctx.now, ctx.log);
+  let step = "";
   try {
     for (const apimId of deps.targets) {
+      step = `apim:${apimId}`;
       if (todo.apim.includes(apimId)) {
         await provider.putApimBackend(apimId, r.backendId, plan.url);
-        const readBack = await provider.apimBackendUrl(apimId, r.backendId);
-        if (!readBack || !sameUrl(readBack, plan.url)) throw new Error(`apim_readback_mismatch:${nameOf(apimId)}`);
+        if (apimState(await provider.apimBackend(apimId, r.backendId), plan.url) !== "same") throw new Error(`apim_readback_mismatch:${nameOf(apimId)}`);
       }
-      steps.push({ step: `apim:${apimId}`, result: todo.apim.includes(apimId) ? "created" : "exists" });
+      steps.push({ step, result: todo.apim.includes(apimId) ? "created" : "exists" });
     }
+    step = "descriptor";
     if (todo.descriptor && await deps.descriptors.create(descriptor) === "conflict") throw new ApiError(409, "backend_id_conflict");
-    steps.push({ step: "descriptor", result: todo.descriptor ? "created" : "exists" });
+    steps.push({ step, result: todo.descriptor ? "created" : "exists" });
+    step = "registry";
     if (todo.registry && !(await registry.save(plan, null))) throw new ApiError(409, "backend_id_conflict");
-    steps.push({ step: "registry", result: todo.registry ? "created" : "exists" });
+    steps.push({ step, result: todo.registry ? "created" : "exists" });
   } catch (err) {
     const code = err instanceof ApiError ? err.code : "onboarding_incomplete";
+    const upstream = !(err instanceof ApiError) ? (err as { status?: unknown }).status : undefined;
+    const problems = [`failedStep:${step}`, ...(typeof upstream === "number" ? [`upstreamStatus:${upstream}`] : []),
+      ...(upstream === 403 && step.startsWith("apim:") ? [`missingAction:${BACKEND_WRITE_ACTION}`] : [])];
     await pending.finish("unconfirmed", { code, steps });
-    audit({ outcome: "unconfirmed", code, steps, cause: reason(err) });
-    return response(err instanceof ApiError ? err.status : 502, { error: code, requestId, steps,
+    audit({ outcome: "unconfirmed", code, steps, problems, cause: reason(err) });
+    return response(err instanceof ApiError ? err.status : 502, { error: code, requestId, steps, problems,
       hint: "Steps already done are kept. Run onboarding again with the same values to finish the rest." });
   }
   await pending.finish("created", { steps });

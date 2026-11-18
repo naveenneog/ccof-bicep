@@ -61,13 +61,15 @@ test("deployments, the APIM principal and the role assignments filtered by princ
 test("the APIM backend read and write; an upstream error is a ProviderError with its status", async () => {
   const t = transport({
     [`https://management.azure.com${APIM}/backends/foundry2?`]: { status: 200, body: { properties: { url: "https://foundry2.services.ai.azure.com/anthropic" } } },
+    [`https://management.azure.com${APIM}/backends/pool1?`]: { status: 200, body: { properties: { type: "Pool", pool: { services: [] } } } },
     [`https://management.azure.com${APIM}/backends/missing?`]: { status: 404 },
     [`https://management.azure.com${APIM}/backends/denied?`]: { status: 403 },
   });
   const provider = createArmOnboardingProvider(credential, t.fn);
-  assert.equal(await provider.apimBackendUrl(APIM, "foundry2"), "https://foundry2.services.ai.azure.com/anthropic");
-  assert.equal(await provider.apimBackendUrl(APIM, "missing"), null);
-  await assert.rejects(provider.apimBackendUrl(APIM, "denied"), (err) => err instanceof ProviderError && err.status === 403);
+  assert.deepEqual(await provider.apimBackend(APIM, "foundry2"), { url: "https://foundry2.services.ai.azure.com/anthropic", type: null });
+  assert.deepEqual(await provider.apimBackend(APIM, "pool1"), { url: null, type: "Pool" });
+  assert.equal(await provider.apimBackend(APIM, "missing"), null);
+  await assert.rejects(provider.apimBackend(APIM, "denied"), (err) => err instanceof ProviderError && err.status === 403);
   await provider.putApimBackend(APIM, "foundry2", "https://foundry2.services.ai.azure.com/anthropic");
   const put = t.calls.at(-1)!;
   assert.equal(put.method, "PUT");
@@ -79,15 +81,14 @@ test("the APIM backend read and write; an upstream error is a ProviderError with
 });
 
 test("the Cosmos descriptor store reads by partition key and creates without upsert", async () => {
-  const docs = new Map<string, unknown>([["foundry-team01", { id: "foundry-team01", backendId: "foundry-team01" }]]);
+  // Keyed by id and partition key, as Cosmos is.
+  const docs = new Map<string, unknown>([["foundry-team01|foundry-team01", { id: "foundry-team01", backendId: "foundry-team01" }]]);
   const container = {
-    item: (id: string, pk: string) => ({ read: async () => {
-      assert.equal(id, pk);
-      return { statusCode: docs.has(id) ? 200 : 404, resource: docs.get(id) };
-    } }),
-    items: { create: async (doc: { id: string }) => {
-      if (docs.has(doc.id)) throw Object.assign(new Error("conflict"), { code: 409 });
-      docs.set(doc.id, doc);
+    item: (id: string, pk: string) => ({ read: async () => ({ statusCode: docs.has(`${id}|${pk}`) ? 200 : 404, resource: docs.get(`${id}|${pk}`) }) }),
+    items: { create: async (doc: { id: string; backendId: string }) => {
+      const key = `${doc.id}|${doc.backendId}`;
+      if (docs.has(key)) throw Object.assign(new Error("conflict"), { code: 409 });
+      docs.set(key, doc);
       return {};
     } },
   } as unknown as Container;
@@ -96,6 +97,17 @@ test("the Cosmos descriptor store reads by partition key and creates without ups
   assert.equal(await store.read("none"), null);
   assert.equal(await store.create({ id: "new", backendId: "new" }), "created");
   assert.equal(await store.create({ id: "new", backendId: "new" }), "conflict");
+  // The reservation is a separate document in the backend's partition; the first endpoint keeps it.
+  assert.equal(await store.readClaim("new"), null);
+  assert.equal(await store.claim("new", "https://a.services.ai.azure.com/anthropic"), "https://a.services.ai.azure.com/anthropic");
+  assert.equal(await store.claim("new", "https://b.services.ai.azure.com/anthropic"), "https://a.services.ai.azure.com/anthropic");
+  assert.equal(await store.readClaim("new"), "https://a.services.ai.azure.com/anthropic");
+  assert.deepEqual(await store.read("new"), { id: "new", backendId: "new" });
+  assert.deepEqual(docs.get("onboarding-claim|new"), { id: "onboarding-claim", backendId: "new", kind: "onboarding-claim", url: "https://a.services.ai.azure.com/anthropic" });
+  // An existing claim without a readable owner is refused, never treated as this caller's claim.
+  docs.set("onboarding-claim|broken", { id: "onboarding-claim", backendId: "broken" });
+  await assert.rejects(store.claim("broken", "https://a.services.ai.azure.com/anthropic"), (e: { status?: number; message?: string; code?: string }) =>
+    e.status === 503 && /claim_unreadable/.test(`${e.message} ${e.code}`));
 });
 
 test("targets come from ADMIN_GATEWAY_RESOURCE_IDS, else the single gateway ID; only APIM IDs are kept", () => {
@@ -118,10 +130,14 @@ test("onboarding dependencies are built only when the flag is exactly true and t
   for (const flag of [undefined, "", "TRUE", "1", "false"]) {
     assert.equal(createOnboardingDependencies({ ...env, ADMIN_BACKEND_ONBOARDING: flag }, credential, open), null, `flag ${flag}`);
   }
-  assert.equal(createOnboardingDependencies(env, credential, () => null), null, "no Cosmos");
-  assert.equal(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "bogus", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open), null, "bad targets");
-  assert.equal(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open), null, "no targets");
-  assert.equal(createOnboardingDependencies({ ...env, ADMIN_RESOURCE_IDS: "", ADMIN_DISCOVERY_SCOPES: "" }, credential, open), null, "no scope");
+  // Flag on but incomplete: the routes answer 503 and name the setting, rather than disappearing.
+  assert.deepEqual(createOnboardingDependencies(env, credential, () => null), { misconfigured: "COSMOS_ENDPOINT" }, "no Cosmos");
+  assert.deepEqual(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "bogus", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open),
+    { misconfigured: "ADMIN_GATEWAY_RESOURCE_IDS" }, "bad targets");
+  assert.deepEqual(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open),
+    { misconfigured: "ADMIN_GATEWAY_RESOURCE_IDS" }, "no targets");
+  assert.deepEqual(createOnboardingDependencies({ ...env, ADMIN_RESOURCE_IDS: "", ADMIN_DISCOVERY_SCOPES: "" }, credential, open),
+    { misconfigured: "ADMIN_RESOURCE_IDS" }, "no scope");
 });
 
 test("list reads follow nextLink on management.azure.com and refuse any other host", async () => {

@@ -4,7 +4,7 @@
 
 import type { Container } from "@azure/cosmos";
 import type { TokenCredential } from "@azure/identity";
-import type { DescriptorStore, OnboardingDependencies, OnboardingProvider } from "./backend-onboarding.ts";
+import type { DescriptorStore, OnboardingDependencies, OnboardingMisconfigured, OnboardingProvider } from "./backend-onboarding.ts";
 import { ProviderError } from "./operations.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
@@ -29,18 +29,19 @@ export function readOnboardingTargets(env: Readonly<Record<string, string | unde
 
 const csv = (v?: string) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-// Null (feature off, routes 404) unless ADMIN_BACKEND_ONBOARDING is exactly "true" and Cosmos, at
-// least one APIM target and an ARM scope are configured; a bad setting must never half-enable writes.
+// Null (feature off, routes 404) unless ADMIN_BACKEND_ONBOARDING is exactly "true". With the flag on, a
+// missing or invalid setting returns a marker naming it (routes 503); a bad setting never half-enables writes.
 export function createOnboardingDependencies(env: Readonly<Record<string, string | undefined>>, credential: TokenCredential,
-  openBackends: (container: string) => Container | null): OnboardingDependencies | null {
+  openBackends: (container: string) => Container | null): OnboardingDependencies | OnboardingMisconfigured | null {
   if (env.ADMIN_BACKEND_ONBOARDING !== "true") return null;
   let targets: string[];
-  try { targets = readOnboardingTargets(env); } catch { return null; }
+  try { targets = readOnboardingTargets(env); } catch { return { misconfigured: "ADMIN_GATEWAY_RESOURCE_IDS" }; }
+  if (!targets.length) return { misconfigured: "ADMIN_GATEWAY_RESOURCE_IDS" };
   const resourceIds = csv(env.ADMIN_RESOURCE_IDS);
   const discoveryScopes = csv(env.ADMIN_DISCOVERY_SCOPES);
-  if (!targets.length || !(resourceIds.length || discoveryScopes.length)) return null;
+  if (!(resourceIds.length || discoveryScopes.length)) return { misconfigured: "ADMIN_RESOURCE_IDS" };
   const container = openBackends("backends");
-  if (!container) return null;
+  if (!container) return { misconfigured: "COSMOS_ENDPOINT" };
   return { provider: createArmOnboardingProvider(credential), descriptors: createCosmosDescriptorStore(container), targets, resourceIds, discoveryScopes };
 }
 
@@ -102,9 +103,11 @@ export function createArmOnboardingProvider(credential: TokenCredential, transpo
         .map((a) => object(a.properties))
         .map((p) => ({ roleDefinitionId: text(p.roleDefinitionId) ?? "", scope: text(p.scope) ?? "" }));
     },
-    async apimBackendUrl(apimId, backendId) {
+    async apimBackend(apimId, backendId) {
       const doc = await call(`${apimId}/backends/${encodeURIComponent(backendId)}`, `api-version=${APIM_API}`);
-      return doc ? text(object(doc.properties).url) : null;
+      if (!doc) return null;
+      const p = object(doc.properties);
+      return { url: text(p.url), type: text(p.type) };
     },
     async putApimBackend(apimId, backendId, url) {
       await call(`${apimId}/backends/${encodeURIComponent(backendId)}`, `api-version=${APIM_API}`, {
@@ -122,15 +125,32 @@ function statusOf(err: unknown): number | undefined {
 }
 
 // The `backends` container (partition key /backendId) the resolver reads; create never upserts.
+// The onboarding reservation is a second document in the backend's partition (id "onboarding-claim");
+// the resolver point-reads id = backendId only, so it never sees it.
+const CLAIM_ID = "onboarding-claim";
 export function createCosmosDescriptorStore(container: Container): DescriptorStore {
+  async function readDoc(id: string, backendId: string): Promise<Doc | null> {
+    try {
+      const { resource, statusCode } = await container.item(id, backendId).read<Doc>();
+      return statusCode === 404 || !resource ? null : resource;
+    } catch (err) {
+      if (statusOf(err) === 404) return null;
+      throw err;
+    }
+  }
+  const readClaim = async (backendId: string) => text((await readDoc(CLAIM_ID, backendId))?.url);
   return {
-    async read(backendId) {
+    read: (backendId) => readDoc(backendId, backendId),
+    readClaim,
+    async claim(backendId, url) {
       try {
-        const { resource, statusCode } = await container.item(backendId, backendId).read<Doc>();
-        return statusCode === 404 || !resource ? null : resource;
+        await container.items.create({ id: CLAIM_ID, backendId, kind: CLAIM_ID, url });
+        return url;
       } catch (err) {
-        if (statusOf(err) === 404) return null;
-        throw err;
+        if (statusOf(err) !== 409) throw err;
+        const owner = await readClaim(backendId);
+        if (!owner) throw new ProviderError(503, "claim_unreadable");
+        return owner;
       }
     },
     async create(doc) {

@@ -34,7 +34,7 @@ import { stripSystem, ValidationError } from "./validation.ts";
 import { failoverAfterBreakerChange, failoverAfterEdit, publicEntry, registryEntryFromBody, registryMap, routingPlan, routingState } from "./backend-routing.ts";
 import type { RegistryStore } from "./backend-routing.ts";
 import { onboardingRequest } from "./backend-onboarding.ts";
-import type { OnboardingDependencies } from "./backend-onboarding.ts";
+import type { OnboardingDependencies, OnboardingMisconfigured } from "./backend-onboarding.ts";
 import { poolBackendIdFor } from "../../src/contracts/project-routing.ts";
 
 export const MAX_PLAN_BYTES = 16 * 1024;
@@ -51,7 +51,7 @@ export interface V3Dependencies {
   // ADR 0034 backend registry (adminConfig); null when ADMIN_CONFIG_CONTAINER is not set.
   registry?: RegistryStore | null;
   // ADR 0040 backend onboarding; null unless ADMIN_BACKEND_ONBOARDING is true.
-  onboarding?: OnboardingDependencies | null;
+  onboarding?: OnboardingDependencies | OnboardingMisconfigured | null;
   defaultCatalog: Doc | null;
   operations: Operations;
   directory?: UserDirectory;

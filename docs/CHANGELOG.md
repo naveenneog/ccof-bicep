@@ -13,6 +13,13 @@
   `management.azure.com` only.
 - The wizard locks its fields while a request runs; the Backends page shows why onboarding is
   unavailable when the capability check fails with anything other than 404.
+- Security review fixes: an atomic create-only reservation (`onboarding-claim` document in the
+  backend's partition) so two concurrent onboards cannot claim one ID for different endpoints; an
+  APIM pool backend is a conflict and is never overwritten; `ccof-` and `onboarding-claim` are
+  refused in any letter case; a rerun with a different descriptor returns `changed:false` with
+  `differences`; missing settings return `503 onboarding_misconfigured`; an APIM `403` names the
+  failed step and the missing action. ADMIN-OPERATIONS section 7 lists the refusals and how to
+  release a reservation.
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
