@@ -33,6 +33,8 @@ import type { LimitsStore } from "./sync-limits.ts";
 import { stripSystem, ValidationError } from "./validation.ts";
 import { failoverAfterBreakerChange, failoverAfterEdit, publicEntry, registryEntryFromBody, registryMap, routingPlan, routingState } from "./backend-routing.ts";
 import type { RegistryStore } from "./backend-routing.ts";
+import { onboardingRequest } from "./backend-onboarding.ts";
+import type { OnboardingDependencies } from "./backend-onboarding.ts";
 import { poolBackendIdFor } from "../../src/contracts/project-routing.ts";
 
 export const MAX_PLAN_BYTES = 16 * 1024;
@@ -48,6 +50,8 @@ export interface V3Dependencies {
   limitsStore?: LimitsStore | null;
   // ADR 0034 backend registry (adminConfig); null when ADMIN_CONFIG_CONTAINER is not set.
   registry?: RegistryStore | null;
+  // ADR 0040 backend onboarding; null unless ADMIN_BACKEND_ONBOARDING is true.
+  onboarding?: OnboardingDependencies | null;
   defaultCatalog: Doc | null;
   operations: Operations;
   directory?: UserDirectory;
@@ -274,6 +278,8 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
     }
     const routed = await routingRequest(path, method, url, request, actor, requestId, deps);
     if (routed) return routed;
+    const onboarded = await onboardingRequest(path, method, url, request, actor, requestId, deps);
+    if (onboarded) return onboarded;
     if (method !== "GET") throw new ApiError(405, "method_not_allowed");
     const clientFiles = /^projects\/([^/]+)\/client-config$/.exec(path);
     if (clientFiles) {
@@ -398,13 +404,13 @@ export async function handleV3Request(request: ApiRequest, deps: V3Dependencies)
     if (status === 401 || status === 403 || path === "sync/removal-limits" && method === "PUT" || ROUTING_WRITE.test(path) && method !== "GET") {
       deps.log(JSON.stringify({ schema: "ccof.admin.audit.v1", at: deps.now().toISOString(), requestId, actorOid, operation: `v3/${path}`, outcome: "refused", status, code }));
     } else deps.log(JSON.stringify({ schema: "ccof.admin.integration.v2", operation: `v3/${path}`, status, code, requestId }));
-    return response(status, { error: code, requestId, ...(err instanceof LimitsInvalid || err instanceof RoutingInvalid ? { problems: err.problems } : {}) });
+    return response(status, { error: code, requestId, ...(err instanceof ApiError && Array.isArray((err as unknown as { problems?: unknown }).problems) ? { problems: (err as unknown as { problems: string[] }).problems } : {}) });
   }
 }
 
 // ---- ADR 0034: backend registry, per-project failover, routing publication ----
 
-const ROUTING_WRITE = /^(backends\/[^/]+|projects\/[^/]+\/failover|routing\/[^/]+\/publication)$/;
+const ROUTING_WRITE = /^(backends\/[^/]+|projects\/[^/]+\/failover|routing\/[^/]+\/publication|backend-onboarding(\/preflight)?)$/;
 
 class RoutingInvalid extends ApiError {
   readonly problems: string[];
