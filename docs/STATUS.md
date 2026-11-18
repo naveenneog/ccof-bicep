@@ -1,5 +1,52 @@
 # Current work
 
+## Linux runner registration identity
+
+**Packet:** CICD-RUNNER-REGISTRATION-CONTRACT (2026-11-18). Resolves the conflict between
+`Test-CicdSetup.ps1` (no `RUNNER_ALLOW_RUNASROOT`) and the host-safety tests (root registration).
+Decision in [ADR 0042](adr/0042-linux-runner-registration-identity.md): `config.sh` runs as root with
+`RUNNER_ALLOW_RUNASROOT=1` only as the prefix of that one command, and `lock_runner_dir` runs before
+`svc.sh start`. The owner approved the contract change on 2026-11-18 at 11:44 IST. Only the ADR-listed
+assertion changed. The unfinished host-safety files were first saved on the local branch
+`wip/cicd-runner-hostsafety-50151c1f` (`415366f`, not pushed).
+
+Baseline: setup 135/136 (the old check failed), host-safety 99/99. After the change: setup 136/136,
+host-safety 103/103 (4 new lifecycle tests), `Test-RunTests.ps1` 38/38. Command for each:
+`pwsh -NoProfile -File tests\<suite>.ps1`, with `CCOF_LIVE_TESTS=0` and a new empty `AZURE_CONFIG_DIR`.
+`Test-RunTests.ps1` needs a short real TEMP: a `subst` drive does not work, because Git resolves it
+to the long path.
+
+Mutation results on a copy of the installer. The original installer's hash was checked after each run.
+
+| Mutant | Host-safety failed | Setup failed |
+|---|---|---|
+| `export RUNNER_ALLOW_RUNASROOT=1` in `do_register` | 2 (new 1, 2) | 1 |
+| `RUNNER_ALLOW_RUNASROOT=1; ./config.sh` | 3 (static, new 1, 2) | 1 |
+| lock moved after `svc.sh start` | 3 (static, new 2, 3) | 0 |
+| `lock_runner_dir \|\| note` | 2 (static, new 3) | 0 |
+| variable on `svc.sh install` | 2 | 1 |
+| `export ... && ./config.sh remove` in the subshell | 0 (same behaviour: subshell) | 1 |
+| global export in `do_remove` | 1 (new 4) | 1 |
+| register without the prefix | 3 | 0 |
+| `--disableupdate && ./svc.sh start)` on the continuation line | 2 (new 2, 3) | 0 |
+
+Every mutant is caught by at least one suite.
+
+Packet gate (`node .ironclad\gate.mjs --stage packet`, offline, logged-out profile):
+**PASS**, 23 passed, 2 warned, 0 failed, 1 skipped; `npm test` took 260.0 s.
+- Warnings: `quality.filesize` lists 12 files. One of them is `Install-CcofRunner.sh`, at 427 lines against a budget of 400.
+- Warnings: `unknowns.open` lists 21.
+
+Council:
+- Architect: PASS. The ADR records the decision.
+- Coder: PASS.
+- QA: PASS-WITH-NOTES. The lifecycle tests run Git Bash with stubs; real systemd and a real runner are not exercised.
+- UX: PASS. Runbook only.
+- Security: PASS-WITH-NOTES. `config.sh` runs as root; the upstream citations were not re-fetched offline (UNKNOWNS CICD-RUNNER-ROOT-01).
+
+The Windows runner is not supported for production in this release; see CICD-SETUP.md section 2.
+Commit: `00a3c1c`.
+
 ## CI/CD nested test TEMP root
 
 **Packet:** CICD-NESTED-TEST-TEMP (2026-11-18). A test-runner fixture executed inside the

@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-11-18 - Linux runner registration identity (ADR 0042)
+
+- The Linux runner installer registers with `config.sh` as root. `RUNNER_ALLOW_RUNASROOT=1` is set
+  only for that one command. The runner directory is then locked to root before the service starts,
+  so the runner user can no longer replace the runner files or the job hook.
+- The Windows runner is not supported for production in this release; see
+  [CICD-SETUP.md](runbooks/CICD-SETUP.md) section 2.
+
 ## 2026-11-18 - Nested test TEMP root
 
 - Nested test-runner fixtures receive the original TEMP root while each suite keeps its
