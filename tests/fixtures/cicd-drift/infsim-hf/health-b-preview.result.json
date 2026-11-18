@@ -1,0 +1,10 @@
+{
+  "schema": "ccof.driver-result.v1",
+  "environment": "infsim-hf",
+  "step": "health-b",
+  "mode": "preview",
+  "exitCode": 0,
+  "startedAt": "2026-11-17T15:42:41.5311095Z",
+  "seconds": 66,
+  "command": "pwsh -NoProfile -File infra/monitoring/Invoke-HealthAlerts.ps1 -ConfigPath deploy/infsim-hf/health-b.json -StateDirectory deploy/infsim-hf/.health-alerts-b"
+}

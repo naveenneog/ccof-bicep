@@ -1,0 +1,35 @@
+== health alerts (preview), subscription 00000000-0000-0000-0000-000000000000, resource group INFSIM-STG-RG, stem infsim-5dnel4x4647ag-b
+  note: probe gateway-direct: GET https://infsim-5dnel4x4647ag-b-apim.azure-api.net/status-0123456789abcdef -> 200, web test added
+  note: probe admin-direct: GET https://infsim-5dnel4x4647ag-b-admin.azurewebsites.net/api/console -> 200, web test added
+  note: probe resolver-direct: GET https://infsim-5dnel4x4647ag-b-resolver.azurewebsites.net/api/health -> 401, web test added
+Action group infsim-5dnel4x4647ag-b-health-ag: ops@example.com
+  web test   gateway-direct   GET https://infsim-5dnel4x4647ag-b-apim.azure-api.net/status-0123456789abcdef expects 200
+  web test   admin-direct     GET https://infsim-5dnel4x4647ag-b-admin.azurewebsites.net/api/console expects 200
+  web test   resolver-direct  GET https://infsim-5dnel4x4647ag-b-resolver.azurewebsites.net/api/health expects 401
+  alert sev1 infsim-5dnel4x4647ag-b-health-apim-gateway-5xx threshold 10 window PT15M
+  alert sev2 infsim-5dnel4x4647ag-b-health-apim-backend-5xx threshold 10 window PT15M
+  alert sev2 infsim-5dnel4x4647ag-b-health-apim-capacity threshold 80 window PT15M
+  alert sev2 infsim-5dnel4x4647ag-b-health-foundry-1-5xx threshold 5 window PT15M
+  alert sev1 infsim-5dnel4x4647ag-b-health-resolver-unavailable threshold 500 window PT15M
+  alert sev2 infsim-5dnel4x4647ag-b-health-function-server-errors threshold 5 window PT15M
+  alert sev2 infsim-5dnel4x4647ag-b-health-sync-run-failures threshold 1 window PT1H
+  alert sev2 infsim-5dnel4x4647ag-b-health-reconciler-run-failures threshold 3 window PT30M
+Create=16
+Ignore=81
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/actionGroups/infsim-5dnel4x4647ag-b-health-ag
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/components/infsim-5dnel4x4647ag-b-health-ai
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-apim-backend-5xx
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-apim-capacity
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-apim-gateway-5xx
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-avail-admin-direct
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-avail-gateway-direct
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-avail-resolver-direct
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/metricAlerts/infsim-5dnel4x4647ag-b-health-foundry-1-5xx
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/scheduledQueryRules/infsim-5dnel4x4647ag-b-health-function-server-errors
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/scheduledQueryRules/infsim-5dnel4x4647ag-b-health-reconciler-run-failures
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/scheduledQueryRules/infsim-5dnel4x4647ag-b-health-resolver-unavailable
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/scheduledQueryRules/infsim-5dnel4x4647ag-b-health-sync-run-failures
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/webtests/infsim-5dnel4x4647ag-b-health-wt-admin-direct
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/webtests/infsim-5dnel4x4647ag-b-health-wt-gateway-direct
+  Create   /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/INFSIM-STG-RG/providers/Microsoft.Insights/webtests/infsim-5dnel4x4647ag-b-health-wt-resolver-direct
+Preview only. No changes were made. Parameters: <repo>\deploy\infsim-hf\.health-alerts-b\health-alerts.parameters.json

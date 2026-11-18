@@ -1,5 +1,23 @@
 # Current work
 
+## CI/CD Windows state-test fixture
+
+**Packet:** CICD-WIN-STATE-TEST (focused fixture verified; integration pending). The nested Windows test TEMP produced a 253-character
+workspace where Git reported success creating the repository but could not discover its conventional
+`.git` directory. The long-workspace checks retain their original path and use a separate Git directory
+on Windows; additional checks cover a conventional `.git` directory in a 225-character workspace.
+The test checks Git exit codes when verifying that `core.longpaths` was not persisted. The checkout
+limitation remains open as CICD-WIN-PATH-01.
+The suite passed 59/59 with a nested Windows TEMP. Disposable negative controls caught removal of the
+product Git option, a failed Git config query, and omission of a check; all mutations were restored.
+The offline packet gate passed (23 passed, 2 warned, 1 skipped; `npm test` 600.1 seconds) with the
+verified runner test-harness and Foundry diagram overlays. The six fixture and ledger files matched
+the gated copies byte-for-byte before this record was updated. This is not a gate on the unmodified
+branch or an integrated validation; both remain pending.
+Direct review: Architect PASS-WITH-NOTES (the separate Git directory is not a normal checkout);
+Coder PASS; QA PASS (including negative controls); UX PASS (the runbook states the observed limit);
+Security PASS for this offline fixture change only. Runner host security remains a separate blocker.
+
 ## Standby Cosmos read region (decision only)
 
 **Packet:** DR-COSMOS-READ-REGION (2026-11-07), lab finding on 94aeafa: resolver B reads Cosmos from

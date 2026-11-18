@@ -51,6 +51,16 @@ function Invoke-Stage0 {
         Assert-Stg (-not $missing.Count) "backend $($b.id) lacks deployments: $($missing -join ', ')"
         $report.backends += [ordered]@{ id = $b.id; account = $acct.name; publicNetworkAccess = $acct.properties.publicNetworkAccess; deployments = @($b.deploymentInferenceGeo.Keys) }
     }
+    # entra.manualVerification: the operator (for example a pipeline managed identity) has no Graph token,
+    # as in Stage 4 and Stage 7. The groups are confirmed by the Entra administrator instead.
+    if ($Cfg.entra -is [Collections.IDictionary] -and $Cfg.entra.Contains('manualVerification')) {
+        $report.operator = @{ id = $null; upn = $null; signedIn = $account.user.name; graph = 'not read (entra.manualVerification)' }
+        $report.groups = @($Cfg.groups | ForEach-Object { [ordered]@{ group = "$($_.projectId)/$($_.classification)"; groupId = $_.groupId; verification = 'manual' } })
+        Write-Host 'Stage 0: no Microsoft Graph call (entra.manualVerification); the Entra administrator confirms the security groups.'
+        $null = Write-StgEvidence 'stage0.json' $report
+        $report | ConvertTo-Json -Depth 10 | Write-Host
+        return $report
+    }
     $me = Get-StgGraph 'me?$select=id,userPrincipalName'
     $report.operator = @{ id = $me.id; upn = $me.userPrincipalName }
     foreach ($g in @($Cfg.groups | Where-Object { $_.groupId })) {
@@ -146,7 +156,7 @@ function Invoke-Stage1 {
         $previous = Get-StgStage1Deployment $Cfg
         if (-not $previous -or $previous.properties.provisioningState -cne 'Succeeded') { throw 'stage1_state_orphaned: local state says Stage 1 completed but its ARM deployment is not Succeeded; inspect the deployment before recovery.' }
         Assert-StgStage1Parameters $previous $Cfg
-        if (-not $Apply) { Write-Host 'preview: Stage 1 is already verified for this target and config; no resource write will occur.'; return $null }
+        if (-not $Apply) { Write-StgWhatIfResult 'stage1-services' $null 'deploymentRecordMatch'; Write-Host 'preview: Stage 1 is already verified for this target and config; no resource write will occur.'; return $null }
         Write-Host 'verify-only: Stage 1 is already verified for this target and config; no resource write will occur.'
         return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
     }
@@ -161,6 +171,7 @@ function Invoke-Stage1 {
             '--template-file', (Join-Path $script:StagedDir 'main.bicep'), '--parameters', "@$(Write-StgParameters $Cfg 'stage1-services' (Get-Stage1Parameters $Cfg))", '--no-pretty-print', '--output', 'json')
         $risky = Get-StgUnsafeSharedChanges -Changes @($preview.changes) -PriorStage1TargetIds $priorTargets
         $null = Write-StgEvidence 'stage1.shared-rg.what-if.json' @($preview.changes | ForEach-Object { [ordered]@{ change = $_.changeType; id = $_.resourceId } })
+        Write-StgWhatIfResult 'stage1-services' @($preview.changes)
         foreach ($change in $preview.changes) { Write-Host ("  {0,-8} {1}" -f $change.changeType, ($change.resourceId -replace '^/subscriptions/[^/]+/resourceGroups/', '')) }
         if ($risky.Count) { throw "shared_rg_changes: what-if would change $($risky.Count) resources not recorded by this Stage 1 deployment: $(@($risky | ForEach-Object { "$($_.changeType) $($_.resourceId)" }) -join '; ')" }
         Write-Host "guarded preview: $($items.Count) existing resources; no unrelated Modify or Delete."
@@ -174,7 +185,7 @@ function Invoke-Stage1 {
         # This deployment already completed, but local state was lost: resume only if every Stage 1
         # parameter matches the ARM deployment record. A shared RG is still read-only here.
         Assert-StgStage1Parameters $previous $Cfg
-        if (-not $Apply) { Write-Host 'preview: matching succeeded Stage 1 deployment found; no resource write will occur.'; return $null }
+        if (-not $Apply) { Write-StgWhatIfResult 'stage1-services' $null 'deploymentRecordMatch'; Write-Host 'preview: matching succeeded Stage 1 deployment found; no resource write will occur.'; return $null }
         Write-Host 'verify-only: matching succeeded Stage 1 deployment found; no resource write will occur.'
         return New-StgStage1Result -Cfg $Cfg -Out (Get-StgStage1Outputs $previous)
     }

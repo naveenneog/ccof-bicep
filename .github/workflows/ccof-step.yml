@@ -1,0 +1,179 @@
+name: ccof-step
+
+# One step of deploy-environment.yml on a self-hosted CCOF runner (docs/runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md,
+# "Trust boundaries"). Sign-in is the runner host's managed identity (.github/actions/azure-login-mi); there is no
+# Azure secret in GitHub. A job reaches a self-hosted runner only for workflow_dispatch or schedule AND inside a
+# GitHub environment (gh_environment): the environment's deployment branch policy then keeps code from other
+# branches off the runner before the job is scheduled. Pull requests never call this workflow. Any other call
+# lands on a GitHub-hosted runner (no private network, no managed identity) and its first step fails.
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true, description: 'deploy/<environment> folder' }
+      step: { type: string, default: '', description: 'Invoke-CicdDriver.ps1 -Step; empty = no driver' }
+      apply: { type: boolean, default: false }
+      approve: { type: string, default: '', description: 'comma-separated Invoke-CicdDriver.ps1 -Approve names' }
+      primary_only: { type: boolean, default: false }
+      reviewed_ids: { type: string, default: '' }
+      test_notification: { type: boolean, default: false }
+      region: { type: string, default: 'A' }
+      runner: { type: string, default: 'preview', description: 'preview | apply' }
+      gh_environment: { type: string, default: '', description: 'GitHub environment (approval gate)' }
+      prereq_scope: { type: string, default: '', description: 'Test-CicdPrerequisites.ps1 -Scope before the driver; empty = none' }
+      prereq_mode: { type: string, default: 'apply' }
+      checklist: { type: string, default: '', description: 'Markdown file shown in the job summary (gates)' }
+      save_state: { type: boolean, default: false }
+      drift: { type: boolean, default: false, description: 'Run Get-CicdDrift.ps1 -ExpectedStep <step> on this job evidence' }
+      node_build: { type: boolean, default: false, description: 'npm ci and tsc before the driver (code publication)' }
+      timeout: { type: number, default: 120 }
+
+# No permissions block: a called workflow inherits the caller job's token permissions (read for pull requests,
+# contents: write for jobs that save driver state).
+jobs:
+  run:
+    name: ${{ inputs.step || 'checks' }} (${{ inputs.test_notification && 'test' || inputs.apply && 'apply' || 'preview' }})
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && inputs.gh_environment != '') && (inputs.runner == 'apply' && fromJSON('["self-hosted","ccof-vnet","ccof-apply"]') || fromJSON('["self-hosted","ccof-vnet","ccof-preview"]')) || 'ubuntu-latest' }}
+    environment: ${{ inputs.gh_environment }}
+    timeout-minutes: ${{ inputs.timeout }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CCOF_ENV: ${{ inputs.environment }}
+      CCOF_STEP: ${{ inputs.step }}
+      CCOF_APPLY: ${{ inputs.apply }}
+      CCOF_TEST_NOTIFICATION: ${{ inputs.test_notification }}
+      CCOF_PRIMARY_ONLY: ${{ inputs.primary_only }}
+      CCOF_REGION: ${{ inputs.region }}
+      CCOF_GH_ENV: ${{ inputs.gh_environment }}
+      CCOF_CHECKLIST: ${{ inputs.checklist }}
+      CCOF_PREREQ_SCOPE: ${{ inputs.prereq_scope }}
+      CCOF_PREREQ_MODE: ${{ inputs.prereq_mode }}
+      CCOF_EXPECTED_ROLE: ${{ inputs.runner == 'apply' && 'apply' || 'preview' }}
+    steps:
+      - name: Refuse an untrusted call (no self-hosted runner)
+        if: ${{ !((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && inputs.gh_environment != '') }}
+        run: |
+          Write-Host "::error::ccof-step runs only for workflow_dispatch or schedule inside a GitHub environment (event '$env:GITHUB_EVENT_NAME'); nothing was run."
+          exit 1
+
+      - name: Trusted call
+        id: trusted
+        run: Write-Host "event $env:GITHUB_EVENT_NAME, environment $env:CCOF_GH_ENV, ref $env:GITHUB_REF, runner $env:RUNNER_OS"
+
+      - uses: actions/checkout@v4
+
+      - name: Runner host preflight (Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/cicd/Test-RunnerHost.sh
+
+      - name: Runner host preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/cicd/Test-RunnerHost.ps1
+
+      - name: Guard inputs
+        run: |
+          $e = $env:CCOF_ENV; $g = $env:CCOF_GH_ENV
+          if ($e -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { throw "invalid environment '$e'" }
+          if (-not (Test-Path "deploy/$e/staged.config.json")) { throw "deploy/$e/staged.config.json is missing" }
+          $writes = $env:CCOF_APPLY -eq 'true' -or $env:CCOF_TEST_NOTIFICATION -eq 'true'
+          if ($env:GITHUB_EVENT_NAME -notin 'workflow_dispatch', 'schedule') { throw "event '$env:GITHUB_EVENT_NAME' never runs ccof-step" }
+          if ($writes -and $g -cnotmatch "^$e-(apply|gate-[a-z]+)$") { throw "an apply runs only in environment $e-apply or $e-gate-<name>, not '$g'" }
+          if ($g -and $g -cnotmatch "^$e-(preview|apply|gate-[a-z]+)$") { throw "GitHub environment '$g' does not belong to $e" }
+
+      - name: Approval checklist
+        if: inputs.checklist != ''
+        run: Get-Content -LiteralPath $env:CCOF_CHECKLIST | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      # Every job of a reviewed environment (<env>-apply, <env>-gate-<name>) proves an approval of its own before Azure
+      # sign-in. The review history (GET .../runs/{id}/approvals) is per run, not per job, so reviews already used by
+      # earlier jobs of this run are counted off through their ledger artifacts (Assert-CicdJobApproval.ps1).
+      - name: Approval of this job
+        id: approval
+        if: inputs.gh_environment != '' && inputs.gh_environment != format('{0}-preview', inputs.environment)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCOF_JOB_KEY: ${{ inputs.step || 'checks' }}-${{ inputs.test_notification && 'test' || inputs.apply && 'apply' || 'preview' }}
+        run: pwsh scripts/cicd/Assert-CicdJobApproval.ps1 -Environment $env:CCOF_ENV -GitHubEnvironment $env:CCOF_GH_ENV -JobKey $env:CCOF_JOB_KEY
+
+      - name: Record the approval as used (ledger artifact)
+        if: steps.approval.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.approval.outputs.ledger }}'
+          path: '${{ steps.approval.outputs.path }}'
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Azure sign-in (runner managed identity)
+        if: inputs.step != '' || inputs.prereq_scope != ''
+        uses: ./.github/actions/azure-login-mi
+        with:
+          expected-role: ${{ env.CCOF_EXPECTED_ROLE }}
+
+      - name: Restore driver state (cicd-state/${{ inputs.environment }})
+        id: restore
+        if: inputs.step != '' || inputs.prereq_scope != ''
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Restore -Environment $env:CCOF_ENV
+
+      - name: Prerequisite checks
+        if: inputs.prereq_scope != ''
+        run: ./scripts/cicd/Test-CicdPrerequisites.ps1 -DeployDirectory "deploy/$env:CCOF_ENV" -OutputDirectory "evidence/$env:CCOF_ENV" -Mode $env:CCOF_PREREQ_MODE -Scope ($env:CCOF_PREREQ_SCOPE -split ',')
+
+      - name: Build (npm ci, tsc) for code publication
+        if: inputs.node_build && inputs.step != ''
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx tsc -p tsconfig.json
+          exit $LASTEXITCODE
+
+      - name: Driver ${{ inputs.step }}
+        id: driver
+        if: inputs.step != ''
+        env:
+          CCOF_REVIEWED_IDS: ${{ inputs.reviewed_ids }}
+          CCOF_APPROVE: ${{ inputs.approve }}
+          CCOF_APPROVAL_LEDGER: ${{ steps.approval.outputs.ledger }}
+        run: |
+          if (($env:CCOF_APPLY -eq 'true' -or $env:CCOF_TEST_NOTIFICATION -eq 'true') -and -not $env:CCOF_APPROVAL_LEDGER) { throw 'no proved approval of this job (Approval of this job); nothing is written' }
+          $p = @{ Environment = $env:CCOF_ENV; Step = $env:CCOF_STEP; Region = $env:CCOF_REGION }
+          if ($env:CCOF_APPLY -eq 'true') { $p.Apply = $true }
+          if ($env:CCOF_PRIMARY_ONLY -eq 'true') { $p.PrimaryOnly = $true }
+          if ($env:CCOF_TEST_NOTIFICATION -eq 'true') { $p.TestNotification = $true }
+          if ($env:CCOF_APPROVE) { $p.Approve = $env:CCOF_APPROVE -split ',' }
+          if ($env:CCOF_REVIEWED_IDS) { $p.ReviewedConnectionIds = $env:CCOF_REVIEWED_IDS }
+          & ./scripts/cicd/Invoke-CicdDriver.ps1 @p
+          exit $LASTEXITCODE
+
+      - name: Drift report
+        if: inputs.drift && inputs.step != '' && !inputs.apply
+        run: pwsh scripts/cicd/Get-CicdDrift.ps1 -LogDirectory "evidence/$env:CCOF_ENV" -ExpectedStep $env:CCOF_STEP
+
+      # Saves only when Restore succeeded AND the driver actually started (outcome success, failure or cancelled). A failed
+      # checkout, preflight, guard, sign-in, Restore, prerequisite check or build, or a cancel before the driver, leaves the
+      # driver 'skipped' and skips Save. A failed or cancelled driver still saves its partial state for recovery.
+      # Sync-CicdState also refuses without the restore marker.
+      - name: Save driver state
+        if: always() && steps.trusted.outcome == 'success' && steps.restore.outcome == 'success' && (steps.driver.outcome == 'success' || steps.driver.outcome == 'failure' || steps.driver.outcome == 'cancelled') && inputs.save_state && inputs.step != ''
+        run: pwsh scripts/cicd/Sync-CicdState.ps1 -Action Save -Environment $env:CCOF_ENV -Message "$env:CCOF_STEP run $env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ inputs.environment }}-${{ inputs.step || 'checks' }}-${{ inputs.apply && 'apply' || 'preview' }}${{ inputs.test_notification && '-test' || '' }}-${{ github.run_attempt }}
+          path: |
+            evidence/${{ inputs.environment }}/
+            deploy/${{ inputs.environment }}/.dr-evidence/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Azure sign-out
+        if: always() && steps.trusted.outcome == 'success' && (inputs.step != '' || inputs.prereq_scope != '')
+        uses: ./.github/actions/azure-login-mi
+        with:
+          mode: logout

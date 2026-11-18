@@ -1,0 +1,10 @@
+{
+  "schema": "ccof.driver-result.v1",
+  "environment": "infsim-hf",
+  "step": "staged-1",
+  "mode": "preview",
+  "exitCode": 0,
+  "startedAt": "2026-11-17T15:39:06.7655600Z",
+  "seconds": 11,
+  "command": "pwsh -NoProfile -File infra/staged/Invoke-StagedDeployment.ps1 -Stage 1 -ConfigPath deploy/infsim-hf/staged.config.json"
+}

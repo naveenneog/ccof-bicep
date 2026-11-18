@@ -441,13 +441,17 @@ function Get-DrCosmosSteps {
 # Admin app SPA redirect URIs for the standby admin host (Config phase). A Stage 4 record with
 # verification 'manual' (entra.manualVerification) means the operator has no Microsoft Graph access, so the
 # URIs are printed for the Entra admin to add in the Entra admin center and no Graph call is made.
+# -ManualHandoff (Invoke-DrStandby.ps1 -ManualEntraHandoff, always set by the CI/CD pipeline) forces the same
+# handoff whatever the restored Stage 4 record says, so a Graph-verified primary never leads to a Graph call.
 function Invoke-DrAdminRedirects {
-    param($Stage4, [string]$AdminHost, [switch]$Apply, [scriptblock]$GetApp, [scriptblock]$PatchApp)
+    param($Stage4, [string]$AdminHost, [switch]$Apply, [scriptblock]$GetApp, [scriptblock]$PatchApp, [switch]$ManualHandoff)
     $want = @("https://$AdminHost/api/console", "https://$AdminHost/api/console-v3")
-    if ("$(Get-DrValue $Stage4 'verification')" -ceq 'manual') {
+    if ($ManualHandoff -or "$(Get-DrValue $Stage4 'verification')" -ceq 'manual') {
         $appId = Get-DrValue (Get-DrValue $Stage4 'admin') 'appId'
-        Write-Host "manual Entra verification: the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
-        return [ordered]@{ mode = 'manual'; redirects = $want }
+        $reason = if ($ManualHandoff) { 'pipeline' } else { 'stage4' }
+        $label = if ($ManualHandoff) { 'manual Entra handoff (pipeline)' } else { 'manual Entra verification' }
+        Write-Host "${label}: the Entra admin adds these Single-page application redirect URIs to admin app $appId (App registrations > Authentication), if not already present: $($want -join ', '). No Microsoft Graph call."
+        return [ordered]@{ mode = 'manual'; reason = $reason; redirects = $want }
     }
     $app = & $GetApp
     $have = @($app.spa.redirectUris)

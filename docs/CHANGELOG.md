@@ -42,6 +42,102 @@
   `reconciler.ledgerCoverageStartAt` no longer change the hash) and clears prior evidence only after its checks pass.
 - Hash-bound diagram assets are stored as CRLF blobs with `-text` in `.gitattributes`, so Git checkouts (any
   `core.autocrlf`), `git archive` / GitHub source ZIPs and the ZIP publisher carry the bytes the manifests hash.
+
+## 2026-11-18 - Windows state-test fixtures
+
+- The long-workspace state test uses a separate Git directory on Windows where the fixture's original
+  checkout root can prevent Git from discovering a conventional `.git` directory. It also checks a
+  conventional `.git` checkout with state paths beyond 260 characters.
+- Git exit status is checked before an absent local `core.longpaths` setting is reported. The
+  Git-for-Windows checkout-root limitation and its unverified version boundaries are recorded in
+  `UNKNOWNS.md` as CICD-WIN-PATH-01.
+- The suite requires all 59 checks to run; negative controls exercise the Git option, query failures,
+  and the check count.
+- The offline packet gate passed with the verified runner harness and Foundry diagram overlays;
+  integrated and unmodified-branch validation remain pending.
+
+## 2026-11-19 - Drift: property verdicts for what-if Modify
+
+- New `infra/staged/Staged.WhatIf.ps1`: pipeline previews give each Modify property a verdict (noise, matched,
+  drift, unmeasured) from exact path-and-value rules and read-only read-backs (app settings, Cosmos throughput,
+  workbook). `Get-CicdDrift.ps1` counts a Modify clean only when every property is noise or matched.
+- APIM policies are compared as XML tokens with only XML-equivalent normalisation; whitespace inside text,
+  attribute values, expressions or string literals is drift; uncertain parsing is unmeasured.
+- Unresolved `reference()` values, unknown or failed read-backs are unmeasured, never clean.
+- Whitespace between tags is ignored only where every open element is a structural policy element (element-only content);
+  in `set-body`, `value` and unlisted elements it is compared. A live app setting with an empty value that the
+  what-if payload lacks is unmeasured (it may be removed by a deployment), no longer matched.
+- CI/CD state: `ccof-step.yml` saves driver state only when its Restore step succeeded (a failed driver still
+  saves). `Sync-CicdState.ps1` refuses an empty or invalid essential state file (`state_invalid_json`), runs git with
+  per-command `core.longpaths` (long Windows work folders), and never parses git stderr as output.
+- Drift: each environment's drift job takes the shared `ccof-env-<environment>` group, so it never runs alongside
+  a deployment. `deploy-environment.yml` and the drift job use `queue: max` (pending entries wait instead of being
+  replaced; at most 100 per group).
+- Approvals: every job in `<env>-apply` or `<env>-gate-*` runs `Assert-CicdJobApproval.ps1` before Azure sign-in
+  and stops unless this job has a reviewer approval of its own. The approvals of the environment in this run must
+  outnumber the ledger artifacts of earlier jobs, administrators must not be able to bypass, and the run must be
+  attempt 1. The driver refuses writes without that ledger. `Test-CicdGitHubEnvironments.ps1` now fails when
+  administrator bypass is on or unreadable. It reports an unreadable organization plan as deferred (NOT PROVED)
+  instead of trusting `CCOF_GITHUB_PLAN` (removed). The health test-mail matrix runs one region at a time.
+- `main` review protection: `protected: true` no longer passes. The check needs classic protection or an active
+  ruleset proving a reviewed pull request (at least 1 approval, reset on push) with administrators included and no
+  bypass. Anything unreadable fails, including bypass allowances the API does not return. `GITHUB_TOKEN` cannot read
+  these settings and the workflows use no GitHub secret, so `resolve` stops (unresolved blocker; runbook section 5
+  lists the options without a secret). The check is a detector; reviewed `main` must be enforced before runners connect.
+- `approvals` input: exact, case-sensitive names validated in `resolve` (`Resolve-CicdApprovals.ps1`); the workflow no longer
+  uses `contains()`, which matched `DO_NOT_APPROVE_PublicFunctionAccess` as an approval. Invalid input stops the run.
+- Front Door: an apply run without `fd_reviewed_ids` now fails at `fd-*-ids-required` after the Approve preview. Before,
+  the skipped approval let Verify, DR standby and health continue.
+- A selected branch rule without `type` fails. An organization plan other than exactly `enterprise` fails, and an
+  unrecognised plan name is reported as unknown.
+- `ccof-step.yml` saves state only when the driver step started (`id: driver`, outcome success, failure or
+  cancelled). A failed prerequisite check or build, or a cancel before the driver, no longer saves.
+- `main` review protection also requires a force-push block and a deletion block, each proved from classic protection
+  or an active ruleset rule (`non_fast_forward`, `deletion`) whose ruleset has no bypass actors. A ruleset with only a
+  pull request rule no longer passes; rules split across rulesets are checked one ruleset at a time.
+- DR standby: `standby-data-preview` saves state, so the reviewed Cosmos preview digest reaches `standby-data-apply`.
+  Before, a new deployment failed with `cosmos_preview_required` because preview and apply run in separate jobs.
+
+## 2026-11-18 - CI/CD trust boundaries, environment proof, state and drift hardening
+
+- Pull requests run only offline prerequisite checks on a GitHub-hosted runner (no self-hosted runner, managed
+  identity or driver state). `ccof-step.yml` uses a self-hosted runner only for `workflow_dispatch`/`schedule`
+  inside a GitHub environment; any other call is GitHub-hosted and refused. `resolve` runs GitHub-hosted.
+- New `scripts/cicd/Test-CicdGitHubEnvironments.ps1`: proves each environment admits exactly the protected default
+  branch (selected-branch policy), gates have required reviewers, and the plan enforces them (public, or
+  GitHub Enterprise for private repositories). Unreadable facts fail; an attested plan is reported NOT PROVED.
+- Driver state: a failed `ls-remote`/fetch (repository not found, authorization, network) stops the restore
+  instead of starting over; Save refuses unknown types, files over 5 MB, secret-like content and missing
+  essential files. Exclusions are documented and limited to regenerable build output.
+- Drift: `Get-CicdDrift.ps1 -ExpectedStep` reads structured what-if results; empty, failed, missing or
+  Unsupported/Deploy previews are not clean.
+- Standby Config in the pipeline hands the region B admin redirect URIs to the Entra admin (`-ManualEntraHandoff`);
+  Stages 0 and 7 refuse to run without `entra.manualVerification`. No Graph call from the pipeline.
+- Runner host preflight follows `runner.os` (bash on Linux, PowerShell on Windows).
+## 2026-11-17 - CI/CD pipeline for a complete environment (deploy-environment)
+
+- `.github/workflows/deploy-environment.yml` deploys `deploy/<environment>/` end to end: prerequisite checks,
+  gate network, Stages 0-7 (preview then apply each), gate entra (Stage 4 manual verification only),
+  Front Door, DR standby phases, health alerts A and B (`health-b.json`, or an explicit
+  `health-b.optout.json` reported as NO REGION B HEALTH MONITORING), final status. A rerun manages the environment.
+  Sign-in is the runner host managed identity; previews on `ccof-apply` in `<env>-preview`, writes in
+  `<env>-apply` or `<env>-gate-<name>`. Reusable job: `.github/workflows/ccof-step.yml`.
+- `scripts/cicd/`: read-only prerequisite checks (`Test-CicdPrerequisites.ps1`, JSON and Markdown
+  checklist), driver command builder with guards (`Invoke-CicdDriver.ps1`), drift report
+  (`Get-CicdDrift.ps1`), driver state on branch `cicd-state/<environment>` (`Sync-CicdState.ps1`).
+- `.github/workflows/drift-check.yml`: scheduled read-only previews; opens an issue on drift.
+- Stage 0 makes no Microsoft Graph call when `entra.manualVerification` is set.
+- Docs: [CICD-ENVIRONMENT-DEPLOYMENT.md](runbooks/CICD-ENVIRONMENT-DEPLOYMENT.md),
+  [CICD-NETWORK-ENTRA-CHECKLIST.md](runbooks/CICD-NETWORK-ENTRA-CHECKLIST.md), `deploy/example/`.
+- Health alerts for a DR standby (region B): new optional `cosmosId` field in the health configuration names the
+  shared primary Cosmos DB account (validated as a full resource ID; a missing account stops with `cosmos_missing`);
+  without it the driver still uses `<stem>-cosmos`. Template `deploy/example/health-b.json` and
+  [HEALTH-ALERTS.md](runbooks/HEALTH-ALERTS.md) section 6: shared Cosmos and Front Door rules alert from region A
+  only, idle-standby rules off in region B. Each Foundry account is listed in one file with `foundryServerErrors`
+  enabled there; a region-B-only account (the template's Central US placeholder) is alerted from region B.
+  Prerequisite checks verify region B scope, duplicates, standby rules, Foundry coverage (`health.foundry-coverage`)
+  and that each covered Foundry account exposes `ModelRequests` or `ServerErrors` (`health.foundry-metrics`).
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

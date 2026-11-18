@@ -1,0 +1,484 @@
+# CI/CD: deploy and manage a complete environment
+
+This runbook covers one GitHub Actions workflow, [`deploy-environment.yml`](../../.github/workflows/deploy-environment.yml).
+It deploys a new CCOF environment (for example Infosys Prod) from the folder `deploy/<environment>/`:
+
+- Stages 0-7 in region A (East US 2);
+- Front Door;
+- the DR standby in region B (Central US);
+- health alerts for both regions.
+
+After the first run, the same workflow manages the environment. A rerun previews every step, which should show
+NoChange, and applies only what changed. Manual network and Entra work is done at approval gates. The pipeline
+only checks the results and never changes Entra.
+
+Related files:
+
+| File | Purpose |
+|---|---|
+| [`ccof-step.yml`](../../.github/workflows/ccof-step.yml) | Reusable job: sign-in, state restore, prerequisite checks, one driver step, evidence upload, state save, sign-out |
+| [`drift-check.yml`](../../.github/workflows/drift-check.yml) | Scheduled read-only previews; opens an issue when Azure differs from the configuration |
+| [`scripts/cicd/`](../../scripts/cicd/) | Prerequisite checks (`Test-CicdPrerequisites.ps1`), driver commands (`Invoke-CicdDriver.ps1`), drift (`Get-CicdDrift.ps1`), state (`Sync-CicdState.ps1`) |
+| [`deploy/example/`](../../deploy/example/README.md) | Template for `deploy/<environment>/` |
+| [CICD-NETWORK-ENTRA-CHECKLIST.md](CICD-NETWORK-ENTRA-CHECKLIST.md) | Printable checklist for the network and Entra teams |
+
+## 1. How it works
+
+- **Drivers.** Each job runs one existing driver command, without changes:
+  - [`Invoke-StagedDeployment.ps1`](../../infra/staged/Invoke-StagedDeployment.ps1);
+  - [`Invoke-DrPrerequisites.ps1`](../../infra/dr/Invoke-DrPrerequisites.ps1);
+  - [`Invoke-DrStandby.ps1`](../../infra/dr/Invoke-DrStandby.ps1);
+  - [`Invoke-DrFrontDoor.ps1`](../../infra/dr/Invoke-DrFrontDoor.ps1);
+  - [`Invoke-HealthAlerts.ps1`](../../infra/monitoring/Invoke-HealthAlerts.ps1);
+  - [`Invoke-DrFailover.ps1`](../../infra/dr/Invoke-DrFailover.ps1) (`Status` only).
+- **Command builder.** `Get-CicdDriverCommand` in [`CicdDriver.psm1`](../../scripts/cicd/CicdDriver.psm1) builds each command. It refuses:
+  - a Stage 4 that would write to Entra;
+  - an approval that does not belong to the step;
+  - an apply on the preview runner;
+  - Front Door with the standby before the standby is ready;
+  - failover changes.
+- **Preview, then apply.** Every step runs as a preview first: what-if for Bicep steps, the printed plan for script steps. The apply job runs only when `apply` is true and the environment's reviewers approve it.
+- **Sign-in.** The runner host's managed identity signs in through `.github/actions/azure-login-mi` (`az login --identity`). There is no Azure secret, no federated credential and no `azure/login`. Runner setup is described in `docs/runbooks/CICD-SETUP.md`.
+- **Evidence.** Each job writes evidence to `evidence/<environment>/<step>-<mode>.log`, uploads it as an artifact, and adds the last 25 lines to the job summary.
+
+Manual steps that the pipeline never runs:
+
+| Step | Runbook |
+|---|---|
+| Entra registrations, groups and members | [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md) |
+| Stage 8 acceptance with a user token | [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md) |
+| Region B sites private endpoints and DNS (DR 7.4) | [DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md) |
+| Front Door `Lockdown`, `DrainPrimary`, `RestorePrimary` | [DR-FRONT-DOOR.md](DR-FRONT-DOOR.md) |
+| Failover `Fence`, `Promote`, `Failback` | [DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md) section 11 |
+
+## 2. Prerequisites
+
+`Test-CicdPrerequisites.ps1` checks the items below. It is read-only, runs at the start of every run, and writes
+`prereqs.json` and `prereqs.md`. Each check reports pass, fail or manual, with an evidence line and a source
+reference. The run stops on any fail. Items marked manual are confirmed at a gate.
+
+| Area | What is checked | Owner if it fails |
+|---|---|---|
+| Configuration | Files present, no `REPLACE-` placeholders, staged and DR configs on one tenant and subscription, DR state paths match the folder layout | Deployment lead |
+| Access | Workload and network resource groups exist; the pipeline identity holds the actions each scope needs (role assignments read with `assignedTo`) | Subscription owner |
+| Subscription | Resource providers registered; Flex Consumption, API Management and Cosmos DB offered in both regions (API Management capacity: manual) | Subscription owner |
+| Names | Front Door endpoint name (global) available, or owned by this environment per saved state. Other names derive from `stage1.prefix`; the Stage 1 what-if shows a clash | Deployment lead |
+| Network | Region A and B VNets; subnets with the right delegation and size (API Management `Microsoft.Web/serverFarms` /27 or larger, Functions `Microsoft.App/environments` /27 or larger, private endpoints without delegation /28 or larger); APIM NSG; private DNS zones present and linked to both VNets; peering connected | Network team |
+| Foundry | Accounts exist; Claude deployments present; Marketplace terms state where readable | Foundry owner |
+| Front Door | Front Door name (`frontDoor.stem`) and WAF mode inputs | Platform owner |
+| Entra | App and group IDs are GUIDs; read with Graph GET only when the identity may, else manual; `entra.manualVerification` present | Entra team |
+
+On Windows, a short runner work path reduces Git checkout path-length failures. In a local test with
+Git for Windows 2.56.0.windows.4, a conventional `.git` directory at a 253-character workspace root
+was not discoverable even with `core.longpaths=true`; a 225-character root worked. Limits on other
+versions and hosts are not established. See [Git for Windows long paths](https://github.com/git-for-windows/git-for-windows.github.io/blob/main/content/git-cannot-create-a-file-or-directory-with-a-long-path.md).
+
+Run it on a workstation from a PowerShell 7 prompt at the repository root (read-only, Azure CLI signed in). Call it in-process as shown: through `pwsh -File`, the `-Scope` list arrives as one string.
+
+```powershell
+./scripts/cicd/Test-CicdPrerequisites.ps1 -DeployDirectory deploy/<environment> -OutputDirectory out/prereqs -Mode apply -Scope primary,frontdoor,standby,health
+```
+
+Use `-Offline` to check only the files.
+
+Before the first run:
+
+1. The subscription owner creates the workload resource groups for region A and region B. The pipeline creates no resource group.
+2. The network team builds the network in both regions. Work from [the checklist](CICD-NETWORK-ENTRA-CHECKLIST.md), part A.
+3. The Entra team creates the registrations and groups. Work from the checklist, part B.
+4. The Foundry owner deploys the Claude models and accepts the Marketplace offer.
+5. A runner administrator sets up the two runners and identities (`docs/runbooks/CICD-SETUP.md`).
+6. A repository administrator creates the GitHub environments (section 5).
+
+## 3. Environment folder
+
+The template is in [`deploy/example/`](../../deploy/example/README.md). The workflow reads these files:
+
+| File | Used by | Required for scope |
+|---|---|---|
+| `staged.config.json` | Stages 0-7; read by DR and Front Door | every scope |
+| `dr-standby.config.json` | DR prerequisites, standby, Front Door, failover status | `all`, `frontdoor-primary`, `standby`, `frontdoor-full` |
+| `health-a.json` | Health alerts, region A | `all`, `health` |
+| `health-b.json` | Health alerts, region B (DR standby: standby stem and group, `workspaceId` and `cosmosId` of the primary, shared and idle-standby rules off, region-B-only Foundry accounts; [HEALTH-ALERTS.md](HEALTH-ALERTS.md) section 6) | `all`, `health` when `dr-standby.config.json` exists |
+| `health-b.optout.json` | Explicit opt-out from region B alerts: `reason`, `approvedBy`, `approvedOn` (`yyyy-MM-dd`). Replaces `health-b.json`; the `resolve` job warns and the run summary shows NO REGION B HEALTH MONITORING | instead of `health-b.json` |
+
+Rules:
+
+- `entra.manualVerification` (`confirmedBy`, `confirmedOn` as yyyy-MM-dd) is required.
+- `entra.existing` app IDs and every `groups[].groupId` are required.
+- `groups[].members` is empty: group owners add members.
+- In `dr-standby.config.json`, `standby.stagedConfigPath` is `staged.config.json`, `stagedStateDirectory` is `.staged-state` and `stateDirectory` is `.dr-state`. These paths are relative to the folder.
+- `dr-standby.config.json` has no `entra` section. With one, DR Discover reads the applications through Graph and stops when the identity may not read them ([DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md) section 7.3).
+- The folder holds no secret.
+- Leave `failover.ledgerCoverageStartAt` empty until the coverage start is verified (DR runbook section 5.2). A `REPLACE-` value makes every failover phase refuse, including the final `Status`.
+- Driver state is not committed with the configuration. It lives on the branch `cicd-state/<environment>` (section 8).
+
+## 4. Identities and roles
+
+There are two runners, each with its own user-assigned managed identity. Both runners are inside the
+environment's VNet. Prod runners and identities are in the Prod subscription; no identity is shared between
+environments.
+
+| Runner (labels) | Identity roles | Runs |
+|---|---|---|
+| `ccof-preview` (`self-hosted, ccof-vnet, ccof-preview`) | Reader on the workload, network and Foundry scopes; Cosmos DB Built-in Data Reader | `resolve`, gate checks, Stage 0, Stage 4 preview |
+| `ccof-apply` (`self-hosted, ccof-vnet, ccof-apply`) | Contributor on the workload RGs; Network Contributor on the network RGs; Role Based Access Control Administrator, conditioned to the Stage 3 and Foundry roles | Every what-if preview, every verify and status step, every apply. Only inside a GitHub environment, never for a pull request |
+
+What-if needs the same permissions as the deployment ([Learn: what-if permissions](https://learn.microsoft.com/azure/azure-resource-manager/templates/deploy-what-if#required-permissions)).
+That is why previews run on the apply runner, in the environment `<environment>-preview`, which accepts only the
+`main` branch. Verify steps that list app settings also need more than Reader.
+
+Each job checks the runner role twice:
+
+- `azure-login-mi` with `expected-role`;
+- `Invoke-CicdDriver.ps1`, which refuses an apply unless `CCOF_RUNNER_ROLE=apply` (`runner_role_mismatch`).
+
+The full role list with role IDs is in `docs/runbooks/CICD-SETUP.md` section 5.
+
+## 5. GitHub environments, gates and approvers
+
+Create these environments before the first run. In each one, set **Deployment branches and tags** to
+**Selected branches and tags** with exactly one rule: the branch `main` (the default branch). Add required reviewers to all except `-preview`, and turn off "Allow
+administrators to bypass".
+
+**Reviewed `main` (required before connecting runners).** Every job of this pipeline, previews included, runs code from `main` on a private runner with a managed identity. `main` must therefore accept only pull requests approved by another person, with no bypass. `protected: true` alone is not enough: a branch protection rule only blocks force pushes and deletion unless reviews are configured, and required reviews and their application to administrators are optional ([GitHub: about protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)). Configure one of:
+
+- a branch protection rule on `main`: require a pull request with at least 1 approval; dismiss stale approvals (or require approval of the most recent push); include administrators (`enforce_admins`); no users, teams or apps allowed to bypass pull requests; force pushes off; deletions off; or
+- active rulesets targeting `main` with three rules: "Require a pull request before merging" (at least 1 approval; dismiss stale approvals or require approval of the most recent push), "Block force pushes" (`non_fast_forward`) and "Restrict deletions" (`deletion`), each in a ruleset with an empty bypass list. The rules may be in one ruleset or split across several; each ruleset that supplies one must have no bypass actors. A pull request rule alone is not enough: "Block force pushes" is a separate rule, and a force push can point `main` at commits that no pull request approved ([GitHub: available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#block-force-pushes)). Without a deletion block, `main` could be deleted and pushed again from unreviewed commits.
+
+Classic protection and rulesets combine; each of the three requirements may come from either. A rename of the default branch, or a ruleset that targets a pattern other than `main`, is not covered by this check.
+
+This must be enforced by a repository or organization administrator outside the pipeline. The pipeline's own check (below) is a detector, not a boundary: if `main` accepted unreviewed pushes, such a push could change the workflow and the check with it. The runner job-start hook (`docs/runbooks/CICD-SETUP.md`) restricts events and refs, not who changed `main`.
+
+**Plan requirement.** Required reviewers are enforced on public repositories, and on private or internal
+repositories only with GitHub Enterprise. GitHub Free, Pro and Team do not enforce them on private repositories
+([GitHub: required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)).
+A private repository therefore belongs to an organization on GitHub Enterprise. Without that, approvals are not
+enforced and the pipeline must not run with `apply`.
+
+The `resolve` job (GitHub-hosted) runs [`Test-CicdGitHubEnvironments.ps1`](../../scripts/cicd/Test-CicdGitHubEnvironments.ps1)
+before any self-hosted job. It reads (GET only):
+
+- the repository visibility and owner, and the organization plan;
+- each environment (`-preview`; with `apply`, also `-apply` and every `-gate-*`), its required reviewers and branch policy;
+- the environment's selected branch rules ([GitHub REST: deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies));
+- whether `main` is protected, and its review protection: `GET /repos/{repo}/branches/main/protection` and `GET /repos/{repo}/rules/branches/main` with each ruleset (`GET /repos/{repo}/rulesets/{id}`).
+
+It fails when anything cannot be proved:
+
+| Finding | Result |
+|---|---|
+| Environment missing (GitHub would create it without protection) | fail |
+| No branch policy, or **Protected branches only** (admits every branch while no protection rule exists, and any branch a pattern rule covers later) | fail |
+| Selected branches other than exactly `main` (type branch, no wildcard, no second rule) | fail |
+| `main` not protected | fail |
+| `main` review protection not proved: no required pull request review, 0 approvals, approvals not reset by a later push, administrators not included, pull request bypass allowances (users, teams, apps) present or not returned (the API schema marks them optional, so absence is not proof of none), force pushes or deletions allowed (classic) or no active `non_fast_forward` or `deletion` ruleset rule, ruleset not active or with bypass actors (checked for each ruleset that supplies a rule), or any of it unreadable | fail. A pull request rule alone never passes. `protected: true` alone never passes |
+| Selected branch rule without `type` (or not `branch`) | fail |
+| Organization plan other than exactly `enterprise` (`plan.name` is a free string in the API, no enum) | fail; `free`, `team`, `pro` as below Enterprise, anything else as unknown |
+| Gate environment without a required reviewer | fail |
+| Gate environment that allows administrators to bypass, or whose bypass setting cannot be read | fail (a bypassed job runs with no approval) |
+| Private user-owned repository, or organization plan below Enterprise | fail |
+| Organization plan not readable by the job token (owner-only field) | **deferred, NOT PROVED** in the summary. No write depends on it: each reviewed job must observe its own enforced approval (below) and fails otherwise. No variable or attestation counts as proof (the former `CCOF_GITHUB_PLAN` variable is ignored) |
+| Any API read error | fail ("cannot prove") |
+
+If the job token cannot read branch policies, a repository administrator checks the same items by hand in
+Settings > Environments, and the run cannot proceed until the token can read them.
+
+**Unresolved blocker: proving reviewed `main` without a GitHub secret.** These workflows use no GitHub secrets, only `GITHUB_TOKEN`. Branch protection needs repository Administration: read, which `GITHUB_TOKEN` cannot be given, and a ruleset's `bypass_actors` list is returned only to callers with write access to the ruleset ([GitHub REST: branch protection](https://docs.github.com/en/rest/branches/branch-protection), [GitHub REST: rules](https://docs.github.com/en/rest/repos/rules)). A job-token probe in the lab (private user repository, run 44163305910) read the repository, `branches/main` (`protected`), environments and run approvals, but nothing that proves review protection. The `main review protection` finding therefore fails and `resolve` stops every run. The check reads no other token; it is not skipped and does not fall back to a pass. Options without a GitHub secret:
+
+| Option | What enforces it | Automatic | Limits |
+|---|---|---|---|
+| A. Approved revision pinned on the runner host (recommended) | The runner's job-started hook refuses a job unless `GITHUB_SHA` is in a list kept on the host by a customer administrator, who adds a commit after checking its review with their own GitHub sign-in | yes, outside the repository | Every release must be pinned on every runner host; needs a change to the runner hook (runner owner) |
+| B. Pull request provenance checked in the job with `GITHUB_TOKEN` (pull requests: read): every commit on `main` since a pinned baseline is the merge commit of a pull request approved by someone other than the author | the workflow | yes | Detector only: an unreviewed push can change the workflow or the check. Independent only with A's host-side pinning of those files |
+| C. Customer administrator verifies protection (section 5 list) and records the result in the change record | people | no | Procedural; a record in the repository can be changed by the push it should prevent |
+
+A GitHub App or a personal access token could read protection automatically but is a GitHub secret and is excluded. OIDC token claims do not describe branch protection. Until the owner chooses A (or accepts a secret), runs stay blocked at `resolve`.
+
+| Environment | Approver | Approves |
+|---|---|---|
+| `<env>-preview` | none | Previews and verification on the apply runner |
+| `<env>-apply` | Deployment owner (platform team) | Stage 1, 2, 3, 5, 6, 7 apply; Front Door primary Deploy; standby Data, Grants, Config, Code; health apply and test e-mail |
+| `<env>-gate-network` | Network team lead | Network ready before Stage 0 (checklist part A); DR Bootstrap (peering, DNS links); standby Network (`PrivateNetworkChanges`) |
+| `<env>-gate-entra` | Entra team lead | Stage 4: Entra settings done as in checklist part B and `entra.manualVerification` committed. The job then re-reads what it can, read-only |
+| `<env>-gate-privatelink` | Resource owners (API Management, Function Apps) and network | Front Door private link approval of the listed connection IDs (`fd_reviewed_ids`); DR 7.3/7.4 handoff before standby Code |
+| `<env>-gate-security` | Security officer | Standby Shells: public API Management bootstrap (`PublicApimBootstrap`, optional `PublicFunctionAccess`) |
+| `<env>-gate-frontdoor` | Platform owner and DR owner | Front Door with region B origins (`StandbyReady`, scope `frontdoor-full`) |
+
+**Approval of each job.** GitHub records reviews per run (`GET /repos/{repo}/actions/runs/{id}/approvals`), not per job, and one review approves every job waiting on that environment at that moment. `<env>-apply` is used by up to 15 jobs in one run, so a review in that list may belong to an earlier job. Every job in `<env>-apply` or `<env>-gate-*` therefore runs [`Assert-CicdJobApproval.ps1`](../../scripts/cicd/Assert-CicdJobApproval.ps1) before Azure sign-in, and stops unless all of these hold at that moment:
+
+- the environment has required reviewers, administrators cannot bypass them, and only `main` (protected) may deploy;
+- the run has more approved reviews of this environment than earlier jobs of the run have used, and no rejection. Each job that passes uploads a ledger artifact `ccof-approval_<environment>_<job>-<id>` before it signs in, which marks one review as used;
+- the plan enforces reviewers: public repository, readable Enterprise plan, or (plan not readable) an approval observed in this run, which only happens when GitHub enforced the review;
+- this is attempt 1 of the run. Reviews cannot be bound to a re-run attempt, so re-running failed jobs is refused: dispatch a new run instead (state on `cicd-state/<env>` lets it continue).
+
+The driver step also refuses `-Apply` or `-TestNotification` without the ledger. `deploy-environment.yml` never lets two jobs of one reviewed environment wait at the same time (a test checks the `needs` graph; the health test-mail matrix runs with `max-parallel: 1`), so each job waits for its own review. The summary and `evidence/<env>/approval-*.json` record the approvers and counts.
+
+Limits (not proved live): artifacts of a running workflow are assumed listable through `GET .../runs/{id}/artifacts` right after upload (if a list missed a ledger entry, an earlier review could be counted again; bypass being off is then the remaining guard); that each matrix job with `max-parallel: 1` waits for its own review; the private organization's plan stays unreadable with `GITHUB_TOKEN`, so a private repository with no observed approval cannot apply at all.
+
+## 6. Run order and timings
+
+Start a run with **Actions > deploy-environment > Run workflow**, from `main`. The inputs are:
+
+| Input | Meaning |
+|---|---|
+| `environment` | Folder name under `deploy/` |
+| `apply` | If false, the run only previews |
+| `scope` | `all`, `primary`, `frontdoor-primary`, `standby`, `frontdoor-full` or `health` |
+| `fd_reviewed_ids` | Front Door private endpoint connection IDs reviewed by the resource owners. If empty in an apply run, job `fd-primary-ids-required` (or `fd-full-ids-required`) fails after the Approve preview and nothing after it runs (Verify, DR, health); rerun with the IDs. Preview-only runs continue |
+| `approvals` | Optional, comma-separated exact names (case-sensitive): `ExistingVnetUpdate`, `CosmosThroughputReduction`, `PublicFunctionAccess`. `resolve` stops on anything else (unknown or prefixed names such as `DO_NOT_APPROVE_PublicFunctionAccess`, empty items, duplicates, other separators). Each approval still runs only in its own environment (`gate-network`, `apply`, `gate-security`) |
+| `health_test_notification` | Send the health alert test e-mail |
+
+The jobs run in this order. Each step previews, then waits for its gate, then applies. The times are lab apply
+times in seconds:
+
+1. **Before the stages**
+   - `resolve`;
+   - prerequisite checks;
+   - gate network.
+2. **Region A stages**
+
+   | Step | Lab apply time (s) |
+   |---|---|
+   | Stage 0 | 50 |
+   | Stage 1 resources | 156-288 |
+   | Stage 2 Cosmos | 196-198 |
+   | Stage 3 grants | 322-393 |
+   | Stage 4: gate entra | 48-83 (manual verify is faster) |
+   | Stage 5 config | 75-78 |
+   | Stage 6 network | 740-759 |
+   | Stage 7 code | 1279-1424 |
+
+3. **Front Door, primary only**
+
+   | Step | Lab apply time (s) |
+   |---|---|
+   | Deploy | 230 |
+   | Approve (gate privatelink) | - |
+   | Verify | up to about 900 (propagation) |
+
+4. **DR standby**
+   - Discover
+   - Bootstrap (gate network)
+   - Verify
+   - Data: 452 s
+   - Shells (gate security)
+   - Grants: 276 s
+   - Config: 119 s
+   - Network (gate network): 179 s
+   - handoff gate privatelink (DR 7.3/7.4)
+   - Code: about 1100 s
+   - Verify: 358 s
+5. **Front Door with the standby** (scope `frontdoor-full` only, gate frontdoor)
+   - Deploy
+   - Approve
+   - Verify
+6. **Health alerts**
+   - Region A: preview, then apply
+   - Region B: preview, then apply (`health-b.json`; skipped only with `health-b.optout.json`, reported on every run)
+   - Test e-mail (optional)
+7. **`final`**
+   - Failover `Status` (scopes `all`, `standby`, `frontdoor-full`)
+   - Prerequisite checks again, for the scopes of the run (`primary`; `primary,frontdoor`; `primary,health`; or all four)
+
+Sources for the times: [STAGED-STDV2-RUNS-2026-10-20.md](../STAGED-STDV2-RUNS-2026-10-20.md),
+[DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md) and [DR-FRONT-DOOR.md](DR-FRONT-DOOR.md).
+
+A complete first run takes about 3.5-4 hours of machine time. Waiting for approvals adds to that.
+
+A failed job stops every later job. Fix the cause and dispatch the workflow again with the same inputs (`Re-run failed jobs` is refused by the approval check, section 5). Steps that are
+already applied preview NoChange and apply idempotently. Saved state lets later stages read earlier outputs.
+
+After Front Door with the standby (saved mode `full`), the driver refuses `-PrimaryOnly`. The `resolve` job reads the saved mode and skips the primary-only Front Door jobs on later runs.
+
+## 7. Manage the environment afterwards
+
+- **Configuration change.** Open a pull request that edits `deploy/<environment>/`. The pull request runs the
+  offline prerequisite checks (`Test-CicdPrerequisites.ps1 -Offline`) on a GitHub-hosted runner: no Azure
+  sign-in, no private network, no driver state. After the merge, run the workflow with `apply` false to review
+  the previews. Then run it with `apply` true.
+- **Drift.** [`drift-check.yml`](../../.github/workflows/drift-check.yml) runs on weekdays at 03:17 UTC for the
+  environments in the repository variable `CCOF_DRIFT_ENVIRONMENTS` (a JSON array, for example `["infprod"]`).
+  A GitHub-hosted job first checks each name and its `-preview` branch policy (section 5). The drift job previews
+  Stages 1, 2, 3, 5, 6 and the health alerts whose files exist. [`Get-CicdDrift.ps1`](../../scripts/cicd/Get-CicdDrift.ps1)
+  reads the structured result each preview writes (`<step>-preview.result.json` and `.whatif.jsonl`), not the log text:
+
+  | Status | Meaning | Clean |
+  |---|---|---|
+  | Clean | What-if ran; only NoChange or Ignore, or Modify whose every property is noise or matched (below) | yes |
+  | RecordMatch | Stage 1: the deployment record matches the template and parameters (resource what-if not run) | yes |
+  | Drift | What-if shows Create or Delete, or a Modify with a drift property or no property verdicts | no |
+  | Unverifiable | What-if shows Deploy or Unsupported, or a Modify with an unmeasured property | no, listed for review |
+  | Unmeasured | The preview ran but produced no what-if result (for example "No what-if output was produced.") | no |
+  | PreviewFailed | The preview exited non-zero | no |
+  | NoResult | No result file for an expected step | no |
+
+  Only when every expected step is Clean or RecordMatch does the report say "No drift in N of N expected previews".
+  Otherwise it opens an issue `Drift: <environment>` with the label `ccof-drift`, or comments on the open one.
+  It never applies and never saves state.
+
+  **Modify on an unchanged environment.** What-if reports Modify for properties the templates do not send and
+  for write-only properties a GET does not return. For pipeline previews the driver
+  ([`Staged.WhatIf.ps1`](../../infra/staged/Staged.WhatIf.ps1)) gives every changed property one verdict, written
+  to `.whatif.jsonl` without values:
+
+  | Verdict | When |
+  |---|---|
+  | noise | Exact path and exact value of a service default or read-only field: Cosmos container conflict path `/_ts` and default indexing policy; private endpoint `isIPv6EnabledPrivateEndpoint` false; APIM API `isAgent` false and header `Ocp-Apim-Subscription-Key`; DNS zone group `etag`/`id`/`type`/`provisioningState`. APIM policy `format` xml to rawxml, and a policy value equal as XML tokens (below). |
+  | matched | A read-only read-back equals the template: app settings (`config/appsettings/list`, `reference()` values resolved by reading the referenced resource), Cosmos database throughput, workbook content. |
+  | drift | Any other path or value, a policy that differs, a read-back that differs (app setting names only). |
+  | unmeasured | The comparison is not certain: an unresolved expression, a live app setting with an empty value that the what-if payload lacks (what-if omits empty template values, so the template cannot be shown to contain it and a deployment may remove it), a read-back that failed or was denied, policy text that cannot be tokenised with certainty, workbook content that differs only in non-ASCII characters. |
+
+  APIM policies are compared as XML tokens, not as collapsed text. Only XML-equivalent differences are
+  ignored: line endings, the five predefined entities and numeric references in the stored (xml) form,
+  attribute order, `<x/>` against `<x></x>`, and whitespace-only text between two tags directly inside a
+  structural policy element whose content is policy elements only, with every enclosing element also
+  structural (`policies`, `inbound`, `backend`,
+  `outbound`, `on-error`, `fragment`, `choose`, `when`, `otherwise`, `set-header`, `set-query-parameter`,
+  `return-response`, `send-request`, `send-one-way-request`, `trace`, `retry`), and not the element's only
+  content. Inside `set-body`, `value` or any other element (possible mixed content), including markup nested in them whatever its names, whitespace is compared, so
+  `<a/> <b/>` against `<a/><b/>` there is drift. Mismatched tags are unmeasured. Text, attribute values, C# policy expressions, string literals and comments must be identical, so
+  `Bearer A` to `Bearer  A` is drift. Template rawxml is not entity-decoded; its `@(...)`/`@{...}` expressions
+  are scanned with C# string rules only where they start an attribute value or a text run. An interpolated
+  string (`$"..."`), an entity inside rawxml, an entity name in other than lower case, a character XML 1.0
+  does not allow, or unbalanced input is unmeasured.
+
+  Limits: the app settings read-back needs the list permission, so on the preview (Reader) identity those
+  properties are unmeasured; drift runs on `ccof-apply`. On Windows, az drops non-ASCII characters from what-if
+  output, so a workbook containing them is unmeasured there; on a UTF-8 Linux runner it is compared (not yet
+  proven on a runner). Health alert records carry no property verdicts, so any Modify there is drift.
+  Lab evidence (unchanged infsim, read-only, 2026-11-18): Stage 2 Clean (10 Modify explained), Stage 6 Clean
+  (10), Stage 5 explained all 6 APIM policies and fragments; the workbook (on Windows) is unmeasured, and so are
+  the admin app settings, because the live `ADMIN_READER_IDS`/`ADMIN_EDITOR_IDS` are empty and what-if omits
+  them. Stage 5 on that lab is therefore Unverifiable, not Clean.
+
+## 8. Driver state
+
+The drivers write their state into `deploy/<environment>/`:
+
+- `.staged-state`;
+- `.dr-state`;
+- `.dr-evidence`;
+- `.health-alerts-a`, `.health-alerts-b`.
+
+[`Sync-CicdState.ps1`](../../scripts/cicd/Sync-CicdState.ps1) keeps this state on the orphan branch
+`cicd-state/<environment>`:
+
+- every job restores the state before it runs;
+- apply and verify jobs, and the DR standby Data preview (below), save it afterwards, even when the driver fails or the job is cancelled, but only when the
+  Restore step of the same job succeeded (`steps.restore.outcome == 'success'`) and the driver step actually started
+  (`steps.driver.outcome` is `success`, `failure` or `cancelled`). A failed checkout, host preflight, input guard,
+  sign-in, Restore, prerequisite check or build, or a cancel before the driver, leaves the driver `skipped` and skips
+  Save; `Sync-CicdState.ps1` also refuses Save without the restore marker;
+- pull request runs never read or save it;
+- `resolve` and drift runs read the branch with the job token (`CCOF_STATE_TOKEN`, passed to git through environment configuration, never on the command line), because those checkouts keep no credentials.
+
+Restore fails when it cannot prove the branch is absent: `git ls-remote --exit-code` exit 2 (no such ref) is
+the first run; any other error (repository not found, authorization, network) stops the job, as does a failed
+fetch or a branch that moved during the restore.
+
+Save keeps files of known types (`.json`, `.jsonl`, `.md`, `.txt`, `.log`, `.xml`, `.csv`) and refuses (the job
+fails, nothing is pushed) on an unknown type, a file over 5 MB, or content that looks like a secret (JWT, GitHub
+token, Entra client secret, private key, account key, SAS, connection string, authorization header). It also
+fails when one of these essential files was in the restored snapshot and is missing now:
+
+- `.staged-state/state.json` (staged outputs; every stage reads it);
+- `.dr-state/standby.state.json` (DR phases done, package digests);
+- `.dr-state/state.json` (standby staged outputs, read by DR standby, Front Door and failover);
+- `.dr-state/frontdoor-state.json` (Front Door mode and origins).
+
+Save also fails (`state_invalid_json`) when one of these files is empty or not valid JSON, for example after a
+driver stopped mid-write; the last saved snapshot is kept. Other files, such as partial evidence, are saved as they
+are.
+
+Only these regenerable files are excluded: `.dr-state/generated/packages/**` (build staging, deleted after Code;
+digests are in `standby.state.json`), `.dr-state/generated/*.zip` (rebuilt on every publish), `*.lock` (held
+only while a phase runs), `node_modules/` and `.git/`. Other generated files (gateway policy XML, render and
+workbook JSON) are regenerated by Stage 5 or Config but are saved, for evidence. Tested with the complete lab DR
+state (38,730 files, 224 MB): 32 files saved and restored byte for byte, 38,698 excluded, nothing refused.
+
+**Cosmos Data preview.** `standby-data-preview` saves state so that `.dr-state/cosmos-throughput-preview.json` (the
+digest of the reviewed account, regions, failover setting and throughput plan) reaches the separate `standby-data-apply`
+job. Apply refuses with `cosmos_preview_required` when the file is missing, and with `cosmos_preview_stale` when it is
+unreadable, has another schema, or the account or plan changed since the preview; it removes the file before any write.
+The preview writes nothing to Azure. Tested across isolated job workspaces with the real state branch
+(`tests/Test-CicdCosmosPreviewHandoff.ps1`). No other preview hands a file to its apply job.
+
+The branch holds no secret. Protect it with a ruleset so that only GitHub Actions can push.
+
+To deploy from Cloud Shell instead, check out the branch into the folder. The drivers read the same files.
+
+Long paths on Windows runners: `Sync-CicdState.ps1` runs git with `-c core.longpaths=true` per command (no git
+or OS setting is written), because Git for Windows refuses paths over 260 characters even when the OS long-path
+setting is on. Windows still cannot use a directory of 248 characters or more as the working directory, and Git
+refuses a `.git` directory path near 260 characters; keep the runner work folder short (for example
+`C:\actions-runner\_work`).
+
+Runs never overlap for one environment. `deploy-environment.yml` holds the concurrency group
+`ccof-env-<environment>` for the whole run. Each `drift` job of `drift-check.yml` takes the same group for its
+environment (job-level, `cancel-in-progress: false`), so a drift preview never runs between or alongside deployment
+stages; the drift workflow itself uses the separate group `ccof-drift` (a `ccof-env` group at workflow level would
+make the job wait on its own run). `ccof-step.yml` sets no concurrency; it runs inside the caller's lock.
+
+By default GitHub keeps one pending run or job per group and a newer pending entry cancels the older one
+(`cancel-in-progress: false` protects only the running one). Every holder of `ccof-env-<environment>`
+(deploy-environment, the drift job, onboard-foundry) therefore sets `queue: max`: pending entries wait in order of
+arrival. Limits:
+
+- At most 100 entries can wait in one group; GitHub cancels any further entry. Nothing has run in a cancelled
+  pending entry; dispatch it again.
+- `queue: max` was proved live at workflow level (three runs queued and all completed; with the default the middle
+  one was cancelled). The job-level setting on the drift job is documented by GitHub but has not been run live.
+- actionlint 1.7.12 reports `queue` as an unknown key (rhysd/actionlint#657).
+## 9. Rollback per step
+
+The drivers apply forward and are idempotent. To roll back, revert the configuration commit and rerun the step,
+or use the manual action below.
+
+| Step | Rollback |
+|---|---|
+| Stage 1 resources | Revert the config and rerun. The Bicep deployments are incremental and do not delete: remove an unwanted new resource by hand |
+| Stage 2 Cosmos schema | Containers are additive; remove a wrong container by hand only when it is empty |
+| Stage 3 grants | Remove the role assignment in the Portal (Access control) and rerun Stage 3 with the fixed config |
+| Stage 4 Entra | Entra team reverts the registration change; update `entra.manualVerification` |
+| Stage 5 configuration | Revert the config and rerun Stage 5 (settings, API, policy are overwritten) |
+| Stage 6 network | Network team reverts the private endpoint or integration; rerun Stage 6 |
+| Stage 7 code and data | Rerun Stage 7 from the previous commit (the packages are rebuilt from that commit) |
+| Front Door | `DrainPrimary`/`RestorePrimary` by hand ([DR-FRONT-DOOR.md](DR-FRONT-DOOR.md)); delete the profile to remove it |
+| DR standby | Each phase is independent; region B resources can be deleted without touching region A ([DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md)) |
+| Health alerts | `Invoke-HealthAlerts.ps1 -Remove` from Cloud Shell ([HEALTH-ALERTS.md](HEALTH-ALERTS.md)) |
+
+## 10. Runner security limits
+
+- **Runner scope.** Organisation runner groups can limit a runner to selected repositories and workflows. For
+  a repository owned by a user account, a self-hosted runner is scoped to the repository, and any workflow in
+  that repository can target its labels.
+- **Trust boundaries.** A self-hosted runner gives any job the host's managed identity and the private network,
+  whatever the identity's roles. So:
+  - pull request jobs run only on GitHub-hosted runners, offline (no Azure sign-in, no state); `pull_request_target` is not used;
+  - `ccof-step.yml` picks a self-hosted runner only for `workflow_dispatch` or `schedule` and only inside a GitHub
+    environment. Any other call lands on a GitHub-hosted runner and its first step fails;
+  - the branch check of a dispatch is the environment branch policy, which GitHub enforces before it schedules the
+    job. The `resolve` and drift `targets` jobs run on GitHub-hosted runners and prove the policies first;
+  - the runner job-start hook (`docs/runbooks/CICD-SETUP.md`) refuses untrusted events and refs on both runners.
+- **Mitigations:**
+  - every apply job sits behind an environment with required reviewers (enforced only by the plans in section 5) and a `main`-only selected-branch policy;
+  - reviewed `main` (section 5: pull request with approval, administrators included, no bypass), enforced by an administrator before runners connect; the in-workflow check only detects its absence;
+  - CODEOWNERS for `.github/workflows/` and `deploy/**`;
+  - the runner role check in each job.
+- **Dependency on the runner branch.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh`/`.ps1` come from the runner setup change (`docs/runbooks/CICD-SETUP.md`). Merge that change before this workflow.
+- **Runner OS.** The host preflight runs `Test-RunnerHost.sh` with bash on Linux and `Test-RunnerHost.ps1` with
+  PowerShell on Windows (`runner.os`). Only Linux runners have been exercised; Windows is untested.
+
+  See [GitHub: security hardening for self-hosted runners](https://docs.github.com/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners).
+- **Inputs.** Workflow inputs reach scripts only through environment variables, never inline in `run:`.
+
+## 11. References
+
+- [Learn: sign in with a managed identity (`az login --identity`)](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-managed-identity)
+- [GitHub: deployment environments](https://docs.github.com/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment)
+- [GitHub: required reviewers and plans](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)
+- [GitHub REST: deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies)
+- [GitHub: reusable workflows](https://docs.github.com/actions/sharing-automations/reusing-workflows)
+- [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md), [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md),
+  [DR-STANDBY-CLOUD-SHELL.md](DR-STANDBY-CLOUD-SHELL.md), [DR-FRONT-DOOR.md](DR-FRONT-DOOR.md),
+  [HEALTH-ALERTS.md](HEALTH-ALERTS.md), [../DR-ACTIVE-PASSIVE.md](../DR-ACTIVE-PASSIVE.md)

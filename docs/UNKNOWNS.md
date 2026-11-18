@@ -2,6 +2,7 @@
 
 | ID | State | Question / evidence |
 | --- | --- | --- |
+| CICD-WIN-PATH-01 | OPEN | Git for Windows 2.56.0.windows.4 did not discover a newly initialized conventional `.git` directory at a 253-character workspace root, even with `core.longpaths=true`; a 225-character root worked in the same local test. Other versions and environments may have different limits. A short Windows runner work path reduces this risk. The test also covers a longer workspace with a [separate Git directory](https://git-scm.com/docs/git-init#Documentation/git-init.txt---separate-git-dirgit-dir), which is not the default Actions checkout layout. |
 | DR-BYO-01 | OPEN | The customer's standby VNet, subnets, delegations, DNS links and peering have not been read in this session. Existing-network mode must inspect them without changing them; missing or inaccessible prerequisites block the deployment. |
 | DR-BYO-02 | OPEN | A customer-approved private publisher and private endpoints/DNS for the standby Function Apps have not been verified. Cloud Shell is not assumed to be inside the VNet. A private publishing path must be checked before code deployment; no public access is enabled by this change. |
 | DR-BYO-03 | OPEN | Region B's end-to-end readiness, including the manual Entra actions, resolver private path and backend connectivity, has not been verified at the customer. A successful ARM deployment or Front Door health probe alone does not prove readiness. |
