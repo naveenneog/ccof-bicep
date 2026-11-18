@@ -1,5 +1,12 @@
 # Change log
 
+## 2026-11-18 - Coordination: DR health-alert `cosmosId`
+
+- The region B health-alert `cosmosId` field (shared primary Cosmos account) on this branch is also shipped on its own as
+  `fix/health-alerts-dr-cosmosid` (commit `df9c2f3`) for customers on main `0560192`. `infra/monitoring/HealthAlerts.psm1` is
+  identical on both branches. `tests/Test-HealthAlerts.ps1` differs: the branch that merges second keeps both test sets
+  and reruns `tests/Test-HealthAlerts.ps1`.
+
 ## 2026-11-17 - Pipeline onboarding of a Foundry backend; Stage 5 keeps live settings
 
 - New `.github/workflows/onboard-foundry.yml` adds a Foundry account to region A and the region B
