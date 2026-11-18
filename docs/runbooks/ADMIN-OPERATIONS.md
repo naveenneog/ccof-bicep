@@ -210,8 +210,11 @@ deployments, private endpoint) and C (acceptance) still apply.
 
 **Platform team, once per deployment (admin identity, Azure RBAC only, no Entra change):**
 
+Under DR each region has its own admin Function App and its own managed identity. Both get the
+grants below; a region whose identity lacks them shows `403` rows in Check after a failover.
+
 ```powershell
-$admin = "<admin Function App principal ID>"
+$admin = "<admin Function App principal ID>"   # run once for region A's admin, once for region B's
 # Custom role: read APIM and read/write its backends only (one per subscription that holds an APIM)
 @{ Name="CCOF APIM Backend Writer"; IsCustom=$true; Description="Read APIM; read/write backends";
    Actions=@("Microsoft.ApiManagement/service/read","Microsoft.ApiManagement/service/backends/read","Microsoft.ApiManagement/service/backends/write");
@@ -224,8 +227,18 @@ foreach ($apim in "<APIM A resource ID>","<APIM B resource ID>") {
 az role assignment create --assignee-object-id $admin --assignee-principal-type ServicePrincipal --role Reader --scope "<RG or subscription ID>"
 ```
 
-Config keys (Stage 3 grants the Cosmos `backends` data role, Stage 5 writes the app settings; rerun
-both and the DR standby Config phase):
+Config keys (Stage 3 grants the Cosmos `backends` data role, Stage 5 writes the app settings). Order:
+Stage 3, Stage 5, then under DR the standby Grants phase and the standby Config phase.
+
+Stage 5 writes the admin app's whole app-settings set from the config file
+(`infra/staged/stage5-config.bicep`, `adminSettings`). A setting added by hand in the portal and not
+in the config is removed. Before rerunning, list the current names on each admin app and move any
+hand-added value into the config (for example a hand-added `ADMIN_RESOURCE_IDS` becomes
+`admin.resourceIds`):
+
+```powershell
+az functionapp config appsettings list -g <rg> -n <admin app> --subscription <sub-id> --query "[].name" -o tsv
+```
 
 | Key | Value |
 | --- | --- |

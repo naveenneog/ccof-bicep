@@ -214,9 +214,11 @@ async function preflight(r: Request, deps: OnboardingDependencies, registry: Reg
   return { ok: checks.every((c) => c.status !== "fail"), conflict: conflicts.length > 0, checks, endpoint, plan };
 }
 
+// Same as the descriptor onboarding writes, including the token audience the gateway requests.
 function sameDescriptor(doc: Doc, backendId: string): boolean {
   const verdict = checkBackendRecord(doc, backendId);
-  return verdict.kind === "active" && verdict.descriptor.auth.mode === "managed-identity";
+  const auth = verdict.kind === "active" ? verdict.descriptor.auth : null;
+  return auth?.mode === "managed-identity" && auth.resource === (descriptorFor(backendId).auth as Doc).resource;
 }
 
 export async function onboardingRequest(path: string, method: string, url: URL, request: ApiRequest, actor: { oid: string; canWrite: boolean },
@@ -254,12 +256,20 @@ async function write(r: Request, plan: RegisteredBackend, deps: OnboardingDepend
   requestId: string, actorOid: string, audit: (fields: Doc) => void): Promise<ApiResponse> {
   const { provider } = deps;
   const descriptor = descriptorFor(r.backendId);
-  const todo = {
-    apim: [] as string[],
-    descriptor: !(await deps.descriptors.read(r.backendId)),
-    registry: !(await registry.read(r.backendId)),
+  // Reread just before writing: another request may have claimed the ID since preflight.
+  const conflict = () => {
+    audit({ outcome: "refused", status: 409, code: "backend_id_conflict" });
+    return response(409, { error: "backend_id_conflict", requestId, hint: "The backend ID was claimed for another endpoint during onboarding. Run Check again." });
   };
-  for (const apimId of deps.targets) if (!(await provider.apimBackendUrl(apimId, r.backendId))) todo.apim.push(apimId);
+  const existingDescriptor = await deps.descriptors.read(r.backendId);
+  const existingEntry = await registry.read(r.backendId);
+  if ((existingDescriptor && !sameDescriptor(existingDescriptor, r.backendId)) || (existingEntry && !sameUrl(existingEntry.doc.url, plan.url))) return conflict();
+  const todo = { apim: [] as string[], descriptor: !existingDescriptor, registry: !existingEntry };
+  for (const apimId of deps.targets) {
+    const url = await provider.apimBackendUrl(apimId, r.backendId);
+    if (url && !sameUrl(url, plan.url)) return conflict();
+    if (!url) todo.apim.push(apimId);
+  }
   const changes = [
     ...todo.apim.map((id) => ({ path: `apim:${id}`, before: null, after: plan.url })),
     ...(todo.descriptor ? [{ path: "descriptor", before: null, after: descriptor }] : []),
@@ -269,13 +279,18 @@ async function write(r: Request, plan: RegisteredBackend, deps: OnboardingDepend
   if (!changes.length) {
     steps.push(...deps.targets.map((id) => ({ step: `apim:${id}`, result: "exists" as const })),
       { step: "descriptor", result: "exists" }, { step: "registry", result: "exists" });
+    audit({ outcome: "unchanged", steps });
     return response(200, { backend: plan, steps, changed: false, requestId });
   }
   const pending = await beginChange(ctx.changeLog, { requestId, at: ctx.now().toISOString(), actorOid, operation: "v3/backend-onboarding",
     projectId: null, changes, details: { backendId: r.backendId, foundryResourceId: r.foundryResourceId } }, ctx.now, ctx.log);
   try {
     for (const apimId of deps.targets) {
-      if (todo.apim.includes(apimId)) await provider.putApimBackend(apimId, r.backendId, plan.url);
+      if (todo.apim.includes(apimId)) {
+        await provider.putApimBackend(apimId, r.backendId, plan.url);
+        const readBack = await provider.apimBackendUrl(apimId, r.backendId);
+        if (!readBack || !sameUrl(readBack, plan.url)) throw new Error(`apim_readback_mismatch:${nameOf(apimId)}`);
+      }
       steps.push({ step: `apim:${apimId}`, result: todo.apim.includes(apimId) ? "created" : "exists" });
     }
     if (todo.descriptor && await deps.descriptors.create(descriptor) === "conflict") throw new ApiError(409, "backend_id_conflict");

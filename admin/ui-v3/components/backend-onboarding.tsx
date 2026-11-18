@@ -48,7 +48,7 @@ export function BackendOnboarding({ scope, onDone, onCancel }: { scope: Onboardi
   const regions = scope.targets.map((t) => t.split("/").pop()).join(" and ");
   return (
     <Section title="Onboard a Foundry account" description={<>For an account that already has its model deployments, an approved private endpoint and Cognitive Services User for the gateway identities. The console adds the backend to {regions || "the gateway"}, the gateway descriptor and the backend registry. No project uses it until an editor selects it.</>}>
-      <div className="form-grid">
+      <fieldset className="form-grid" disabled={busy !== null}>
         <Field label="Foundry account resource ID" error={d.foundryResourceId ? problems.foundryResourceId : null}
           hint={<>Azure portal: the account's Overview → JSON View → Resource ID. Allowed: {[...scope.resourceIds, ...scope.discoveryScopes].join(", ") || "none configured"}.</>}>
           {(id, h) => <input id={id} aria-describedby={h} className="input mono" value={d.foundryResourceId} placeholder="/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/…" onChange={(e) => setAccount(e.target.value)} />}</Field>
@@ -60,7 +60,7 @@ export function BackendOnboarding({ scope, onDone, onCancel }: { scope: Onboardi
           {(id, h) => <input id={id} aria-describedby={h} className="input mono" value={d.deployments} onChange={(e) => set({ deployments: e.target.value })} />}</Field>
         <Field label="Inference geography" hint="Fallbacks must match their primary.">{(id) => <select id={id} className="input" value={d.inferenceGeo} onChange={(e) => set({ inferenceGeo: e.target.value })}>
           {["global", "us", "eu"].map((g) => <option key={g} value={g}>{g}</option>)}</select>}</Field>
-      </div>
+      </fieldset>
       {checked && <DataTable caption="Preflight checks" rows={checked.checks} rowKey={(r) => r.id} dense
         columns={[
           { key: "id", label: "Check", render: (r: Check) => checkName(r.id) },

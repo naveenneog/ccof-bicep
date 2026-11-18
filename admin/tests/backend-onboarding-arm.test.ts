@@ -123,3 +123,21 @@ test("onboarding dependencies are built only when the flag is exactly true and t
   assert.equal(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open), null, "no targets");
   assert.equal(createOnboardingDependencies({ ...env, ADMIN_RESOURCE_IDS: "", ADMIN_DISCOVERY_SCOPES: "" }, credential, open), null, "no scope");
 });
+
+test("list reads follow nextLink on management.azure.com and refuse any other host", async () => {
+  const page2 = `https://management.azure.com${ACCOUNT}/deployments?api-version=2024-10-01&$skiptoken=p2`;
+  const t = transport({
+    [page2]: { status: 200, body: { value: [{ name: "claude-sonnet-4-5", properties: { provisioningState: "Succeeded" } }] } },
+    [`https://management.azure.com${ACCOUNT}/deployments?`]: { status: 200, body: { value: [{ name: "claude-haiku-4-5", properties: { provisioningState: "Succeeded" } }], nextLink: page2 } },
+  });
+  const provider = createArmOnboardingProvider(credential, t.fn);
+  assert.deepEqual((await provider.deployments(ACCOUNT)).map((d) => d.name), ["claude-haiku-4-5", "claude-sonnet-4-5"]);
+  assert.equal(t.calls.length, 2);
+  assert.equal((t.calls[1].init.headers as Record<string, string>).authorization, "Bearer tok:https://management.azure.com/.default");
+
+  const evil = transport({
+    [`https://management.azure.com${ACCOUNT}/deployments?`]: { status: 200, body: { value: [], nextLink: "https://attacker.example/steal" } },
+  });
+  await assert.rejects(createArmOnboardingProvider(credential, evil.fn).deployments(ACCOUNT), (e: unknown) => e instanceof ProviderError && /invalid_next_link/.test(e.message));
+  assert.equal(evil.calls.length, 1);
+});

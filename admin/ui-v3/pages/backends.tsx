@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, useQuery } from "../lib/api.ts";
+import { ApiFailure, api, errorMessage, useQuery } from "../lib/api.ts";
 import { Button, CapabilityNotice, DataTable, Empty, ErrorNote, Field, Loading, PageHeader, Review, Section, StatePill, diff, useToast } from "../components/ui.tsx";
 import { useSession } from "../components/shell.tsx";
 import { href } from "../lib/router.ts";
@@ -53,6 +53,7 @@ export function Backends() {
   const rows: any[] = q.data?.backends ?? [];
   const editable = Boolean(q.data?.editable && session.canWrite);
   const canOnboard = Boolean(onboardingInfo.data?.enabled && onboardingInfo.data?.editable && session.canWrite);
+  const onboardingError = onboardingInfo.error && !(onboardingInfo.error instanceof ApiFailure && onboardingInfo.error.status === 404) ? onboardingInfo.error : null;
 
   const d = draft ?? EMPTY;
   const ranges = parseRanges(d.breaker.ranges);
@@ -93,6 +94,7 @@ export function Backends() {
         actions={editable && !draft && !review && !onboarding ? <>
           {canOnboard && <Button icon="plus" onClick={() => setOnboarding(true)}>Onboard Foundry account</Button>}
           <Button variant="primary" icon="plus" onClick={() => { setEditing(null); setDraft(EMPTY); }}>Register backend</Button></> : undefined} />
+      {editable && onboardingError && !onboarding && <CapabilityNotice cap={{ state: "unavailable", reason: errorMessage(onboardingError) }} what="Onboarding a Foundry account" />}
       {onboarding && onboardingInfo.data ? (
         <BackendOnboarding scope={onboardingInfo.data} onDone={q.reload} onCancel={() => setOnboarding(false)} />
       ) : review ? (

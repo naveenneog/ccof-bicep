@@ -217,3 +217,63 @@ test("a failure part-way is reported as incomplete, and a rerun finishes the rem
   assert.deepEqual(fake.calls.filter((c) => c.startsWith("put-")), [`put-backend ${APIM_A}`, `put-backend ${APIM_B}`, `put-backend ${APIM_B}`]);
   assert.ok(registry.entries.has("foundry2"));
 });
+
+test("a descriptor with another token audience is a conflict, not 'exists'", async () => {
+  const { v3, descriptors, registry } = setup();
+  await descriptors.create({ id: "foundry2", backendId: "foundry2", status: "active", apiFormat: "anthropic-messages",
+    auth: { mode: "managed-identity", resource: "https://management.azure.com" } });
+  const pre = await v3("POST", "backend-onboarding/preflight", body());
+  assert.equal(check(pre, "id_free")?.status, "fail");
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(json(r).error, "backend_id_conflict");
+  assert.equal(await registry.read("foundry2"), null);
+});
+
+test("an APIM backend claimed for another URL after preflight stops the write", async () => {
+  const fake = fakeProvider();
+  const real = fake.provider.apimBackendUrl;
+  let reads = 0;
+  fake.provider.apimBackendUrl = async (apimId, id) => (++reads > 2 && apimId === APIM_B ? "https://other.services.ai.azure.com/anthropic" : real(apimId, id));
+  const { v3, registry, descriptors } = setup({ provider: fake });
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(json(r).error, "backend_id_conflict");
+  assert.equal(await registry.read("foundry2"), null);
+  assert.equal(await descriptors.read("foundry2"), null);
+});
+
+test("a registry entry claimed for another URL after preflight stops the write", async () => {
+  const fake = fakeProvider();
+  const { v3, registry } = setup({ provider: fake });
+  const real = fake.provider.apimBackendUrl;
+  let reads = 0;
+  fake.provider.apimBackendUrl = async (apimId, id) => {
+    if (++reads === 2) await registry.save({ ...((await v3("POST", "backend-onboarding/preflight", body())).jsonBody as Doc).plan as never, url: "https://other.services.ai.azure.com/anthropic" } as never, null);
+    return real(apimId, id);
+  };
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 409);
+  assert.equal(fake.apim.size, 0);
+});
+
+test("an APIM backend that does not read back with the URL is reported incomplete", async () => {
+  const fake = fakeProvider();
+  fake.provider.putApimBackend = async () => {};
+  const { v3, registry } = setup({ provider: fake });
+  const r = await v3("POST", "backend-onboarding", body());
+  assert.equal(r.status, 502);
+  assert.equal(json(r).error, "onboarding_incomplete");
+  assert.equal(await registry.read("foundry2"), null);
+});
+
+test("a rerun with nothing to change is still audited", async () => {
+  const { v3, logs } = setup();
+  assert.equal((await v3("POST", "backend-onboarding", body())).status, 201);
+  const before = logs.filter((l) => l.operation === "v3/backend-onboarding").length;
+  const again = await v3("POST", "backend-onboarding", body());
+  assert.equal(again.status, 200);
+  const audits = logs.filter((l) => l.operation === "v3/backend-onboarding");
+  assert.equal(audits.length, before + 1);
+  assert.equal(audits.at(-1)?.outcome, "unchanged");
+});
