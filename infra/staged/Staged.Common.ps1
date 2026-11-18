@@ -279,6 +279,11 @@ function ConvertTo-StgCanonical {
     }
     return $Value
 }
+function Test-StgAdminBackendOnboarding {
+    # True only for a JSON boolean true; a string such as "true" does not opt in.
+    param($Cfg)
+    return ($Cfg.admin -is [Collections.IDictionary] -and $Cfg.admin.Contains('backendOnboarding') -and $Cfg.admin.backendOnboarding -is [bool] -and $Cfg.admin.backendOnboarding)
+}
 function Get-StgStageInput {
     param($Cfg, [int]$Number)
     $input = [ordered]@{ tenantId = $Cfg.tenantId; subscriptionId = $Cfg.subscriptionId; resourceGroup = $Cfg.resourceGroup }
@@ -298,6 +303,8 @@ function Get-StgStageInput {
     if ($Number -eq 6 -and $Cfg.apim.existing -is [Collections.IDictionary] -and $Cfg.apim.existing.integrateOutboundVnet -is [bool] -and $Cfg.apim.existing.integrateOutboundVnet) {
         $input.existingApimOutbound = [ordered]@{ subscriptionId = $Cfg.apim.existing.subscriptionId; resourceGroup = $Cfg.apim.existing.resourceGroup; name = $Cfg.apim.existing.name }
     }
+    # Same for opted-in admin backend onboarding (ADR 0040) in the Stage 3 hash.
+    if ($Number -eq 3 -and (Test-StgAdminBackendOnboarding $Cfg)) { $input.adminBackendOnboarding = $true }
     $canonical = ConvertTo-StgCanonical $input | ConvertTo-Json -Depth 100 -Compress
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
 }
