@@ -15,6 +15,7 @@ Step-by-step guides. Read them in this order for a new deployment:
 | 7 | [ADMIN-UPDATE-FROM-VM.md](ADMIN-UPDATE-FROM-VM.md) | Operators publishing admin console updates and fix patches after Front Door lockdown | One-time VM setup (private endpoint, DNS, VM with managed identity, role), then each update: preview, publish through Run Command, verify, roll back |
 | 8 | [HEALTH-ALERTS.md](HEALTH-ALERTS.md) | Operators adding e-mail alerts after Step 8 (with or without Front Door) | Action group, availability tests and alert rules for the admin Health page's signals; preview, apply, test notification and removal from Cloud Shell; creates only its own tagged resources |
 | 9 | [CICD-ENVIRONMENT-DEPLOYMENT.md](CICD-ENVIRONMENT-DEPLOYMENT.md) | Platform team running deployments from GitHub Actions | One workflow for a complete environment (Stages 0-7, Front Door, DR standby, health alerts) with prerequisite checks and approval gates; reruns manage the environment; drift check. Checklist for network and Entra teams: [CICD-NETWORK-ENTRA-CHECKLIST.md](CICD-NETWORK-ENTRA-CHECKLIST.md) |
+| 10 | [CICD-SETUP.md](CICD-SETUP.md) | Platform and VM teams setting up GitHub Actions deployment | Two self-hosted runners in the VNet (preview and apply) signing in with their VM's managed identity, least-privilege roles, host bootstrap for hardened images, egress allow-list, GitHub environments, customer ZIP to private repository |
 
 Command reference for the deployment driver: [STAGED-DEPLOYMENT-V2.md](STAGED-DEPLOYMENT-V2.md).
 

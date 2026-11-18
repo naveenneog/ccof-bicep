@@ -1,0 +1,62 @@
+name: azure-login-mi
+description: >-
+  Signs the Azure CLI in with the self-hosted runner's user-assigned managed identity
+  (az login --identity), in a per-job AZURE_CONFIG_DIR, or signs it out again. No secret, no
+  federated credential and no azure/login action. Runs only on a CCOF runner set up by
+  scripts/cicd/Install-CcofRunner.sh or .ps1 (docs/runbooks/CICD-SETUP.md).
+  Call with mode login at the start of a job and with mode logout under if always() at the end;
+  composite actions have no post step.
+inputs:
+  mode:
+    description: login or logout.
+    required: false
+    default: login
+  expected-role:
+    description: >-
+      preview or apply. The step fails unless the runner's CCOF_RUNNER_ROLE matches, so a job that
+      expects the apply identity cannot run with the preview identity and the other way round.
+      Empty skips the check.
+    required: false
+    default: ''
+  client-id:
+    description: Client ID of the identity to use. Default is the runner's CCOF_RUNNER_IDENTITY_CLIENT_ID.
+    required: false
+    default: ''
+  subscription-id:
+    description: Subscription to select in the per-job profile. Default is the runner's CCOF_RUNNER_SUBSCRIPTION_ID.
+    required: false
+    default: ''
+outputs:
+  client-id:
+    description: Client ID of the identity that signed in.
+    value: ${{ steps.mi.outputs.client-id || steps.miw.outputs.client-id }}
+  subscription-id:
+    description: Subscription selected in the per-job profile.
+    value: ${{ steps.mi.outputs.subscription-id || steps.miw.outputs.subscription-id }}
+  tenant-id:
+    description: Tenant of the signed-in identity.
+    value: ${{ steps.mi.outputs.tenant-id || steps.miw.outputs.tenant-id }}
+  role:
+    description: The runner's CCOF_RUNNER_ROLE (preview or apply).
+    value: ${{ steps.mi.outputs.role || steps.miw.outputs.role }}
+runs:
+  using: composite
+  steps:
+    - id: mi
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        IN_MODE: ${{ inputs.mode }}
+        IN_ROLE: ${{ inputs.expected-role }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        IN_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+      run: bash "$GITHUB_ACTION_PATH/azure-login-mi.sh"
+    - id: miw
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        IN_MODE: ${{ inputs.mode }}
+        IN_ROLE: ${{ inputs.expected-role }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        IN_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH "azure-login-mi.ps1")'

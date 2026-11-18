@@ -144,6 +144,59 @@
   enabled there; a region-B-only account (the template's Central US placeholder) is alerted from region B.
   Prerequisite checks verify region B scope, duplicates, standby rules, Foundry coverage (`health.foundry-coverage`)
   and that each covered Foundry account exposes `ModelRequests` or `ServerErrors` (`health.foundry-metrics`).
+## 2026-11-18 - Linux runner registration identity (ADR 0042)
+
+- The Linux runner installer registers with `config.sh` as root. `RUNNER_ALLOW_RUNASROOT=1` is set
+  only for that one command. The runner directory is then locked to root before the service starts,
+  so the runner user can no longer replace the runner files or the job hook.
+- The Windows runner is not supported for production in this release; see
+  [CICD-SETUP.md](runbooks/CICD-SETUP.md) section 2.
+
+## 2026-11-18 - Nested test TEMP root
+
+- Nested test-runner fixtures receive the original TEMP root while each suite keeps its
+  separate TEMP. This avoids Windows Git path-length failures in nested fixture tests.
+
+## 2026-11-18 - Isolated short TEMP for Node tests
+
+- Node suites now use their own short TEMP, outside a deep workspace. A failed Node run retains that
+  TEMP for diagnosis; successful runs remove it without touching other directories.
+
+## 2026-11-17 - Self-hosted CI/CD runners with managed identities
+
+- New add-on [CICD-SETUP.md](runbooks/CICD-SETUP.md): `infra/cicd/` (two user-assigned identities, optional
+  runner VMs and subnet, least-privilege roles with conditioned role assignment rights, driver
+  `Invoke-CicdSetup.ps1`), host bootstrap and preflight for hardened RHEL/Ubuntu/Windows images in
+  `scripts/cicd/`, and the shared sign-in action `.github/actions/azure-login-mi` (`az login --identity`).
+  No GitHub secret, federated credential or Entra change.
+- `scripts/New-CustomerRepoFromZip.ps1`: customer ZIP from a commit with a secret scan, and ZIP to a
+  private GitHub repository. Publish pushes only to the verified private repository, never force-pushes
+  (`-ReplaceMainAt <sha>` with a lease), refuses ZIPs with `.git` metadata or links before any git command, and
+  checks that the commit holds exactly the ZIP files. The scan reads UTF-16/UTF-32, ZIP containers and PNG
+  text, fails on unscanned files, and takes exceptions only from an exact operator allow-list (`-AllowList`).
+- Both runners refuse, in a root-owned job-started hook, every job that is not `push`, `workflow_dispatch` or
+  `schedule` of a listed workflow on a protected branch (`github.previewWorkflows`, `github.applyWorkflows`);
+  pull request validation runs on GitHub-hosted runners. The bootstrap only uses dedicated directories, acts
+  only on its own runner service, refuses root runner users and proxy URLs with credentials, keeps the CA bundle
+  and tools runner-scoped, and protects the runner `.env`. The role assignment condition is documented as
+  type-only (`ServicePrincipal`); `roles.assignablePrincipalIds` limits it to exact identities.
+- `roles.foundryRolesBy: foundry-owner` hands the Foundry role assignments to the Foundry owner; dispatch-only
+  workflow `ccof-runner-smoke.yml` proves sign-in, VNet reach and the negative cases on the runners (lab results
+  in CICD-SETUP.md section 10).
+- Windows runner: `Install-CcofRunner.ps1 register` writes the tool `PATH` to the runner `.env` (the Windows
+  runner service does not read `.path`); new `print-env` command. Smoke workflow input `windows`.
+- `npm test` runs the PowerShell suites in parallel (`CCOF_TEST_THROTTLE`, default half the processors, at most
+  8), each with its own `TEMP`; every suite, Node included, gets its own logged-out Azure CLI profile (config and
+  Bicep binary, no tokens). The run fails before any suite when the test directory, the Node or PowerShell
+  suites, or a Bicep binary are missing. Full run about 280 s instead of about 1170 s on 16 logical processors.
+  New `tests/Test-RunTests.ps1` covers exit codes, empty runs, output order and isolation.
+- Each suite's `TEMP` is a short directory created by the run under the caller's `TEMP` (`ccof-t-<id>\<n>`), not
+  under the scratch directory: from a deep worktree, Git in `Test-CicdState` failed with "Filename too long". On
+  Windows the run stops before any suite if that `TEMP` would exceed 120 characters, and it deletes only the
+  directory it created. No Git or registry setting is changed.
+- Smoke workflow input `fips`; the preflight reports FIPS mode as a warning, not a pass. Lab result on RHEL 9.8 in
+  FIPS mode (functional, not a compliance test): Node.js 22 (`crypto.getFips()` = 0) and pwsh computed MD5; VM
+  extensions needed the `enableFips1403Encryption` opt-in. See CICD-SETUP.md sections 4 and 10.
 
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 

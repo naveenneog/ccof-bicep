@@ -1,0 +1,86 @@
+{
+  "_readme": "Input for infra/cicd/Invoke-CicdSetup.ps1 (docs/runbooks/CICD-SETUP.md). Copy outside the repository or under .customer-private/ and replace every REPLACE value and zero GUID. No secret belongs here: the runner registration token is passed on the command line or fetched with gh, and is never stored. One file per environment (STG, Prod): the runners and their identities are never shared between them. runner.createVms false (default) attaches the identities to the customer VMs in runner.existingVms (hardened images); true creates VMs from runner.images. runner.stage, proxy, noProxy and caCert are passed to scripts/cicd/Install-CcofRunner.sh on the VM.",
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "location": "eastus2",
+  "cicdResourceGroup": "REPLACE-cicd-rg",
+  "workloadResourceGroup": "REPLACE-workload-rg",
+  "networkResourceGroup": "REPLACE-network-rg",
+  "namePrefix": "ccof-stg-cicd",
+  "runner": {
+    "subnetId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/REPLACE-network-rg/providers/Microsoft.Network/virtualNetworks/REPLACE-vnet/subnets/cicd-runner",
+    "createSubnet": null,
+    "createVms": false,
+    "vmSize": "Standard_B2s",
+    "images": {
+      "preview": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      },
+      "apply": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+    "existingVms": {
+      "preview": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/REPLACE-vm-rg/providers/Microsoft.Compute/virtualMachines/REPLACE-preview-vm",
+      "apply": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/REPLACE-vm-rg/providers/Microsoft.Compute/virtualMachines/REPLACE-apply-vm"
+    },
+    "runnerVersion": "2.338.2",
+    "runnerSha256": "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40",
+    "nodeVersion": "22.23.5",
+    "nodeSha256": "c54118104acc524633b5abe106bbf44a53126ec8b4e5fa105cb92b5d7de8a1a1",
+    "pwshVersion": "7.7.0",
+    "pwshSha256": "c89d9c682d2c403dfe726f3df948e359675235a5bd6fab535776de69729ca0cb",
+    "bicepVersion": "v0.46.1",
+    "bicepSha256": "3e011d629ea4311b7a7dd8f0040ab2b1a072ea4ff5d02cb75e0e55a9a6703fb9",
+    "stage": "",
+    "proxy": "",
+    "noProxy": "",
+    "caCert": ""
+  },
+  "github": {
+    "owner": "REPLACE-owner",
+    "repo": "REPLACE-repo",
+    "environments": [
+      "stg"
+    ],
+    "gates": [
+      "network",
+      "entra",
+      "privatelink",
+      "marketplace"
+    ],
+    "reviewers": [],
+    "applyBranches": [
+      "main"
+    ],
+    "previewWorkflows": [
+      ".github/workflows/REPLACE-preview.yml"
+    ],
+    "applyWorkflows": [
+      ".github/workflows/REPLACE-deploy.yml"
+    ]
+  },
+  "cosmos": {
+    "accountName": "REPLACE-cosmos-account",
+    "databaseName": "ccof"
+  },
+  "foundry": [
+    {
+      "subscriptionId": "00000000-0000-0000-0000-000000000000",
+      "resourceGroup": "REPLACE-foundry-rg",
+      "accountName": "REPLACE-foundry-account"
+    }
+  ],
+  "roles": {
+    "foundryRolesBy": "operator",
+    "foundryPrivateEndpointApproval": false,
+    "deployCosmosDataWriter": false,
+    "assignablePrincipalIds": []
+  }
+}
