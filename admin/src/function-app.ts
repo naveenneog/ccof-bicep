@@ -19,6 +19,7 @@ import { handleV3Request } from "./v3.ts";
 import { createCosmosChangeLog } from "./change-log.ts";
 import { createLimitsStore } from "./sync-limits.ts";
 import { createRegistryStore } from "./backend-routing.ts";
+import { createOnboardingDependencies } from "./backend-onboarding-arm.ts";
 import { QueryCache } from "./chargeback.ts";
 import type { QuerySources } from "./chargeback.ts";
 import { ADMIN_VERSION } from "./version.ts";
@@ -46,6 +47,8 @@ const catalogStore = catalogContainer ? createCatalogStore(catalogContainer) : n
 const changeLog = catalogContainer ? createCosmosChangeLog(catalogContainer) : null;
 const limitsStore = catalogContainer ? createLimitsStore(catalogContainer) : null;
 const registry = catalogContainer ? createRegistryStore(catalogContainer) : null;
+// ADR 0040: console backend onboarding; null (routes 404) unless enabled and fully configured.
+const onboarding = createOnboardingDependencies(process.env, credential, (name) => cosmos ? openContainer({ ...cosmos, container: name }, credential) : null);
 let defaultCatalogPromise: Promise<Doc | null> | null = null;
 // A missing or invalid packaged rate card degrades only the cost-definitions view, and is retried
 // on the next request rather than cached as a permanent failure.
@@ -169,7 +172,7 @@ app.http("adminV3", {
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
       headers: (name) => request.headers.get(name), body: ["POST", "PUT"].includes(request.method.toUpperCase()) ? await request.text() : null,
     }, {
-      authenticate, projects: store, catalogStore, changeLog, limitsStore, registry, defaultCatalog: await defaultCatalog(log),
+      authenticate, projects: store, catalogStore, changeLog, limitsStore, registry, onboarding, defaultCatalog: await defaultCatalog(log),
       operations: createOperations(process.env, credential, log), env: process.env,
       sources: await querySources(log), cache: v3Cache, directory, now: () => new Date(), newId: randomUUID, log,
     });

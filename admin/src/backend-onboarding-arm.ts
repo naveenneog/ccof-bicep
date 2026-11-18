@@ -4,7 +4,7 @@
 
 import type { Container } from "@azure/cosmos";
 import type { TokenCredential } from "@azure/identity";
-import type { DescriptorStore, OnboardingProvider } from "./backend-onboarding.ts";
+import type { DescriptorStore, OnboardingDependencies, OnboardingProvider } from "./backend-onboarding.ts";
 import { ProviderError } from "./operations.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
@@ -24,6 +24,23 @@ export function readOnboardingTargets(env: Readonly<Record<string, string | unde
   const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
   if (!ids.every((id) => APIM_ID.test(id))) throw new Error("admin_gateway_resource_ids_invalid");
   return ids;
+}
+
+const csv = (v?: string) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
+// Null (feature off, routes 404) unless ADMIN_BACKEND_ONBOARDING is exactly "true" and Cosmos, at
+// least one APIM target and an ARM scope are configured; a bad setting must never half-enable writes.
+export function createOnboardingDependencies(env: Readonly<Record<string, string | undefined>>, credential: TokenCredential,
+  openBackends: (container: string) => Container | null): OnboardingDependencies | null {
+  if (env.ADMIN_BACKEND_ONBOARDING !== "true") return null;
+  let targets: string[];
+  try { targets = readOnboardingTargets(env); } catch { return null; }
+  const resourceIds = csv(env.ADMIN_RESOURCE_IDS);
+  const discoveryScopes = csv(env.ADMIN_DISCOVERY_SCOPES);
+  if (!targets.length || !(resourceIds.length || discoveryScopes.length)) return null;
+  const container = openBackends("backends");
+  if (!container) return null;
+  return { provider: createArmOnboardingProvider(credential), descriptors: createCosmosDescriptorStore(container), targets, resourceIds, discoveryScopes };
 }
 
 export function createArmOnboardingProvider(credential: TokenCredential, transport: typeof fetch = fetch): OnboardingProvider {

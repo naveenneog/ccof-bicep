@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { TokenCredential } from "@azure/identity";
 import type { Container } from "@azure/cosmos";
-import { createArmOnboardingProvider, createCosmosDescriptorStore, readOnboardingTargets } from "../src/backend-onboarding-arm.ts";
+import { createArmOnboardingProvider, createCosmosDescriptorStore, createOnboardingDependencies, readOnboardingTargets } from "../src/backend-onboarding-arm.ts";
 import { ProviderError } from "../src/operations.ts";
 
 const SUB = "/subscriptions/00000000-0000-0000-0000-000000000001";
@@ -103,4 +103,23 @@ test("targets come from ADMIN_GATEWAY_RESOURCE_IDS, else the single gateway ID; 
   assert.deepEqual(readOnboardingTargets({ ADMIN_GATEWAY_RESOURCE_ID: APIM }), [APIM]);
   assert.throws(() => readOnboardingTargets({ ADMIN_GATEWAY_RESOURCE_IDS: ACCOUNT }), /gateway/);
   assert.deepEqual(readOnboardingTargets({}), []);
+});
+
+test("onboarding dependencies are built only when the flag is exactly true and the config is complete", () => {
+  const opened: string[] = [];
+  const open = (name: string) => { opened.push(name); return {} as Container; };
+  const env = { ADMIN_BACKEND_ONBOARDING: "true", ADMIN_GATEWAY_RESOURCE_IDS: `${APIM},${APIM}-b`, ADMIN_RESOURCE_IDS: ` ${ACCOUNT} ,`, ADMIN_DISCOVERY_SCOPES: SUB };
+  const deps = createOnboardingDependencies(env, credential, open);
+  assert.ok(deps);
+  assert.deepEqual(deps.targets, [APIM, `${APIM}-b`]);
+  assert.deepEqual(deps.resourceIds, [ACCOUNT]);
+  assert.deepEqual(deps.discoveryScopes, [SUB]);
+  assert.deepEqual(opened, ["backends"]);
+  for (const flag of [undefined, "", "TRUE", "1", "false"]) {
+    assert.equal(createOnboardingDependencies({ ...env, ADMIN_BACKEND_ONBOARDING: flag }, credential, open), null, `flag ${flag}`);
+  }
+  assert.equal(createOnboardingDependencies(env, credential, () => null), null, "no Cosmos");
+  assert.equal(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "bogus", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open), null, "bad targets");
+  assert.equal(createOnboardingDependencies({ ...env, ADMIN_GATEWAY_RESOURCE_IDS: "", ADMIN_GATEWAY_RESOURCE_ID: "" }, credential, open), null, "no targets");
+  assert.equal(createOnboardingDependencies({ ...env, ADMIN_RESOURCE_IDS: "", ADMIN_DISCOVERY_SCOPES: "" }, credential, open), null, "no scope");
 });
