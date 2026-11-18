@@ -1,5 +1,12 @@
 # Change log
 
+## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
+
+- Backends > **Onboard Foundry account** (off by default, `admin.backendOnboarding`) checks an existing
+  account read-only (scope, deployments, approved private endpoint, APIM roles, ID free) and then adds
+  the APIM backend in every region, the gateway descriptor and the registry entry. No scripts and no
+  Entra change; idempotent reruns. Roles and config keys: ADMIN-OPERATIONS section 7.
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

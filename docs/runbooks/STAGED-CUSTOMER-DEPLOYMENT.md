@@ -268,8 +268,9 @@ this runbook's application deployment commands.
 
 V2 optional settings are `ADMIN_GRAPH_ENABLED`, `ADMIN_RESOURCE_IDS` /
 `ADMIN_DISCOVERY_SCOPES`, `ADMIN_WORKSPACE_ID` + `ADMIN_LOG_RESOURCE_IDS`,
-`ADMIN_CONFIG_CONTAINER`, `ADMIN_RETAIL_PRICES_ENABLED`, `ADMIN_COST_SCOPE`
-and `ADMIN_HEALTH_TARGETS`. They stay **unset/disabled unless separately
+`ADMIN_CONFIG_CONTAINER`, `ADMIN_RETAIL_PRICES_ENABLED`, `ADMIN_COST_SCOPE`,
+`ADMIN_HEALTH_TARGETS` and `ADMIN_BACKEND_ONBOARDING` (from `admin.backendOnboarding`, ADR 0040;
+see ADMIN-OPERATIONS section 7 for its roles). They stay **unset/disabled unless separately
 approved**; none is written by stage 1. Use the v2 matrix's exact identity/scopes
 and configure one capability at a time. Retail price discovery needs outbound
 HTTPS, not a new Azure role. Health-target keys use protected setting references,
