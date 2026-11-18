@@ -78,7 +78,11 @@ $sh = [IO.File]::ReadAllText((Join-Path $repo 'scripts/cicd/Install-CcofRunner.s
 Check 'Install-CcofRunner.sh: the token comes only from RUNNER_TOKEN in the environment and is never printed' ($sh -match '--token "\$RUNNER_TOKEN"' -and
     @(($sh -split "`n") | Where-Object { $_ -match 'RUNNER_TOKEN' -and $_ -match '\b(echo|printf|note|emit|tee)\b' }).Count -eq 0 -and $sh -notmatch '--token-file|RUNNER_TOKEN=')
 Check 'Install-CcofRunner.sh: downloads verified with sha256sum before extraction' ($sh -match 'sha256sum' -and $sh.IndexOf('sha256sum') -lt $sh.IndexOf('tar x'))
-Check 'Install-CcofRunner.sh: no sudo, no NOPASSWD, not run as root, no cloud-init or extension' ($sh -notmatch 'sudo -u|sudoers' -and $sh -notmatch 'NOPASSWD' -and $sh -notmatch 'RUNNER_ALLOW_RUNASROOT' -and $sh -match 'runuser' -and $sh -notmatch '(?m)^[^#]*(cloud-init|waagent)')
+# ADR 0042: config.sh may run as root, but RUNNER_ALLOW_RUNASROOT=1 only prefixes that one command in a subshell.
+$asRoot = @(($sh -split "`n") | Where-Object { $_ -match 'RUNNER_ALLOW_RUNASROOT' })
+Check 'Install-CcofRunner.sh: no sudo, no NOPASSWD, RUNNER_ALLOW_RUNASROOT only as the prefix of a single config.sh command, no cloud-init or extension' ($sh -notmatch 'sudo -u|sudoers' -and $sh -notmatch 'NOPASSWD' -and
+    $asRoot.Count -ge 1 -and @($asRoot | Where-Object { $_ -notmatch '^\s*\(cd "\$RUNNER_DIR" && RUNNER_ALLOW_RUNASROOT=1 \./config\.sh [^;&|()]*(\)|\\)' -or ([regex]::Matches($_, 'RUNNER_ALLOW_RUNASROOT')).Count -ne 1 }).Count -eq 0 -and
+    $sh -match 'runuser' -and $sh -notmatch '(?m)^[^#]*(cloud-init|waagent)')
 Check 'Install-CcofRunner.sh: runner .env sets identity, role, hook, TMPDIR in _work and NO_PROXY with IMDS' ($sh -match 'CCOF_RUNNER_IDENTITY_CLIENT_ID=' -and $sh -match 'CCOF_RUNNER_ROLE=' -and
     $sh -match 'ACTIONS_RUNNER_HOOK_JOB_STARTED=' -and $sh -match 'TMPDIR=.*_work' -and $sh -match 'IMDS=169\.254\.169\.254' -and $sh -match 'DEFAULT_NO_PROXY="[^"]*\$IMDS')
 Check 'Install-CcofRunner.sh: SELinux contexts restored for the runner and tools' ($sh -match 'restorecon' -and $sh -match 'semanage fcontext')

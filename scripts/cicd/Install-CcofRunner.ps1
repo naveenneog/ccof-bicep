@@ -9,6 +9,8 @@ no VM extension or custom data is used. Commands:
               or taken from -Stage). Git for Windows must already be installed (customer software baseline).
   register    job policy and job-started hook under ProgramData (admin-only write), runner .env, configure the
               runner as a Windows service. Needs $env:RUNNER_TOKEN (registration token); it is never written.
+              Needs -ReviewedMainEnforced: the operator confirms that GitHub, not this host, enforces reviewed
+              pull requests without bypass on the allowed branches.
   status      service state, then Test-RunnerHost.ps1 next to this script.
   remove      unregister; $env:RUNNER_TOKEN is a remove token.
   check       validate the arguments and paths and print the service of -RunnerDir; changes nothing.
@@ -33,7 +35,8 @@ param(
     [string]$PwshVersion = '7.7.0', [string]$PwshSha256 = '7c74e03b20a75b59715847439d046a6214b1863ee79b187872980f139bb4a05f',
     [string]$BicepVersion = 'v0.46.1', [string]$BicepSha256 = '441d3d6094513acaa8a9be0b96b754d174bc0c19064c7be04e35b87e67b66250',
     [string]$AzMsi, [string]$AzSha256, [string]$Stage, [string]$Proxy, [string]$NoProxy, [string]$CaCert,
-    [string]$RunnerDir = 'C:\actions-runner', [string]$ToolsDir = 'C:\ccof-tools'
+    [string]$RunnerDir = 'C:\actions-runner', [string]$ToolsDir = 'C:\ccof-tools',
+    [switch]$ReviewedMainEnforced
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -90,6 +93,8 @@ if ($Command -in 'register', 'print-env') {
     if (",$Labels," -notlike "*,ccof-$Role,*" -or ",$Labels," -like "*,ccof-$other,*") { Refuse "labels must include ccof-$Role and not ccof-$other" }
     Want 'AllowedRefs' $AllowedRefs '^refs/heads/[A-Za-z0-9._/-]+( refs/heads/[A-Za-z0-9._/-]+)*$'
     Want 'AllowedWorkflows' $AllowedWorkflows '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$'
+    # Operator attestation, not a check: the hook trusts these branches and cannot see how GitHub protects them.
+    if ($Command -eq 'register' -and -not $ReviewedMainEnforced) { Refuse "register needs -ReviewedMainEnforced: confirm first that GitHub enforces, for every branch in -AllowedRefs ($AllowedRefs), a ruleset or branch protection that requires a reviewed pull request (code owner review for .github/ and deploy/), blocks force pushes and deletion, and lets nobody bypass it, administrators included. Default protection does not. This host cannot check it (docs/runbooks/CICD-SETUP.md section 1)" }
 }
 function Test-ReparsePoint([string]$Path) { $i = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue; $i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) }
 function Assert-SafeDir([string]$Name, [string]$Path, [string[]]$Legacy = @()) {
@@ -186,6 +191,42 @@ function New-CcofBundle {
     Set-Content (Join-Path $ca 'ccof-ca-bundle.pem') ((Get-Content -Raw $certifi) + "`n" + (Get-Content -Raw $CaCert)) -Encoding ascii -NoNewline
     return (Join-Path $ca 'ccof-ca-bundle.pem')
 }
+function Set-CcofAcl([string]$Path, $Acl) {
+    # Set-Acl can also try to write the SACL, which needs SeSecurityPrivilege; write only the DACL.
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSObject.Methods['SetAccessControl']) { $item.SetAccessControl($Acl) } else { [IO.FileSystemAclExtensions]::SetAccessControl($item, $Acl) }
+}
+function Protect-RunnerDir([string]$Dir, [string]$Account) {    # Jobs run as the service account. config.cmd gives a group holding it Full control of the runner root, and Full
+    # control of a folder (delete child) lets it delete and replace .env, which points to the job-started hook,
+    # whatever the ACL of .env. The account keeps read on the root and Modify on _work and _diag only.
+    foreach ($w in '_work', '_diag') {
+        $p = Join-Path $Dir $w
+        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { Fail "$p is a link: install into a new RunnerDir" }
+    }
+    $rule = { param($Who, $Rights) New-Object Security.AccessControl.FileSystemAccessRule($Who, $Rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($r in @(@('BUILTIN\Administrators', 'FullControl'), @('NT AUTHORITY\SYSTEM', 'FullControl'), @($Account, 'ReadAndExecute'))) { $acl.AddAccessRule((& $rule $r[0] $r[1])) }
+    Set-CcofAcl $Dir $acl
+    foreach ($w in '_work', '_diag') {
+        $p = Join-Path $Dir $w; New-Item -ItemType Directory -Force $p | Out-Null
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($r in @(@('BUILTIN\Administrators', 'FullControl'), @('NT AUTHORITY\SYSTEM', 'FullControl'), @($Account, 'Modify'))) { $acl.AddAccessRule((& $rule $r[0] $r[1])) }
+        Set-CcofAcl $p $acl
+    }
+}
+function Write-RunnerEnv([string[]]$Lines, [string]$Account) {
+    # Only Administrators, SYSTEM and the runner service account can read .env.
+    $f = Join-Path $RunnerDir '.env'
+    Set-Content -LiteralPath $f $Lines -Encoding ascii
+    $acl = New-Object Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($r in @(@('BUILTIN\Administrators', 'FullControl'), @('NT AUTHORITY\SYSTEM', 'FullControl'), @($Account, 'Read'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($r[0], $r[1], 'Allow')))
+    }
+    Set-CcofAcl $f $acl
+}
 function Test-Imds {
     try { $r = Invoke-WebRequest -UseBasicParsing -NoProxy -TimeoutSec 5 -Headers @{ Metadata = 'true' } -Uri "http://$imds/metadata/instance?api-version=2021-02-01" } catch { $r = $null }
     if (-not $r -or $r.StatusCode -ne 200) { Fail "IMDS $imds is not reachable: managed identity needs it; allow it in the host firewall and exclude it from the proxy" }
@@ -244,20 +285,26 @@ switch ($Command) {
             $own = Get-OwnService
             if ($own) { Stop-Service -Name $own -Force; & sc.exe delete $own | Out-Null; if ($LASTEXITCODE -ne 0) { Fail "cannot delete service $own" }; Remove-Item -LiteralPath .service -Force }
             if (Test-Path .runner) { Remove-Item .runner, .credentials, .credentials_rsaparams -Force -ErrorAction SilentlyContinue }
-            & .\config.cmd --unattended --url "https://github.com/$Repository" --token $env:RUNNER_TOKEN --name $RunnerName --labels $Labels --work _work --replace --runasservice | Out-Null
-            if ($LASTEXITCODE -ne 0) { Fail 'config.cmd failed: the registration token may be expired (1 hour) or for another repository' }
+            # config.cmd starts the service at once (queued jobs may arrive): .env with the hook must exist first.
+            $account = 'NT AUTHORITY\NETWORK SERVICE'
             $envLines = Get-RunnerEnvLines $(if ($CaCert) { New-CcofBundle })
+            Write-RunnerEnv $envLines $account
+            # No self-update: the runner root is read-only for the service account; install a newer pinned version
+            # within 63 days of its release (CICD-SETUP.md section 7).
+            & .\config.cmd --unattended --url "https://github.com/$Repository" --token $env:RUNNER_TOKEN --name $RunnerName --labels $Labels --work _work --replace --runasservice --windowslogonaccount 'NT AUTHORITY\NETWORK SERVICE' --disableupdate | Out-Null
+            if ($LASTEXITCODE -ne 0) { Fail 'config.cmd failed: the registration token may be expired (1 hour) or for another repository' }
             $own = Get-OwnService
             if (-not $own) { Fail "config.cmd did not create a verifiable service for $RunnerDir" }
-            $account = "$((Get-CimInstance -ClassName Win32_Service -Filter "Name='$own'").StartName)"
-            Set-Content .env $envLines -Encoding ascii
-            # Only Administrators, SYSTEM and the runner service account can read .env.
-            $acl = New-Object Security.AccessControl.FileSecurity
-            $acl.SetAccessRuleProtection($true, $false)
-            foreach ($r in @(@('BUILTIN\Administrators', 'FullControl'), @('NT AUTHORITY\SYSTEM', 'FullControl'), @($account, 'Read'))) {
-                $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($r[0], $r[1], 'Allow')))
+            $startName = "$((Get-CimInstance -ClassName Win32_Service -Filter "Name='$own'").StartName)"
+            $sid = try { ([Security.Principal.NTAccount]$startName).Translate([Security.Principal.SecurityIdentifier]).Value } catch { '' }
+            if ($sid -ne 'S-1-5-20') { Stop-Service -Name $own -Force; Fail "service $own runs as '$startName', not NETWORK SERVICE (S-1-5-20): stopped" }
+            Write-RunnerEnv $envLines $account
+            Protect-RunnerDir $RunnerDir $account
+            # Administrators own everything outside _work and _diag (an owner can change an ACL).
+            foreach ($i in @(Get-Item -LiteralPath $RunnerDir -Force) + @(Get-ChildItem -LiteralPath $RunnerDir -Force | Where-Object Name -notin '_work', '_diag')) {
+                & icacls.exe $i.FullName /setowner *S-1-5-32-544 $(if ($i.PSIsContainer -and $i.FullName -ne $RunnerDir) { '/T' }) /C /Q | Out-Null
+                if ($LASTEXITCODE -ne 0) { Stop-Service -Name $own -Force; Fail "cannot set the owner of $($i.FullName): stopped" }
             }
-            Set-Acl -LiteralPath (Join-Path $RunnerDir '.env') $acl
             Restart-Service -Name $own -Force
             "registered $RunnerName ($Labels) to $Repository as $own"
         } finally { Pop-Location }

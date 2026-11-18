@@ -5,7 +5,9 @@
 #   install     tools (git curl jq tar via apt/dnf/yum; Azure CLI package; Node.js, PowerShell, Bicep and the
 #               runner from tarballs pinned by SHA-256, downloaded or taken from --stage) and the runner user
 #   register    root-owned job policy and job-started hook, runner .env, configure and start the service.
-#               Needs RUNNER_TOKEN (registration token, 1 hour) in the environment; it is never written
+#               Needs RUNNER_TOKEN (registration token, 1 hour) in the environment; it is never written.
+#               Needs --reviewed-main-enforced yes: the operator confirms that GitHub, not this host, enforces
+#               reviewed pull requests without bypass on the allowed branches
 #   status      service state, then Test-RunnerHost.sh (next to this script) as the runner user
 #   remove      stop the service and unregister; RUNNER_TOKEN is a remove token
 #   check       validate the arguments, paths and runner user and print the service of --runner-dir; changes nothing
@@ -28,7 +30,7 @@ BICEP_VERSION='v0.46.1'; BICEP_SHA256='3e011d629ea4311b7a7dd8f0040ab2b1a072ea4ff
 AZ_PACKAGE=''; AZ_SHA256=''; STAGE=''; PROXY=''; NO_PROXY_EXTRA=''; CA_CERT=''
 RUNNER_USER='ghrunner'; RUNNER_DIR='/opt/actions-runner'; TOOLS=/opt/ccof-tools; WORK=/var/lib/ccof-runner
 POLICY=/etc/ccof-runner/policy; HOOK=/opt/ccof-runner/job-started.sh
-NOTES=''; LOG=/dev/null; FETCHED=''
+NOTES=''; LOG=/dev/null; FETCHED=''; REVIEWED_MAIN=''
 IMDS=169.254.169.254
 DEFAULT_NO_PROXY="localhost,127.0.0.1,$IMDS,168.63.129.16,.documents.azure.com,.azurewebsites.net,.azure-api.net,.vaultcore.azure.net,.cognitiveservices.azure.com,.services.ai.azure.com,.openai.azure.com"
 
@@ -99,6 +101,7 @@ while [ $# -gt 0 ]; do
     --az-package) AZ_PACKAGE="$2" ;; --az-sha256) AZ_SHA256="$2" ;;
     --stage) STAGE="$2" ;; --proxy) PROXY="$2" ;; --no-proxy) NO_PROXY_EXTRA="$2" ;; --ca-cert) CA_CERT="$2" ;;
     --runner-user) RUNNER_USER="$2" ;; --runner-dir) RUNNER_DIR="$2" ;; --tools-dir) TOOLS="$2" ;;
+    --reviewed-main-enforced) REVIEWED_MAIN="$2" ;;
     *) refuse "unknown option $1" ;;
   esac
   shift 2
@@ -129,6 +132,8 @@ if [ "$COMMAND" = register ]; then
   [[ ",$LABELS," != *",ccof-$other,"* ]] || refuse "labels must not include ccof-$other"
   want allowed-refs "$ALLOWED_REFS" '^refs/heads/[A-Za-z0-9._/-]+( refs/heads/[A-Za-z0-9._/-]+)*$'
   want allowed-workflows "$ALLOWED_WORKFLOWS" '^\.github/workflows/[A-Za-z0-9._-]+( \.github/workflows/[A-Za-z0-9._-]+)*$'
+  # Operator attestation, not a check: the hook trusts these branches and cannot see how GitHub protects them.
+  [ "$REVIEWED_MAIN" = yes ] || refuse "register needs --reviewed-main-enforced yes: confirm first that GitHub enforces, for every branch in --allowed-refs ($ALLOWED_REFS), a ruleset or branch protection that requires a reviewed pull request (code owner review for .github/ and deploy/), blocks force pushes and deletion, and lets nobody bypass it, administrators included. Default protection does not. This host cannot check it (docs/runbooks/CICD-SETUP.md section 1)"
 fi
 
 # ---- dedicated paths, runner user and the runner's own service (checked before any change)
@@ -297,21 +302,41 @@ do_install() {
     note "bicep $BICEP_VERSION installed"
   fi
   id "$RUNNER_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$RUNNER_USER" >>"$LOG" 2>&1 || fail user "cannot create user $RUNNER_USER"
-  if [ "$(cat "$RUNNER_DIR/.ccof-version" 2>/dev/null)" != "$RUNNER_VERSION" ]; then
+  if [ "$(cat "$RUNNER_DIR/.ccof-version" 2>/dev/null)" != "$RUNNER_VERSION" ] || [ ! -e "$RUNNER_DIR/.ccof-layout" ]; then
     fetch "actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" "$RUNNER_SHA256"
+    # A new version, or a runner that an earlier bootstrap left writable by the runner user: fresh binaries only.
+    rm -rf -- "$RUNNER_DIR/bin" "$RUNNER_DIR/externals"
     mkdir -p "$RUNNER_DIR" && touch "$RUNNER_DIR/.ccof-owned" && tar xzf "$FETCHED" -C "$RUNNER_DIR" --no-same-owner >>"$LOG" 2>&1 || fail runner "runner extraction failed"
     "$RUNNER_DIR/bin/installdependencies.sh" >>"$LOG" 2>&1 || fail runner "runner dependency install failed (libicu, openssl, krb5 from the distribution repositories)"
     echo "$RUNNER_VERSION" >"$RUNNER_DIR/.ccof-version"
-    # Fresh extraction, before any job ran: the only recursive ownership change, never following links.
-    chown -R -h "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR"
     note "runner $RUNNER_VERSION installed in $RUNNER_DIR"
   fi
-  mkdir -p "$RUNNER_DIR/_work/_tmp" && chown -h "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR" "$RUNNER_DIR/_work" "$RUNNER_DIR/_work/_tmp" && chmod 750 "$RUNNER_DIR" || fail runner "cannot prepare $RUNNER_DIR/_work"
+  lock_runner_dir
+  echo root-locked-1 >"$RUNNER_DIR/.ccof-layout" && chmod 644 "$RUNNER_DIR/.ccof-layout" || fail runner "cannot write $RUNNER_DIR/.ccof-layout"
   rm -rf "$WORK/dl"
   selinux_fix
   note "az $(az version --query '"azure-cli"' -o tsv 2>/dev/null), node $("$TOOLS/bin/node" -v 2>/dev/null), pwsh $PWSH_VERSION, bicep $BICEP_VERSION"
 }
 
+
+lock_runner_dir() {
+  # Jobs run as the runner user. A directory owner can unlink and replace any child whatever the child's owner and
+  # mode, so the runner directory is root's: the runner user cannot replace .env (it points to the job-started
+  # hook), the registration files, runsvc.sh or the runner binaries. It writes only _work and _diag.
+  local d="$RUNNER_DIR" w
+  for w in _work _work/_tmp _diag .env .runner .credentials .credentials_rsaparams .runner_migrated .credentials_migrated; do
+    [ ! -L "$d/$w" ] || fail runner "$d/$w is a symbolic link: install into a new --runner-dir"
+  done
+  mkdir -p "$d/_work/_tmp" "$d/_diag" || fail runner "cannot create $d/_work and $d/_diag"
+  find "$d" -mindepth 1 \( -path "$d/_work" -o -path "$d/_diag" \) -prune -o -exec chown -h root:root {} + || fail runner "cannot give $d to root"
+  find "$d" -mindepth 1 \( -path "$d/_work" -o -path "$d/_diag" \) -prune -o ! -type l -exec chmod go-w {} + || fail runner "cannot remove group and other write in $d"
+  for w in .env .runner .credentials .credentials_rsaparams .runner_migrated .credentials_migrated; do
+    [ -e "$d/$w" ] || continue
+    chown root:"$RUNNER_USER" "$d/$w" && chmod 640 "$d/$w" || fail runner "cannot protect $d/$w"
+  done
+  chown root:"$RUNNER_USER" "$d" && chmod 750 "$d" || fail runner "cannot protect $d"
+  chown -h "$RUNNER_USER:$RUNNER_USER" "$d/_work" "$d/_work/_tmp" "$d/_diag" && chmod 750 "$d/_work" "$d/_diag" || fail runner "cannot give $d/_work and $d/_diag to $RUNNER_USER"
+}
 
 write_env() {
   # The runner reads .env and .path at start; every job inherits them.
@@ -347,7 +372,7 @@ write_env() {
 }
 
 do_register() {
-  [ -x "$RUNNER_DIR/config.sh" ] || fail register "runner is not installed: run install first"
+  [ -x "$RUNNER_DIR/config.sh" ] && [ -e "$RUNNER_DIR/.ccof-layout" ] || fail register "runner is not installed by this bootstrap version: run install first"
   [ -n "${RUNNER_TOKEN:-}" ] || refuse "RUNNER_TOKEN (registration token) is not set in the environment"
   [[ "$RUNNER_TOKEN" =~ ^[A-Za-z0-9_-]{20,200}$ ]] || refuse "RUNNER_TOKEN does not look like a registration token"
   mkdir -p /etc/ccof-runner "$(dirname "$HOOK")"
@@ -359,12 +384,15 @@ do_register() {
   # svc.sh acts only on the unit named in $RUNNER_DIR/.service, verified above; other runner services are untouched.
   if [ -n "$SVC" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1 || fail register "cannot stop the existing service $SVC"; fi
   # Re-registration: drop the local registration; --replace takes over the runner with the same name on GitHub.
-  rm -f "$RUNNER_DIR/.runner" "$RUNNER_DIR/.credentials" "$RUNNER_DIR/.credentials_rsaparams"
-  (cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- ./config.sh --unattended --url "https://github.com/$REPOSITORY" \
-    --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$LABELS" --work _work --replace) >>"$LOG" 2>&1 \
+  rm -f "$RUNNER_DIR/.runner" "$RUNNER_DIR/.credentials" "$RUNNER_DIR/.credentials_rsaparams" "$RUNNER_DIR/.runner_migrated" "$RUNNER_DIR/.credentials_migrated"
+  # As root for this one command (the runner user has no write access to the runner directory). No self-update:
+  # bin is root's; install a newer pinned version within 63 days of its release (CICD-SETUP.md section 7).
+  (cd "$RUNNER_DIR" && RUNNER_ALLOW_RUNASROOT=1 ./config.sh --unattended --url "https://github.com/$REPOSITORY" \
+    --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$LABELS" --work _work --replace --disableupdate) >>"$LOG" 2>&1 \
     || fail register "config.sh failed: the registration token may be expired (1 hour) or for another repository"
   write_env
   (cd "$RUNNER_DIR" && ./svc.sh install "$RUNNER_USER") >>"$LOG" 2>&1 || fail register "runner service install failed"
+  lock_runner_dir
   selinux_fix
   (cd "$RUNNER_DIR" && ./svc.sh start) >>"$LOG" 2>&1 || fail register "runner service start failed"
   own_service
@@ -388,7 +416,7 @@ do_remove() {
   [ -n "${RUNNER_TOKEN:-}" ] || refuse "RUNNER_TOKEN (a remove token) is not set in the environment"
   own_service
   if [ -n "$SVC" ]; then (cd "$RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) >>"$LOG" 2>&1; fi
-  (cd "$RUNNER_DIR" && runuser -u "$RUNNER_USER" -- ./config.sh remove --token "$RUNNER_TOKEN") >>"$LOG" 2>&1 || fail remove "config.sh remove failed"
+  (cd "$RUNNER_DIR" && RUNNER_ALLOW_RUNASROOT=1 ./config.sh remove --token "$RUNNER_TOKEN") >>"$LOG" 2>&1 || fail remove "config.sh remove failed"
   note "removed the runner registration"
 }
 

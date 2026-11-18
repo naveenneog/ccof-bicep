@@ -23,6 +23,10 @@
   -Apply     Changes Azure (and GitHub with -ConfigureGitHub).
   Registration token (Host with -ViaRunCommand -Apply): -RegistrationToken, else $env:CCOF_RUNNER_TOKEN,
   else -FetchToken (gh, repository admin). It is passed as a Run Command protected parameter and never written.
+  -ReviewedMainEnforced: the operator confirms that GitHub enforces, on github.applyBranches, a reviewed pull
+  request that nobody can bypass (administrators included). Neither this script nor the runner can check it.
+  Without it the register commands are printed without --reviewed-main-enforced (Install-CcofRunner.sh then
+  refuses register) and Host -ViaRunCommand -Apply is refused.
   Exit codes: 0 done, 2 input refused, 3 refused or failed.
 
 .EXAMPLE
@@ -40,6 +44,7 @@ param(
     [switch]$ConfigureGitHub,
     [string]$RegistrationToken,
     [switch]$FetchToken,
+    [switch]$ReviewedMainEnforced,
     [string]$StateDirectory
 )
 Set-StrictMode -Version Latest
@@ -193,25 +198,33 @@ try {
     if ($Phase -contains 'Host') {
         Say "`n== Host"
         $script = Join-Path $repo 'scripts/cicd/Install-CcofRunner.sh'
+        $branchesText = (@(Get-CicdValue $cfg 'github.applyBranches') -join ', ')
+        Say "  REQUIRED before register (not checked by this script or the runner): on GitHub, branches $branchesText of $ghRepo"
+        Say '  are protected by a ruleset or branch protection rule that requires a pull request with approving review'
+        Say '  (code owner review for .github/ and deploy/), blocks force pushes and deletion, and has no bypass, administrators'
+        Say '  included. Default branch protection only blocks force pushes and deletion. Without this, anyone who can push to'
+        Say '  those branches runs code with the runner identities. Confirm with -ReviewedMainEnforced.'
+        if (-not $ReviewedMainEnforced) { Say '  -ReviewedMainEnforced not given: register is printed without --reviewed-main-enforced and refuses to run.' }
         if (-not $ViaRunCommand) {
             Say '  The VM admin copies scripts/cicd/Install-CcofRunner.sh and Test-RunnerHost.sh to each VM and runs, as root:'
             foreach ($r in $runners) {
                 $cid = $idOf[$r.role].clientId
                 Say "  [$($r.role)] $(if ($createVms) { $r.vmName } else { $cfg.runner.existingVms[$r.role] })"
                 Say "    sudo bash Install-CcofRunner.sh $(Format-Args (Get-CicdInstallArgs $cfg $r.role 'install'))"
-                if ($cid) { Say "    read -rs RUNNER_TOKEN && sudo env RUNNER_TOKEN=`"`$RUNNER_TOKEN`" bash Install-CcofRunner.sh $(Format-Args (Get-CicdInstallArgs $cfg $r.role 'register' -ClientId $cid))" }
+                if ($cid) { Say "    read -rs RUNNER_TOKEN && sudo env RUNNER_TOKEN=`"`$RUNNER_TOKEN`" bash Install-CcofRunner.sh $(Format-Args (Get-CicdInstallArgs $cfg $r.role 'register' -ClientId $cid -ReviewedMainEnforced:$ReviewedMainEnforced))" }
                 else { Say '    register: the identity does not exist yet (run -Phase Infra -Apply)' }
             }
             Say "  Registration token: gh api -X POST repos/$ghRepo/actions/runners/registration-token --jq .token (valid one hour)."
         } else {
             $token = if ($RegistrationToken) { $RegistrationToken } elseif ($env:CCOF_RUNNER_TOKEN) { $env:CCOF_RUNNER_TOKEN } else { '' }
             if ($Apply -and -not $token -and $FetchToken) { $token = "$(Invoke-CicdTool 'gh' @('api', '-X', 'POST', "repos/$ghRepo/actions/runners/registration-token", '--jq', '.token') -Raw)".Trim() }
+            if ($Apply -and -not $ReviewedMainEnforced) { throw 'refused: Host -ViaRunCommand -Apply needs -ReviewedMainEnforced (see REQUIRED above)' }
             if ($Apply -and -not (Test-CicdRegistrationToken $token)) { throw 'refused: Host -ViaRunCommand -Apply needs a registration token (-RegistrationToken, CCOF_RUNNER_TOKEN or -FetchToken)' }
             foreach ($r in $runners) {
                 $vmIdText = if ($createVms) { "/subscriptions/$sub/resourceGroups/$cicdRg/providers/Microsoft.Compute/virtualMachines/$($r.vmName)" } else { "$($cfg.runner.existingVms[$r.role])" }
                 $vm = [regex]::Match($vmIdText, '/resourceGroups/([^/]+)/providers/Microsoft\.Compute/virtualMachines/([^/]+)$')
                 foreach ($cmd in 'install', 'register') {
-                    $a = Get-CicdInstallArgs $cfg $r.role $cmd -ClientId $idOf[$r.role].clientId
+                    $a = Get-CicdInstallArgs $cfg $r.role $cmd -ClientId $idOf[$r.role].clientId -ReviewedMainEnforced:$ReviewedMainEnforced
                     $file = Join-Path $stateDir "runcommand-$($r.role)-$cmd.sh"
                     [IO.File]::WriteAllText($file, (New-CicdRunCommandScript -Arguments $a -ScriptPath $script))
                     Say "  [$($r.role)] $($vm.Groups[2].Value): Run Command $cmd"

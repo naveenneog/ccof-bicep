@@ -160,7 +160,9 @@ function Get-CicdInstallArgs {
     # argument: the script reads RUNNER_TOKEN from the environment.
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Config, [Parameter(Mandatory)][ValidateSet('preview', 'apply')][string]$Role,
-        [Parameter(Mandatory)][ValidateSet('install', 'register', 'status', 'remove')][string]$Command, [string]$ClientId)
+        [Parameter(Mandatory)][ValidateSet('install', 'register', 'status', 'remove')][string]$Command, [string]$ClientId,
+        # Operator attestation that GitHub enforces reviewed main without bypass; never defaulted from configuration.
+        [switch]$ReviewedMainEnforced)
     $v = { param($p) "$(Get-CicdValue $Config $p)" }
     $r = @(Get-CicdRunners $Config | Where-Object role -eq $Role)[0]
     $a = [System.Collections.Generic.List[string]]::new()
@@ -174,6 +176,7 @@ function Get-CicdInstallArgs {
         $refs = (@(Get-CicdValue $Config 'github.applyBranches') | ForEach-Object { "refs/heads/$_" }) -join ' '
         $a.AddRange([string[]]@('--client-id', $ClientId, '--subscription-id', (& $v 'subscriptionId'), '--tenant-id', (& $v 'tenantId'),
                 "--repository", "$(& $v 'github.owner')/$(& $v 'github.repo')", '--runner-name', $r.runnerName, '--labels', $r.labels, '--allowed-refs', $refs))
+        if ($ReviewedMainEnforced) { $a.AddRange([string[]]@('--reviewed-main-enforced', 'yes')) }
         $wf = (@(Get-CicdValue $Config "github.$($Role)Workflows") | Where-Object { $_ }) -join ' '
         if (-not $wf) { throw "input_refused: github.$($Role)Workflows is empty; the runner accepts only listed workflows" }
         $a.AddRange([string[]]@('--allowed-workflows', $wf))

@@ -82,12 +82,91 @@ if ($bash) {
     Check 'sh check: an earlier CCOF tools-dir (node, pwsh only) is accepted' ($r.code -eq 0)
     $r = Chk $ours @('--proxy', 'http://fakeuser:FAKEPASS123@proxy.example:8080')
     Check 'sh: a credential-bearing proxy is refused and not echoed' ($r.code -eq 2 -and $r.out -notmatch 'FAKEPASS123|fakeuser')
+    # Reviewed-main attestation: refused before any check of the host or any change (no systemctl call).
+    $reg = @('register', '--role', 'apply', '--client-id', '11111111-1111-4111-8111-111111111111', '--subscription-id', '22222222-2222-4222-8222-222222222222',
+        '--tenant-id', '33333333-3333-4333-8333-333333333333', '--repository', 'octo/ccof-lab', '--runner-name', 'lab-apply', '--allowed-workflows', '.github/workflows/deploy.yml', '--runner-dir', $ours, '--tools-dir', $tools)
+    foreach ($v in @($null, 'no', 'YES')) {
+        $r = Invoke-Sh ($reg + @(if ($null -ne $v) { '--reviewed-main-enforced', $v }))
+        Check "sh register: reviewed-main attestation '$v' is refused before any change" ($r.code -eq 2 -and $r.out -match 'needs --reviewed-main-enforced yes' -and $r.out -match 'nobody bypass' -and $r.calls.Count -eq 0)
+    }
+    $r = Invoke-Sh ($reg + @('--reviewed-main-enforced', 'yes'))
+    Check 'sh register: with the attestation it goes on to the host checks (here: not root)' ($r.code -eq 2 -and $r.out -notmatch 'reviewed-main-enforced' -and $r.out -match 'run as root')
+
+    # Runner directory lock. Jobs run as the runner user; a directory owner can unlink and replace any child whatever
+    # the child's owner, so only _work and _diag may belong to that user. chown/chmod are logging fakes; find is real.
+    $lk = Join-Path $root 'lockdir'; $lbin = Join-Path $root 'lockbin'; $llog = Join-Path $root 'lock.log'
+    New-Item -ItemType Directory $lbin, (Join-Path $lk 'bin'), (Join-Path $lk 'externals/node22/bin'), (Join-Path $lk '_work/repo'), (Join-Path $lk '_diag') | Out-Null
+    $lockFiles = '.env', '.runner', '.credentials', '.credentials_rsaparams'
+    foreach ($f in @('bin/Runner.Listener', 'externals/node22/bin/node', '.path', 'config.sh', 'runsvc.sh', '_work/repo/x', '_diag/Runner_1.log') + $lockFiles) { [IO.File]::WriteAllText((Join-Path $lk $f), '') }
+    foreach ($c in 'chown', 'chmod') {
+        [IO.File]::WriteAllText((Join-Path $lbin $c), "#!/bin/bash`nh=''; s=''`nfor a in `"`$@`"; do case `"`$a`" in -h) h=' -h' ;; -*) echo `"$c REFUSED-OPTION `$a`" >>`"`$LOCK_LOG`"; exit 1 ;; *) if [ -z `"`$s`" ]; then s=`"`$a`"; else echo `"$c`$h `$s `$a`" >>`"`$LOCK_LOG`"; fi ;; esac; done`n")
+    }
+    function Invoke-Lock([string]$Dir) {
+        if (Test-Path $llog) { Remove-Item $llog }
+        $cmd = "export PATH=`"$(& $toBash $lbin)`":`$PATH LOCK_LOG='$(& $toBash $llog)'; fail() { echo `"failed: `$*`"; exit 3; }; RUNNER_DIR='$(& $toBash $Dir)'; RUNNER_USER=ghrunner; " +
+            "eval `"`$(sed -n '/^lock_runner_dir() {/,/^}/p' '$sh')`"; type lock_runner_dir >/dev/null 2>&1 || { echo 'no lock_runner_dir'; exit 9; }; lock_runner_dir && echo locked"
+        $out = & $bash -c $cmd 2>&1
+        @{ code = $LASTEXITCODE; out = "$out"; calls = @(if (Test-Path $llog) { Get-Content $llog }) }
+    }
+    $lb = & $toBash $lk
+    $r = Invoke-Lock $lk; $c = $r.calls
+    Check 'sh lock: lock_runner_dir runs' ($r.code -eq 0 -and $r.out -match 'locked')
+    Check 'sh lock: runner binaries, runsvc.sh and scripts become root:root without following links' (
+        @("$lb/bin", "$lb/bin/Runner.Listener", "$lb/externals/node22/bin/node", "$lb/runsvc.sh", "$lb/config.sh" | Where-Object { $c -cnotcontains "chown -h root:root $_" }).Count -eq 0)
+    Check 'sh lock: .env, .runner and the credentials are root:<runner user> 640' (
+        @($lockFiles | Where-Object { $c -cnotcontains "chown root:ghrunner $lb/$_" -or $c -cnotcontains "chmod 640 $lb/$_" }).Count -eq 0)
+    Check 'sh lock: the runner directory itself is root:<runner user> 750' ($c -ccontains "chown root:ghrunner $lb" -and $c -ccontains "chmod 750 $lb")
+    Check 'sh lock: group and other write is removed from the rest' ($c -ccontains "chmod go-w $lb/bin/Runner.Listener" -and $c -ccontains "chmod go-w $lb/runsvc.sh")
+    $toUser = @($c | Where-Object { $_ -match 'ghrunner:ghrunner' } | ForEach-Object { $_ -replace '^chown -h ghrunner:ghrunner ', '' } | Sort-Object)
+    Check 'sh lock: only _work, _work/_tmp and _diag are given to the runner user' (($toUser -join '|') -ceq (@("$lb/_diag", "$lb/_work", "$lb/_work/_tmp") -join '|'))
+    Check 'sh lock: nothing inside _work or _diag is changed (job content, links)' (@($c | Where-Object { $_ -match [regex]::Escape("$lb/") + '(_work|_diag)/' -and $_ -notmatch '_work/_tmp$' }).Count -eq 0)
+    Check 'sh lock: no recursive chown or chmod' (-not ($c -match 'REFUSED-OPTION'))
+    $lk2 = Join-Path $root 'lockdir2'; New-Item -ItemType Directory $lk2 | Out-Null
+    $lnk2 = & $bash -c "MSYS=winsymlinks:nativestrict ln -s '$(& $toBash $target)' '$(& $toBash $lk2)/_work' && [ -L '$(& $toBash $lk2)/_work' ] && echo ok" 2>$null
+    if ("$lnk2" -eq 'ok') {
+        $r = Invoke-Lock $lk2
+        Check 'sh lock: a _work that is a symbolic link fails before any change' ($r.code -eq 3 -and $r.out -match 'symbolic link' -and $r.calls.Count -eq 0)
+    } else { Write-Host 'SKIP lock symlink case: native symlinks are not available' }
 
     $text = Get-Content -Raw (Join-Path $repo 'scripts/cicd/Install-CcofRunner.sh')
+    $regBody = [regex]::Match($text, '(?s)\ndo_register\(\) \{.*?\n\}').Value; $instBody = [regex]::Match($text, '(?s)\ndo_install\(\) \{.*?\n\}').Value
+    Check 'sh static: register runs config.sh as root for that command only, with --disableupdate' ($regBody -match 'RUNNER_ALLOW_RUNASROOT=1 \./config\.sh --unattended' -and $regBody -match '--replace --disableupdate')
+    Check 'sh static: config.sh never runs as the runner user (it would need a writable runner directory)' ($text -notmatch 'runuser[^\n]*config\.sh')
+    Check 'sh static: register locks the directory after svc.sh install and before svc.sh start' ($regBody -match '(?s)svc\.sh install.*\n\s*lock_runner_dir\n.*svc\.sh start')
+    Check 'sh static: install locks the directory and never gives it to the runner user' ($instBody -match '\n\s*lock_runner_dir\n' -and $instBody -notmatch 'chown[^\n]*"\$RUNNER_USER:\$RUNNER_USER" "\$RUNNER_DIR"')
+    Check 'sh static: a runner installed by an earlier bootstrap gets fresh bin and externals' ($instBody -match '\.ccof-layout' -and $instBody -match 'rm -rf -- "\$RUNNER_DIR/bin" "\$RUNNER_DIR/externals"' -and $regBody -match '\.ccof-layout')
     foreach ($p in 'list-unit-files', 'git config --system', 'ln -sf[^\n]*/usr/local/bin', 'update-ca-trust', 'update-ca-certificates', 'restorecon[^\n]*/usr/local/bin', 'chown -R "') {
         Check "sh static: no '$p'" ($text -notmatch $p)
     }
     Check 'sh static: .env is written root:runner 640' ($text -match 'chown root:"\$RUNNER_USER" "\$RUNNER_DIR/\.env\.new" && chmod 640')
+
+    # Registration lifecycle (ADR 0042), run from the real do_register/do_remove bodies with fake config.sh and svc.sh that
+    # log whether they see RUNNER_ALLOW_RUNASROOT. Host-changing helpers are stubs; the fake token is not a real one.
+    $rd = Join-Path $root 'regdir'; $rlog = Join-Path $root 'reg.log'; New-Item -ItemType Directory $rd | Out-Null
+    [IO.File]::WriteAllText((Join-Path $rd '.ccof-layout'), "root-locked-1`n")
+    [IO.File]::WriteAllText((Join-Path $rd 'config.sh'), "#!/bin/bash`nf=''; for a in `"`$@`"; do case `"`$a`" in --replace|--disableupdate) f=`"`$f`$a`" ;; esac; done`necho `"config.sh `$1 `$f root=`${RUNNER_ALLOW_RUNASROOT-unset}`" >>`"`$REG_LOG`"`n")
+    [IO.File]::WriteAllText((Join-Path $rd 'svc.sh'), "#!/bin/bash`necho `"svc.sh `$1 root=`${RUNNER_ALLOW_RUNASROOT-unset}`" >>`"`$REG_LOG`"`n")
+    function Invoke-Lifecycle([string]$Fn, [string]$Lock = 'echo "lock root=${RUNNER_ALLOW_RUNASROOT-unset}" >>"$REG_LOG"', [string]$Svc = '') {
+        if (Test-Path $rlog) { Remove-Item $rlog }
+        $rb = & $toBash $rd
+        $cmd = "set -euo pipefail; export REG_LOG='$(& $toBash $rlog)'; chmod +x '$rb/config.sh' '$rb/svc.sh'; fail() { echo `"failed: `$*`"; exit 3; }; refuse() { echo `"refused: `$*`"; exit 2; }; note() { :; }; " +
+            "mkdir() { :; }; chown() { :; }; chmod() { :; }; print_hook() { :; }; write_env() { :; }; selinux_fix() { :; }; own_service() { SVC='$Svc'; }; lock_runner_dir() { $Lock; }; " +
+            "RUNNER_DIR='$rb'; RUNNER_USER=ghrunner; LOG=/dev/null; POLICY='$rb.policy'; HOOK='$rb.hook'; ROLE=apply; REPOSITORY=octo/ccof-lab; RUNNER_NAME=lab-apply; LABELS=ccof-vnet,ccof-apply; " +
+            "ALLOWED_REFS=refs/heads/main; ALLOWED_WORKFLOWS=.github/workflows/deploy.yml; RUNNER_TOKEN=FAKEFAKEFAKEFAKEFAKEFAKE; unset RUNNER_ALLOW_RUNASROOT; " +
+            "eval `"`$(sed -n '/^$Fn() {/,/^}/p' '$sh')`"; type $Fn >/dev/null 2>&1 || { echo 'no $Fn'; exit 9; }; $Fn; echo `"after root=`${RUNNER_ALLOW_RUNASROOT-unset}`" >>`"`$REG_LOG`""
+        $out = & $bash -c $cmd 2>&1
+        @{ code = $LASTEXITCODE; out = "$out"; log = @(if (Test-Path $rlog) { Get-Content $rlog }) }
+    }
+    $r = Invoke-Lifecycle do_register
+    Check 'sh register: only config.sh sees RUNNER_ALLOW_RUNASROOT=1 (--replace --disableupdate); svc.sh, the lock and the caller do not' (
+        $r.code -eq 0 -and @($r.log | Where-Object { $_ -match 'root=1' }).Count -eq 1 -and $r.log -ccontains 'config.sh --unattended --replace--disableupdate root=1' -and $r.log[-1] -ceq 'after root=unset')
+    Check 'sh register: config.sh, then svc.sh install, then lock_runner_dir, then svc.sh start' (
+        ($r.log -join '|') -ceq 'config.sh --unattended --replace--disableupdate root=1|svc.sh install root=unset|lock root=unset|svc.sh start root=unset|after root=unset')
+    $r = Invoke-Lifecycle do_register 'echo "lock failed" >>"$REG_LOG"; return 1'
+    Check 'sh register: a failed lock stops registration before svc.sh start' ($r.code -ne 0 -and $r.log -ccontains 'lock failed' -and -not ($r.log -match 'svc\.sh start'))
+    $r = Invoke-Lifecycle do_remove -Svc 'actions.runner.octo-ccof-lab.lab-apply.service'
+    Check 'sh remove: only config.sh remove sees RUNNER_ALLOW_RUNASROOT=1; svc.sh stop and uninstall and the caller do not' (
+        $r.code -eq 0 -and ($r.log -join '|') -ceq 'svc.sh stop root=unset|svc.sh uninstall root=unset|config.sh remove  root=1|after root=unset')
 } else { Write-Host 'SKIP bash checks: Git for Windows bash not found' }
 
 # ---- Windows bootstrap: check/status with mocked service cmdlets in a child pwsh (no real service is queried or changed)
@@ -153,11 +232,85 @@ exit `$LASTEXITCODE
     Check 'ps check: an earlier CCOF ToolsDir (node, bin only) is accepted' ($r.code -eq 0)
     $r = Invoke-Win @('check', '-Role', 'apply', '-RunnerDir', $ours, '-ToolsDir', $tools, '-Proxy', 'http://fakeuser:FAKEPASS123@proxy.example:8080')
     Check 'ps: a credential-bearing proxy is refused and not echoed' ($r.code -eq 2 -and $r.out -notmatch 'FAKEPASS123|fakeuser')
+    $wreg = @('register', '-Role', 'apply', '-ClientId', '11111111-1111-4111-8111-111111111111', '-SubscriptionId', '22222222-2222-4222-8222-222222222222',
+        '-TenantId', '33333333-3333-4333-8333-333333333333', '-Repository', 'octo/ccof-lab', '-AllowedWorkflows', '.github/workflows/deploy.yml', '-ToolsDir', $tools)
+    $r = Invoke-Win ($wreg + @('-RunnerDir', $ours)) $svcs
+    Check 'ps register: without -ReviewedMainEnforced it is refused before any service query or change' ($r.code -eq 2 -and $r.out -match 'needs -ReviewedMainEnforced' -and $r.out -match 'nobody bypass' -and $r.calls.Count -eq 0)
+    $r = Invoke-Win ($wreg + @('-RunnerDir', 'C:\', '-ReviewedMainEnforced')) $svcs
+    Check 'ps register: with -ReviewedMainEnforced it goes on to the next check (here: a refused RunnerDir)' ($r.code -eq 2 -and $r.out -notmatch 'ReviewedMainEnforced' -and $r.calls.Count -eq 0)
     $wtext = Get-Content -Raw $ps1
     foreach ($p in "'actions\.runner\.\*'", 'SetEnvironmentVariable', 'Import-Certificate', 'Cert:\\', 'git config --system', 'Select-Object -First 1') {
         Check "ps static: no $p" ($wtext -notmatch $p)
     }
     Check 'ps static: services are only addressed by the verified own name' (@([regex]::Matches($wtext, '(Stop|Restart|Start)-Service[^\n]*') | Where-Object { $_.Value -notmatch '-Name \$own' }).Count -eq 0)
+    $wreg2 = [regex]::Match($wtext, "(?s)\n    'register' \{.*?\n    'remove'").Value
+    Check 'ps static: config.cmd pins the service account to NETWORK SERVICE and disables self-update' ($wreg2 -match "config\.cmd [^\n]*--runasservice --windowslogonaccount 'NT AUTHORITY\\NETWORK SERVICE' --disableupdate")
+    Check 'ps static: .env (with the hook) is written before config.cmd starts the service' ($wreg2 -match '(?s)Write-RunnerEnv[^\n]*\n.*config\.cmd')
+    Check 'ps static: after config.cmd the account is verified, then Protect-RunnerDir, owner reset, then restart' ($wreg2 -match '(?s)config\.cmd.*S-1-5-20.*Protect-RunnerDir \$RunnerDir.*/setowner \*S-1-5-32-544.*Restart-Service')
+
+    # Runner directory ACL on NTFS (real ACLs in the scratch directory; this process stands in for the service account).
+    if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Host 'SKIP NTFS runner ACL checks: elevated shell (the Administrators entry would grant every right)'
+    } else {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        function New-Tree([string]$Name) {
+            $d = Join-Path $wroot $Name
+            foreach ($s in 'bin', '_work\r', '_diag') { New-Item -ItemType Directory -Force (Join-Path $d $s) | Out-Null }
+            foreach ($f in 'bin\Runner.Listener.exe', '.env', '.runner', '.credentials', 'config.cmd', '_work\r\x', '_diag\l.log') { Set-Content (Join-Path $d $f) 'x' }
+            $d
+        }
+        function Set-Protected([string]$Path, [object[]]$Rules) {
+            $a = if (Test-Path -LiteralPath $Path -PathType Container) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+            $a.SetAccessRuleProtection($true, $false)
+            foreach ($x in $Rules) { $a.AddAccessRule($x) }
+            Set-Acl -LiteralPath $Path $a
+        }
+        function Invoke-Probe([scriptblock]$Do) { try { & $Do; $true } catch { $false } }
+        function Undo-Tree([string]$Dir) { & icacls.exe $Dir /grant "${me}:(OI)(CI)F" /T /C /Q | Out-Null; & icacls.exe $Dir /reset /T /C /Q | Out-Null }
+        # Negative control, the shape config.cmd leaves: the account's group has Full control of the root, .env is Read only.
+        $neg = New-Tree 'acl-config'
+        Set-Protected $neg @((New-Object Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+        Set-Protected (Join-Path $neg '.env') @((New-Object Security.AccessControl.FileSystemAccessRule($me, 'Read', 'Allow')))
+        Check 'NTFS negative control: a Read-only .env cannot be written by the account' (-not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $neg '.env'), 'ACTIONS_RUNNER_HOOK_JOB_STARTED=') }))
+        Check 'NTFS negative control: but Full control of the runner root lets the account delete and replace it' (
+            (Invoke-Probe { Remove-Item -LiteralPath (Join-Path $neg '.env') -ErrorAction Stop; [IO.File]::WriteAllText((Join-Path $neg '.env'), 'ACTIONS_RUNNER_HOOK_JOB_STARTED=') }) -and
+            (Get-Content -Raw (Join-Path $neg '.env')) -eq 'ACTIONS_RUNNER_HOOK_JOB_STARTED=')
+        Undo-Tree $neg
+
+        $ast = [Management.Automation.Language.Parser]::ParseFile($ps1, [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Protect-RunnerDir' }, $true)
+        Check 'ps: Install-CcofRunner.ps1 defines Protect-RunnerDir' ($null -ne $fn)
+        if ($fn) {
+            function Fail([string]$m) { throw "Fail: $m" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+            $setAcl = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Set-CcofAcl' }, $true)
+            if ($setAcl) { . ([scriptblock]::Create($setAcl.Extent.Text)) }
+            $pos = New-Tree 'acl-ccof'
+            # config.cmd's group entry, then the CCOF ACL on top of it.
+            Set-Protected $pos @((New-Object Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+            Set-Protected (Join-Path $pos '.env') @((New-Object Security.AccessControl.FileSystemAccessRule($me, 'Read', 'Allow')))
+            Protect-RunnerDir $pos $me
+            Check 'ps lock: the account can still read .env, .runner and the runner binaries' (
+                (Invoke-Probe { $null = [IO.File]::ReadAllText((Join-Path $pos '.env')); $null = [IO.File]::ReadAllText((Join-Path $pos '.runner')); $null = [IO.File]::ReadAllBytes((Join-Path $pos 'bin\Runner.Listener.exe')) }))
+            Check 'ps lock: the account cannot delete, rename or overwrite .env' (
+                -not (Invoke-Probe { Remove-Item -LiteralPath (Join-Path $pos '.env') -ErrorAction Stop }) -and -not (Invoke-Probe { Rename-Item -LiteralPath (Join-Path $pos '.env') '.env.x' -ErrorAction Stop }) -and
+                -not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $pos '.env'), 'x') }) -and (Get-Content -Raw (Join-Path $pos '.env')).Trim() -eq 'x' -and (Test-Path (Join-Path $pos '.env')))
+            Check 'ps lock: the account cannot create files in the runner root' (-not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $pos '.env2'), 'x') }) -and -not (Test-Path (Join-Path $pos '.env2')))
+            Check 'ps lock: the account cannot change, delete or add runner binaries or registration files' (
+                -not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $pos 'bin\Runner.Listener.exe'), 'x') }) -and -not (Invoke-Probe { Remove-Item -LiteralPath (Join-Path $pos 'bin\Runner.Listener.exe') -ErrorAction Stop }) -and
+                -not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $pos 'bin\evil.dll'), 'x') }) -and -not (Invoke-Probe { [IO.File]::WriteAllText((Join-Path $pos '.runner'), 'x') }) -and
+                -not (Invoke-Probe { Remove-Item -LiteralPath (Join-Path $pos '.credentials') -ErrorAction Stop }))
+            Check 'ps lock: the account can still create, change and delete files in _work and _diag' (
+                Invoke-Probe { foreach ($w in '_work', '_diag') { $f = Join-Path $pos "$w\new.txt"; [IO.File]::WriteAllText($f, 'x'); [IO.File]::AppendAllText($f, 'y'); Remove-Item -LiteralPath $f -ErrorAction Stop }; Remove-Item -LiteralPath (Join-Path $pos '_work\r') -Recurse -Force -ErrorAction Stop })
+            $rootRules = @((Get-Acl -LiteralPath $pos).Access)
+            Check 'ps lock: the root ACL is protected and the account has ReadAndExecute only' (
+                (Get-Acl -LiteralPath $pos).AreAccessRulesProtected -and @($rootRules | Where-Object { $_.IdentityReference.Value -eq $me -and $_.FileSystemRights -ne 'ReadAndExecute, Synchronize' }).Count -eq 0)
+            Undo-Tree $pos
+            $jn = New-Tree 'acl-junction'; Remove-Item -Recurse -Force (Join-Path $jn '_diag'); New-Item -ItemType Junction -Path (Join-Path $jn '_diag') -Target $adj | Out-Null
+            Check 'ps lock: a _work or _diag that is a link fails' (-not (Invoke-Probe { Protect-RunnerDir $jn $me }))
+            Undo-Tree $jn
+        }
+    }
 } else { Write-Host 'SKIP Windows bootstrap checks: not Windows' }
 
 # ---- preflight: a credential-bearing proxy fails and its userinfo never reaches the output (fake values only)

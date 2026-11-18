@@ -48,7 +48,29 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
   branch and commit as the job (`GITHUB_WORKFLOW_REF`, `GITHUB_WORKFLOW_SHA`). `pull_request`,
   `pull_request_target` and every other event are refused, and an empty or missing policy refuses everything.
   The runner user cannot change the hook or policy. The hook trusts the listed workflows only as far as the
-  branch is protected: it cannot check branch protection, so protect the branches (below).
+  branch is protected, and it cannot check how the branch is protected: see "Reviewed main" below.
+- **Reviewed main (required before registering either runner).** Whoever can put a commit on an allowed branch
+  runs code with the runner identity. GitHub must therefore enforce, for every branch in
+  `github.applyBranches`, a [ruleset](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+  or [branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
+  that requires a pull request with approving review, requires code owner review (CODEOWNERS for
+  `.github/workflows/**`, `.github/actions/**` and `deploy/**`), dismisses stale approvals or requires approval
+  of the most recent push, blocks force pushes and deletion, and has no bypass: an empty bypass list for a
+  ruleset, or "Do not allow bypassing the above settings" for a branch protection rule. A branch that only
+  shows as protected is not enough: by default a branch protection rule only blocks force pushes and deletion,
+  and administrators bypass it. In a private repository, rulesets and branch protection need GitHub Pro, Team
+  or Enterprise; on GitHub Free they cannot be set, so do not connect these runners to such a repository
+  outside a lab.
+  - `register` refuses to run without `--reviewed-main-enforced yes` (Windows: `-ReviewedMainEnforced`), and
+    `Invoke-CicdSetup.ps1 -Phase Host -ViaRunCommand -Apply` refuses without `-ReviewedMainEnforced`. This is
+    the operator's statement that the protection is in place. Neither the scripts nor the runner verify it.
+  - The runner host cannot verify it either. The job-started hook runs before checkout. It has no GitHub
+    credential, and reading branch protection or ruleset bypass actors needs one with repository
+    administration read access. A check inside a workflow is code from the same branch, so whoever can change
+    that branch can change the check. It shows a configuration mistake. It does not stop malicious code on
+    `main`. A host-side check would need a GitHub credential stored on the runner host that the job cannot
+    read, plus a per-commit query (merged pull request and reviews for `GITHUB_SHA`). It is not implemented.
+  - Recheck the protection after any change to repository administrators, rulesets or the plan.
 - **Pull request validation** (tests, lint, Bicep build) runs on GitHub-hosted runners, offline: no Azure
   sign-in and no VNet access. Pull request code never runs on a CCOF runner.
 - **Workflows** sign in with the shared action: `uses: ./.github/actions/azure-login-mi` with
@@ -62,8 +84,9 @@ all role assignments are Azure RBAC (Azure Resource Manager only).
   [Deployments and environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment).
   In a private repository, required reviewers need GitHub Enterprise and deployment branch policies need GitHub
   Pro, Team or Enterprise ([plan availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
-  On GitHub Free, `gh` returns HTTP 422 and the driver stops with that hint; the apply gate is then only the
-  runner's job-started hook (`--allowed-refs`, `pull_request` refused).
+  On GitHub Free, `gh` returns HTTP 422 and the driver stops with that hint. The apply gate is then only the
+  runner's job-started hook (`--allowed-refs`, `pull_request` refused). The hook does not stop a direct push to
+  `main`, and on GitHub Free `main` cannot be protected in a private repository (see "Reviewed main").
 - **STG and Prod do not share anything.** Use one configuration file per environment. Prod runners and their
   identities are in the Prod subscription and VNet; the STG identities have no role in Prod.
 
@@ -85,7 +108,7 @@ groups: the runner is registered to the repository and any workflow in it can ta
 
 - No `pull_request` jobs from forks (private repository; "Run workflows from fork pull requests" off).
 - `pull_request` jobs never use a CCOF runner; the job-started hook refuses them on both runners.
-- Branch protection on `main`: pull request, review, no force push.
+- Reviewed `main` enforced by GitHub without bypass, before either runner is registered ("Reviewed main" above).
 - CODEOWNERS for `.github/workflows/**`, `.github/actions/**` and `deploy/**`, with code owner review required.
 - `<env>-apply` and `<env>-gate-*` environments with required reviewers and deployment branch `main`.
 
@@ -104,6 +127,14 @@ The customer provides the VMs from its own image (for example a CIS-hardened RHE
 | Identity | Exactly one user-assigned identity (set by the Attach phase) |
 | IMDS | `169.254.169.254` reachable and not proxied (managed identity tokens come from IMDS) |
 | Admin | Root or local administrator, only for the bootstrap; the runner runs as a dedicated non-root user (`ghrunner`) without sudo |
+
+**Windows runner: not supported for production in this release.** The lab regression uses Linux runners only.
+`Install-CcofRunner.ps1` passes its offline tests and the lab run in section 10, but two blockers are open:
+runner 2.338.2 `ConfigureService` starts the Windows service before the bootstrap protects the runner
+directory ACL, so the service runs for a short time on an unprotected directory; and the `.ccof-version` marker that
+decides the layout migration is a plain file and can be forged. Use RHEL or Ubuntu runners until both are fixed.
+Linux registration runs `config.sh` as root for that one command only
+([ADR 0042](../adr/0042-linux-runner-registration-identity.md)).
 
 Tools installed by the bootstrap (pinned, verified by SHA-256 in [cicd.config.example.json](../../infra/cicd/cicd.config.example.json)):
 GitHub Actions runner 2.338.2, Node.js 22.23.5, PowerShell 7.7.0, Bicep v0.46.1, Azure CLI (distribution
@@ -199,14 +230,16 @@ and network resource groups and on each Foundry account.
    what-if for the identities and the roles, and prints the bootstrap commands. Nothing is changed.
 3. Apply Azure: `... -Apply -Phase Infra, Attach, Roles`. Parameter files and evidence are written to
    `.cicd-state/` next to the configuration file (ignored by git).
-4. Bootstrap each VM. The driver prints the exact commands; the VM admin copies `scripts/cicd/` to the VM and runs:
+4. Protect the allowed branches on GitHub first (section 1, "Reviewed main"), with CODEOWNERS on `main`.
+   Bootstrap each VM only after that. The driver prints the exact commands (with `-ReviewedMainEnforced`,
+   including `--reviewed-main-enforced yes`). The VM admin copies `scripts/cicd/` to the VM and runs:
 
    ```bash
    sudo bash Install-CcofRunner.sh install --role apply [--stage /mnt/ccof-stage] [--proxy http://proxy:8080] [--ca-cert /etc/pki/corp.pem]
    read -rs RUNNER_TOKEN && sudo env RUNNER_TOKEN="$RUNNER_TOKEN" bash Install-CcofRunner.sh register --role apply \
      --client-id <deploy identity client id> --subscription-id <sub> --tenant-id <tenant> \
      --repository <owner>/<repo> --labels ccof-vnet,ccof-apply --allowed-refs refs/heads/main \
-     --allowed-workflows ".github/workflows/deploy.yml"
+     --allowed-workflows ".github/workflows/deploy.yml" --reviewed-main-enforced yes
    sudo bash Install-CcofRunner.sh status --role apply
    ```
 
@@ -214,11 +247,10 @@ and network resource groups and on each Foundry account.
    or `gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token --jq .token`. It is valid for one
    hour, is read from the terminal and is never written to disk. On Windows Server 2022 use
    `Install-CcofRunner.ps1` with the same commands and options (`-Command install`, `-Role apply`, ...).
-   Where the customer allows Azure Run Command, `-Phase Host -ViaRunCommand -Apply -FetchToken` runs the same
+   Where the customer allows Azure Run Command, `-Phase Host -ViaRunCommand -Apply -ReviewedMainEnforced -FetchToken` runs the same
    commands through [managed Run Command](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/run-command-managed),
    passing the token as a protected parameter and deleting the Run Command afterwards.
 5. GitHub: `... -Phase GitHub` prints the environments; `-Apply -ConfigureGitHub` creates them with `gh`.
-   Then set branch protection and CODEOWNERS (section 1).
 6. Check: `gh api repos/<owner>/<repo>/actions/runners` lists both runners `online` with their labels.
 
 ## 7. Preflight

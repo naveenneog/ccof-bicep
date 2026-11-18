@@ -115,7 +115,8 @@ npx tsc -p tsconfig.typecheck.json
 `npm test` runs every exported root Node and PowerShell suite, including the client
 suite through its root test. It forces live integration off and uses repository-local
 scratch. The PowerShell suites run in parallel, each in its own process with its own short
-`TEMP` (`ccof-t-<id>\<n>` under your `TEMP`, so Git paths in suites stay under the Windows
+`TEMP`; the Node suites share one short `TEMP` of their own (`ccof-t-<id>\0`, PowerShell suites
+`ccof-t-<id>\<n>`, under your `TEMP`, so Git paths in suites stay under the Windows
 260-character limit even from a deep worktree; on Windows the run stops first if that path would
 exceed 120 characters, and it deletes only the directory it created). Every suite, Node included, uses its own logged-out Azure CLI profile (the config
 files and Bicep binary only, never the token cache); without a Bicep binary, a test
