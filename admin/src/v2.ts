@@ -8,7 +8,7 @@ import { parseRateCard } from "../../src/cost/rate-card.ts";
 import { ccuToUsd } from "../../src/cost/budget-units.ts";
 import { Money } from "../../src/cost/money.ts";
 import type { Capability, Operations } from "./operations.ts";
-import { ADMIN_VERSION } from "./version.ts";
+import { ADMIN_VERSION, type ServedBy } from "./version.ts";
 import { beginChange } from "./change-log.ts";
 import type { ChangeEntry, ChangeLog } from "./change-log.ts";
 export const MAX_CATALOG_BYTES = 1024 * 1024;
@@ -113,6 +113,7 @@ export interface V2Dependencies {
   // Null when the packaged rate card could not be read; only cost definitions degrade.
   defaultCatalog: Doc | null;
   operations: Operations;
+  servedBy?: ServedBy;
   now(): Date;
   newId(): string;
   log(line: string): void;
@@ -246,7 +247,7 @@ export async function handleV2Request(request: ApiRequest, deps: V2Dependencies)
       case "health": cap = await deps.operations.health(); break;
       case "prices": cap = await deps.operations.retail(); break;
       case "billed-cost": cap = await deps.operations.billed(); break;
-      case "version": return response(200, { version: ADMIN_VERSION, api: "v2", projectApi: "v1-compatible" });
+      case "version": return response(200, { version: ADMIN_VERSION, api: "v2", projectApi: "v1-compatible", servedBy: deps.servedBy ?? { app: null, region: null } });
       default: throw new ApiError(404, "route_not_found");
     }
     return response(200, cap);

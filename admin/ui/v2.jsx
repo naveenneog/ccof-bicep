@@ -28,6 +28,13 @@ function useData(path, version = 0) {
   }, [path, version, nonce]);
   return { ...value, reload: () => setNonce((n) => n + 1) };
 }
+// In a two-region deployment Front Door may serve either admin app; show which one answered.
+function ServedBy() {
+  const served = useData("/v2/version").data?.servedBy;
+  if (!served?.region && !served?.app) return null;
+  const text = [served.region, served.app && `(${served.app})`].filter(Boolean).join(" ");
+  return <span className="nav-version nav-served" title="Admin app and Azure region that served this page">Served from {text}</span>;
+}
 
 /* ── Formatting ──────────────────────────────────────── */
 
@@ -757,6 +764,7 @@ export function mountV2({ call, state, saved, notify }) {
         <ul>{Object.entries(SECTIONS).map(([id, label]) => <li key={id}>
           <a aria-current={active === id ? "page" : undefined} href={id === "projects" ? "#/" : `#/${id}`}>{label}</a>
         </li>)}</ul>
+        <ServedBy/>
         <span className="nav-version">Console {VERSION}</span>
       </nav>
       {active !== "projects" && createPortal(<div className="detail-inner detail-enter" key={active}>

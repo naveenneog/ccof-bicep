@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-11-08 - Admin console shows which region served it
+
+- `GET /api/v2/version` returns `servedBy: { app, region }` from the new `ADMIN_SERVED_APP` and
+  `ADMIN_SERVED_REGION` app settings, which stage 5 and `infra/admin/admin-resources.bicep` set from
+  the site itself. It falls back to App Service `WEBSITE_SITE_NAME` and `REGION_NAME`, and is null
+  when none is set. The console v2 nav shows "Served from <region> (<app>)", so a DR drill can
+  confirm that the standby admin app answered through Front Door.
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the
