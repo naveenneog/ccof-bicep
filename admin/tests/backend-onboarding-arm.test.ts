@@ -1,0 +1,106 @@
+// The Azure side of ADR 0040: the ARM reads and the one APIM write, and the Cosmos descriptor store.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import type { TokenCredential } from "@azure/identity";
+import type { Container } from "@azure/cosmos";
+import { createArmOnboardingProvider, createCosmosDescriptorStore, readOnboardingTargets } from "../src/backend-onboarding-arm.ts";
+import { ProviderError } from "../src/operations.ts";
+
+const SUB = "/subscriptions/00000000-0000-0000-0000-000000000001";
+const ACCOUNT = `${SUB}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/foundry2`;
+const APIM = `${SUB}/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim-a`;
+const credential: TokenCredential = { getToken: async (scope) => ({ token: `tok:${String(scope)}`, expiresOnTimestamp: Date.now() + 60_000 }) };
+
+function transport(routes: Record<string, { status: number; body?: unknown }>) {
+  const calls: { method: string; url: string; init: RequestInit }[] = [];
+  const fn = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = String(input);
+    calls.push({ method: init.method ?? "GET", url, init });
+    const key = Object.keys(routes).find((k) => url.startsWith(k));
+    const r = key ? routes[key] : { status: 404 };
+    return new Response(r.body === undefined ? null : JSON.stringify(r.body), { status: r.status });
+  }) as typeof fetch;
+  return { fn, calls };
+}
+
+test("the account read maps the endpoint, network and private endpoint states; 404 is null", async () => {
+  const t = transport({
+    [`https://management.azure.com${ACCOUNT}?`]: { status: 200, body: { id: ACCOUNT, properties: {
+      customSubDomainName: "Foundry2", publicNetworkAccess: "Disabled",
+      privateEndpointConnections: [{ properties: { privateLinkServiceConnectionState: { status: "Pending" } } }],
+    } } },
+  });
+  const provider = createArmOnboardingProvider(credential, t.fn);
+  assert.deepEqual(await provider.account(ACCOUNT), { id: ACCOUNT, customSubDomainName: "Foundry2", publicNetworkAccess: "Disabled", privateEndpointStatuses: ["Pending"] });
+  const call = t.calls[0];
+  assert.equal(call.init.redirect, "error");
+  assert.equal((call.init.headers as Record<string, string>).authorization, "Bearer tok:https://management.azure.com/.default");
+  assert.equal(await provider.account(`${ACCOUNT}x`), null);
+});
+
+test("deployments, the APIM principal and the role assignments filtered by principal", async () => {
+  const t = transport({
+    [`https://management.azure.com${ACCOUNT}/deployments?`]: { status: 200, body: { value: [{ name: "claude-haiku-4-5", properties: { provisioningState: "Succeeded" } }] } },
+    [`https://management.azure.com${APIM}?`]: { status: 200, body: { identity: { principalId: "11111111-1111-1111-1111-111111111111" } } },
+    [`https://management.azure.com${ACCOUNT}/providers/Microsoft.Authorization/roleAssignments?`]: { status: 200, body: { value: [
+      { properties: { roleDefinitionId: "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/a97b65f3-24c7-4388-baec-2e87135dc908", scope: ACCOUNT } },
+    ] } },
+  });
+  const provider = createArmOnboardingProvider(credential, t.fn);
+  assert.deepEqual(await provider.deployments(ACCOUNT), [{ name: "claude-haiku-4-5", provisioningState: "Succeeded" }]);
+  assert.equal(await provider.apimPrincipal(APIM), "11111111-1111-1111-1111-111111111111");
+  const roles = await provider.roleAssignments(ACCOUNT, "11111111-1111-1111-1111-111111111111");
+  assert.equal(roles.length, 1);
+  assert.equal(roles[0].scope, ACCOUNT);
+  const url = new URL(t.calls.at(-1)!.url);
+  assert.equal(url.searchParams.get("$filter"), "principalId eq '11111111-1111-1111-1111-111111111111'");
+  await assert.rejects(provider.roleAssignments(ACCOUNT, "x' or 1 eq 1"), /invalid_principal/);
+});
+
+test("the APIM backend read and write; an upstream error is a ProviderError with its status", async () => {
+  const t = transport({
+    [`https://management.azure.com${APIM}/backends/foundry2?`]: { status: 200, body: { properties: { url: "https://foundry2.services.ai.azure.com/anthropic" } } },
+    [`https://management.azure.com${APIM}/backends/missing?`]: { status: 404 },
+    [`https://management.azure.com${APIM}/backends/denied?`]: { status: 403 },
+  });
+  const provider = createArmOnboardingProvider(credential, t.fn);
+  assert.equal(await provider.apimBackendUrl(APIM, "foundry2"), "https://foundry2.services.ai.azure.com/anthropic");
+  assert.equal(await provider.apimBackendUrl(APIM, "missing"), null);
+  await assert.rejects(provider.apimBackendUrl(APIM, "denied"), (err) => err instanceof ProviderError && err.status === 403);
+  await provider.putApimBackend(APIM, "foundry2", "https://foundry2.services.ai.azure.com/anthropic");
+  const put = t.calls.at(-1)!;
+  assert.equal(put.method, "PUT");
+  assert.match(put.url, /\/backends\/foundry2\?api-version=2024-05-01$/);
+  assert.deepEqual(JSON.parse(String(put.init.body)), { properties: {
+    url: "https://foundry2.services.ai.azure.com/anthropic", protocol: "http",
+    tls: { validateCertificateChain: true, validateCertificateName: true },
+  } });
+});
+
+test("the Cosmos descriptor store reads by partition key and creates without upsert", async () => {
+  const docs = new Map<string, unknown>([["infsimbe", { id: "infsimbe", backendId: "infsimbe" }]]);
+  const container = {
+    item: (id: string, pk: string) => ({ read: async () => {
+      assert.equal(id, pk);
+      return { statusCode: docs.has(id) ? 200 : 404, resource: docs.get(id) };
+    } }),
+    items: { create: async (doc: { id: string }) => {
+      if (docs.has(doc.id)) throw Object.assign(new Error("conflict"), { code: 409 });
+      docs.set(doc.id, doc);
+      return {};
+    } },
+  } as unknown as Container;
+  const store = createCosmosDescriptorStore(container);
+  assert.deepEqual(await store.read("infsimbe"), { id: "infsimbe", backendId: "infsimbe" });
+  assert.equal(await store.read("none"), null);
+  assert.equal(await store.create({ id: "new", backendId: "new" }), "created");
+  assert.equal(await store.create({ id: "new", backendId: "new" }), "conflict");
+});
+
+test("targets come from ADMIN_GATEWAY_RESOURCE_IDS, else the single gateway ID; only APIM IDs are kept", () => {
+  assert.deepEqual(readOnboardingTargets({ ADMIN_GATEWAY_RESOURCE_IDS: ` ${APIM} , ${APIM}b `, ADMIN_GATEWAY_RESOURCE_ID: "ignored" }), [APIM, `${APIM}b`]);
+  assert.deepEqual(readOnboardingTargets({ ADMIN_GATEWAY_RESOURCE_ID: APIM }), [APIM]);
+  assert.throws(() => readOnboardingTargets({ ADMIN_GATEWAY_RESOURCE_IDS: ACCOUNT }), /gateway/);
+  assert.deepEqual(readOnboardingTargets({}), []);
+});
