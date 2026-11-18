@@ -1,5 +1,14 @@
 # Change log
 
+## 2026-11-18 - CI/CD integration and runner allow-lists
+
+- Foundry onboarding, production deploy and the Linux runner registration contract (ADR 0042) are on one
+  branch, `integration/cicd`.
+- `infra/cicd/cicd.config.example.json` and `docs/runbooks/CICD-SETUP.md` list the workflows each runner
+  accepts: preview runs `deploy-environment`, `onboard-foundry` and `ccof-runner-smoke`; apply also runs
+  `drift-check`. A workflow missing from the list is refused by the runner hook.
+- `tests/Test-CicdSetup.ps1` fails if the example lists drift from the workflows that target each runner.
+
 ## 2026-11-18 - Coordination: DR health-alert `cosmosId`
 
 - The region B health-alert `cosmosId` field (shared primary Cosmos account) on this branch is also shipped on its own as

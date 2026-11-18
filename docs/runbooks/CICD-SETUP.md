@@ -239,7 +239,8 @@ and network resource groups and on each Foundry account.
    read -rs RUNNER_TOKEN && sudo env RUNNER_TOKEN="$RUNNER_TOKEN" bash Install-CcofRunner.sh register --role apply \
      --client-id <deploy identity client id> --subscription-id <sub> --tenant-id <tenant> \
      --repository <owner>/<repo> --labels ccof-vnet,ccof-apply --allowed-refs refs/heads/main \
-     --allowed-workflows ".github/workflows/deploy.yml" --reviewed-main-enforced yes
+     --allowed-workflows ".github/workflows/deploy-environment.yml .github/workflows/onboard-foundry.yml .github/workflows/drift-check.yml .github/workflows/ccof-runner-smoke.yml" \
+     --reviewed-main-enforced yes
    sudo bash Install-CcofRunner.sh status --role apply
    ```
 
@@ -252,6 +253,16 @@ and network resource groups and on each Foundry account.
    passing the token as a protected parameter and deleting the Run Command afterwards.
 5. GitHub: `... -Phase GitHub` prints the environments; `-Apply -ConfigureGitHub` creates them with `gh`.
 6. Check: `gh api repos/<owner>/<repo>/actions/runners` lists both runners `online` with their labels.
+
+Workflow allow-lists (`--allowed-workflows`, space-separated; `github.previewWorkflows` and
+`github.applyWorkflows` in the configuration). A reusable workflow such as `ccof-step.yml` is checked as
+its calling workflow, so it is not listed. A workflow missing from the list fails closed: the hook
+refuses every job of that workflow on that runner.
+
+| Runner | Workflows that send jobs to it |
+|---|---|
+| preview (`ccof-preview`) | `deploy-environment.yml`, `onboard-foundry.yml`, `ccof-runner-smoke.yml` |
+| apply (`ccof-apply`) | `deploy-environment.yml`, `onboard-foundry.yml`, `drift-check.yml`, `ccof-runner-smoke.yml` |
 
 ## 7. Preflight
 

@@ -126,8 +126,10 @@ Steps: `validate`, `stage3`, `stage5`, `stage6`, `standby-backends`, `standby-ve
   registered to a user-owned repository cannot be limited to workflows, so use an organization repository
   for production ([GitHub: self-hosted runner security](https://docs.github.com/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners)).
 - The `if:` conditions in the workflow file are not the control, because a branch can change them. The
-  control is on the runner host: its job-started hook (runner infrastructure) must refuse every job that
-  is not `workflow_dispatch` on `refs/heads/main` of an allow-listed workflow, on both runners.
+  control is on the runner host: its job-started hook refuses every job that is not a `push`,
+  `workflow_dispatch` or `schedule` event on `refs/heads/main` of an allow-listed workflow, on both runners
+  (`docs/runbooks/CICD-SETUP.md`, "Job policy on both runners"). `onboard-foundry.yml` must be on the
+  allow-list of both runners. The workflow itself runs preview, gate and apply only for `workflow_dispatch`.
 - Each self-hosted job first runs the host preflight for its operating system:
   `scripts/cicd/Test-RunnerHost.sh` on Linux, `scripts/cicd/Test-RunnerHost.ps1` on Windows (no Bash
   needed). Any other operating system fails the job.

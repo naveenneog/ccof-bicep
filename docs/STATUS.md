@@ -1,5 +1,25 @@
 # Current work
 
+## CI/CD integration (Foundry onboarding, production deploy, runner contract)
+
+**Packet:** CICD-INTEGRATION (2026-11-18). Branch `integration/cicd` merges Foundry onboarding
+(`5083ed4`), production deploy (`099c021`, commit `4a1e003`) and the runner registration contract
+(`feat/cicd-runner-oidc` `9aa2063`, commit `b0d319e`).
+
+Offline packet gate on `b0d319e` (`node .ironclad/gate.mjs --stage packet`, logged-out isolated
+`AZURE_CONFIG_DIR`, `CCOF_LIVE_TESTS=0`, no shims): exit 0, 23 passed, 2 warned (file size, open
+unknowns), 1 skipped (lint); `npm test` 468.2 seconds.
+
+Council: Architect PASS-WITH-NOTES (nothing tied the runner allow-lists to the workflows), Coder PASS,
+QA PASS, UX PASS-WITH-NOTES (stale runbook text, placeholder workflow lists), Security PASS-WITH-NOTES
+(four follow-ups, recorded as CICD-SEC-FOLLOWUP-1 to 4 in the roadmap). The Architect and UX notes are
+fixed in this packet: the example configuration and `CICD-SETUP.md` now list the real workflows for each
+runner, and `tests/Test-CicdSetup.ps1` checks that the example lists match the workflows that target each
+runner. The new check failed against the previous placeholder lists (2 failures) and when
+`drift-check.yml` was removed from the apply list (1 failure). Setup suite: 138/138.
+
+Pending: live lab acceptance (runner smoke, Foundry onboarding primary and DR, environment deployment).
+
 ## CI/CD Windows state-test fixture
 
 **Packet:** CICD-WIN-STATE-TEST (focused fixture verified; integration pending). The nested Windows test TEMP produced a 253-character

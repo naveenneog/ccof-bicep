@@ -60,10 +60,15 @@
       "main"
     ],
     "previewWorkflows": [
-      ".github/workflows/REPLACE-preview.yml"
+      ".github/workflows/deploy-environment.yml",
+      ".github/workflows/onboard-foundry.yml",
+      ".github/workflows/ccof-runner-smoke.yml"
     ],
     "applyWorkflows": [
-      ".github/workflows/REPLACE-deploy.yml"
+      ".github/workflows/deploy-environment.yml",
+      ".github/workflows/onboard-foundry.yml",
+      ".github/workflows/drift-check.yml",
+      ".github/workflows/ccof-runner-smoke.yml"
     ]
   },
   "cosmos": {

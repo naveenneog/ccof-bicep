@@ -465,7 +465,7 @@ or use the manual action below.
   - reviewed `main` (section 5: pull request with approval, administrators included, no bypass), enforced by an administrator before runners connect; the in-workflow check only detects its absence;
   - CODEOWNERS for `.github/workflows/` and `deploy/**`;
   - the runner role check in each job.
-- **Dependency on the runner branch.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh`/`.ps1` come from the runner setup change (`docs/runbooks/CICD-SETUP.md`). Merge that change before this workflow.
+- **Runner setup.** `.github/actions/azure-login-mi` and `scripts/cicd/Test-RunnerHost.sh`/`.ps1` come from the runner setup (`docs/runbooks/CICD-SETUP.md`). `deploy-environment.yml` must be on the allow-list of both runners, and `drift-check.yml` on the apply runner (CICD-SETUP section 6).
 - **Runner OS.** The host preflight runs `Test-RunnerHost.sh` with bash on Linux and `Test-RunnerHost.ps1` with
   PowerShell on Windows (`runner.os`). Only Linux runners have been exercised; Windows is untested.
 

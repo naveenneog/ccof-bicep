@@ -2,6 +2,11 @@
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
+| CICD-INTEGRATION | Offline gate green; live lab acceptance pending | Foundry onboarding, production deploy and runner branches merged; the example runner allow-lists name exactly the workflows that target each runner; full packet gate exits 0; runner smoke, Foundry onboarding (primary and DR) and environment deployment succeed on the lab |
+| CICD-SEC-FOLLOWUP-1 | Open (review note 2026-11-18) | `ccof-runner-smoke.yml` refuses an `environment` input that does not already exist in the repository, so a mistyped name cannot create an ungated environment |
+| CICD-SEC-FOLLOWUP-2 | Open (review note 2026-11-18) | `actions/checkout` on the self-hosted runners (`ccof-step.yml`, `ccof-runner-smoke.yml`, the onboard-foundry apply job) sets `persist-credentials: false` unless a later step needs the token |
+| CICD-SEC-FOLLOWUP-3 | Open (review note 2026-11-18) | On upgrade of an older writable runner layout, `Install-CcofRunner.sh` locks the runner directory before replacing `bin/` and running `installdependencies.sh` as root |
+| CICD-SEC-FOLLOWUP-4 | Open (review note 2026-11-18) | The `cicd-state/<env>` branches have a documented ruleset (no force push, no deletion, writes only from the apply workflow) |
 | CICD-WIN-STATE-TEST | Focused offline fixture verified with overlays; integrated gate pending | Existing long-workspace state restore, save and fresh-restore checks run in a valid Git fixture; a conventional `.git` checkout also covers a state file beyond 260 characters; Git errors cannot appear as an absent local setting |
 | DR-BYO standby | Standby-only release in review; customer validation pending | An explicitly supplied standby VNet ID can name a different resource group; existing-network Bootstrap does not deploy or alter network resources; later private endpoint, DNS-record and VNet-integration changes require explicit approval; manual Entra and private publishing remain explicit and verifiable |
 | DR-BYO Front Door | BLOCK / separate release | Full approval requires current standby records and reviewed exact connection IDs with independently verified ownership; primary recovery never enables or depends on B; stale Verify is invalidated before a real attempt. All Front Door operations remain STOP pending review and tests. |

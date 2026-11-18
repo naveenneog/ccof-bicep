@@ -33,6 +33,19 @@ function Problems($Patch) { @(Get-CicdConfigProblems (New-Cfg $Patch)) }
 # ---- configuration
 Check 'a filled configuration has no problem' (@(Problems @{}).Count -eq 0)
 $example = Get-Content -LiteralPath (Join-Path $repo 'infra/cicd/cicd.config.example.json') -Raw | ConvertFrom-Json -AsHashtable
+# The runner hook refuses any workflow not on its allow-list, so the example lists must name exactly the
+# workflows that send jobs to each runner (a reusable workflow is checked as its caller and is not listed).
+$wfTargets = @{ preview = [System.Collections.Generic.List[string]]::new(); apply = [System.Collections.Generic.List[string]]::new() }
+foreach ($wf in Get-ChildItem -LiteralPath (Join-Path $repo '.github/workflows') -Filter '*.yml') {
+    $wt = [IO.File]::ReadAllText($wf.FullName)
+    if ($wt -match '(?m)^  workflow_call:' -and $wt -notmatch '(?m)^  (workflow_dispatch|schedule|push):') { continue }
+    if ($wt -match 'ccof-preview|runner: preview\b') { $wfTargets.preview.Add(".github/workflows/$($wf.Name)") }
+    if ($wt -match 'ccof-apply|runner: apply\b') { $wfTargets.apply.Add(".github/workflows/$($wf.Name)") }
+}
+Check 'example previewWorkflows lists exactly the workflows that target the preview runner' ($wfTargets.preview.Count -ge 1 -and
+    ((@($example.github.previewWorkflows | Sort-Object) -join '|') -ceq (@($wfTargets.preview | Sort-Object) -join '|')))
+Check 'example applyWorkflows lists exactly the workflows that target the apply runner' ($wfTargets.apply.Count -ge 1 -and
+    ((@($example.github.applyWorkflows | Sort-Object) -join '|') -ceq (@($wfTargets.apply | Sort-Object) -join '|')))
 Check 'the example is refused until REPLACE values and zero GUIDs are replaced' ((@(Get-CicdConfigProblems $example) -match 'REPLACE|placeholder').Count -ge 1)
 Check 'the runner RG must differ from the workload RG' ((@(Problems @{ cicdResourceGroup = 'RG-WORK' }) -match '^cicdResourceGroup').Count -eq 1)
 Check 'subnet must be a full ID in the same subscription' ((@(Problems @{ 'runner.subnetId' = 'cicd-runner' }) -match '^runner.subnetId').Count -eq 1 -and
