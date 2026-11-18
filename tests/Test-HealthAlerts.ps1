@@ -55,6 +55,8 @@ Check 'a display-name address is refused' ((Problems (New-Cfg @{ emailReceivers 
 Check 'a duplicate address (any case) is refused' ((Problems (New-Cfg @{ emailReceivers = @('ops@example.com', 'OPS@example.com') })) -match 'duplicate')
 Check 'an unknown top-level field is refused' ((Problems (New-Cfg @{ emailRecievers = @('x@example.com') })) -match 'unknown_field:emailRecievers')
 Check 'a non-GUID subscription is refused' ((Problems (New-Cfg @{ subscriptionId = 'abc' })) -match 'subscriptionId')
+Check 'an explicit shared Cosmos ID is accepted' ((Problems (New-Cfg @{ cosmosId = "$prov/Microsoft.DocumentDB/databaseAccounts/primary-cosmos" })).Count -eq 0)
+Check 'a Cosmos ID with the wrong ARM resource type is refused' ((Problems (New-Cfg @{ cosmosId = "$prov/Microsoft.Web/sites/primary-cosmos" })) -match 'cosmosId')
 Check 'a stem with unsafe characters is refused' ((Problems (New-Cfg @{ stem = 'bad stem&' })) -match 'stem')
 Check 'a Front Door host with a scheme is refused' ((Problems (New-Cfg @{ frontDoor = @{ host = 'https://x.azurefd.net' } })) -match 'frontDoor.host')
 Check 'a probe mode other than auto/on/off is refused' ((Problems (New-Cfg @{ probes = @{ apimDirect = 'yes' } })) -match 'probes.apimDirect')
@@ -214,6 +216,7 @@ function global:az {
     if ($l -match '/components/sample-abc123-(\w+)-ai\?') { return '{"id":"' + $p + '/Microsoft.Insights/components/sample-abc123-' + $Matches[1] + '-ai"}' }
     if ($l -match '/sites/sample-abc123-(\w+)\?') { $pna = if ($Matches[1] -eq 'resolver') { 'Enabled' } else { 'Disabled' }; return '{"id":"' + $p + '/Microsoft.Web/sites/sample-abc123-' + $Matches[1] + '","properties":{"defaultHostName":"sample-abc123-' + $Matches[1] + '.azurewebsites.net","publicNetworkAccess":"' + $pna + '"}}' }
     if ($l -match '/databaseAccounts/sample-abc123-cosmos\?') { return '{"id":"' + $p + '/Microsoft.DocumentDB/databaseAccounts/sample-abc123-cosmos"}' }
+    if ($l -match '/databaseAccounts/primary-cosmos\?') { return '{"id":"' + $p + '/Microsoft.DocumentDB/databaseAccounts/primary-cosmos"}' }
     if ($l -match '/service/sample-abc123-apim/apis/claude-messages\?') { return '{"name":"claude-messages"}' }
     if ($l -match '/service/sample-abc123-apim/providers/Microsoft\.Insights/metricDefinitions') { return '{"value":[{"name":{"value":"Requests"}},{"name":{"value":"Capacity"}}]}' }
     if ($l -match '/service/sample-abc123-apim\?') { return '{"id":"' + $p + '/Microsoft.ApiManagement/service/sample-abc123-apim","properties":{"gatewayUrl":"https://sample-abc123-apim.azure-api.net","publicNetworkAccess":"Disabled"}}' }
@@ -260,6 +263,9 @@ $params = if (Test-Path $pf) { (Get-Content $pf -Raw | ConvertFrom-Json -AsHasht
 Check 'preview: parameter file has three web tests via Front Door and the public resolver' ($params.Contains('webTests') -and (@($params.webTests.value | ForEach-Object { $_.key }) -join ',') -ceq 'gateway-fd,admin-fd,resolver-direct')
 Check 'az arguments: no ( ) | & < > ^ (az.cmd quoting) and no Graph or az ad call' (@($r.log | Where-Object { $_ -match '[()|&<>^]' -or $_ -match '^ad |graph\.microsoft' }).Count -eq 0)
 Check 'reads only: every az call before what-if is a GET' (@($r.log | Where-Object { $_ -notmatch '^rest --method get |^deployment group what-if ' }).Count -eq 0)
+$drCosmosCfg = New-Cfg @{ cosmosId = "$prov/Microsoft.DocumentDB/databaseAccounts/primary-cosmos" }
+$r = Run-Driver @() $drCosmosCfg $creates
+Check 'DR preview: uses the explicitly shared primary Cosmos account' ($r.code -eq 0 -and @($r.log | Where-Object { $_ -match '/databaseAccounts/primary-cosmos\?' }).Count -eq 1 -and @($r.log | Where-Object { $_ -match '/databaseAccounts/sample-abc123-cosmos\?' }).Count -eq 0)
 $bad = @{ changes = @(@{ changeType = 'Create'; resourceId = $ownedAg }, @{ changeType = 'Modify'; resourceId = "$prov/Microsoft.Web/sites/$stem-admin"; before = @{ tags = @{} } }) }
 $r = Run-Driver @('-Apply') $e2eCfg $bad
 Check 'apply: a Modify of a resource it does not own stops before deployment (exit 3)' ($r.code -eq 3 -and $r.out -match 'Microsoft.Web/sites' -and @($r.log | Where-Object { $_ -match '^deployment group create' }).Count -eq 0)
@@ -282,4 +288,4 @@ Check 'remove apply: the shared Smart Detection action group Azure creates is le
 Check 'remove apply: makes no deployment and reads no endpoint' (@($r.log | Where-Object { $_ -match '^deployment ' }).Count -eq 0 -and $r.probes.Count -eq 0)
 
 Write-Host "Test-HealthAlerts: $script:pass passed, $script:fail failed"
-if ($script:fail -gt 0 -or $script:pass -lt 92) { exit 1 }
+if ($script:fail -gt 0 -or $script:pass -lt 95) { exit 1 }
