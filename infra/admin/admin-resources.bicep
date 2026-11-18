@@ -184,6 +184,8 @@ resource settings 'Microsoft.Web/sites/config@2024-04-01' = {
     ADMIN_EDITOR_IDS: adminEditorIds
     ADMIN_UI_CLIENT_ID: adminUiClientId
     ADMIN_UI_SCOPE: adminUiScope
+    ADMIN_SERVED_REGION: functionApp.location
+    ADMIN_SERVED_APP: functionApp.name
   }
   dependsOn: [storageRole, insightsRole]
 }

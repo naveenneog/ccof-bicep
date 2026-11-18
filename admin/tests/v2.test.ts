@@ -5,6 +5,7 @@ import { BUDGET_PAGE_DEFAULT, BUDGET_PAGE_MAX, handleV2Request, MAX_CATALOG_BYTE
 import type { CatalogStore, V2Dependencies } from "../src/v2.ts";
 import type { Doc } from "../src/validation.ts";
 import type { Capability, Operations } from "../src/operations.ts";
+import { readServedBy } from "../src/version.ts";
 
 const rateCard: unknown = JSON.parse(await readFile(new URL("../../config/rate-card.json", import.meta.url), "utf8"));
 const baseline: Doc = { schemaVersion: 1, rateCard, models: [{ model: "claude-sonnet-5", deployment: "claude-sonnet-5", family: "sonnet", backendId: "" }] };
@@ -33,6 +34,17 @@ test("v2 fails closed and optional capabilities are independently disabled", asy
   assert.equal(((await call("version")).jsonBody as Doc).version, "3.3.0");
   deps.authenticate = null;
   assert.equal((await call("catalog")).status, 503);
+});
+test("version reports which app and region served the request, null when unknown", async () => {
+  const { deps, call } = setup();
+  assert.deepEqual(((await call("version")).jsonBody as Doc).servedBy, { app: null, region: null });
+  deps.servedBy = readServedBy({ WEBSITE_SITE_NAME: "ccof-admin-b", REGION_NAME: "Central US" });
+  assert.deepEqual(((await call("version")).jsonBody as Doc).servedBy, { app: "ccof-admin-b", region: "Central US" });
+  assert.deepEqual(readServedBy({ WEBSITE_SITE_NAME: " ", REGION_NAME: "" }), { app: null, region: null });
+  assert.deepEqual(readServedBy({ ADMIN_SERVED_APP: "admin-b", ADMIN_SERVED_REGION: "centralus", WEBSITE_SITE_NAME: "x", REGION_NAME: "y" }),
+    { app: "admin-b", region: "centralus" });
+  deps.authenticate = null;
+  assert.equal((await call("version")).status, 503);
 });
 test("catalog default remains readable without optional store; saves disabled", async () => {
   const { deps, call } = setup();

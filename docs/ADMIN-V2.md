@@ -287,7 +287,7 @@ Existing v1 project operations remain. New authenticated routes:
 | `GET /api/v2/runs`, `/audit` | Server-generated queries against allowlisted log resource IDs. |
 | `GET /api/v2/health`, `/prices`, `/billed-cost` | Separate optional capability results, including observation time/permission requirement. |
 | `GET/PUT /api/v2/catalog` | Editor writes; If-None-Match `*` for first create, exact If-Match for replace; parsed rate card and deployment mappings. |
-| `GET /api/v2/version` | Authenticated version information. |
+| `GET /api/v2/version` | Authenticated version information, plus `servedBy: { app, region }`. The values come from `ADMIN_SERVED_APP` and `ADMIN_SERVED_REGION` (set by both Bicep paths from the site itself), falling back to App Service `WEBSITE_SITE_NAME` and `REGION_NAME`; null when none is set. The nav shows it as "Served from …". On another deploy path, set the two `ADMIN_SERVED_*` settings yourself. |
 
 Optional integrations return an explicit capability envelope: `available`,
 `partial`, `disabled`, `permission_required` or `unavailable`; the UI does not

@@ -171,6 +171,9 @@ resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnable
     ADMIN_CLIENT_ID: admin.?clientId ?? ''
     ADMIN_GATEWAY_URL: admin.?gatewayUrl ?? ''
     ADMIN_PROJECT_HEADER: admin.?projectHeader ?? 'x-ccof-project'
+    // Shown in the console nav ("Served from …") so a DR drill can tell which admin app answered.
+    ADMIN_SERVED_REGION: adminSite!.location
+    ADMIN_SERVED_APP: adminSite!.name
   })
 }
 

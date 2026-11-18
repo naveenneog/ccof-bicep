@@ -21,7 +21,7 @@ import { createLimitsStore } from "./sync-limits.ts";
 import { createRegistryStore } from "./backend-routing.ts";
 import { QueryCache } from "./chargeback.ts";
 import type { QuerySources } from "./chargeback.ts";
-import { ADMIN_VERSION } from "./version.ts";
+import { ADMIN_VERSION, readServedBy } from "./version.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 import { createUserDirectory } from "./user-directory.ts";
@@ -109,7 +109,7 @@ app.http("adminV2", {
       headers: (name) => request.headers.get(name), body: request.method === "PUT" ? await request.text() : null,
     }, {
       authenticate, projects: store, catalogStore, changeLog, defaultCatalog: await defaultCatalog((line) => context.log(line)),
-      operations: createOperations(process.env, credential, (line) => context.log(line)),
+      operations: createOperations(process.env, credential, (line) => context.log(line)), servedBy: readServedBy(process.env),
       now: () => new Date(), newId: randomUUID, log: (line) => context.log(line),
     });
     return { status: response.status, headers: response.headers, jsonBody: response.jsonBody };
