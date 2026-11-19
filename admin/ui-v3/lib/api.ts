@@ -18,7 +18,7 @@ export class ApiFailure extends Error {
   }
 }
 
-export interface ApiOptions { method?: string; body?: unknown; ifMatch?: string | null; ifNoneMatch?: string; signal?: AbortSignal; refresh?: boolean }
+export interface ApiOptions { method?: string; body?: unknown; ifMatch?: string | null; ifNoneMatch?: string; idempotencyKey?: string; signal?: AbortSignal; refresh?: boolean }
 export interface ApiResult<T> { data: T; etag: string | null; status: number }
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<ApiResult<T>> {
@@ -30,6 +30,7 @@ export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   if (opts.ifMatch) headers["if-match"] = opts.ifMatch;
   if (opts.ifNoneMatch) headers["if-none-match"] = opts.ifNoneMatch;
+  if (opts.idempotencyKey) headers["idempotency-key"] = opts.idempotencyKey;
   if (opts.refresh) headers["x-ccof-refresh"] = "true";
   let res: Response;
   try { res = await fetch(path, {
