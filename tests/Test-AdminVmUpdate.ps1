@@ -109,6 +109,14 @@ Check 'check: private DNS, identity and outbound HTTPS -> succeeded' ($r.run -an
 Check 'check: changes nothing (no build, no deploy, no install)' (-not (Has $r 'config-zip|^pwsh -NoProfile -File|^apt-get|^git clone'))
 $r = Invoke-VmScript 'check' @{ STUB_IP = '20.50.1.2' }
 Check 'check: scm name resolving to a public address fails with the DNS reason' ($r.run -and $r.run.outcome -ceq 'failed' -and $r.run.step -ceq 'check' -and $r.run.detail -match 'not a private address' -and $r.code -eq '1')
+foreach ($ip in '100.64.0.1', '100.80.22.82', '100.127.255.254') {
+    $r = Invoke-VmScript 'check' @{ STUB_IP = $ip }
+    Check "check: shared address space (RFC 6598) $ip counts as private" ($r.run -and $r.run.outcome -ceq 'succeeded')
+}
+foreach ($ip in '100.63.255.254', '100.128.0.1') {
+    $r = Invoke-VmScript 'check' @{ STUB_IP = $ip }
+    Check "check: $ip outside 100.64.0.0/10 is not private" ($r.run -and $r.run.outcome -ceq 'failed' -and $r.run.detail -match 'not a private address')
+}
 $r = Invoke-VmScript 'check' @{ STUB_HTTP = '000' }
 Check 'check: no outbound HTTPS fails naming the URL' ($r.run -and $r.run.outcome -ceq 'failed' -and $r.run.detail -match 'outbound HTTPS to https://github.com/example/ccof-bicep')
 $r = Invoke-VmScript 'check' @{ STUB_NODE = 'v20.11.0' }

@@ -2,6 +2,11 @@
 
 | ID | State | Question / evidence |
 | --- | --- | --- |
+| ONB-01 | RESOLVED | Cognitive Services account private endpoint state is `properties.privateEndpointConnections[].properties.privateLinkServiceConnectionState.status` (`Approved`/`Pending`/`Rejected`/`Disconnected`), with `properties.publicNetworkAccess` `Enabled`/`Disabled`. Read live 2026-11-08, api-version 2025-06-01, a second lab account (Pending, Disabled). |
+| ONB-02 | RESOLVED | APIM backend writes avoid `If-None-Match` (not relied on): GET first; 404 creates with PUT, same URL is a no-op, different URL is a 409 conflict. Body follows `infra/staged/modules/apim-api.bicep` (api-version 2024-05-01). |
+| ONB-03 | ASSUMED | `roleAssignments?$filter=principalId eq '<id>'` at the account scope returns assignments at, above and below the scope (as used by `Staged.Resources.ps1`); the preflight keeps only scopes that are a case-insensitive prefix of the account ID. Risk: a false "role missing" is a refusal, never a wrong write. |
+| ONB-04 | ASSUMED | Both admin apps (A and B) write the same Cosmos account; a console onboarding in either region is visible to both. Risk: during a Cosmos regional outage onboarding fails cleanly; retry is idempotent. |
+| ONB-05 | RESOLVED | A new backend ID is admitted by the gateway without a policy re-render only when a `backends` descriptor exists (`claude-messages.template.xml`, `ccofBackendAllowed`: baked ID list or a decision carrying `backendAuthMode`). Hence the descriptor write is mandatory. |
 | DR-BYO-01 | OPEN | The customer's standby VNet, subnets, delegations, DNS links and peering have not been read in this session. Existing-network mode must inspect them without changing them; missing or inaccessible prerequisites block the deployment. |
 | DR-BYO-02 | OPEN | A customer-approved private publisher and private endpoints/DNS for the standby Function Apps have not been verified. Cloud Shell is not assumed to be inside the VNet. A private publishing path must be checked before code deployment; no public access is enabled by this change. |
 | DR-BYO-03 | OPEN | Region B's end-to-end readiness, including the manual Entra actions, resolver private path and backend connectivity, has not been verified at the customer. A successful ARM deployment or Front Door health probe alone does not prove readiness. |

@@ -33,7 +33,8 @@ fail() {
 note() { NOTES="$NOTES$1; "; echo "$1"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
-is_private() { [[ "$1" =~ ^10\. || "$1" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. || "$1" =~ ^192\.168\. ]]; }
+# RFC 1918 plus RFC 6598 shared space (100.64.0.0/10), which some private VNets use.
+is_private() { [[ "$1" =~ ^10\. || "$1" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. || "$1" =~ ^192\.168\. || "$1" =~ ^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]; }
 
 do_setup() {
   local missing=''

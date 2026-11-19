@@ -100,6 +100,7 @@ for (const [name, over, problem] of badBreakers) {
 
 test("registry entries refuse reserved ids, non-Foundry URLs and unknown geographies", () => {
   assert.deepEqual(registeredBackendProblems(backend({ backendId: "ccof-pool-x-r1" })), ["backendId:invalid"]);
+  assert.deepEqual(registeredBackendProblems(backend({ backendId: "CCOF-Pool-x-r1" })), ["backendId:invalid"]);
   assert.deepEqual(registeredBackendProblems(backend({ url: "https://evil.example.com/anthropic" })), ["url:invalid"]);
   assert.deepEqual(registeredBackendProblems(backend({ url: "http://acct-a.services.ai.azure.com/anthropic" })), ["url:invalid"]);
   assert.deepEqual(registeredBackendProblems(backend({ inferenceGeo: "apac" as "us" })), ["inferenceGeo:invalid"]);

@@ -1,5 +1,26 @@
 # Change log
 
+## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
+
+- Backends > **Onboard Foundry account** (off by default, `admin.backendOnboarding`) checks an existing
+  account read-only (scope, deployments, approved private endpoint, APIM roles, ID free) and then adds
+  the APIM backend in every region, the gateway descriptor and the registry entry. No scripts and no
+  Entra change; idempotent reruns. Roles and config keys: ADMIN-OPERATIONS section 7.
+- Onboard rereads each record before writing: an APIM backend, registry entry or descriptor claimed
+  for another endpoint or token audience since Check returns `409 backend_id_conflict`, and an APIM
+  backend that does not read back with the account URL returns `502 onboarding_incomplete`. A rerun
+  with nothing to change is audited as `unchanged`. ARM list reads follow `nextLink` on
+  `management.azure.com` only.
+- The wizard locks its fields while a request runs; the Backends page shows why onboarding is
+  unavailable when the capability check fails with anything other than 404.
+- Security review fixes: an atomic create-only reservation (`onboarding-claim` document in the
+  backend's partition) so two concurrent onboards cannot claim one ID for different endpoints; an
+  APIM pool backend is a conflict and is never overwritten; `ccof-` and `onboarding-claim` are
+  refused in any letter case; a rerun with a different descriptor returns `changed:false` with
+  `differences`; missing settings return `503 onboarding_misconfigured`; an APIM `403` names the
+  failed step and the missing action. ADMIN-OPERATIONS section 7 lists the refusals and how to
+  release a reservation.
+
 ## 2026-11-07 - DR Network checks the standby APIM SKU before changing anything
 
 - Network preview and apply stop with `apim_sku_unsupported` before any what-if or write when the

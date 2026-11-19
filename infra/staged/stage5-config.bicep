@@ -142,10 +142,18 @@ resource adminInsights 'Microsoft.Insights/components@2020-02-02' existing = if 
 // Application Insights component.
 // Active/passive DR (DR-05): every gateway this deployment's usage can come from; absent for one region.
 var adminGatewayList = admin.?gatewayResourceIds ?? []
+// ADR 0040: console backend onboarding and its ARM scope; each setting is absent unless configured.
+var adminResourceIdList = admin.?resourceIds ?? []
+var adminDiscoveryScopeList = admin.?discoveryScopes ?? []
+var adminOnboardingSettings = union(
+  empty(adminResourceIdList) ? {} : { ADMIN_RESOURCE_IDS: join(adminResourceIdList, ',') },
+  empty(adminDiscoveryScopeList) ? {} : { ADMIN_DISCOVERY_SCOPES: join(adminDiscoveryScopeList, ',') },
+  (admin.?backendOnboarding ?? false) ? { ADMIN_BACKEND_ONBOARDING: 'true' } : {}
+)
 resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnabled) {
   parent: adminSite
   name: 'appsettings'
-  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, {
+  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, adminOnboardingSettings, {
     AzureWebJobsStorage__accountName: names.apps.?admin.?storageAccount ?? ''
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: adminInsights!.properties.ConnectionString

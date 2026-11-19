@@ -196,6 +196,87 @@ No-op project edits do not create change records.
 The Foundry console page is inventory only. This task crosses Azure provisioning, network,
 APIM, registry and project administration; a console editor cannot complete it alone.
 
+### Console onboarding (ADR 0040, optional)
+
+When `admin.backendOnboarding` is `true`, the Backends page shows **Onboard Foundry account**. It
+replaces sections B (APIM backend) and the registry/descriptor steps below. Sections A (account,
+deployments, private endpoint) and C (acceptance) still apply.
+
+**Platform team, once per account (before the admin starts):**
+
+1. Create the account and the Claude deployments.
+2. Approve the private endpoint from each regional APIM subnet.
+3. Grant `Cognitive Services User` on the account to each APIM managed identity.
+
+**Platform team, once per deployment (admin identity, Azure RBAC only, no Entra change):**
+
+Under DR each region has its own admin Function App and its own managed identity. Both get the
+grants below; a region whose identity lacks them shows `403` rows in Check after a failover.
+
+```powershell
+$admin = "<admin Function App principal ID>"   # run once for region A's admin, once for region B's
+# Custom role: read APIM and read/write its backends only (one per subscription that holds an APIM)
+@{ Name="CCOF APIM Backend Writer"; IsCustom=$true; Description="Read APIM; read/write backends";
+   Actions=@("Microsoft.ApiManagement/service/read","Microsoft.ApiManagement/service/backends/read","Microsoft.ApiManagement/service/backends/write");
+   AssignableScopes=@("/subscriptions/<sub-id>") } | ConvertTo-Json | Set-Content role.json
+az role definition create --role-definition "@role.json"
+foreach ($apim in "<APIM A resource ID>","<APIM B resource ID>") {
+  az role assignment create --assignee-object-id $admin --assignee-principal-type ServicePrincipal --role "CCOF APIM Backend Writer" --scope $apim
+}
+# Reader where new accounts live (account, RG or subscription)
+az role assignment create --assignee-object-id $admin --assignee-principal-type ServicePrincipal --role Reader --scope "<RG or subscription ID>"
+```
+
+Config keys (Stage 3 grants the Cosmos `backends` data role, Stage 5 writes the app settings). Order:
+Stage 3, Stage 5, then under DR the standby Grants phase and the standby Config phase.
+
+Stage 5 writes the admin app's whole app-settings set from the config file
+(`infra/staged/stage5-config.bicep`, `adminSettings`). A setting added by hand in the portal and not
+in the config is removed. Before rerunning, list the current names on each admin app and move any
+hand-added value into the config (for example a hand-added `ADMIN_RESOURCE_IDS` becomes
+`admin.resourceIds`):
+
+```powershell
+az functionapp config appsettings list -g <rg> -n <admin app> --subscription <sub-id> --query "[].name" -o tsv
+```
+
+| Key | Value |
+| --- | --- |
+| `admin.backendOnboarding` | `true` |
+| `admin.gatewayResourceIds` | Every regional APIM resource ID |
+| `admin.discoveryScopes` | RG or subscription IDs where new accounts may live |
+| `admin.resourceIds` | Optional: exact account IDs instead of scopes |
+
+**Admin, per account:** Backends > Onboard Foundry account > paste the account resource ID >
+**Check** > fix any failed row in Azure and Check again > **Onboard**. Then open the project's
+Settings and pick the new backend. Reruns are safe: finished steps show `exists`.
+
+**Ownership and refusals (security fixes, ADR 0040):**
+
+| Case | Result |
+| --- | --- |
+| The backend ID already has a reservation for a different endpoint | `409`, Check shows `existing_entry` |
+| The APIM backend with that ID is a pool (`type` not `Single`) | `409`; a pool is never overwritten |
+| The backend ID is `onboarding-claim` (any case) | `422 backendId:reserved` |
+| The backend ID starts with `ccof-` (any case) | `422 backendId:invalid` (reserved for gateway pools) |
+| `ADMIN_GATEWAY_RESOURCE_IDS`, `ADMIN_RESOURCE_IDS`/discovery scopes, or `COSMOS_ENDPOINT` is missing or invalid | `503 onboarding_misconfigured` naming the setting |
+| A rerun whose stored descriptor differs from the request | `200 changed:false` with `differences`; the stored entry is not changed |
+| An APIM write returns `403` | The failed step and the missing action are in `problems` |
+
+The first Onboard writes a reservation document (`id: "onboarding-claim"`) in the backend's partition
+of the Cosmos `backends` container, with create-only semantics, so two admins cannot claim the same
+backend ID for different endpoints. To release a reservation (for example after deleting the
+backend), delete that document in that backend's partition:
+
+```powershell
+az cosmosdb sql container show -g <rg> -a <cosmos account> -d <database> -n backends --subscription <sub-id> --query id -o tsv
+# Data Explorer: backends > filter c.backendId = "<backend id>" > delete the item with id "onboarding-claim"
+```
+
+Bicep (`backendRegistry`) and the scripts in section 7B do not write or check the reservation. For a
+backend added that way, console onboarding refuses (`409`) when the APIM backend is a pool or points
+at another URL; with the same URL it takes the reservation and reports any descriptor `differences`
+without changing the stored entry.
 ### Required change sheet
 
 | Value | Source / approval |

@@ -71,6 +71,19 @@ function Invoke-Stage5 {
             }
         }
         if ($gatewayResourceIds.Count) { $admin.gatewayResourceIds = $gatewayResourceIds }
+        # ADR 0040: console onboarding is opt-in, scoped to the configured ARM IDs.
+        $guidRe = '[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}'
+        $resourceIds = @($Cfg.admin.resourceIds | Where-Object { $_ -is [string] -and $_.Trim().Length })
+        if (@($resourceIds | Where-Object { $_ -notmatch "^/subscriptions/$guidRe/resourceGroups/[^/\s]+/providers/[^/\s]+/[^/\s]+/[^/\s]+(?:/[^/\s]+/[^/\s]+)*$" }).Count) {
+            throw 'stage5_admin_resource_ids_invalid: admin.resourceIds must contain full ARM resource IDs.'
+        }
+        $discoveryScopes = @($Cfg.admin.discoveryScopes | Where-Object { $_ -is [string] -and $_.Trim().Length })
+        if (@($discoveryScopes | Where-Object { $_ -notmatch "^/subscriptions/$guidRe(?:/resourceGroups/[^/\s]+)?$" }).Count) {
+            throw 'stage5_admin_discovery_scopes_invalid: admin.discoveryScopes must contain subscription or resource group IDs.'
+        }
+        if ($resourceIds.Count) { $admin.resourceIds = $resourceIds }
+        if ($discoveryScopes.Count) { $admin.discoveryScopes = $discoveryScopes }
+        if (Test-StgAdminBackendOnboarding $Cfg) { $admin.backendOnboarding = $true }
     }
     $params = @{
         tenantId = $Cfg.tenantId; location = $Cfg.location; names = $ctx.P.names; cosmosEndpoint = $s1.cosmosEndpoint

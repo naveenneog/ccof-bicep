@@ -6,7 +6,7 @@ interface CachedRead { data: unknown; etag: string | null; observedAt: Date }
 const readCache = new ReadCache<CachedRead>();
 
 export class ApiFailure extends Error {
-  status: number; code: string; problems: string[]; requestId: string | null; detail: string | null;
+  status: number; code: string; problems: string[]; requestId: string | null; detail: string | null; body: Record<string, unknown> | null;
   constructor(status: number, body: Record<string, unknown> | null) {
     super(String(body?.error ?? `http_${status}`));
     this.status = status;
@@ -14,6 +14,7 @@ export class ApiFailure extends Error {
     this.problems = Array.isArray(body?.problems) ? body.problems.map(String) : [];
     this.requestId = typeof body?.requestId === "string" ? body.requestId : null;
     this.detail = typeof body?.detail === "string" ? body.detail : null;
+    this.body = body;
   }
 }
 
@@ -100,6 +101,13 @@ export function errorMessage(err: unknown): string {
       historical_rate_edit_forbidden: "Recorded rates can't be edited. Close the old entry and add a new one from a future date.",
       effective_date_in_past: "A new price can't take effect in the past: that would reprice usage already recorded.",
       catalog_store_not_configured: "Saving cost definitions needs ADMIN_CONFIG_CONTAINER and a Cosmos data role.",
+      resource_out_of_scope: "This account is outside ADMIN_RESOURCE_IDS and ADMIN_DISCOVERY_SCOPES, so the console may not onboard it.",
+      preflight_failed: "A check failed. Fix the failed rows in Azure, then select Check again.",
+      backend_id_conflict: "This backend ID is already used for another endpoint. Choose another backend ID.",
+      onboarding_incomplete: "Onboarding stopped part way. Steps already done are kept; select Onboard again to finish.",
+      invalid_onboarding_request: "The console refused the values.",
+      backend_registry_not_configured: "Onboarding needs ADMIN_CONFIG_CONTAINER and a Cosmos data role for the backend registry.",
+      onboarding_misconfigured: "Onboarding is switched on (ADMIN_BACKEND_ONBOARDING) but an app setting is missing or invalid. Fix the named setting on the admin app and restart it.",
     };
     const base = known[err.code] ?? (err.detail ? err.detail : `The request failed (${err.code}).`);
     return err.problems.length ? `${base} ${err.problems.join(", ")}` : base;

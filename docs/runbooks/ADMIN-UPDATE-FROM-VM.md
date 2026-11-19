@@ -144,10 +144,15 @@ az network private-endpoint create -g $rg -n "$adminApp-pe" -l $loc --subnet $pe
   --private-connection-resource-id $adminId --group-id sites --connection-name "$adminApp-pe"
 az network private-endpoint dns-zone-group create -g $rg --endpoint-name "$adminApp-pe" -n default `
   --private-dns-zone $zoneId --zone-name sites
-az network private-endpoint show -g $rg -n "$adminApp-pe" --query "{state:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status, ip:customDnsConfigs[0].ipAddresses[0]}" -o table
+az network private-endpoint show -g $rg -n "$adminApp-pe" --query "privateLinkServiceConnections[0].privateLinkServiceConnectionState.status" -o tsv
+$nic = az network private-endpoint show -g $rg -n "$adminApp-pe" --query "networkInterfaces[0].id" -o tsv
+az network nic show --ids $nic --query "ipConfigurations[0].privateIPAddress" -o tsv
 ```
 
-**Expect:** `Approved` and a private IP address from the subnet. The DNS zone group adds two records,
+**Expect:** `Approved`, then a private IP address from the subnet. With a DNS zone group,
+`customDnsConfigs` on the endpoint is empty, so the address is read from the endpoint's network
+interface. The address can be in RFC 1918 space or in the RFC 6598 shared space `100.64.0.0/10`.
+The DNS zone group adds two records,
 `<app>` and `<app>.scm`, both pointing to that address
 ([Kudu/scm endpoint](https://learn.microsoft.com/azure/app-service/overview-private-endpoint#kuduscm-endpoint)).
 Flex Consumption apps support private endpoints
@@ -308,6 +313,7 @@ Command fails or returns no result line.
 | `failed at check: cannot read <app>` or `subscription ... is not visible` | The role assignment is missing or not yet effective | A6; wait a few minutes and rerun `Check` |
 | `failed at check: outbound HTTPS to ... returned` | A firewall or missing outbound path | A0 outbound list |
 | `failed at setup` | A package source is blocked | A0 outbound list; or a VM image with the tools |
+| `failed at setup: Azure CLI install failed`, VM log ends `gpg: no valid OpenPGP data found` | `packages.microsoft.com` returned HTTP 429 (rate limit) for the signing key on a shared outbound address | Run `Setup` again after a minute; it installs only the tools still missing |
 | `failed at clone: commit ... is not in` | The commit is not on the repository the VM downloads | Push the commit; check `git remote get-url origin` |
 | `failed at build` | `npm ci`, the TypeScript build or an admin unit test failed | The VM log named in the message; fix the code and push a new commit |
 | `failed at deploy` | OneDeploy refused the package | Role (A6) and private endpoint (A4); the VM log |

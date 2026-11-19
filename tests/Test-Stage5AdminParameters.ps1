@@ -77,6 +77,24 @@ try {
         }
     }
     $cfg.admin.gatewayResourceIds = @()
+    # ADR 0040: onboarding settings are omitted unless configured; malformed IDs fail before any write.
+    $account = '/subscriptions/00000000-0000-4000-8000-000000000011/resourceGroups/fx/providers/Microsoft.CognitiveServices/accounts/fx-foundry'
+    $rgScope = '/subscriptions/00000000-0000-4000-8000-000000000011/resourceGroups/fx'
+    $null = Invoke-Stage5 -Cfg $cfg
+    foreach ($k in 'resourceIds', 'discoveryScopes', 'backendOnboarding') { if ($script:captured.admin.ContainsKey($k)) { throw "Unset admin.$k must be omitted." } }
+    $cfg.admin.resourceIds = @($null, ' '); $cfg.admin.discoveryScopes = @(); $cfg.admin.backendOnboarding = 'true'
+    $null = Invoke-Stage5 -Cfg $cfg
+    foreach ($k in 'resourceIds', 'discoveryScopes', 'backendOnboarding') { if ($script:captured.admin.ContainsKey($k)) { throw "Empty or non-boolean admin.$k must be omitted." } }
+    $cfg.admin.resourceIds = @($account); $cfg.admin.discoveryScopes = @($rgScope, '/subscriptions/00000000-0000-4000-8000-000000000011'); $cfg.admin.backendOnboarding = $true
+    $null = Invoke-Stage5 -Cfg $cfg
+    if (($script:captured.admin.resourceIds -join ',') -cne $account -or $script:captured.admin.discoveryScopes.Count -ne 2 -or $script:captured.admin.backendOnboarding -ne $true) { throw 'Valid onboarding settings must pass through.' }
+    foreach ($bad in @(@{ key = 'resourceIds'; value = @('not-an-id') }, @{ key = 'resourceIds'; value = @($rgScope) }, @{ key = 'discoveryScopes'; value = @($account) }, @{ key = 'discoveryScopes'; value = @('/subscriptions/nope') })) {
+        $cfg.admin.resourceIds = @($account); $cfg.admin.discoveryScopes = @($rgScope); $cfg.admin[$bad.key] = $bad.value
+        $script:captured = $null; $script:diagnosticsCalls = 0; $errorText = $null
+        try { $null = Invoke-Stage5 -Cfg $cfg } catch { $errorText = "$_" }
+        if ($errorText -notmatch "admin\.$($bad.key)" -or $null -ne $script:captured -or $script:diagnosticsCalls -ne 0) { throw "Malformed admin.$($bad.key) must fail before deployment: $errorText" }
+    }
+    $cfg.admin.Remove('resourceIds'); $cfg.admin.Remove('discoveryScopes'); $cfg.admin.Remove('backendOnboarding')
     $script:fakeEntra.admin.appId = $null
     $script:diagnosticsCalls = 0; $script:captured = $null
     $errorText = $null

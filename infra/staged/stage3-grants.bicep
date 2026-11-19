@@ -34,6 +34,9 @@ param backends array = []
 @description('Empty for the primary region. A standby region (infra/dr) passes its own value, so its grants on the shared workspace and Cosmos account get their own names instead of replacing the primary region\'s.')
 param assignmentNameSalt string = ''
 
+@description('ADR 0040: grant the admin app create-only access to the backends container for console onboarding.')
+param adminBackendOnboarding bool = false
+
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logReader = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -159,9 +162,11 @@ var cosmosAssignments = [
   { id: 'qs-sync-backends-writer', principal: 'sync', role: 'custom:onbProjectWriter', container: 'backends', when: '' }
   { id: 'admin-projects-editor', principal: 'admin', role: 'custom:adminProjectEditor', container: 'projects', when: '' }
   { id: 'admin-config-editor', principal: 'admin', role: 'custom:adminProjectEditor', container: 'adminConfig', when: '' }
+  // ADR 0040: the console writes new backend descriptors (create-only), only when onboarding is enabled.
+  { id: 'admin-backends-writer', principal: 'admin', role: 'custom:onbProjectWriter', container: 'backends', when: 'onboarding' }
   { id: 'sync-limits-reader', principal: 'sync', role: '00000000-0000-0000-0000-000000000001', container: 'adminConfig', when: '' }
 ]
-var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode) && !empty(principals[?a.principal] ?? '') && (a.container != 'adminConfig' || !empty(principals.?admin ?? '')))
+var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode || (a.when == 'onboarding' && adminBackendOnboarding)) && !empty(principals[?a.principal] ?? '') && (a.container != 'adminConfig' || !empty(principals.?admin ?? '')))
 
 resource roleDefinitions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions@2024-11-15' = [for d in cosmosRoleDefinitions: {
   parent: account

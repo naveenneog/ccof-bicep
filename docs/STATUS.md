@@ -1,5 +1,19 @@
 # Current work
 
+## Admin console onboards a Foundry backend
+
+**Packet:** ADMIN-FOUNDRY-ONBOARD (2026-11-08), ADR 0040. An admin can add a Foundry account that
+the platform team already created (deployments, private endpoint, APIM role) without scripts or
+Entra changes. Acceptance: (1) flag `ADMIN_BACKEND_ONBOARDING` off returns 404 for both routes and
+changes nothing; (2) readers get 403; (3) preflight is read-only and reports each check (ID free,
+account in scope, deployments present, private endpoint approved, every APIM identity holds a
+Foundry role); (4) onboarding refuses (422) on a failed preflight, refuses (409) when an ID is taken
+with a different URL; (5) otherwise writes every APIM backend, the descriptor (resolver verdict
+`active`) and the registry entry, idempotently, and reports per-step results on a partial failure;
+(6) one change-log entry and one audit line; (7) Stage 5 sets the flag from `admin.backendOnboarding`
+(default false) and Stage 3 grants the admin `backends` data role only when it is true; (8) lab:
+existing project (the lab's first project) keeps working; a second account is onboarded from the console and a
+project routed to it answers through both regions.
 ## Standby Cosmos read region (decision only)
 
 **Packet:** DR-COSMOS-READ-REGION (2026-11-07), lab finding on 94aeafa: resolver B reads Cosmos from

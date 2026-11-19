@@ -570,6 +570,7 @@ function Invoke-Stage3 {
     $params = @{ names = $s1.names; principals = $s1.principals; databaseName = $Cfg.cosmos.databaseName; roleNames = $Cfg.cosmos.roleNames
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
+    if (Test-StgAdminBackendOnboarding $Cfg) { $params.adminBackendOnboarding = $true }
     $params = Add-StgStandbyParameters $Cfg 3 $params
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name (Get-StgDeploymentName $Cfg 'stage3-grants') -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
