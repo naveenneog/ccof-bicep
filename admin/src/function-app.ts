@@ -26,6 +26,8 @@ import { ADMIN_VERSION } from "./version.ts";
 import { isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
 import { createUserDirectory } from "./user-directory.ts";
+import { createSelfServiceRuntime } from "./self-service-runtime.ts";
+import { handleSelfServiceRequest } from "./self-service-api.ts";
 
 let authenticate: Authenticator | null = null;
 let authProblem = "";
@@ -39,7 +41,7 @@ const cosmos = readCosmosSettings(process.env);
 const credential = new ManagedIdentityCredential(process.env.ADMIN_MANAGED_IDENTITY_CLIENT_ID ? { clientId: process.env.ADMIN_MANAGED_IDENTITY_CLIENT_ID } : {});
 const directory = createUserDirectory(process.env, credential);
 const container = cosmos ? openContainer(cosmos, credential) : null;
-const store = container ? createCosmosProjectStore(container) : null;
+const projectStore = container ? createCosmosProjectStore(container) : null;
 const catalogContainer = cosmos && process.env.ADMIN_CONFIG_CONTAINER
   ? openContainer({ ...cosmos, container: process.env.ADMIN_CONFIG_CONTAINER }, credential) : null;
 const catalogStore = catalogContainer ? createCatalogStore(catalogContainer) : null;
@@ -47,6 +49,21 @@ const catalogStore = catalogContainer ? createCatalogStore(catalogContainer) : n
 const changeLog = catalogContainer ? createCosmosChangeLog(catalogContainer) : null;
 const limitsStore = catalogContainer ? createLimitsStore(catalogContainer) : null;
 const registry = catalogContainer ? createRegistryStore(catalogContainer) : null;
+const selfService = createSelfServiceRuntime({
+  env: process.env, authenticate, projects: projectStore, container: catalogContainer, registry, changeLog, credential,
+  now: () => new Date(), newId: randomUUID, log: (line) => console.log(line),
+});
+const store = selfService.projects;
+if (catalogContainer && (process.env.ADMIN_ROUTING_PUBLISH_ENABLED === "true" || process.env.ADMIN_APPLY_ENABLED === "true")) {
+  app.timer("adminOperations", {
+    schedule: "*/10 * * * * *", runOnStartup: false,
+    handler: async (_timer, context) => {
+      try { await selfService.tick(); } catch {
+        context.log(JSON.stringify({ schema: "ccof.admin.operation.v1", code: "operation_tick_unavailable" }));
+      }
+    },
+  });
+}
 // ADR 0040: console backend onboarding; null (routes 404) unless enabled and fully configured.
 const onboarding = createOnboardingDependencies(process.env, credential, (name) => cosmos ? openContainer({ ...cosmos, container: name }, credential) : null);
 let defaultCatalogPromise: Promise<Doc | null> | null = null;
@@ -168,10 +185,13 @@ app.http("adminV3", {
   handler: async (request, context) => {
     if (!v3Enabled(process.env)) return { status: 404, headers: { "cache-control": "no-store" }, jsonBody: { error: "route_not_found" } };
     const log = (line: string) => context.log(line);
-    const response = await handleV3Request({
+    const input = {
       method: request.method, path: new URL(request.url).pathname + new URL(request.url).search,
-      headers: (name) => request.headers.get(name), body: ["POST", "PUT"].includes(request.method.toUpperCase()) ? await request.text() : null,
-    }, {
+      headers: (name: string) => request.headers.get(name), body: ["POST", "PUT"].includes(request.method.toUpperCase()) ? await request.text() : null,
+    };
+    const operation = await handleSelfServiceRequest(input, { ...selfService.dependencies, log });
+    if (operation) return { status: operation.status, headers: operation.headers, jsonBody: operation.jsonBody };
+    const response = await handleV3Request(input, {
       authenticate, projects: store, catalogStore, changeLog, limitsStore, registry, onboarding, defaultCatalog: await defaultCatalog(log),
       operations: createOperations(process.env, credential, log), env: process.env,
       sources: await querySources(log), cache: v3Cache, directory, now: () => new Date(), newId: randomUUID, log,
