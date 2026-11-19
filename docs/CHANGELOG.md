@@ -20,9 +20,11 @@
   No new Entra app roles or Graph writes are required; existing sync Graph reads remain separate.
 - Five-role council passes or passes with notes; admin 259, root Apply 20 and 12 synthetic-API
   browser scenarios pass. Diagram drift is fixed and recovered active ZIPs supply exact-byte
-  rollback without claiming source provenance. The fourth gate still fails `tests.run` without
-  concurrent updater tests; its output tail does not identify the original failure. A full diagnostic
-  run captures all output; the updater suite passes 84 checks in that run. Positive Graph
+  rollback without claiming source provenance. Full diagnostic output identifies the fourth
+  gate's deterministic failure: an offline Apply test imports the SDK-wired adapter. Extracted
+  its controller into an SDK-free module without weakening the live-Azure detector; 37 focused
+  checks, mutation control, typecheck/build and scoped reviews pass. The diagnostic updater
+  suite passes 84 checks; a green full gate remains required. Positive Graph
   Apply acceptance also lacks the lab's existing Graph read grants. No new feature code or customer
   rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
 

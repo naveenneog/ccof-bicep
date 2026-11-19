@@ -34,13 +34,23 @@ lease cleanup no longer masks the real result or original error.
 
 The latest executed `node .ironclad/gate.mjs --stage packet --json` at `dfda914` exits 1:
 22 checks pass, 1 fails, 1 skips and 2 warn. Diagram checks, typecheck and build pass.
-The sole failed check is `tests.run`. This fourth gate ran without a concurrent updater suite;
-its retained output contains only the final passing suite, not the original failure.
-The preceding gate failed at `Test-AdminVmUpdate.ps1:223` with no parsed worker receipt;
-a standalone reproduction subsequently passed all 84 checks. Scratch interference remains
-unproven and does not explain the fourth gate without further evidence. A full diagnostic
-`npm test` run now retains stdout/stderr outside git; its updater suite passes all 84 checks.
-No assertion, charter limit or production code was changed. This is **not a green packet gate**.
+The sole failed check is `tests.run`. This fourth gate ran without a concurrent updater suite.
+A full diagnostic `npm test` run then exited 1 after 852 seconds and identified the deterministic
+failure: the unchanged live-Azure detector flags `apply-runtime.test.ts` importing the SDK-wired
+worker adapter. All 84 updater checks pass in that diagnostic run. The preceding gate's missing
+worker receipt remains intermittent and unexplained; scratch interference is not established.
+
+The correction extracts configuration/default-off/error-isolation behavior into SDK-free
+`apply-control.ts`; the existing adapter and function-app entrypoints retain their public
+contracts, identity selection, Cosmos wiring and sanitized failure response. Offline tests
+exercise the controller without importing the adapter. The live-Azure detector, charter and
+all existing behavior assertions remain intact. Focused reproduction first fails on the Azure
+boundary; after the correction, 37 Apply/live-gate checks, typecheck and build pass. Removing
+controller validation causes the intended adapter-call assertion to fail with all five controller
+tests loaded; validation is restored. Scoped reviews: Architect PASS (boundary and API retained),
+Coder PASS (same adapter behavior), QA PASS (reproduction and non-vacuity), UX PASS (no UI change,
+same unavailable state); independent Security PASS, no vulnerabilities. Full gate remains required.
+This is **not a green packet gate** or live acceptance.
 
 Private-lab preparation is verified, not new-feature acceptance:
 
