@@ -22,12 +22,19 @@ import { readHostSettings, readSyncConfig } from "./config.ts";
 import { SEED_FUNCTION_NAME, SEED_SCHEDULE, SEED_SETTING, runRegistrySeed } from "./registry-seed.ts";
 import { configFailure, runSync } from "./run.ts";
 import { SNAPSHOT_FUNCTION_NAME, SNAPSHOT_SCHEDULE, SNAPSHOT_SETTING, runSnapshotFunction, snapshotOperationLog } from "./snapshot-function.ts";
+import { APPLY_CONTROL_FUNCTION_NAME, APPLY_CONTROL_SCHEDULE, applyControlEnabled, createApplyControlHandler } from "../operations/apply-runtime.ts";
+import { guardSyncDependencies } from "../operations/apply-guards.ts";
+import type { ApplyRequest } from "../operations/apply-contracts.ts";
 
 // No hyphen: a function whose name has one cannot be disabled on Linux (Learn,
 // "How to disable functions in Azure Functions").
 export const FUNCTION_NAME = "syncEntitlement";
 
 async function syncTimer(_timer: Timer, context: InvocationContext): Promise<void> {
+  await executeSync(context);
+}
+
+async function executeSync(context: InvocationContext, guard?: () => Promise<void>, request?: ApplyRequest) {
   const runContext = {
     trigger: "timer" as const,
     now: () => new Date(),
@@ -37,11 +44,11 @@ async function syncTimer(_timer: Timer, context: InvocationContext): Promise<voi
   const host = readHostSettings(process.env);
   const sync = readSyncConfig(process.env);
   if (!host.ok || !sync.ok) {
-    configFailure([...(host.ok ? [] : host.problems), ...(sync.ok ? [] : sync.problems)], runContext);
-    return;
+    return configFailure([...(host.ok ? [] : host.problems), ...(sync.ok ? [] : sync.problems)], runContext);
   }
   const credential = new ManagedIdentityCredential({ clientId: host.managedIdentityClientId });
-  await runSync(sync.config, createAzureDependencies(sync.config, credential), runContext);
+  const deps = createAzureDependencies(sync.config, credential);
+  return runSync(sync.config, guard ? guardSyncDependencies(deps, guard, request) : deps, runContext);
 }
 
 // The quick-start's registry seed (registry-seed.ts; docs/QUICKSTART.md, step 5).
@@ -72,6 +79,12 @@ async function snapshotApplyTimer(_timer: Timer, context: InvocationContext): Pr
 
 if (process.env.CCOF_APP_ROLE === "sync") {
   app.timer(FUNCTION_NAME, { schedule: "%SYNC_SCHEDULE%", runOnStartup: false, handler: syncTimer });
+  if (applyControlEnabled(process.env, "sync")) {
+    app.timer(APPLY_CONTROL_FUNCTION_NAME, {
+      schedule: APPLY_CONTROL_SCHEDULE, runOnStartup: false, useMonitor: false,
+      handler: createApplyControlHandler({ env: process.env, phase: "sync", run: (request, context, guard) => executeSync(context, guard, request) }),
+    });
+  }
   // Only while step 5 has set the seed documents, so the staged path (which never sets them) gets no
   // new function; the host runs it only while AzureWebJobs.registrySeed.Disabled is false, which the
   // quick-start's settings keep true outside step 5.

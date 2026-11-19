@@ -15,6 +15,9 @@ import { createReconcilerDependencies } from "./azure.ts";
 import { runReconciler, settingsFailure } from "./run.ts";
 import type { RunDependencies } from "./run.ts";
 import { readReconcilerSettings } from "./settings.ts";
+import { APPLY_CONTROL_FUNCTION_NAME, APPLY_CONTROL_SCHEDULE, applyControlEnabled, createApplyControlHandler } from "../operations/apply-runtime.ts";
+import { guardReconcilerDependencies } from "../operations/apply-guards.ts";
+import type { ApplyRequest } from "../operations/apply-contracts.ts";
 
 // No hyphen: a function whose name has one cannot be disabled on Linux (Learn,
 // "How to disable functions in Azure Functions").
@@ -30,6 +33,10 @@ const assets = loadRunAssets((path) => readFile(new URL(path, packageRoot), "utf
 let dependencies: RunDependencies | undefined;
 
 async function reconcileTimer(_timer: Timer, context: InvocationContext): Promise<void> {
+  await executeReconciler(context);
+}
+
+async function executeReconciler(context: InvocationContext, guard?: () => Promise<void>, request?: ApplyRequest) {
   const runContext = { now: () => new Date(), newRunId: () => randomUUID(), log: (line: string) => context.log(line) };
   const read = readReconcilerSettings(process.env);
   if (!read.ok) {
@@ -42,9 +49,15 @@ async function reconcileTimer(_timer: Timer, context: InvocationContext): Promis
     return;
   }
   dependencies ??= createReconcilerDependencies(read.settings, new ManagedIdentityCredential({ clientId: read.settings.managedIdentityClientId }));
-  await runReconciler(read.settings, loaded.assets, dependencies, runContext);
+  return runReconciler(read.settings, loaded.assets, guard ? guardReconcilerDependencies(dependencies, guard, request) : dependencies, runContext);
 }
 
 if (process.env.CCOF_APP_ROLE === "reconciler") {
   app.timer(FUNCTION_NAME, { schedule: "%RECONCILER_SCHEDULE%", runOnStartup: false, handler: reconcileTimer });
+  if (applyControlEnabled(process.env, "reconcile")) {
+    app.timer(APPLY_CONTROL_FUNCTION_NAME, {
+      schedule: APPLY_CONTROL_SCHEDULE, runOnStartup: false, useMonitor: false,
+      handler: createApplyControlHandler({ env: process.env, phase: "reconcile", run: (request, context, guard) => executeReconciler(context, guard, request) }),
+    });
+  }
 }
