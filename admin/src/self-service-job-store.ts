@@ -1,4 +1,4 @@
-import type { Container } from "@azure/cosmos";
+import type { Container, ItemDefinition } from "@azure/cosmos";
 import type { DurableJob, JobStore, StoredJob } from "./self-service-jobs.ts";
 
 const PARTITION = "admin-operations";
@@ -6,6 +6,11 @@ const status = (error: unknown) => Number((error as { code?: unknown })?.code ??
 
 export function createCosmosJobStore(container: Container): JobStore {
   const document = (job: DurableJob) => ({ ...job, scopeId: PARTITION, recordKind: "adminOperation" });
+  const readRequired = async <T extends ItemDefinition>(id: string) => {
+    const response = await container.item(id, PARTITION).read<T>();
+    if (response.statusCode === 404) throw Object.assign(new Error("operation_document_not_found"), { code: 404 });
+    return response;
+  };
   const stored = (doc: Record<string, unknown>, etag?: string): StoredJob => {
     const { scopeId: _partition, recordKind: _kind, _etag, _rid: _rid, _self: _self, _attachments: _attachments, _ts: _ts, ...job } = doc;
     return { job: job as unknown as DurableJob, etag: etag ?? String(_etag ?? "") };
@@ -18,7 +23,7 @@ export function createCosmosJobStore(container: Container): JobStore {
         try {
           let etag: string | undefined;
           try {
-            const response = await container.item(id, PARTITION).read<{ recordKind: string }>();
+            const response = await readRequired<{ recordKind: string }>(id);
             if (response.resource?.recordKind !== value.recordKind) throw new Error("operation_probe_conflict");
             etag = response.etag;
           } catch (error) {
@@ -63,7 +68,7 @@ export function createCosmosJobStore(container: Container): JobStore {
       const id = `project-lock:${projectId}`;
       const value = { id, scopeId: PARTITION, recordKind: "adminOperationLease", owner, until };
       try {
-        const response = await container.item(id, PARTITION).read<{ owner: string; until: string }>();
+        const response = await readRequired<{ owner: string; until: string }>(id);
         if (!response.resource || response.resource.until > now) return false;
         await container.item(id, PARTITION).replace(value, { accessCondition: { type: "IfMatch", condition: response.etag ?? "" } });
         return true;

@@ -15,8 +15,8 @@ function cosmos() {
       return {
         async read() {
           fail("read");
-          if (!docs.has(id)) throw { code: 404 };
-          return { resource: structuredClone(docs.get(id)), etag: docs.get(id)!._etag };
+          if (!docs.has(id)) return { resource: undefined, statusCode: 404 };
+          return { resource: structuredClone(docs.get(id)), etag: docs.get(id)!._etag, statusCode: 200 };
         },
         async replace(doc: any, options: any) {
           fail("replace");
@@ -54,6 +54,14 @@ test("Cosmos storage probe proves create, conditional replace and query, not jus
   fixture.deny("");
   await fixture.store.probe!();
   assert.ok([...fixture.docs.values()].every((doc) => doc.recordKind !== "adminOperation"), "probe cannot enqueue real work");
+});
+
+test("Cosmos storage probe refuses an existing conflicting record without overwriting it", async () => {
+  const { store, docs } = cosmos();
+  const conflicting = { id: "self-service-probe", scopeId: "admin-operations", recordKind: "unrelated", _etag: '"existing"' };
+  docs.set(conflicting.id, conflicting);
+  await assert.rejects(store.probe!(), /operation_probe_conflict/);
+  assert.deepEqual(docs.get(conflicting.id), conflicting);
 });
 
 test("Cosmos job writes use ETags and leases cannot be stolen or released by another owner", async () => {
