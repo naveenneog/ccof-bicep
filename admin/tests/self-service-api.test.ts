@@ -4,6 +4,7 @@ import { handleSelfServiceRequest } from "../src/self-service-api.ts";
 import { createMemoryJobStore } from "../src/self-service-jobs.ts";
 import { createMemoryChangeLog } from "../src/change-log.ts";
 import { ApiError } from "../src/auth.ts";
+import { createCosmosConfigHistoryStore, HISTORY_ACTIONS } from "../src/config-history-store.ts";
 
 const now = new Date("2026-11-20T12:00:00Z");
 function fixture() {
@@ -119,4 +120,24 @@ test("native history permission refusals report history scope rather than operat
   assert.equal(response?.status, 403);
   assert.deepEqual((response?.jsonBody as any).capability?.requirements, requirements);
   assert.equal((response?.jsonBody as any).capability?.reason, "history_permission_required");
+});
+
+test("a native Cosmos history query denial after preflight preserves its exact permission in the API", async () => {
+  const { deps, request } = fixture();
+  const scope = "/dbs/ccof/colls/adminConfig";
+  const versions = createCosmosConfigHistoryStore({
+    items: {
+      query() {
+        return { async fetchAll() { throw Object.assign(new Error("provider-private-details"), { code: 403 }); } };
+      },
+    },
+  } as any, scope);
+  Object.assign(deps, { history: {
+    capability: async () => ({ state: "available", requirements: [] }),
+    list: (projectId: string) => versions.list(projectId, 20),
+  } });
+  const response = await handleSelfServiceRequest(request("/api/v3/projects/PROJECT/history"), deps);
+  assert.doesNotMatch(JSON.stringify(response), /provider-private-details/);
+  assert.equal(response?.status, 403);
+  assert.deepEqual((response?.jsonBody as any).capability?.requirements, [{ action: HISTORY_ACTIONS.query, scope }]);
 });

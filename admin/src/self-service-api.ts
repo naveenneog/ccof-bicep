@@ -168,7 +168,8 @@ export async function handleSelfServiceRequest(request: ApiRequest, deps: SelfSe
   } catch (error) {
     const statusCode = Number((error as { code?: unknown; statusCode?: unknown })?.statusCode ?? (error as { code?: unknown })?.code);
     const conflict = error instanceof Error && error.message === "idempotency_conflict";
-    const status = error instanceof ApiError ? error.status : error instanceof ValidationError ? 400 : conflict ? 409 : statusCode === 403 ? 403 : 503;
+    const permissionDenied = (error as { permissionRequired?: unknown })?.permissionRequired === true;
+    const status = permissionDenied ? 403 : error instanceof ApiError ? error.status : error instanceof ValidationError ? 400 : conflict ? 409 : statusCode === 403 ? 403 : 503;
     const code = error instanceof ApiError ? error.code : error instanceof ValidationError ? "invalid_configuration" : conflict ? "idempotency_conflict" : "self_service_unavailable";
     const required = (error as { requirements?: unknown })?.requirements;
     const requirements = Array.isArray(required) ? required.filter((item) =>
