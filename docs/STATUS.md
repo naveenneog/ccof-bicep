@@ -34,7 +34,9 @@ times out. No assertion, command, timeout or charter constraint is relaxed. Iden
 test-runner descendants from the timed-out gate are stopped by exact process ID. Further
 retries stopped pending a scoped runtime investigation (SS-10). SS-10 is resolved by running the
 PowerShell suites in parallel (`scripts/run-tests.ps1`, `tests/Test-RunTestsRunner.ps1`); packet
-gate 9 exits 0 in 273 seconds with the unchanged limit. SS-09 is not live-resolved.
+gate 9 exits 0 in 273 seconds with the unchanged limit. SS-09 is live-resolved (`0cc43c3` on
+both lab admins). SS-11: Front Door WAF rule 931130 blocks backend registration (JSON `url`);
+fixed in `infra/dr/frontdoor.bicep` with a single-rule, single-field exclusion.
 Azure startup telemetry identifies SS-08's health component as `AzureWebJobsStorage` client
 creation, not a missing module: host/script lifecycle are healthy and the disabled sync function
 is indexed. Both sync host-storage client IDs match assigned identities. A prior-day query finds

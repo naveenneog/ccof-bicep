@@ -1,5 +1,17 @@
 # Change log
 
+## Unreleased - Front Door WAF lets the console register a backend
+
+- Live routing acceptance found that registering a fallback backend returns Front Door's HTML 403.
+  WAF logs show DRS 2.1 rule 931130 (remote file inclusion, off-domain link) matching JSON field
+  `url` with score 5, which reaches the blocking threshold in Prevention mode, for scripts and
+  browsers alike. `infra/dr/frontdoor.bicep` now overrides only rule 931130 to skip only the JSON
+  body field `url`; every other rule still inspects it. Because the policy covers the whole
+  endpoint, a gateway request body key named `url` is also exempt from 931130 only.
+  `tests/Test-DrStandby.ps1` fails without the override and passes with it (122/122).
+- SS-09 is confirmed fixed live: both lab admins run `0cc43c3` and report `publish-routing` and
+  `history` available.
+
 ## Unreleased - Cosmos operation storage and live lab acceptance
 
 - Corrected the job-store assumption that missing Cosmos point reads throw. The installed SDK

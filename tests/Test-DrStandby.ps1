@@ -68,6 +68,17 @@ Check 'WAF policy attached through a security policy' (@(& $fdType 'Microsoft.Cd
 Check 'WAF mode is a parameter defaulting to Detection' ($fd.parameters.wafMode.defaultValue -ceq 'Detection' -and (@($fd.parameters.wafMode.allowedValues) -join ',') -ceq 'Detection,Prevention')
 $wafPolicy = "$((& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies') | ConvertTo-Json -Depth 20)"
 Check 'WAF preserves the managed JavaScript challenge expiration' ($wafPolicy -match 'javascriptChallengeExpirationInMinutes.*30')
+$prop = { param($o, $n) if ($null -ne $o -and $o.PSObject.Properties[$n]) { $o.$n } else { $null } }
+$wafManaged = (& $fdType 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies')[0].properties.managedRules
+$drs = @($wafManaged.managedRuleSets | Where-Object { $_.ruleSetType -ceq 'Microsoft_DefaultRuleSet' })[0]
+$overrides = @(& $prop $drs 'ruleGroupOverrides' | Where-Object { $_ })
+$rfiRules = @($overrides | Where-Object { $_.ruleGroupName -ceq 'RFI' } | ForEach-Object { @(& $prop $_ 'rules') } | Where-Object { $_ })
+$urlExclusion = @($rfiRules | Where-Object { $_.ruleId -ceq '931130' } | ForEach-Object { @(& $prop $_ 'exclusions') } | Where-Object { $_ })
+Check 'WAF lets the admin register a backend URL: only rule 931130 skips only the JSON field "url"' (
+    @(& $prop $wafManaged 'exclusions' | Where-Object { $_ }).Count -eq 0 -and
+    @(& $prop $drs 'exclusions' | Where-Object { $_ }).Count -eq 0 -and $overrides.Count -eq 1 -and $rfiRules.Count -eq 1 -and
+    (& $prop $rfiRules[0] 'enabledState') -ceq 'Enabled' -and (& $prop $rfiRules[0] 'action') -ceq 'AnomalyScoring' -and $urlExclusion.Count -eq 1 -and
+    $urlExclusion[0].matchVariable -ceq 'RequestBodyJsonArgNames' -and $urlExclusion[0].selectorMatchOperator -ceq 'Equals' -and $urlExclusion[0].selector -ceq 'url')
 Check 'primary gateway drain control defaults off' ($fd.parameters.disablePrimaryOrigins.defaultValue -eq $false)
 Check 'primary admin drain control defaults off' ($fd.parameters.disablePrimaryAdminOrigins.defaultValue -eq $false)
 Check 'primary failure injection defaults off' ($fd.parameters.simulatePrimaryFailure.defaultValue -eq $false)

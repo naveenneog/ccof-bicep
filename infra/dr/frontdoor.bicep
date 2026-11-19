@@ -175,7 +175,26 @@ resource waf 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@2024-02-
     policySettings: { enabledState: 'Enabled', mode: wafMode, requestBodyCheck: 'Enabled', javascriptChallengeExpirationInMinutes: 30 }
     managedRules: {
       managedRuleSets: [
-        { ruleSetType: 'Microsoft_DefaultRuleSet', ruleSetVersion: '2.1', ruleSetAction: 'Block' }
+        {
+          ruleSetType: 'Microsoft_DefaultRuleSet'
+          ruleSetVersion: '2.1'
+          ruleSetAction: 'Block'
+          // The admin backend registry body carries the Foundry endpoint in JSON "url"; 931130 (off-domain link) scores it as
+          // critical and blocks registration in Prevention. Only this rule skips only that field; every other rule still sees it.
+          ruleGroupOverrides: [
+            {
+              ruleGroupName: 'RFI'
+              rules: [
+                {
+                  ruleId: '931130'
+                  enabledState: 'Enabled'
+                  action: 'AnomalyScoring'
+                  exclusions: [{ matchVariable: 'RequestBodyJsonArgNames', selectorMatchOperator: 'Equals', selector: 'url' }]
+                }
+              ]
+            }
+          ]
+        }
         { ruleSetType: 'Microsoft_BotManagerRuleSet', ruleSetVersion: '1.0' }
       ]
     }
