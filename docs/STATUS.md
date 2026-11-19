@@ -36,7 +36,10 @@ retries stopped pending a scoped runtime investigation (SS-10). SS-10 is resolve
 PowerShell suites in parallel (`scripts/run-tests.ps1`, `tests/Test-RunTestsRunner.ps1`); packet
 gate 9 exits 0 in 273 seconds with the unchanged limit. SS-09 is live-resolved (`0cc43c3` on
 both lab admins). SS-11: Front Door WAF rule 931130 blocks backend registration (JSON `url`);
-fixed in `infra/dr/frontdoor.bicep` with a single-rule, single-field exclusion.
+fixed in `infra/dr/frontdoor.bicep` with a single-rule, single-field exclusion; the lab WAF change took
+~16 minutes to take effect after the PUT reported Succeeded. SS-12: the first live publish failed
+`routing_readback_mismatch` because ARM GET returns unset backend properties as `null` (`title`; pool
+`protocol`/`url`); read-back comparison now treats a `null` property as absent.
 Azure startup telemetry identifies SS-08's health component as `AzureWebJobsStorage` client
 creation, not a missing module: host/script lifecycle are healthy and the disabled sync function
 is indexed. Both sync host-storage client IDs match assigned identities. A prior-day query finds

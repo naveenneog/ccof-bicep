@@ -1,5 +1,16 @@
 # Change log
 
+## Unreleased - Routing publication verifies ARM read-back of unset properties
+
+- The first live `publish-routing` job failed `verification/routing_readback_mismatch` after creating
+  the member and pool backends in the first APIM. ARM GET returns unset backend properties as
+  `null`: `title` on every backend, `protocol` and `url` on a pool. The read-back comparison only
+  ignored `null` on `credentials`, `resourceId` and `circuitBreaker`. It now ignores a `null`
+  property on any key; a `null` where a value is expected (for example `protocol`) still fails.
+  New test in `admin/tests/self-service-routing.test.ts` failed before the change (SS-12).
+- The lab WAF override from SS-11 took about 16 minutes to take effect after the PUT returned
+  Succeeded.
+
 ## Unreleased - Front Door WAF lets the console register a backend
 
 - Live routing acceptance found that registering a fallback backend returns Front Door's HTML 403.

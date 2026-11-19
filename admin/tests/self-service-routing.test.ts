@@ -178,6 +178,26 @@ test("readback mismatch of auth, protocol, TLS, breaker or pool never promotes; 
   assert.equal(s.writes.length, 0);
 });
 
+test("ARM null serialization of unset fields (title; pool protocol/url) verifies; a null over an expected value does not", async () => {
+  const s = setup(); const j = await s.planned();
+  s.setGet((_scope, id, value) => {
+    if (!value || !id.startsWith("ccof-")) return value;
+    const p = value.properties as Record<string, unknown>;
+    p.title = null;
+    if (id.startsWith("ccof-pool-")) { p.protocol = null; p.url = null; }
+    return value;
+  });
+  const done = await s.finish(j);
+  assert.equal(done.state, "succeeded", done.reason);
+  const t = setup(); const k = await t.planned();
+  t.setGet((_scope, id, value) => {
+    if (value && id.startsWith("ccof-m-")) (value.properties as Record<string, unknown>).protocol = null;
+    return value;
+  });
+  assert.notEqual((await t.finish(k)).state, "succeeded");
+  assert.equal(t.replacements.length, 0);
+});
+
 test("stale project/registry, final CAS race and denied registry fence cannot activate a stale plan", async () => {
   for (const race of ["project", "registry", "fence", "cas", "late-registry"]) {
     const s = setup(); const j = await s.planned();

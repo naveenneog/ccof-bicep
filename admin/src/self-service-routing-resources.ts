@@ -63,9 +63,11 @@ const duration = (v: unknown) => {
 function comparable(body: Doc): unknown {
   if (!isObject(body.properties)) return body;
   const p = structuredClone(body.properties);
+  // ARM GET serializes unset properties as null (title on every backend; protocol/url on pools).
+  for (const key of Object.keys(p)) if (p[key] === null) delete p[key];
   if (p.type === "Single") delete p.type;
   for (const key of ["credentials", "resourceId", "circuitBreaker"]) {
-    if (p[key] === null || p[key] === "" || (isObject(p[key]) && !Object.keys(p[key]).length)) delete p[key];
+    if (p[key] === "" || (isObject(p[key]) && !Object.keys(p[key]).length)) delete p[key];
   }
   if (isObject(p.circuitBreaker) && Array.isArray(p.circuitBreaker.rules)) {
     for (const rule of p.circuitBreaker.rules) if (isObject(rule)) {
