@@ -52,7 +52,8 @@ Private-lab preparation is verified, not new-feature acceptance:
   match. However, B's `kudu-state.json` active deployment IDs reference different archives from
   its saved Code records. Metadata alone does not establish which code is executing. This
   contradiction and A worker source-commit provenance must be reconciled before a safe upgrade
-  (SS-06); no rebuilt package is being relabelled as the old artifact.
+  (SS-06); no rebuilt package is being relabelled as the old artifact. Resolved by content-addressed
+  rollback (`-PreviousSource Recovered`): the platform-active archive is the baseline, identified by SHA-256 only.
 - Post-preparation reads compare every setting on all six apps against encrypted backups:
   unchanged, including A-active/B-disabled timers and disabled snapshotApply. Identity, ingress,
   VNet and selected private-publishing guards also match. No authentication changes were performed.

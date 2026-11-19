@@ -122,7 +122,11 @@ guard_snapshot() {
 }
 
 prepare_backup() {
-  local previous="$WORK/$PACKAGE_KIND-$PREVIOUS_COMMIT.zip" actual
+  local previous="$WORK/$PACKAGE_KIND-$PREVIOUS_COMMIT.zip" actual label="$PREVIOUS_COMMIT"
+  if [ "${PREVIOUS_SOURCE:-commit}" = recovered ]; then
+    previous="$WORK/recovered/$APP/$PREVIOUS_SHA256.zip"
+    label="recovered active package (source commit unknown)"
+  fi
   [ -s "$previous" ] || fail backup "approved retained artifact missing: $previous; recover the exact previously deployed package before upgrading"
   actual=$(sha256sum "$previous" | cut -c1-64)
   [ "$actual" = "$PREVIOUS_SHA256" ] || fail backup "previous artifact hash mismatch; no deployment attempted"
@@ -130,7 +134,7 @@ prepare_backup() {
   BACKUP="$WORK/backups/$APP/$PREVIOUS_SHA256.zip"
   cp "$previous" "$BACKUP" && chmod 600 "$BACKUP" || fail backup "cannot retain approved rollback package"
   GUARD_BEFORE=$(guard_snapshot) || fail backup "cannot read settings/auth/access guards; config/list/action is sensitive and required for safe upgrade"
-  note "backup $PREVIOUS_COMMIT sha256=$PREVIOUS_SHA256; guard=$GUARD_BEFORE"
+  note "backup $label sha256=$PREVIOUS_SHA256; guard=$GUARD_BEFORE"
 }
 
 verify_functions() {

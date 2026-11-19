@@ -10,6 +10,7 @@ $script:Patterns = [ordered]@{
     Commit = '^[0-9a-f]{40}$'
     PreviousCommit = '^[0-9a-f]{40}$'
     PreviousPackageSha256 = '^[0-9a-f]{64}$'
+    PreviousSource = '^(commit|recovered)$'
     PackageKind = '^(admin|sync|reconciler)$'
     PackageSha256 = '^[0-9a-f]{64}$'
     RepoUrl = '^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._-]+)+$'
@@ -43,8 +44,14 @@ function Get-AdminVmInputProblems {
             if ($target -notin $approved) { $problems.Add('ApprovedWorkerResourceIds: exact target resource ID is not approved') }
         }
     }
+    # 'recovered': the previous package is the platform-active archive, identified only by its SHA-256.
+    # Its source commit is unknown, so a commit label is refused rather than attached to those bytes.
+    $recovered = $Values.Contains('PreviousSource') -and [string]$Values['PreviousSource'] -ceq 'recovered'
+    if ($recovered -and $Values.Contains('PreviousCommit') -and $Values['PreviousCommit']) {
+        $problems.Add('PreviousCommit: must be empty with PreviousSource recovered; recovered bytes are identified by PreviousPackageSha256 only')
+    }
     if ($Values.Contains('SafeUpgrade') -and $Values['SafeUpgrade']) {
-        foreach ($k in 'PreviousCommit', 'PreviousPackageSha256') {
+        foreach ($k in @(if (-not $recovered) { 'PreviousCommit' }) + 'PreviousPackageSha256') {
             if (-not ($Values.Contains($k) -and $Values[$k])) { $problems.Add("${k}: required for safe upgrade or rollback") }
         }
     }
@@ -65,7 +72,8 @@ function New-AdminVmScript {
     $safe = if ($Values.Contains('SafeUpgrade') -and $Values['SafeUpgrade']) { 'true' } else { 'false' }
     $previous = if ($Values.Contains('PreviousCommit')) { [string]$Values['PreviousCommit'] } else { '' }
     $previousHash = if ($Values.Contains('PreviousPackageSha256')) { [string]$Values['PreviousPackageSha256'] } else { '' }
-    $line += "; SAFE_UPGRADE='$safe'; PREVIOUS_COMMIT='$previous'; PREVIOUS_SHA256='$previousHash'"
+    $previousSource = if ($Values.Contains('PreviousSource') -and $Values['PreviousSource']) { [string]$Values['PreviousSource'] } else { 'commit' }
+    $line += "; SAFE_UPGRADE='$safe'; PREVIOUS_COMMIT='$previous'; PREVIOUS_SHA256='$previousHash'; PREVIOUS_SOURCE='$previousSource'"
     $packageKind = if ($Values.Contains('PackageKind')) { [string]$Values['PackageKind'] } else { 'admin' }
     $packageHash = if ($Values.Contains('PackageSha256')) { [string]$Values['PackageSha256'] } else { '' }
     $line += "; PACKAGE_KIND='$packageKind'; PACKAGE_SHA256='$packageHash'"

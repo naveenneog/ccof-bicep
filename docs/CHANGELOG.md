@@ -1,5 +1,10 @@
 # Change log
 
+## Unreleased - admin updater content-addressed rollback
+
+- `Update-AdminFromVm.ps1 -PreviousSource Recovered`: safe upgrade and rollback can use the platform-active
+  archive identified only by SHA-256 when its source commit is unknown; commit labels are refused (SS-06).
+
 ## Implemented, not released - Admin self-service operations (ADR 0041)
 
 - Added independently optional console routing publication, guarded Apply now and immutable

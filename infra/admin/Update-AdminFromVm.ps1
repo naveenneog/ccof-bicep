@@ -16,6 +16,8 @@
                  be pushed) and publish it. Needs -Apply; without it, prints the plan.
   -SafeUpgrade   Require -PreviousCommit and -PreviousPackageSha256; verify/back up the exact retained
                  previous package before Update, read back settings/auth/access, roll back on failure.
+  -PreviousSource Recovered  The previous package is the platform-active archive recovered to the VM as
+                 recovered/<app>/<sha256>.zip; identified by -PreviousPackageSha256 only, -PreviousCommit must be empty.
   -Phase Rollback Republish that approved retained artifact without rebuilding; guard readback.
                  Does not restore app settings or modify public access. Needs -Apply.
   -PackageKind Sync|Reconciler Select an approved retained worker artifact instead of building admin.
@@ -43,6 +45,7 @@ param(
     [switch]$SafeUpgrade,
     [string]$PreviousCommit,
     [string]$PreviousPackageSha256,
+    [ValidateSet('Commit', 'Recovered')] [string]$PreviousSource = 'Commit',
     [ValidateSet('Admin', 'Sync', 'Reconciler')] [string]$PackageKind = 'Admin',
     [string]$PackageSha256,
     [string[]]$ApprovedWorkerResourceIds = @(),
@@ -63,7 +66,7 @@ if (($SafeUpgrade -or $PackageKind -ne 'Admin') -and $Phase -eq 'Update' -and (-
 if (-not $RepoUrl) { $RepoUrl = "$(git -C $repoRoot remote get-url origin 2>$null)".Trim() -replace '\.git$', '' }
 if ($Phase -eq 'Update' -and -not $Commit) { $Commit = "$(git -C $repoRoot rev-parse HEAD 2>$null)".Trim() }
 $values = [ordered]@{ Subscription = $Subscription; ResourceGroup = $AdminResourceGroup; VmName = $VmName; App = $AdminApp; Commit = $Commit; RepoUrl = $RepoUrl
-    SafeUpgrade = [bool]($SafeUpgrade -or $Phase -eq 'Rollback'); PreviousCommit = $PreviousCommit; PreviousPackageSha256 = $PreviousPackageSha256
+    SafeUpgrade = [bool]($SafeUpgrade -or $Phase -eq 'Rollback'); PreviousCommit = $PreviousCommit; PreviousPackageSha256 = $PreviousPackageSha256; PreviousSource = $PreviousSource.ToLowerInvariant()
     PackageKind = $PackageKind.ToLowerInvariant(); PackageSha256 = $PackageSha256; ApprovedWorkerResourceIds = @($ApprovedWorkerResourceIds) }
 $problems = @(Get-AdminVmInputProblems $values -RequireCommit:($Phase -eq 'Update'))
 if (-not ($VmResourceGroup -cmatch '^[A-Za-z0-9._-]{1,90}$')) { $problems += "VmResourceGroup: '$VmResourceGroup' does not match ^[A-Za-z0-9._-]{1,90}$" }
@@ -94,7 +97,7 @@ $power = @($view.instanceView.statuses | Where-Object { "$($_.code)".StartsWith(
 if ($power -cne 'PowerState/running') { Stop-Upd "vm_not_running: $VmName is '$power'. Start it: az vm start --subscription $Subscription --resource-group $VmResourceGroup --name $VmName" 2 }
 if ($Phase -ne 'Check' -and -not $Apply) {
     if ($Phase -eq 'Setup') { Write-Host 'preview: install the missing tools on the VM (apt, Azure CLI, Node.js 22, PowerShell 7), then run Check. Rerun with -Apply.' }
-    elseif ($Phase -eq 'Rollback') { Write-Host "preview: verify retained $($values.PackageKind)-$PreviousCommit.zip against $PreviousPackageSha256, publish through private SCM, then read back functions and unchanged settings/auth/access. Rerun with -Apply." }
+    elseif ($Phase -eq 'Rollback') { Write-Host "preview: verify retained $(if ($PreviousSource -eq 'Recovered') { "recovered/$AdminApp/$PreviousPackageSha256.zip" } else { "$($values.PackageKind)-$PreviousCommit.zip" }) against $PreviousPackageSha256, publish through private SCM, then read back functions and unchanged settings/auth/access. Rerun with -Apply." }
     elseif ($PackageKind -ne 'Admin') { Write-Host "preview: Check private SCM, verify retained $($values.PackageKind)-$Commit.zip against $PackageSha256; back up approved previous package, publish, and read back functions/settings/auth/access with rollback on failure. No worker build or settings changes. Rerun with -Apply." }
     else { Write-Host "preview: Check, then on the VM clone $RepoUrl at $Commit, build admin/ (admin/Build-AdminPackage.ps1, with unit tests) and publish it to $AdminApp with OneDeploy$(if ($SafeUpgrade) { '; verify and back up the approved previous package first, then guard readback with rollback on failure' }). Rerun with -Apply." }
     exit 0
@@ -115,7 +118,7 @@ $run = Read-AdminVmRunLine $message
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $evidenceFile = Join-Path $EvidenceDirectory "admin-$($Phase.ToLowerInvariant())-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
 [ordered]@{ schema = 'ccof.admin.vmupdate.evidence.v1'; phase = $Phase; vm = $VmName; vmResourceGroup = $VmResourceGroup; app = $AdminApp; appResourceGroup = $AdminResourceGroup
-    commit = $Commit; repoUrl = $RepoUrl; safeUpgrade = $values.SafeUpgrade; previousCommit = $PreviousCommit; previousPackageSha256 = $PreviousPackageSha256
+    commit = $Commit; repoUrl = $RepoUrl; safeUpgrade = $values.SafeUpgrade; previousCommit = $PreviousCommit; previousPackageSha256 = $PreviousPackageSha256; previousSource = $values.PreviousSource
     packageKind = $values.PackageKind; approvedPackageSha256 = $PackageSha256
     approvedWorkerResourceIds = $values.ApprovedWorkerResourceIds
     startedAt = $started; completedAt = [DateTime]::UtcNow.ToString('o'); run = $run; message = $message } |

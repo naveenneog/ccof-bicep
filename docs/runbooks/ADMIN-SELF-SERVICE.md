@@ -366,6 +366,13 @@ $workerRelease = @{
 & .\infra\admin\Update-AdminFromVm.ps1 -Phase Update @common @workerRelease -PackageKind Sync -SafeUpgrade -Apply
 ```
 
+**When the previous source commit is unknown** (for example, the first upgrade of a deployment whose
+package provenance was never recorded), use the archive the platform reports as active. Download it
+privately (the app's `kudu-state.json` `ActiveDeploymentId` in its deployment container), place it at
+`/var/lib/ccof-admin-update/recovered/<app>/<sha256>.zip`, and replace `PreviousCommit` with
+`-PreviousSource Recovered` plus `PreviousPackageSha256 = '<sha256 of that ZIP>'`. A commit label is
+refused in this mode; rollback restores those exact bytes and its receipt records an empty `commit`.
+
 Worker Update refuses a missing or mismatched new artifact, missing/mismatched previous artifact,
 implicit commit, or missing `-SafeUpgrade`. It does not need repository/npm connectivity on the VM.
 Both worker modes verify the original business function registration and unchanged full

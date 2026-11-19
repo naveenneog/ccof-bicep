@@ -26,6 +26,14 @@ $safeValues = [ordered]@{} + $values; $safeValues.SafeUpgrade = $true
 Check 'safe upgrade refuses a missing approved rollback artifact' ((@(Get-AdminVmInputProblems $safeValues -RequireCommit) -match 'PreviousCommit|PreviousPackageSha256').Count -ge 1)
 $safeValues.PreviousCommit = 'b' * 40; $safeValues.PreviousPackageSha256 = 'f' * 64
 Check 'safe upgrade accepts immutable rollback commit and package hash' (@(Get-AdminVmInputProblems $safeValues -RequireCommit).Count -eq 0)
+$recValues = [ordered]@{} + $values; $recValues.SafeUpgrade = $true; $recValues.PreviousSource = 'recovered'; $recValues.PreviousPackageSha256 = 'f' * 64
+Check 'recovered baseline is accepted with a package hash and no commit label' (@(Get-AdminVmInputProblems $recValues -RequireCommit).Count -eq 0)
+$recValues.PreviousCommit = 'b' * 40
+Check 'recovered baseline refuses a commit label (bytes are never relabelled)' ((@(Get-AdminVmInputProblems $recValues -RequireCommit) -match '^PreviousCommit').Count -eq 1)
+$recValues.PreviousCommit = ''; $recValues.PreviousPackageSha256 = ''
+Check 'recovered baseline still requires the package hash' ((@(Get-AdminVmInputProblems $recValues -RequireCommit) -match 'PreviousPackageSha256').Count -eq 1)
+$recValues.PreviousPackageSha256 = 'f' * 64; $recValues.PreviousSource = 'recovered;id'
+Check 'previous source rejects arbitrary values' ((@(Get-AdminVmInputProblems $recValues) -match '^PreviousSource').Count -eq 1)
 $safeValues.PreviousPackageSha256 = 'latest'
 Check 'safe upgrade refuses mutable or malformed rollback hash' ((@(Get-AdminVmInputProblems $safeValues -RequireCommit) -match 'PreviousPackageSha256').Count -eq 1)
 $workerValues = [ordered]@{} + $values; $workerValues.PackageKind = 'sync'; $workerValues.ApprovedWorkerResourceIds = @($workerResourceId)
@@ -100,7 +108,11 @@ function Invoke-VmScript([string]$Phase, [hashtable]$Env = @{}, [string[]]$Witho
     $script:runId++
     $d = Join-Path $scratch "run$script:runId"; New-Item -ItemType Directory -Force -Path (Join-Path $d 'work') | Out-Null
     $runValues = [ordered]@{} + $values
-    foreach ($key in $Options.Keys) { if ($key -notin @('SeedBaseline', 'SeedArtifact')) { $runValues[$key] = $Options[$key] } }
+    foreach ($key in $Options.Keys) { if ($key -notin @('SeedBaseline', 'SeedArtifact', 'SeedRecovered')) { $runValues[$key] = $Options[$key] } }
+    if ($Options.ContainsKey('SeedRecovered') -and $Options.SeedRecovered) {
+        $recoveredDir = Join-Path $d "work/recovered/$($values.App)"; New-Item -ItemType Directory -Force -Path $recoveredDir | Out-Null
+        [IO.File]::WriteAllText((Join-Path $recoveredDir "$($Options.PreviousPackageSha256).zip"), "previous-package`n", [Text.UTF8Encoding]::new($false))
+    }
     $packageKind = if ($Options.ContainsKey('PackageKind')) { $Options.PackageKind } else { 'admin' }
     if ($Options.ContainsKey('SeedBaseline') -and $Options.SeedBaseline) { [IO.File]::WriteAllText((Join-Path $d "work/$packageKind-$($Options.PreviousCommit).zip"), "previous-package`n", [Text.UTF8Encoding]::new($false)) }
     if ($Options.ContainsKey('SeedArtifact') -and $Options.SeedArtifact) { [IO.File]::WriteAllText((Join-Path $d "work/$packageKind-$commit.zip"), "worker-package`n", [Text.UTF8Encoding]::new($false)) }
@@ -190,6 +202,17 @@ $r = Invoke-VmScript 'rollback' @{} @() $safe
 Check 'explicit rollback: publishes only the approved retained artifact without rebuilding' ($r.run.outcome -ceq 'succeeded' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 1 -and -not (Has $r '^git clone|^npm ci|^pwsh -NoProfile -File'))
 $r = Invoke-VmScript 'rollback' @{ STUB_HTTP = '000' } @() $safe
 Check 'explicit rollback: source/npm outage does not block approved artifact recovery' ($r.run.outcome -ceq 'succeeded' -and -not (Has $r '^curl .*github|^curl .*registry'))
+$recovered = @{ SafeUpgrade = $true; PreviousSource = 'recovered'; PreviousPackageSha256 = $baselineHash; SeedRecovered = $true }
+$r = Invoke-VmScript 'update' @{} @() $recovered
+Check 'recovered baseline: active bytes found by sha256 alone are backed up before upgrade' ($r.run.outcome -ceq 'succeeded' -and (Test-Path (Join-Path $r.work "backups/lab-admin/$baselineHash.zip")) -and $r.run.guardReadback -and "$($r.run.notes)" -match 'recovered active package')
+$r = Invoke-VmScript 'rollback' @{} @() $recovered
+Check 'recovered baseline: rollback republishes exact recovered bytes and claims no source commit' ($r.run.outcome -ceq 'succeeded' -and $r.run.sha256 -ceq $baselineHash -and $r.run.commit -ceq '' -and @($r.calls | Where-Object { $_ -match "config-zip .*--src \S+backups/lab-admin/$baselineHash\.zip" }).Count -eq 1)
+$missingRecovered = @{} + $recovered; $missingRecovered.SeedRecovered = $false
+$r = Invoke-VmScript 'update' @{} @() $missingRecovered
+Check 'recovered baseline: absent recovered bytes refuse before build or deployment' ($r.run.step -ceq 'backup' -and -not (Has $r '^git clone|config-zip'))
+$wrongRecovered = @{} + $recovered; $wrongRecovered.PreviousPackageSha256 = '0' * 64; $wrongRecovered.SeedRecovered = $false
+$r = Invoke-VmScript 'rollback' @{} @() $wrongRecovered
+Check 'recovered baseline: a hash with no recovered file never deploys' ($r.run.outcome -ceq 'failed' -and -not (Has $r 'config-zip'))
 $workerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("worker-package`n"))).ToLowerInvariant()
 foreach ($worker in @(@{ kind = 'sync'; function = 'syncEntitlement' }, @{ kind = 'reconciler'; function = 'reconcileBudgets' })) {
     $workerOptions = @{} + $safe; $workerOptions.PackageKind = $worker.kind; $workerOptions.PackageSha256 = $workerHash; $workerOptions.SeedArtifact = $true; $workerOptions.ApprovedWorkerResourceIds = @($workerResourceId)
