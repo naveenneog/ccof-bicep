@@ -4,12 +4,17 @@
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
-| SS-01 contract and durable operations | In progress | Independent capability states, exact permission/scope requirements, create-only idempotency, leases and durable results; default-off compatibility |
-| SS-02 routing publication | Pending SS-01 | Compatible immutable revision pools read back in every APIM before activation; partial errors retain the last verified route |
-| SS-03 Apply now | Pending SS-01 | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
-| SS-04 history and restore | Pending SS-01 | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
-| SS-05 console and private upgrade | Pending SS-02/03/04 | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
-| SS-06 acceptance | Pending SS-05 | Five-role review, regression gate and live simulated-lab existing-project/new-feature checks |
+| SS-01 contract and durable operations | Implemented, `32f1f92` | Independent capability states, exact permission/scope requirements, create-only idempotency, leases and durable results; default-off compatibility |
+| SS-02 routing publication | Implemented, `8ebb9e3` | Compatible immutable revision pools read back in every APIM before activation; partial errors retain the last verified route |
+| SS-03 Apply now | Implemented, `cd8904a` | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
+| SS-04 history and restore | Implemented, `642734b` | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
+| SS-05 console and private upgrade | Implemented, `365eaf8`, `97a571f`, `1c0e314`, `161d794` | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
+| SS-06 acceptance | BLOCKED; council passes, gate/live incomplete | Resolve baseline diagram-export gate failure, reconcile conflicting B deployment metadata and prior-artifact provenance, then privately upgrade and verify new features and existing projects; real Graph Apply also needs its existing separately approved Graph reads |
+
+Implementation is committed on `feat/admin-self-service-ops`, not merged or deployed. These
+implementation statuses do not close the packet: [STATUS](STATUS.md) records the failed executed
+gate, scoped offline/browser evidence and remaining live acceptance; [UNKNOWNS](UNKNOWNS.md)
+SS-03 through SS-06 remain open. No customer rollout or CI/CD work is implied.
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |

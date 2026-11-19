@@ -2,29 +2,66 @@
 
 ## Admin self-service operations
 
-**Packet:** ADMIN-SELF-SERVICE, ADR 0041; implementation in progress. Acceptance: routing publication
+**Packet:** ADMIN-SELF-SERVICE, ADR 0041; implementation committed, release blocked. Acceptance: routing publication
 verifies all configured gateways before ETag-guarded activation; Apply now runs only the active
 worker pair and reports completion/freshness, not just HTTP acceptance; history previews and
 validates a configuration-only restore without reviving retirement or rewinding spend/audit.
 Each capability is independently optional, reports missing action and scope, and leaves unrelated
 features working. Existing deployment settings default off. Private-runner lab update, negative
 permission tests, existing-project regression and customer upgrade evidence are required before
-release. Baseline audit: `node .ironclad/gate.mjs --stage packet --no-run` passed (two existing
-warnings: oversized files and unrelated open unknowns). Parent durable/API/Cosmos tests: 15 passed;
-complete admin suite: 234 passed; admin and root TypeScript/build passed. Runtime integration,
-five-role council and live feature acceptance remain pending. Six-app pre-upgrade resource,
-settings and web-configuration backups are encrypted and round-trip verified outside git.
-The existing private updater VM was started and its primary admin/SCM private DNS and HTTP
-reachability verified. A narrowly scoped standby admin private endpoint is approved and its
-admin/SCM names resolve privately from that runner; configuration returns HTTP 200 in both regions.
-Existing A-active/B-disabled worker fences were read
-back unchanged. Both existing lab projects return authenticated HTTP 200 through Front Door.
-Functions dispatch now mounts the new routes before unrelated catalog/query loading; optional
-history wraps existing API stores without blocking their writes. Shared registry leases guard
-all updated application writers, while immutable snapshot/CAS semantics remain explicit.
-The full root run finished with a baseline architecture-export hash failure (confirmed in
-untouched HEAD blobs), plus a directly coupled optional-worker union assertion under correction.
-The full gate is not green and release is not approved.
+release. Focused implementation commits: `32f1f92` (durable API), `642734b` (history),
+`365eaf8` (console), `8ebb9e3` (routing), `cd8904a` (Apply), `97a571f` (private updater),
+`1c0e314` (optional infrastructure) and `161d794` (host integration).
+The implementation head is `161d7948c80c63c742226512650ac4f913150562` on
+`feat/admin-self-service-ops`; it is not merged or deployed.
+
+The integrated admin suite has **259 passing tests**; root Apply has **20 passing tests**.
+Root typecheck/build and admin build including UI pass. The 12 browser scenarios were rerun
+against the actual nested permission-error contract, with zero page errors; authentication/API
+were synthetic, not live acceptance. Council-found regressions were reproduced before fixing:
+transient receipt reads now retry without redispatching completed sync; native history denials
+retain 403 and permission guidance; the console reads nested capability requirements. Registry
+lease cleanup no longer masks the real result or original error.
+
+| Council | Verdict |
+| --- | --- |
+| Architect | PASS-WITH-NOTES |
+| Coder | PASS after fixes |
+| QA | PASS-WITH-NOTES after fixes |
+| UX | PASS-WITH-NOTES; inherited dense mobile touch targets |
+| Security | PASS; no vulnerabilities reported |
+
+The executed `node .ironclad/gate.mjs --stage packet --json` completed with exit 1:
+22 checks pass, 1 fails, 1 skips and 2 warn. The sole failed check is `tests.run`:
+`test_architecture_assets.py` reports `Diagram export drift: ccof-network-architecture.drawio`.
+The hash drift reproduces in untouched base/HEAD assets; no diagram, manifest or assertion was
+changed to hide it. Typecheck and build pass within that gate. The directly coupled optional-worker
+union assertion is corrected, with 37 focused tests passing. This is **not a green packet gate**.
+
+Private-lab preparation is verified, not new-feature acceptance:
+
+- Six-app resource/settings/web backups are encrypted and round-trip verified outside git.
+- Five new Approved/Succeeded private endpoints and DNS bindings complete all twelve admin/worker
+  site/SCM private names. Both admin configurations return 200 from the runner; both existing
+  projects returned authenticated 200 through Front Door before upgrade.
+- Exact-app publisher assignments cover the existing six-app private updater. Five temporary
+  container-scoped Blob Data Reader assignments recovered deployment ZIPs privately and were
+  subsequently removed, with absence read back. No shared keys or public-access changes were used.
+- ZIP SHA-256 and historical worker **directory digests** are distinct. Recovered archive contents
+  match the historical worker records; B admin's retained submitted ZIP also has a file-content
+  match. However, B's `kudu-state.json` active deployment IDs reference different archives from
+  its saved Code records. Metadata alone does not establish which code is executing. This
+  contradiction and A worker source-commit provenance must be reconciled before a safe upgrade
+  (SS-06); no rebuilt package is being relabelled as the old artifact.
+- Post-preparation reads compare every setting on all six apps against encrypted backups:
+  unchanged, including A-active/B-disabled timers and disabled snapshotApply. Identity, ingress,
+  VNet and selected private-publishing guards also match. No authentication changes were performed.
+- The updater VM is verified back in its original **deallocated** state.
+
+Both sync identities have zero existing Graph application-role assignments. No Entra roles were
+changed; real positive Graph sync/Apply acceptance remains blocked and snapshots are not a
+substitute. Optional feature grants/settings and live publication/history/Apply checks remain
+pending. No self-service feature code or customer update was deployed; CI/CD work remains deferred.
 
 ## Admin console onboards a Foundry backend
 

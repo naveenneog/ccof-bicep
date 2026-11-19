@@ -1,6 +1,6 @@
 # ADR 0041: independently gated admin self-service operations
 
-Status: proposed; implementation and private-lab acceptance pending.
+Status: accepted for implementation; code committed, release and private-lab acceptance blocked.
 
 ## Context
 
@@ -79,3 +79,12 @@ A generic runner, function keys in the console, settings changes to wake a timer
 browser-held deployment requests were rejected. Durable jobs add a small amount of Cosmos
 metadata, but survive disconnected browsers and avoid claiming that HTTP acceptance is success.
 No new Entra write permission or new hosting service is part of this decision.
+
+## Verification status
+
+The five-role council has no remaining BLOCK after regression fixes. Implementation is committed
+through `161d794` on the feature branch; optional features are not deployed. The executed packet
+gate fails on existing architecture-export drift. Conflicting B active-deployment metadata and
+saved Code records must be reconciled before selecting rollback artifacts (UNKNOWNS SS-06).
+Existing Graph application reads are absent on both lab sync identities, blocking positive
+Graph-based Apply acceptance separately from admin permissions. See STATUS for measured evidence.

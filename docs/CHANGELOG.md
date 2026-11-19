@@ -1,10 +1,23 @@
 # Change log
 
-## In progress - Admin self-service operations (ADR 0041)
+## Implemented, not released - Admin self-service operations (ADR 0041)
 
-- Contract recorded for independently optional routing publication, Apply now and immutable
-  configuration history/restore. Implementation, permissions verification, review and private
-  simulated-lab upgrade are pending; no customer rollout is implied.
+- Added independently optional console routing publication, guarded Apply now and immutable
+  configuration history/preview/restore. Capability-local denials identify the required action
+  and scope; missing optional access does not bypass mandatory authentication or audit.
+- Routing verifies every approved gateway before ETag-guarded activation. Apply uses durable
+  Cosmos requests and correlated worker receipts without enabling standby timers; transient
+  receipt reads retry without redispatching completed sync. Restore validates current state
+  without rewinding identity, retirement, spend, counters or audit.
+- Added default-off staged/DR settings and scoped optional grants. Extended the existing private
+  updater to explicit admin/sync/reconciler targets, approved immutable sources and verified
+  retained-artifact rollback, without writing existing app settings or public-access controls.
+  No new Entra app roles or Graph writes are required; existing sync Graph reads remain separate.
+- Five-role council passes or passes with notes; admin 259, root Apply 20 and 12 synthetic-API
+  browser scenarios pass. The executed packet gate is blocked by untouched baseline diagram
+  hash drift. Live upgrade is held on conflicting prior-deployment metadata, and positive
+  Graph Apply acceptance also lacks the lab's existing Graph read grants. No new feature code
+  or customer rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
 
 ## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
 
