@@ -1,6 +1,22 @@
 # Current work
 
-## Admin console onboards a Foundry backend
+## Network diagram export hashes are platform-stable
+
+**Packet:** NETWORK-DIAGRAM-EXPORTS (2026-11-19). Windows text-mode writes changed generated text
+exports to CRLF while checked-in assets used LF, causing raw SHA-256 manifest mismatches despite
+unchanged diagram content. Both generators now write LF, `.gitattributes` pins the generated text
+assets to LF, and the asset test rejects CRLF. Acceptance: (1) run both documented generators with
+`--png`; (2) `python tests/test_architecture_assets.py` passes, including hashes, line endings,
+icon sources, network boundaries and preview dimensions; (3) `git diff --check` passes; (4) the
+packet gate passes.
+
+Verification: both generators and the targeted asset test pass; `git diff --check` passes. The
+packet gate is still blocked: `npm test` exceeded its 900-second limit (`22 passed · 2 warned · 1
+failed · 1 skipped`). Keep this packet open until the full gate completes successfully.
+
+## Completed: Admin console onboards a Foundry backend
+
+Merged to `main` in `13d8c67`.
 
 **Packet:** ADMIN-FOUNDRY-ONBOARD (2026-11-08), ADR 0040. An admin can add a Foundry account that
 the platform team already created (deployments, private endpoint, APIM role) without scripts or

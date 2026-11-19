@@ -1,5 +1,14 @@
 # Change log
 
+## 2026-11-19 - Make diagram export hashes platform-stable
+
+- Windows text-mode writes produced CRLF in generated exports while checked-in assets used LF,
+  causing raw SHA-256 manifest drift with no change to the diagram content. Both generators now
+  write LF; `.gitattributes` preserves LF checkouts, and the asset test guards against CRLF.
+- Both documented `--png` generators, `python tests/test_architecture_assets.py` and
+  `git diff --check` pass. The full packet gate remains blocked because `npm test` timed out after
+  900 seconds.
+
 ## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
 
 - Backends > **Onboard Foundry account** (off by default, `admin.backendOnboarding`) checks an existing
