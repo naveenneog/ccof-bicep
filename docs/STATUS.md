@@ -39,7 +39,14 @@ both lab admins). SS-11: Front Door WAF rule 931130 blocks backend registration 
 fixed in `infra/dr/frontdoor.bicep` with a single-rule, single-field exclusion; the lab WAF change took
 ~16 minutes to take effect after the PUT reported Succeeded. SS-12: the first live publish failed
 `routing_readback_mismatch` because ARM GET returns unset backend properties as `null` (`title`; pool
-`protocol`/`url`); read-back comparison now treats a `null` property as absent.
+`protocol`/`url`); read-back comparison now treats a `null` property as absent. SS-12 is deployed
+to both lab admins; routing live acceptance passes; Coder, QA and Security review PASS. Routing
+permission isolation passes live: with the APIM backend writer role removed, only `publish-routing`
+becomes `permission_required` (naming `backends/read`/`backends/write` and scope) and publish
+returns 403, while project, registry and history reads return 200; the restored role re-enables it
+(evidence `selfservice-upgrade-evidence/perm-negative-20261119T191207Z`, session-local). Apply
+acceptance stays blocked on SS-08 and on the Graph application permission for sync (PIM sign-in
+blocked by Conditional Access in the lab).
 Azure startup telemetry identifies SS-08's health component as `AzureWebJobsStorage` client
 creation, not a missing module: host/script lifecycle are healthy and the disabled sync function
 is indexed. Both sync host-storage client IDs match assigned identities. A prior-day query finds

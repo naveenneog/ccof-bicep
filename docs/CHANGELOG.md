@@ -1,5 +1,19 @@
 # Change log
 
+## Unreleased - Routing permission isolation verified live
+
+- Removing the CCOF APIM Backend Writer assignment from admin A's identity on the standby APIM moved
+  `publish-routing` to `permission_required` after about 2.5 minutes. The capability named
+  `backends/read` and `backends/write` on that APIM. A publish POST returned 403
+  `feature_unavailable`. Project, registry and history reads still returned 200, and Apply kept its
+  existing state. Restoring the same assignment made routing available again after about
+  1.5 minutes.
+- Lab acceptance script defect: the post-run clean-up deleted the active pool and its members,
+  which `failover.active` still referenced (state `disabled_with_pool`). The six backends were
+  recreated from the run evidence. The clean-up now keeps the pool named by `failover.active` and
+  its members. This affected only the session acceptance script, not product code.
+- SS-12 review: Coder, QA and Security PASS (`aa0036d..0330179`).
+
 ## Unreleased - Routing publication verifies ARM read-back of unset properties
 
 - The first live `publish-routing` job failed `verification/routing_readback_mismatch` after creating
