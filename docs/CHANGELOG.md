@@ -1,5 +1,11 @@
 # Change log
 
+## In progress - Admin self-service operations (ADR 0041)
+
+- Contract recorded for independently optional routing publication, Apply now and immutable
+  configuration history/restore. Implementation, permissions verification, review and private
+  simulated-lab upgrade are pending; no customer rollout is implied.
+
 ## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
 
 - Backends > **Onboard Foundry account** (off by default, `admin.backendOnboarding`) checks an existing

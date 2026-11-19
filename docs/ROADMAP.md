@@ -1,5 +1,16 @@
 # Deployment packets
 
+## Admin self-service
+
+| Packet | Status | Observable acceptance |
+| --- | --- | --- |
+| SS-01 contract and durable operations | In progress | Independent capability states, exact permission/scope requirements, create-only idempotency, leases and durable results; default-off compatibility |
+| SS-02 routing publication | Pending SS-01 | Compatible immutable revision pools read back in every APIM before activation; partial errors retain the last verified route |
+| SS-03 Apply now | Pending SS-01 | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
+| SS-04 history and restore | Pending SS-01 | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
+| SS-05 console and private upgrade | Pending SS-02/03/04 | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
+| SS-06 acceptance | Pending SS-05 | Five-role review, regression gate and live simulated-lab existing-project/new-feature checks |
+
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
 | DR-BYO standby | Standby-only release in review; customer validation pending | An explicitly supplied standby VNet ID can name a different resource group; existing-network Bootstrap does not deploy or alter network resources; later private endpoint, DNS-record and VNet-integration changes require explicit approval; manual Entra and private publishing remain explicit and verifiable |

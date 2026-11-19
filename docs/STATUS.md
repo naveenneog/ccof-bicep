@@ -1,5 +1,31 @@
 # Current work
 
+## Admin self-service operations
+
+**Packet:** ADMIN-SELF-SERVICE, ADR 0041; implementation in progress. Acceptance: routing publication
+verifies all configured gateways before ETag-guarded activation; Apply now runs only the active
+worker pair and reports completion/freshness, not just HTTP acceptance; history previews and
+validates a configuration-only restore without reviving retirement or rewinding spend/audit.
+Each capability is independently optional, reports missing action and scope, and leaves unrelated
+features working. Existing deployment settings default off. Private-runner lab update, negative
+permission tests, existing-project regression and customer upgrade evidence are required before
+release. Baseline audit: `node .ironclad/gate.mjs --stage packet --no-run` passed (two existing
+warnings: oversized files and unrelated open unknowns). Parent durable/API/Cosmos tests: 15 passed;
+complete admin suite: 234 passed; admin and root TypeScript/build passed. Runtime integration,
+five-role council and live feature acceptance remain pending. Six-app pre-upgrade resource,
+settings and web-configuration backups are encrypted and round-trip verified outside git.
+The existing private updater VM was started and its primary admin/SCM private DNS and HTTP
+reachability verified. A narrowly scoped standby admin private endpoint is approved and its
+admin/SCM names resolve privately from that runner; configuration returns HTTP 200 in both regions.
+Existing A-active/B-disabled worker fences were read
+back unchanged. Both existing lab projects return authenticated HTTP 200 through Front Door.
+Functions dispatch now mounts the new routes before unrelated catalog/query loading; optional
+history wraps existing API stores without blocking their writes. Shared registry leases guard
+all updated application writers, while immutable snapshot/CAS semantics remain explicit.
+The full root run finished with a baseline architecture-export hash failure (confirmed in
+untouched HEAD blobs), plus a directly coupled optional-worker union assertion under correction.
+The full gate is not green and release is not approved.
+
 ## Admin console onboards a Foundry backend
 
 **Packet:** ADMIN-FOUNDRY-ONBOARD (2026-11-08), ADR 0040. An admin can add a Foundry account that
