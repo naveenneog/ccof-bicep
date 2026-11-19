@@ -32,14 +32,15 @@ lease cleanup no longer masks the real result or original error.
 | UX | PASS-WITH-NOTES; inherited dense mobile touch targets |
 | Security | PASS; no vulnerabilities reported |
 
-The latest executed `node .ironclad/gate.mjs --stage packet --json` at `6cb2dc8` exits 1:
-22 checks pass, 1 fails, 1 skips and 2 warn. Diagram checks now pass after the merged LF fix.
-The sole failed check is `tests.run`: `Test-AdminVmUpdate.ps1:223` received no parsed worker
-receipt. A subsequent standalone run with the same logged-out profile and TEMP passes all
-84 checks. Concurrent runs of that suite share a scratch path; interference is a hypothesis,
-not an established cause. The next full gate runs without a concurrent updater suite. No
-assertion, charter limit or production code was changed to obtain that standalone result.
-Typecheck and build pass within the failed gate. This is **not a green packet gate**.
+The latest executed `node .ironclad/gate.mjs --stage packet --json` at `dfda914` exits 1:
+22 checks pass, 1 fails, 1 skips and 2 warn. Diagram checks, typecheck and build pass.
+The sole failed check is `tests.run`. This fourth gate ran without a concurrent updater suite;
+its retained output contains only the final passing suite, not the original failure.
+The preceding gate failed at `Test-AdminVmUpdate.ps1:223` with no parsed worker receipt;
+a standalone reproduction subsequently passed all 84 checks. Scratch interference remains
+unproven and does not explain the fourth gate without further evidence. A full diagnostic
+`npm test` run now retains stdout/stderr outside git; its updater suite passes all 84 checks.
+No assertion, charter limit or production code was changed. This is **not a green packet gate**.
 
 Private-lab preparation is verified, not new-feature acceptance:
 
@@ -63,6 +64,10 @@ Private-lab preparation is verified, not new-feature acceptance:
 - The updater VM was restarted for the next private upgrade attempt. All five recovered
   rollback ZIP hashes and all twelve private DNS names were verified again. It must return
   to its original **deallocated** state when the attempt finishes or is blocked.
+- The VM is deallocated while gate diagnosis blocks deployment. Before-upgrade Front Door
+  inference returned 200 for `INFSIMFD2` and 403 `permission_error` (not entitled) twice for
+  `INFSIMPROJ`. Existing-project admin reads and inference are separate baselines; the latter
+  refusal is not a new-feature regression and no membership was changed to make it pass.
 
 Both sync identities have zero existing Graph application-role assignments. No Entra roles were
 changed; real positive Graph sync/Apply acceptance remains blocked and snapshots are not a

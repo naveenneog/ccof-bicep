@@ -20,8 +20,9 @@
   No new Entra app roles or Graph writes are required; existing sync Graph reads remain separate.
 - Five-role council passes or passes with notes; admin 259, root Apply 20 and 12 synthetic-API
   browser scenarios pass. Diagram drift is fixed and recovered active ZIPs supply exact-byte
-  rollback without claiming source provenance. The latest gate fails an updater receipt assertion;
-  a standalone rerun passes 84 checks, with an exclusive full gate still required. Positive Graph
+  rollback without claiming source provenance. The fourth gate still fails `tests.run` without
+  concurrent updater tests; its output tail does not identify the original failure. A full diagnostic
+  run captures all output; the updater suite passes 84 checks in that run. Positive Graph
   Apply acceptance also lacks the lab's existing Graph read grants. No new feature code or customer
   rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
 
@@ -33,6 +34,8 @@
 - Both documented `--png` generators, `python tests/test_architecture_assets.py` and
   `git diff --check` pass. The full packet gate remains blocked because `npm test` timed out after
   900 seconds.
+  Later gate attempts finish with `tests.run` exit 1 rather than a reported timeout; the current
+  investigation and release blocker are recorded above.
 
 ## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
 
