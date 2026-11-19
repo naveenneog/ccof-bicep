@@ -1,2 +1,9 @@
 # Shell scripts run on Linux (Cloud Shell, Run Command); CRLF breaks bash.
 *.sh text eol=lf
+docs/diagrams/*.drawio text eol=lf
+docs/diagrams/*.svg text eol=lf
+docs/diagrams/render-manifest.json text eol=lf
+docs/images/dr/*.svg text eol=lf
+docs/images/dr/*.excalidraw text eol=lf
+docs/images/dr/dr-render-manifest.json text eol=lf
+docs/diagrams/*.py text eol=lf

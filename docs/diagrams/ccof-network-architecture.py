@@ -19,6 +19,11 @@ cells, boxes, edges = [], [], []
 BLUE, GREEN, PURPLE, ORANGE, GRAY = "#0078d4", "#107c10", "#8764b8", "#ca5010", "#687787"
 
 
+def write_utf8_lf(path, content):
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(content)
+
+
 def box(id, x, y, w, h, title, lines=(), fill="#ffffff", stroke=BLUE, parent="1", dashed=False, boundary=False):
     boxes.append(dict(id=id, x=x, y=y, w=w, h=h, title=title, lines=list(lines),
                       fill=fill, stroke=stroke, parent=parent, dashed=dashed, boundary=boundary))
@@ -288,7 +293,7 @@ def render(diagram, name, page_boxes, page_edges, width, height, svg_name):
             svg.append(f'<rect x="{e["lx"]-label_width/2}" y="{e["ly"]-18}" width="{label_width}" height="24" fill="white"/>')
             svg.append(f'<text x="{e["lx"]}" y="{e["ly"]}" text-anchor="middle" fill="{e["color"]}" font-family="Arial,Segoe UI,sans-serif" font-size="17">{html.escape(e["label"])}</text>')
     svg.append('</svg>')
-    (HERE / svg_name).write_text("\n".join(svg), encoding="utf-8")
+    write_utf8_lf(HERE / svg_name, "\n".join(svg))
 
 
 mxfile = E.Element("mxfile", host="local", version="24.7.17")
@@ -297,7 +302,10 @@ render(overview, "Claude on Foundry architecture overview", boxes, edges, 1680, 
 network = E.SubElement(mxfile, "diagram", id="ccof-network-architecture", name="Detailed network and trust")
 render(network, "Claude on Foundry detailed network and trust", network_boxes, network_edges, W, H, "ccof-network-architecture.svg")
 E.indent(mxfile)
-E.ElementTree(mxfile).write(HERE / "ccof-network-architecture.drawio", encoding="utf-8", xml_declaration=True)
+drawio = E.tostring(mxfile, encoding="utf-8", xml_declaration=True)
+(HERE / "ccof-network-architecture.drawio").write_bytes(
+    drawio.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+)
 print(f"Generated two editable pages, {len(boxes)+len(network_boxes)} vertices, original Azure SVG icons and two SVG previews.")
 
 if arguments.png:
@@ -326,5 +334,5 @@ if arguments.png:
              "ccof-network-architecture.svg", "ccof-network-architecture.png")
     manifest = {"files": {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in names},
                 "rendering": "Same geometry; original Microsoft SVGs embedded; local Edge at 1x device scale. Design, not live acceptance."}
-    (HERE / "render-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    write_utf8_lf(HERE / "render-manifest.json", json.dumps(manifest, indent=2) + "\n")
     print("Rendered both PNGs and recorded vector/draw.io/preview hashes.")

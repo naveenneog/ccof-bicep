@@ -9,6 +9,9 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[1]
 diagrams = root / "docs" / "diagrams"
 rendered = json.loads((diagrams / "render-manifest.json").read_text())
+for filename in ["render-manifest.json", *rendered["files"]]:
+    if filename.endswith((".drawio", ".svg", ".json")):
+        assert b"\r" not in (diagrams / filename).read_bytes(), f"Diagram export uses CRLF: {filename}"
 for filename, digest in rendered["files"].items():
     assert hashlib.sha256((diagrams / filename).read_bytes()).hexdigest() == digest, f"Diagram export drift: {filename}"
 manifest = json.loads((diagrams / "icons" / "azure" / "manifest.json").read_text())
@@ -62,6 +65,8 @@ print("Editable two-page architecture, actual Microsoft icon hashes, endpoint ed
 
 dr = root / "docs" / "images" / "dr"
 dr_manifest = json.loads((dr / "dr-render-manifest.json").read_text())
+for filename in ("dr-render-manifest.json", "dr-active-passive.svg", "dr-active-passive.excalidraw"):
+    assert b"\r" not in (dr / filename).read_bytes(), f"DR diagram export uses CRLF: {filename}"
 for path, digest in [
     (root / dr_manifest["source"], dr_manifest["sourceSha256"]),
     (dr / "dr-active-passive.svg", dr_manifest["svgSha256"]),

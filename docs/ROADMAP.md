@@ -52,6 +52,7 @@ Details and stage owners: [DR implementation](design/DR-IMPLEMENTATION.md).
 
 | Packet | Status | Acceptance |
 | --- | --- | --- |
+| Network diagram export sync | In progress; packet gate blocked by `npm test` timeout after 900s | CCOF and DR generated text exports are LF-stable across platforms; manifests match; architecture asset checks and `git diff --check` pass; full packet gate passes |
 | V3-names | Complete | Names plus full IDs across V3; authenticated Graph lookup with explicit failures; admin-only VDI upgrade guide |
 | Stage 1 resources-only proof | Complete | Compile and inspect templates, deploy new lab services, verify live properties, document permissions and evidence |
 | Later-stage separation | Complete | Stages 0-8 exercised in the existing Fabrikam lab/Contoso labs; prerequisite-first DR workflow remains separate |

@@ -20,6 +20,11 @@ BLUE, GREEN, PURPLE, GRAY, ORANGE = (
 parts, nodes, links, used_icons = [], {}, [], set()
 
 
+def write_utf8_lf(path, content):
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(content)
+
+
 def text(x, y, lines, size=21, bold=False, color="#172334"):
     if isinstance(lines, str):
         lines = [lines]
@@ -447,9 +452,9 @@ def main():
     ET.fromstring(svg)
     OUT.mkdir(parents=True, exist_ok=True)
     target = OUT / "dr-active-passive.svg"
-    target.write_text(svg, encoding="utf-8")
+    write_utf8_lf(target, svg)
     editable = OUT / "dr-active-passive.excalidraw"
-    editable.write_text(json.dumps(editable_scene(svg), indent=2) + "\n", encoding="utf-8")
+    write_utf8_lf(editable, json.dumps(editable_scene(svg), indent=2) + "\n")
     manifest = {
         "source": str(Path(__file__).relative_to(ROOT)).replace("\\", "/"),
         "sourceSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -479,9 +484,7 @@ def main():
             png.write_bytes(base64.b64decode(capture["data"]))
             browser.close()
         manifest["pngSha256"] = hashlib.sha256(png.read_bytes()).hexdigest()
-    (OUT / "dr-render-manifest.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
+    write_utf8_lf(OUT / "dr-render-manifest.json", json.dumps(manifest, indent=2) + "\n")
     print(f"Rendered {target.name}: {len(nodes)} nodes, {len(links)} links, "
           f"{len(used_icons)} original Microsoft icons.")
 
