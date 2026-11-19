@@ -79,7 +79,11 @@ az() { rec "az $*"
     "functionapp config appsettings list"*)
       if [[ "$*" == *CCOF_APP_ROLE* ]]; then echo "${STUB_ROLE:-$PACKAGE_KIND}"
       elif [ -n "${STUB_SETTINGS_CHANGE:-}" ] && grep -q 'config-zip' "$CALLS"; then echo '[{"name":"keep","value":"changed"}]'; else echo '[{"name":"keep","value":"original"}]'; fi ;;
-    "rest --method post"*) echo '{"properties":{"platform":{"enabled":true}}}' ;;
+    "rest --method get"*)
+      if [[ "$*" == *'/config/authsettingsV2/list?api-version=2024-04-01'* ]]; then
+        echo '{"properties":{"platform":{"enabled":true}}}'
+      else return 1; fi ;;
+    "rest --method post"*) echo 'MethodNotAllowed: authentication settings read requires GET' >&2; return 1 ;;
     "functionapp deployment source config-zip"*) [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "deploy error" >&2; return 1; } ;;
     "functionapp function list"*) printf '%s\n' ${STUB_FUNCS-lab-admin/projects lab-admin/adminUi lab-admin/adminHealth} ;;
     *) return 0 ;;
@@ -188,6 +192,7 @@ $baselineHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
 $safe = @{ SafeUpgrade = $true; PreviousCommit = ('b' * 40); PreviousPackageSha256 = $baselineHash; SeedBaseline = $true }
 $r = Invoke-VmScript 'update' @{} @() $safe
 Check 'safe upgrade: verified previous artifact is backed up and settings/auth/access are read back' ($r.run.outcome -ceq 'succeeded' -and (Test-Path (Join-Path $r.work "backups/lab-admin/$baselineHash.zip")) -and $r.run.guardReadback -and $r.run.previousSha256 -ceq $baselineHash -and (Has $r '^az functionapp config appsettings list') -and (Has $r 'authsettingsV2/list'))
+Check 'safe upgrade: authentication guard uses the documented read-only GET endpoint' ((Has $r '^az rest --method get --url https://management.azure.com/.*/config/authsettingsV2/list\?api-version=2024-04-01') -and -not (Has $r '^az rest --method post'))
 $noBaseline = @{} + $safe; $noBaseline.SeedBaseline = $false
 $r = Invoke-VmScript 'update' @{} @() $noBaseline
 Check 'safe upgrade: absent baseline refuses before source build or deployment' ($r.run.step -ceq 'backup' -and -not (Has $r '^git clone|config-zip'))

@@ -9,7 +9,7 @@
 | SS-03 Apply now | Implemented, `cd8904a` | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
 | SS-04 history and restore | Implemented, `642734b` | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
 | SS-05 console and private upgrade | Implemented, `365eaf8`, `97a571f`, `1c0e314`, `161d794` | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
-| SS-06 acceptance | In progress; council and full gate pass, live incomplete | Full packet gate at 474ec8a exits 0 without weakening the Azure detector or charter. SHA-256-addressed active archives provide exact-byte rollback without claiming source provenance. Private six-app upgrades and live acceptance remain pending; real Graph Apply also needs its existing separately approved Graph reads |
+| SS-06 acceptance | In progress; live updater correction awaits gate/retry | Full packet gate at 474ec8a exits 0. First private upgrade stopped before deployment on an incorrect authentication-read verb; documented GET is confirmed live and 85 corrected updater checks pass (SS-07). The correction needs a new full gate before retry. Exact-byte rollback retains active archives without claiming source provenance. Live acceptance remains pending; real Graph Apply also needs its existing separately approved Graph reads |
 
 Implementation is committed on `feat/admin-self-service-ops`, not merged or deployed. These
 implementation statuses do not close the packet: [STATUS](STATUS.md) records the failed executed

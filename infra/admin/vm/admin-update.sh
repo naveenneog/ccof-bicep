@@ -115,7 +115,7 @@ guard_snapshot() {
   local settings auth access
   # Never persist app-setting values or authentication documents in logs/evidence.
   settings=$(az functionapp config appsettings list --subscription "$SUB" --resource-group "$RG" --name "$APP" --query 'sort_by(@, &name)' --output json 2>/dev/null) || return 1
-  auth=$(az rest --method post --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Web/sites/$APP/config/authsettingsV2/list?api-version=2024-04-01" --output json 2>/dev/null) || return 1
+  auth=$(az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Web/sites/$APP/config/authsettingsV2/list?api-version=2024-04-01" --output json 2>/dev/null) || return 1
   access=$(az functionapp show --subscription "$SUB" --resource-group "$RG" --name "$APP" --query '{publicNetworkAccess:publicNetworkAccess,httpsOnly:httpsOnly,virtualNetworkSubnetId:virtualNetworkSubnetId}' --output json 2>/dev/null) || return 1
   [ -n "$settings" ] && [ -n "$auth" ] && [ -n "$access" ] || return 1
   printf '%s\n%s\n%s\n' "$settings" "$auth" "$access" | sha256sum | cut -c1-64

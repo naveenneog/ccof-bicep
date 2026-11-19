@@ -1,5 +1,14 @@
 # Change log
 
+## Unreleased - Private updater authentication guard read
+
+- Corrected `authsettingsV2/list` from POST to the documented GET. A live read-only probe
+  under the updater identity confirms the method mismatch; the safe upgrade stopped before
+  build/deployment and no permissions were added. The offline stub now rejects POST and a
+  method-specific assertion covers the read; 85 updater checks pass after the reproduced RED.
+  Settings/auth/access hashing and fail-closed behavior are retained. The next full gate and
+  private upgrade retry remain pending (SS-07). Upgrade examples use absolute evidence paths.
+
 ## Unreleased - admin updater content-addressed rollback
 
 - `Update-AdminFromVm.ps1 -PreviousSource Recovered`: safe upgrade and rollback can use the platform-active

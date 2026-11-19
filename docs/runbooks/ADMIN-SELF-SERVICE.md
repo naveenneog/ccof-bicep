@@ -299,7 +299,7 @@ $common = @{
   AdminResourceGroup = 'REPLACE-admin-rg'
   AdminApp = 'REPLACE-region-a-admin'
   RepoUrl = 'https://github.com/REPLACE-owner/REPLACE-repository'
-  EvidenceDirectory = '.\.env.admin-updates'
+  EvidenceDirectory = (Join-Path $HOME 'ccof-admin-updates')
 }
 $release = @{
   Commit = 'REPLACE-approved-full-40-character-lowercase-commit'

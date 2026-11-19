@@ -57,6 +57,16 @@ passes in 884.3 seconds; typecheck and build pass. No detector, assertion, chart
 was relaxed. This closes the offline gate blocker, not live acceptance. Private six-app
 upgrades and optional-feature acceptance remain pending.
 
+The first live A admin safe-upgrade attempt at pushed ledger commit `477ac4e` stopped
+before build/deployment: the authentication guard used POST rather than the documented GET.
+The same VM identity's read-only probe returns failure for POST and success for GET; this
+is not a missing-permission finding. The corrected verb preserves the endpoint, guard hashing
+and fail-closed behavior. A contract-faithful stub reproduces the failure with all 85 checks
+loaded, including the named HTTP-method assertion; after correction all 85 pass. Scoped
+reviews: Architect PASS (same boundary), Coder PASS (one read verb), QA PASS (live probe and
+RED/GREEN), UX PASS (no interface change), Security PASS (same read scope, no values logged).
+A new full gate and private retry remain required. The VM is again verified deallocated.
+
 Private-lab preparation is verified, not new-feature acceptance:
 
 - Six-app resource/settings/web backups are encrypted and round-trip verified outside git.
