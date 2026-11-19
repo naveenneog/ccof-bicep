@@ -19,10 +19,11 @@
   retained-artifact rollback, without writing existing app settings or public-access controls.
   No new Entra app roles or Graph writes are required; existing sync Graph reads remain separate.
 - Five-role council passes or passes with notes; admin 259, root Apply 20 and 12 synthetic-API
-  browser scenarios pass. The executed packet gate is blocked by untouched baseline diagram
-  hash drift. Live upgrade is held on conflicting prior-deployment metadata, and positive
-  Graph Apply acceptance also lacks the lab's existing Graph read grants. No new feature code
-  or customer rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
+  browser scenarios pass. Diagram drift is fixed and recovered active ZIPs supply exact-byte
+  rollback without claiming source provenance. The latest gate fails an updater receipt assertion;
+  a standalone rerun passes 84 checks, with an exclusive full gate still required. Positive Graph
+  Apply acceptance also lacks the lab's existing Graph read grants. No new feature code or customer
+  rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
 
 ## 2026-11-19 - Make diagram export hashes platform-stable
 

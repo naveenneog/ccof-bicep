@@ -12,8 +12,9 @@ permission tests, existing-project regression and customer upgrade evidence are 
 release. Focused implementation commits: `32f1f92` (durable API), `642734b` (history),
 `365eaf8` (console), `8ebb9e3` (routing), `cd8904a` (Apply), `97a571f` (private updater),
 `1c0e314` (optional infrastructure) and `161d794` (host integration).
-The implementation head is `161d7948c80c63c742226512650ac4f913150562` on
-`feat/admin-self-service-ops`; it is not merged or deployed.
+Host integration is `161d7948c80c63c742226512650ac4f913150562`; the subsequent
+content-addressed rollback fix is `6cb2dc8` on `feat/admin-self-service-ops`.
+The feature is not merged or deployed.
 
 The integrated admin suite has **259 passing tests**; root Apply has **20 passing tests**.
 Root typecheck/build and admin build including UI pass. The 12 browser scenarios were rerun
@@ -31,12 +32,14 @@ lease cleanup no longer masks the real result or original error.
 | UX | PASS-WITH-NOTES; inherited dense mobile touch targets |
 | Security | PASS; no vulnerabilities reported |
 
-The executed `node .ironclad/gate.mjs --stage packet --json` completed with exit 1:
-22 checks pass, 1 fails, 1 skips and 2 warn. The sole failed check is `tests.run`:
-`test_architecture_assets.py` reports `Diagram export drift: ccof-network-architecture.drawio`.
-The hash drift reproduces in untouched base/HEAD assets; no diagram, manifest or assertion was
-changed to hide it. Typecheck and build pass within that gate. The directly coupled optional-worker
-union assertion is corrected, with 37 focused tests passing. This is **not a green packet gate**.
+The latest executed `node .ironclad/gate.mjs --stage packet --json` at `6cb2dc8` exits 1:
+22 checks pass, 1 fails, 1 skips and 2 warn. Diagram checks now pass after the merged LF fix.
+The sole failed check is `tests.run`: `Test-AdminVmUpdate.ps1:223` received no parsed worker
+receipt. A subsequent standalone run with the same logged-out profile and TEMP passes all
+84 checks. Concurrent runs of that suite share a scratch path; interference is a hypothesis,
+not an established cause. The next full gate runs without a concurrent updater suite. No
+assertion, charter limit or production code was changed to obtain that standalone result.
+Typecheck and build pass within the failed gate. This is **not a green packet gate**.
 
 Private-lab preparation is verified, not new-feature acceptance:
 
@@ -57,7 +60,9 @@ Private-lab preparation is verified, not new-feature acceptance:
 - Post-preparation reads compare every setting on all six apps against encrypted backups:
   unchanged, including A-active/B-disabled timers and disabled snapshotApply. Identity, ingress,
   VNet and selected private-publishing guards also match. No authentication changes were performed.
-- The updater VM is verified back in its original **deallocated** state.
+- The updater VM was restarted for the next private upgrade attempt. All five recovered
+  rollback ZIP hashes and all twelve private DNS names were verified again. It must return
+  to its original **deallocated** state when the attempt finishes or is blocked.
 
 Both sync identities have zero existing Graph application-role assignments. No Entra roles were
 changed; real positive Graph sync/Apply acceptance remains blocked and snapshots are not a
@@ -76,9 +81,9 @@ assets to LF, and the asset test rejects CRLF. Acceptance: (1) run both document
 icon sources, network boundaries and preview dimensions; (3) `git diff --check` passes; (4) the
 packet gate passes.
 
-Verification: both generators and the targeted asset test pass; `git diff --check` passes. The
-packet gate is still blocked: `npm test` exceeded its 900-second limit (`22 passed · 2 warned · 1
-failed · 1 skipped`). Keep this packet open until the full gate completes successfully.
+Verification: both generators and the targeted asset test pass; `git diff --check` passes.
+The latest packet gate passes the diagram checks but fails an updater test, as recorded above.
+This packet remains open until the full gate completes successfully.
 
 ## Completed: Admin console onboards a Foundry backend
 

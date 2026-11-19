@@ -9,12 +9,13 @@
 | SS-03 Apply now | Implemented, `cd8904a` | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
 | SS-04 history and restore | Implemented, `642734b` | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
 | SS-05 console and private upgrade | Implemented, `365eaf8`, `97a571f`, `1c0e314`, `161d794` | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
-| SS-06 acceptance | BLOCKED; council passes, gate/live incomplete | Resolve baseline diagram-export gate failure, reconcile conflicting B deployment metadata and prior-artifact provenance, then privately upgrade and verify new features and existing projects; real Graph Apply also needs its existing separately approved Graph reads |
+| SS-06 acceptance | BLOCKED; council passes, gate/live incomplete | Diagram drift is fixed; SHA-256-addressed active archives provide exact-byte rollback without claiming source provenance. Obtain a green exclusive gate after an intermittent updater-test receipt failure, then privately upgrade and verify features and existing projects; real Graph Apply also needs its existing separately approved Graph reads |
 
 Implementation is committed on `feat/admin-self-service-ops`, not merged or deployed. These
 implementation statuses do not close the packet: [STATUS](STATUS.md) records the failed executed
 gate, scoped offline/browser evidence and remaining live acceptance; [UNKNOWNS](UNKNOWNS.md)
-SS-03 through SS-06 remain open. No customer rollout or CI/CD work is implied.
+SS-03 through SS-05 remain open; SS-06 is resolved by content-addressed rollback.
+No customer rollout or CI/CD work is implied.
 
 | Packet | Status | Observable acceptance |
 | --- | --- | --- |
