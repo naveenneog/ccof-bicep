@@ -82,9 +82,14 @@ No new Entra write permission or new hosting service is part of this decision.
 
 ## Verification status
 
-The five-role council has no remaining BLOCK after regression fixes. Implementation is committed
-through `161d794` on the feature branch; optional features are not deployed. The executed packet
-gate fails on existing architecture-export drift. Conflicting B active-deployment metadata and
-saved Code records must be reconciled before selecting rollback artifacts (UNKNOWNS SS-06).
-Existing Graph application reads are absent on both lab sync identities, blocking positive
-Graph-based Apply acceptance separately from admin permissions. See STATUS for measured evidence.
+The five-role council has no remaining BLOCK after regression fixes. The full packet gate at
+`e39482c` passes; both lab admins are privately upgraded with unchanged guards. Recovered,
+content-addressed rollback resolves SS-06 without claiming historical source provenance.
+Focused live history acceptance passes. Worker health failure rolls back the first standby sync;
+other workers remain untouched (SS-08). Routing capability acceptance remains blocked (SS-09);
+a faithful Cosmos SDK 404 regression is reproduced and corrected locally. All diagnostic tests pass,
+but gates 7/8 exceed the unchanged 900-second test budget (SS-10). Decision for SS-10: run the
+PowerShell suites in parallel with a per-suite TEMP rather than relax the budget or remove
+assertions; suites already use PID-unique scratch paths. Gate 9 passes in 273 seconds.
+Existing Graph application reads are absent on both lab sync identities, separately blocking
+positive Graph-based Apply acceptance. No customer rollout or CI/CD work; see STATUS for evidence.

@@ -9,11 +9,13 @@
 | SS-03 Apply now | Implemented, `cd8904a` | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
 | SS-04 history and restore | Implemented, `642734b` | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
 | SS-05 console and private upgrade | Implemented, `365eaf8`, `97a571f`, `1c0e314`, `161d794` | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
-| SS-06 acceptance | In progress; live updater correction awaits gate/retry | Full packet gate at 474ec8a exits 0. First private upgrade stopped before deployment on an incorrect authentication-read verb; documented GET is confirmed live and 85 corrected updater checks pass (SS-07). The correction needs a new full gate before retry. Exact-byte rollback retains active archives without claiming source provenance. Live acceptance remains pending; real Graph Apply also needs its existing separately approved Graph reads |
+| SS-06 acceptance | Blocked on SS-08/SS-09 after real attempts (SS-10 resolved) | Full gate e39482c and both admin upgrades pass with unchanged guards. Default-off compatibility and focused live history restore/ETag/auth negatives pass. Standby sync health failure rolls back exactly; other workers untouched. Routing returns generic unavailable. Its local SDK correction passes all tests in a 932.6s diagnostic run, gates 7/8 exceeded the unchanged 900s limit; the parallel runner (SS-10) brings the packet gate to 273s with no limit change. No new feature grants or Entra changes. Real Graph Apply also needs separately approved existing Graph reads |
 
-Implementation is committed on `feat/admin-self-service-ops`, not merged or deployed. These
-implementation statuses do not close the packet: [STATUS](STATUS.md) records the failed executed
-gate, scoped offline/browser evidence and remaining live acceptance; [UNKNOWNS](UNKNOWNS.md)
+Implementation is committed on `feat/admin-self-service-ops`, not merged. Both lab admins are
+deployed; workers and customer rollout remain incomplete. A test-first Cosmos 404 correction for
+the initial operation probe/lease is locally green; its full gate and private retry remain pending.
+These implementation statuses do not close the packet: [STATUS](STATUS.md) records the green
+release gate, subsequent live failures, offline/browser evidence and remaining acceptance; [UNKNOWNS](UNKNOWNS.md)
 SS-03 and SS-04 remain open; SS-05 is resolved by the full green gate and SS-06 by content-addressed rollback.
 No customer rollout or CI/CD work is implied.
 

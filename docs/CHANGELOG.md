@@ -1,5 +1,32 @@
 # Change log
 
+## Unreleased - Cosmos operation storage and live lab acceptance
+
+- Corrected the job-store assumption that missing Cosmos point reads throw. The installed SDK
+  returns a 404 response with no resource; both the initial probe and first project/registry lease
+  now reach their existing create-on-miss branches. A faithful SDK fixture reproduces both failures;
+  23 focused checks, 260 admin tests, admin typecheck and a valid guard mutation pass.
+  Conflicting probe records, denied permissions and conditional lease writes retain their behavior.
+  Five scoped council verdicts pass, including independent Security with no vulnerabilities.
+  Full diagnostic tests pass in 932.6s, but packet gates 7 and 8 exceed the unchanged 900s
+  test limit; typecheck/build pass. The correction remains uncommitted and undeployed.
+  Runtime investigation is SS-10; no test, command or timeout is weakened.
+- `npm test` runs the PowerShell suites in parallel, each with its own TEMP, printing output per
+  suite in name order and failing when any suite fails (SS-10). The full packet gate passes in 273s
+  instead of timing out at 900s; `tests/Test-RunTestsRunner.ps1` covers parallelism, isolation,
+  order and failure exit codes, and catches both mutations tried.
+- Both lab admins were privately upgraded at `e39482c`, with guard equality and retained ZIPs.
+  Routing/history opt-in preserves all other settings. Live history capture, preview and restore,
+  authentication/ETag/input negatives and existing-project/inference baselines pass.
+  Routing acceptance remains failed pending a real retry after the storage correction.
+- First standby sync upgrade fails platform health and automatically rolls back to its exact
+  approved previous package; other workers remain untouched. Host telemetry identifies
+  `AzureWebJobsStorage` client creation as the unhealthy component, with code indexed successfully.
+  Matching storage identities/Blob Data Owner and current VM-origin private DNS/HTTPS checks do
+  not recover the original host client-construction exception or establish a fix.
+  The updater VM is restored to deallocated and read back. No Entra, authentication, public-access or writer-fence change;
+  no new optional APIM/Cosmos grant. Customer rollout and CI/CD remain deferred.
+
 ## Unreleased - Private updater authentication guard read
 
 - Corrected `authsettingsV2/list` from POST to the documented GET. A live read-only probe
@@ -7,7 +34,10 @@
   build/deployment and no permissions were added. The offline stub now rejects POST and a
   method-specific assertion covers the read; 85 updater checks pass after the reproduced RED.
   Settings/auth/access hashing and fail-closed behavior are retained. The next full gate and
-  private upgrade retry remain pending (SS-07). Upgrade examples use absolute evidence paths.
+  private upgrade retry passed at `e39482c`: full gate exits 0, A admin guardReadback true,
+  both existing project reads retain HTTP 200/original ETags, optional capabilities disabled.
+  B admin also passes; worker deployment and complete opted-in acceptance remain pending as described
+  above. Upgrade examples use absolute evidence paths.
 
 ## Unreleased - admin updater content-addressed rollback
 
@@ -35,8 +65,9 @@
   checks, mutation control, typecheck/build and scoped reviews pass. The diagnostic updater
   suite passes 84 checks. The full packet gate at `474ec8a` exits 0 (23 pass, 1 skip, 2 warn);
   `npm test` passes in 884.3 seconds, typecheck/build pass. Positive Graph
-  Apply acceptance also lacks the lab's existing Graph read grants. No new feature code or customer
-  rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
+  Apply acceptance also lacks the lab's existing Graph read grants. Lab admin deployment and focused
+  history acceptance are recorded above; no customer rollout. CI/CD work is deferred.
+  See STATUS and UNKNOWNS SS-03 to SS-09.
 
 ## 2026-11-19 - Make diagram export hashes platform-stable
 

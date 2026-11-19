@@ -14,7 +14,38 @@ release. Focused implementation commits: `32f1f92` (durable API), `642734b` (his
 `1c0e314` (optional infrastructure) and `161d794` (host integration).
 Host integration is `161d7948c80c63c742226512650ac4f913150562`; the subsequent
 content-addressed rollback fix is `6cb2dc8` on `feat/admin-self-service-ops`.
-The feature is not merged or deployed.
+The feature is not merged or release-approved. Both lab admin apps are upgraded;
+worker deployment and opted-in acceptance remain incomplete.
+
+Current correction: the Cosmos SDK resolves a missing point read as a 404 response with no
+resource. The job-store probe and first lease expected an exception instead. A faithful SDK
+fixture reproduces both failures; normalization at those two create-on-miss reads preserves the
+existing create/ETag/race handling. All 23 focused checks, 260 admin tests and admin typecheck pass.
+A guard mutation fails both intended tests with all three storage tests loaded; restoring it passes.
+Scoped verdicts: Architect PASS (same adapter boundary), Coder PASS (only missing-read handling),
+QA PASS (faithful SDK RED, denial/conflict/lease checks and mutation), UX PASS (existing capability
+states preserved); independent Security PASS, no vulnerabilities in the two-file correction.
+Full packet gates 7 and 8 each exit 1: 22 pass, 1 fail, 1 skip and 2 warn. Their sole failed
+check is `npm test` exceeding the unchanged 900-second limit; typecheck/build pass. Between
+them, a timestamped full diagnostic run passes every suite in 932.6 seconds. Its largest stages
+are existing DR Cosmos throughput (155.5s), Front Door safety (103.6s) and existing-network
+(90.8s) tests; the updater suite takes 58.5s. Gate 8 runs without concurrent work and still
+times out. No assertion, command, timeout or charter constraint is relaxed. Identified orphan
+test-runner descendants from the timed-out gate are stopped by exact process ID. Further
+retries stopped pending a scoped runtime investigation (SS-10). SS-10 is resolved by running the
+PowerShell suites in parallel (`scripts/run-tests.ps1`, `tests/Test-RunTestsRunner.ps1`); packet
+gate 9 exits 0 in 273 seconds with the unchanged limit. SS-09 is not live-resolved.
+Azure startup telemetry identifies SS-08's health component as `AzureWebJobsStorage` client
+creation, not a missing module: host/script lifecycle are healthy and the disabled sync function
+is indexed. Both sync host-storage client IDs match assigned identities. A prior-day query finds
+no other matching error rows; that absence does not prove baseline health or a transient cause.
+The bounded storage follow-up finds matching identity-based settings and Storage Blob Data Owner
+for all four workers, and confirms B's VNet integration through raw ARM. VM-origin DNS/HTTPS
+reaches B's approved blob endpoint; it does not prove worker-origin or deployment-time access.
+The original client-construction exception remains unavailable. No role, network or identity
+change is supported by this evidence; the read-only agent has released the private runner.
+The updater VM is deallocated again, with power-state readback verified, while the local gate
+blocks deployment. Current admin rollback ZIPs remain verified on its retained disk.
 
 The integrated admin suite has **259 passing tests**; root Apply has **20 passing tests**.
 Root typecheck/build and admin build including UI pass. The 12 browser scenarios were rerun
@@ -65,7 +96,25 @@ and fail-closed behavior. A contract-faithful stub reproduces the failure with a
 loaded, including the named HTTP-method assertion; after correction all 85 pass. Scoped
 reviews: Architect PASS (same boundary), Coder PASS (one read verb), QA PASS (live probe and
 RED/GREEN), UX PASS (no interface change), Security PASS (same read scope, no values logged).
-A new full gate and private retry remain required. The VM is again verified deallocated.
+Full packet gate 6 at `e39482c` exits 0: 23 pass, 1 skip, 2 warn; `npm test` passes
+in 877.9 seconds, typecheck/build pass. The pushed release is
+`e39482c9ad08f58cebef13e5ef201d12a77b0bd5`. A admin's private safe upgrade now succeeds
+with guardReadback true. Both authenticated existing-project reads retain HTTP 200 and
+their original ETags; all three optional capabilities report disabled. Its submitted ZIP
+is retained separately by app/SHA-256 before B's rebuild. B admin also succeeds with
+guardReadback true and its own retained ZIP. Worker packages build with the three approved
+reconciler inputs unchanged. The first standby sync deployment fails the platform health check;
+the safe updater restores its exact approved previous package and verifies host HTTP 200 and
+unchanged guards. No other worker is attempted. This is SS-08, not evidence of missing RBAC.
+
+Routing/history opt-in changes only their two flags on each admin app; exact full settings
+readback passes. History is available, Apply remains disabled, and existing projects still work.
+Focused live history acceptance passes: before/after capture, preview, restore, unauthenticated
+denial, 428 without If-Match, 412 with stale If-Match, and original configuration restored.
+However, both admins' routing capability reports generic `feature_unavailable` without the
+expected permission guidance (SS-09). The negative routing acceptance is failed, not covered
+by the focused history pass. No optional APIM/Cosmos grant or Entra change has been made.
+The updater VM remains running for read-only diagnosis; neither blocker is release-approved.
 
 Private-lab preparation is verified, not new-feature acceptance:
 
@@ -89,7 +138,7 @@ Private-lab preparation is verified, not new-feature acceptance:
 - The updater VM was restarted for the next private upgrade attempt. All five recovered
   rollback ZIP hashes and all twelve private DNS names were verified again. It must return
   to its original **deallocated** state when the attempt finishes or is blocked.
-- The VM is deallocated while gate diagnosis blocks deployment. Before-upgrade Front Door
+- Before-upgrade Front Door
   inference returned 200 for `INFSIMFD2` and 403 `permission_error` (not entitled) twice for
   `INFSIMPROJ`. Existing-project admin reads and inference are separate baselines; the latter
   refusal is not a new-feature regression and no membership was changed to make it pass.
@@ -97,7 +146,8 @@ Private-lab preparation is verified, not new-feature acceptance:
 Both sync identities have zero existing Graph application-role assignments. No Entra roles were
 changed; real positive Graph sync/Apply acceptance remains blocked and snapshots are not a
 substitute. Optional feature grants/settings and live publication/history/Apply checks remain
-pending. No self-service feature code or customer update was deployed; CI/CD work remains deferred.
+pending except for the verified history opt-in above. Both lab admins contain self-service code;
+workers and customer rollout remain incomplete. CI/CD work remains deferred.
 
 ## Admin console onboards a Foundry backend
 
