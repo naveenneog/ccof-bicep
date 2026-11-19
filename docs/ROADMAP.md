@@ -9,12 +9,12 @@
 | SS-03 Apply now | Implemented, `cd8904a` | Active-pair-only sync then reconciliation, preserving all existing guards and distinguishing accepted from completed |
 | SS-04 history and restore | Implemented, `642734b` | Immutable configuration versions, reviewed ETag-guarded validated restore, no retirement/usage/spend/audit rewind |
 | SS-05 console and private upgrade | Implemented, `365eaf8`, `97a571f`, `1c0e314`, `161d794` | Existing console components, per-feature denied states, optional deployment settings/grants, immutable private update and rollback evidence |
-| SS-06 acceptance | BLOCKED; council passes, full gate/live incomplete | Diagram drift and the reproduced offline Apply SDK-boundary failure are corrected; focused checks pass without weakening the Azure detector. SHA-256-addressed active archives provide exact-byte rollback without claiming source provenance. A green full gate precedes private upgrades and live acceptance; real Graph Apply also needs its existing separately approved Graph reads |
+| SS-06 acceptance | In progress; council and full gate pass, live incomplete | Full packet gate at 474ec8a exits 0 without weakening the Azure detector or charter. SHA-256-addressed active archives provide exact-byte rollback without claiming source provenance. Private six-app upgrades and live acceptance remain pending; real Graph Apply also needs its existing separately approved Graph reads |
 
 Implementation is committed on `feat/admin-self-service-ops`, not merged or deployed. These
 implementation statuses do not close the packet: [STATUS](STATUS.md) records the failed executed
 gate, scoped offline/browser evidence and remaining live acceptance; [UNKNOWNS](UNKNOWNS.md)
-SS-03 through SS-05 remain open; SS-06 is resolved by content-addressed rollback.
+SS-03 and SS-04 remain open; SS-05 is resolved by the full green gate and SS-06 by content-addressed rollback.
 No customer rollout or CI/CD work is implied.
 
 | Packet | Status | Observable acceptance |
@@ -53,7 +53,7 @@ Details and stage owners: [DR implementation](design/DR-IMPLEMENTATION.md).
 
 | Packet | Status | Acceptance |
 | --- | --- | --- |
-| Network diagram export sync | In progress; packet gate blocked by `npm test` timeout after 900s | CCOF and DR generated text exports are LF-stable across platforms; manifests match; architecture asset checks and `git diff --check` pass; full packet gate passes |
+| Network diagram export sync | Complete; fix merged at 2941fc4, full gate passes at 474ec8a | CCOF and DR generated text exports are LF-stable across platforms; manifests match; architecture asset checks and `git diff --check` pass; full packet gate exits 0 |
 | V3-names | Complete | Names plus full IDs across V3; authenticated Graph lookup with explicit failures; admin-only VDI upgrade guide |
 | Stage 1 resources-only proof | Complete | Compile and inspect templates, deploy new lab services, verify live properties, document permissions and evidence |
 | Later-stage separation | Complete | Stages 0-8 exercised in the existing Fabrikam lab/Contoso labs; prerequisite-first DR workflow remains separate |

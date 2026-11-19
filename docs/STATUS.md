@@ -32,7 +32,7 @@ lease cleanup no longer masks the real result or original error.
 | UX | PASS-WITH-NOTES; inherited dense mobile touch targets |
 | Security | PASS; no vulnerabilities reported |
 
-The latest executed `node .ironclad/gate.mjs --stage packet --json` at `dfda914` exits 1:
+The preceding `node .ironclad/gate.mjs --stage packet --json` at `dfda914` exits 1:
 22 checks pass, 1 fails, 1 skips and 2 warn. Diagram checks, typecheck and build pass.
 The sole failed check is `tests.run`. This fourth gate ran without a concurrent updater suite.
 A full diagnostic `npm test` run then exited 1 after 852 seconds and identified the deterministic
@@ -49,8 +49,13 @@ boundary; after the correction, 37 Apply/live-gate checks, typecheck and build p
 controller validation causes the intended adapter-call assertion to fail with all five controller
 tests loaded; validation is restored. Scoped reviews: Architect PASS (boundary and API retained),
 Coder PASS (same adapter behavior), QA PASS (reproduction and non-vacuity), UX PASS (no UI change,
-same unavailable state); independent Security PASS, no vulnerabilities. Full gate remains required.
-This is **not a green packet gate** or live acceptance.
+same unavailable state); independent Security PASS, no vulnerabilities.
+
+The full packet gate at correction commit `474ec8a` now **exits 0**: 23 pass, 1 skip
+(no lint command declared), 2 warnings (existing file-size and TODO budgets). `npm test`
+passes in 884.3 seconds; typecheck and build pass. No detector, assertion, charter or timeout
+was relaxed. This closes the offline gate blocker, not live acceptance. Private six-app
+upgrades and optional-feature acceptance remain pending.
 
 Private-lab preparation is verified, not new-feature acceptance:
 
@@ -97,8 +102,8 @@ icon sources, network boundaries and preview dimensions; (3) `git diff --check` 
 packet gate passes.
 
 Verification: both generators and the targeted asset test pass; `git diff --check` passes.
-The latest packet gate passes the diagram checks but fails an updater test, as recorded above.
-This packet remains open until the full gate completes successfully.
+The full packet gate at `474ec8a` exits 0, including the diagram checks. This packet is complete;
+the LF fix was merged as `2941fc4`.
 
 ## Completed: Admin console onboards a Foundry backend
 

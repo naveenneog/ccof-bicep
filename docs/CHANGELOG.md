@@ -24,7 +24,8 @@
   gate's deterministic failure: an offline Apply test imports the SDK-wired adapter. Extracted
   its controller into an SDK-free module without weakening the live-Azure detector; 37 focused
   checks, mutation control, typecheck/build and scoped reviews pass. The diagnostic updater
-  suite passes 84 checks; a green full gate remains required. Positive Graph
+  suite passes 84 checks. The full packet gate at `474ec8a` exits 0 (23 pass, 1 skip, 2 warn);
+  `npm test` passes in 884.3 seconds, typecheck/build pass. Positive Graph
   Apply acceptance also lacks the lab's existing Graph read grants. No new feature code or customer
   rollout was deployed; CI/CD work is deferred. See STATUS and UNKNOWNS SS-03 to SS-06.
 
@@ -34,10 +35,8 @@
   causing raw SHA-256 manifest drift with no change to the diagram content. Both generators now
   write LF; `.gitattributes` preserves LF checkouts, and the asset test guards against CRLF.
 - Both documented `--png` generators, `python tests/test_architecture_assets.py` and
-  `git diff --check` pass. The full packet gate remains blocked because `npm test` timed out after
-  900 seconds.
-  Later gate attempts finish with `tests.run` exit 1 rather than a reported timeout; the current
-  investigation and release blocker are recorded above.
+  `git diff --check` pass. The full packet gate at `474ec8a` exits 0 after the separate offline
+  Apply SDK-boundary correction described above. Diagram fix merged as `2941fc4`.
 
 ## 2026-11-08 - Admin console onboards a Foundry account (ADR 0040)
 
