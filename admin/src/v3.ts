@@ -461,8 +461,10 @@ async function routingRequest(path: string, method: string, url: URL, request: A
     if (!etag) { await pending.finish("refused", { code: "etag_mismatch" }); throw new ApiError(412, "etag_mismatch"); }
     await pending.finish(current ? "updated" : "created", { etagAfter: etag });
     audit(operation, { outcome: current ? "updated" : "created", backendId, etagAfter: etag, changes: changed });
-    const routing = current && changed.some((c) => c.path === "circuitBreaker")
-      ? await requeueAfterBreakerChange(backendId, requestId, actor, deps, audit)
+    const routingChanged = changed.some((c) => c.path === "circuitBreaker" ||
+      deps.env.ADMIN_ROUTING_PUBLISH_ENABLED === "true" && ["url", "status", "deployments", "inferenceGeo"].includes(c.path.split(".")[0]));
+    const routing = current && routingChanged
+      ? await requeueAfterRegistryChange(backendId, requestId, actor, deps, audit)
       : { queued: [], failed: [] };
     return response(current ? 200 : 201, { backend: { ...doc, etag }, changed: true, routing });
   }
@@ -540,9 +542,9 @@ async function routingRequest(path: string, method: string, url: URL, request: A
   return null;
 }
 
-// After a saved breaker edit: one ETag-guarded, change-recorded write per affected project. The registry
+// After a saved routing-affecting edit: one ETag-guarded, change-recorded write per affected project. The registry
 // is already saved, so a project that cannot be written is reported in `failed` rather than undoing it.
-async function requeueAfterBreakerChange(backendId: string, requestId: string, actor: { oid: string }, deps: V3Dependencies,
+async function requeueAfterRegistryChange(backendId: string, requestId: string, actor: { oid: string }, deps: V3Dependencies,
   audit: (operation: string, fields: Doc) => void): Promise<{ queued: { projectId: string; revision: number }[]; failed: string[] }> {
   const queued: { projectId: string; revision: number }[] = [];
   const failed: string[] = [];

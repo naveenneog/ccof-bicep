@@ -49,6 +49,7 @@ function setup() {
   const store = new Store();
   const changeLog = createMemoryChangeLog();
   const registry = createMemoryRegistryStore();
+  const env: Record<string, string> = {};
   let id = 0;
   const logs: Doc[] = [];
   const base = { authenticate: async (h: string | null) => ({ oid: "00000000-0000-4000-8000-0000000000e1", canWrite: h !== "reader" }),
@@ -58,8 +59,8 @@ function setup() {
     method, path, headers: headers(h), body: body === undefined ? null : JSON.stringify(body) }, { ...base, store, changeLog } as ApiDependencies);
   const v3 = (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => handleV3Request({
     method, path: `/api/v3/${path}`, headers: headers(h), body: body === undefined ? null : JSON.stringify(body),
-  }, { ...base, projects: store, catalogStore: null, changeLog, registry, defaultCatalog: null, env: {}, sources: null, cache: new QueryCache(), operations: {} as never } as never);
-  return { store, changeLog, registry, v1, v3, logs };
+  }, { ...base, projects: store, catalogStore: null, changeLog, registry, defaultCatalog: null, env, sources: null, cache: new QueryCache(), operations: {} as never } as never);
+  return { store, changeLog, registry, v1, v3, logs, env };
 }
 const json = (r: { jsonBody?: unknown }) => r.jsonBody as Doc;
 
@@ -258,6 +259,24 @@ test("a backend edit that leaves the breaker unchanged queues no revision", asyn
   assert.deepEqual(await etags(), before);
   assert.deepEqual(json(await v3("GET", "routing/pending")).pending, []);
   assert.equal(requeues(changeLog).length, 0);
+});
+
+test("self-service URL changes queue a fresh immutable pool while flag-off behavior stays unchanged", async () => {
+  for (const enabled of [false, true]) {
+    const { env, v3, store, putBackend } = await verifiedPools();
+    env.ADMIN_ROUTING_PUBLISH_ENABLED = String(enabled);
+    const before = (await store.read("PROJECT02"))!.doc.failover as Doc;
+    const changed = await putBackend("foundry-b", entry("acct-b2", null));
+    assert.equal(changed.status, 200);
+    assert.deepEqual(json(changed).routing, { queued: enabled ? [{ projectId: "PROJECT02", revision: 2 }] : [], failed: [] });
+    const after = (await store.read("PROJECT02"))!.doc.failover as Doc;
+    assert.deepEqual(after.active, before.active, "the last verified pool must keep serving");
+    if (enabled) {
+      const pending = json(await v3("GET", "routing/pending")).pending as Doc[];
+      assert.equal(pending[0].revision, 2);
+      assert.equal((pending[0].members as Doc[])[1].url, "https://acct-b2.services.ai.azure.com/anthropic");
+    }
+  }
 });
 
 test("a breaker requeue re-reads a project changed concurrently and keeps that change", async () => {

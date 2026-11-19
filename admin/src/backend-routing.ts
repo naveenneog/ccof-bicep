@@ -14,6 +14,9 @@ import {
 import type { RegisteredBackend } from "../../src/contracts/project-routing.ts";
 import { ValidationError, isObject } from "./validation.ts";
 import type { Doc } from "./validation.ts";
+import { createCosmosJobStore } from "./self-service-job-store.ts";
+import { createRegistryFence } from "./self-service-registry-fence.ts";
+import type { RegistryFence } from "./self-service-registry-fence.ts";
 
 export const REGISTRY_PARTITION = "backend-registry";
 
@@ -22,6 +25,7 @@ export interface RegistryStore {
   read(backendId: string): Promise<{ doc: RegisteredBackend; etag: string } | null>;
   // The new ETag, or null when the stored ETag differs (or the entry appeared meanwhile).
   save(doc: RegisteredBackend, etag: string | null): Promise<string | null>;
+  withVersions?: RegistryFence["verify"];
 }
 
 const strip = (d: Doc): RegisteredBackend => Object.fromEntries(REGISTRY_KEYS.map((k) => [k, d[k] ?? null])) as unknown as RegisteredBackend;
@@ -37,7 +41,7 @@ export function registryEntryFromBody(backendId: string, body: unknown): Registe
 
 export function createRegistryStore(container: Container): RegistryStore {
   const id = (backendId: string) => `backend:${backendId}`;
-  return {
+  const store: RegistryStore = {
     async list() {
       const { resources } = await container.items.query<Doc & { _etag?: string }>({
         query: "SELECT * FROM c WHERE c.scopeId = @p AND c.kind = 'backendRegistration'", parameters: [{ name: "@p", value: REGISTRY_PARTITION }],
@@ -60,6 +64,11 @@ export function createRegistryStore(container: Container): RegistryStore {
       } catch (err) { if ([409, 412, 404].includes((err as { code?: number })?.code ?? 0)) return null; throw err; }
     },
   };
+  const fence = createRegistryFence({
+    leases: createCosmosJobStore(container), now: () => new Date(),
+    readEtag: async (backendId) => (await store.read(backendId))?.etag ?? null,
+  });
+  return { ...store, save: (doc, etag) => fence.write(doc.backendId, () => store.save(doc, etag)), withVersions: fence.verify };
 }
 
 export function createMemoryRegistryStore(): RegistryStore & { entries: Map<string, { doc: RegisteredBackend; etag: string }> } {
