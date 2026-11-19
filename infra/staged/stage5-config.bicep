@@ -84,6 +84,10 @@ module settings '../quickstart/modules/app-settings.bicep' = {
     resolver: resolver
     sync: sync
     syncLimitsContainer: (admin.?enabled ?? false) ? 'adminConfig' : ''
+    applyWorker: (admin.?enabled ?? false) && (admin.?applyNow ?? false) ? {
+      enabled: true
+      workerResourceIds: admin.?workerResourceIds ?? []
+    } : {}
     reconciler: reconciler
     budgetState: budgetState
     syncTimerEnabled: syncTimerEnabled
@@ -150,10 +154,15 @@ var adminOnboardingSettings = union(
   empty(adminDiscoveryScopeList) ? {} : { ADMIN_DISCOVERY_SCOPES: join(adminDiscoveryScopeList, ',') },
   (admin.?backendOnboarding ?? false) ? { ADMIN_BACKEND_ONBOARDING: 'true' } : {}
 )
+var adminSelfServiceSettings = union(
+  (admin.?routingPublish ?? false) ? { ADMIN_ROUTING_PUBLISH_ENABLED: 'true' } : {},
+  (admin.?applyNow ?? false) ? { ADMIN_APPLY_ENABLED: 'true', ADMIN_WORKER_RESOURCE_IDS: string(admin.?workerResourceIds ?? []) } : {},
+  (admin.?configurationHistory ?? false) ? { ADMIN_HISTORY_ENABLED: 'true' } : {}
+)
 resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = if (adminEnabled) {
   parent: adminSite
   name: 'appsettings'
-  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, adminOnboardingSettings, {
+  properties: union(empty(adminGatewayList) ? {} : { ADMIN_GATEWAY_RESOURCE_IDS: join(adminGatewayList, ',') }, adminOnboardingSettings, adminSelfServiceSettings, {
     AzureWebJobsStorage__accountName: names.apps.?admin.?storageAccount ?? ''
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: adminInsights!.properties.ConnectionString

@@ -25,6 +25,8 @@ param resolver object
 param sync object
 @description('Cosmos container with the admin console\'s removal-limit override (adminConfig); empty when the admin app is not deployed.')
 param syncLimitsContainer string = ''
+@description('ADR 0041: optional Cosmos request/receipt worker controls; absent preserves the existing settings.')
+param applyWorker object = {}
 param reconciler object
 param budgetState object
 
@@ -120,6 +122,12 @@ var reconcilerSettings = {
   'AzureWebJobs.reconcileBudgets.Disabled': reconciler.timerEnabled ? 'false' : 'true'
 }
 
+var applyWorkerSettings = (applyWorker.?enabled ?? false) ? {
+  CCOF_APPLY_WORKER_ENABLED: 'true'
+  CCOF_APPLY_WORKER_PAIRS: string(applyWorker.?workerResourceIds ?? [])
+  ADMIN_CONFIG_CONTAINER: 'adminConfig'
+} : {}
+
 // ADR 0035: the optional pacing pair, written only when the answers set both.
 var reconcilerPacing = contains(reconciler, 'softLimitPercent') && contains(reconciler, 'pacingWindowMinutes') ? {
   RECONCILER_SOFT_LIMIT_PERCENT: string(reconciler.softLimitPercent)
@@ -161,13 +169,28 @@ resource resolverAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
 resource syncAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: syncSite
   name: 'appsettings'
-  properties: empty(syncLimitsContainer) ? syncSettings : union(syncSettings, { SYNC_LIMITS_CONTAINER: syncLimitsContainer })
+  properties: union(
+    syncSettings,
+    empty(syncLimitsContainer) ? {} : { SYNC_LIMITS_CONTAINER: syncLimitsContainer },
+    applyWorkerSettings,
+    (applyWorker.?enabled ?? false) ? {
+      CCOF_APPLY_WORKER_RESOURCE_ID: syncSite.id
+      CCOF_APPLY_WORKER_IDENTITY_RESOURCE_ID: resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', names.identities.sync)
+    } : {}
+  )
 }
 
 resource reconcilerAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: reconcilerSite
   name: 'appsettings'
-  properties: union(reconcilerSettings, reconcilerPacing, reconcilerLedgerGateways, reconcilerContinuity, reconcilerCoverageStart)
+  properties: union(
+    reconcilerSettings, reconcilerPacing, reconcilerLedgerGateways, reconcilerContinuity, reconcilerCoverageStart,
+    applyWorkerSettings,
+    (applyWorker.?enabled ?? false) ? {
+      CCOF_APPLY_WORKER_RESOURCE_ID: reconcilerSite.id
+      CCOF_APPLY_WORKER_IDENTITY_RESOURCE_ID: resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', names.identities.reconciler)
+    } : {}
+  )
 }
 
 // infra/poc/resolver-auth.ps1, New-ResolverAuthSettingsBody: v2 issuer, the resolver API audience,

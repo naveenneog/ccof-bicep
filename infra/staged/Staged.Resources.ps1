@@ -571,6 +571,9 @@ function Invoke-Stage3 {
         syncMode = $Cfg.sync.mode; apimPrincipalId = $apim.principalId; apimResourceId = $apim.id
         backends = @($Cfg.backends | ForEach-Object { @{ id = $_.id; subscriptionId = $_.subscriptionId; resourceGroup = $_.resourceGroup; accountName = $_.accountName; assignCognitiveServicesUser = ($_.assignCognitiveServicesUser -ne $false) } }) }
     if (Test-StgAdminBackendOnboarding $Cfg) { $params.adminBackendOnboarding = $true }
+    $optionalAdmin = Get-StgAdminSelfService $Cfg
+    if ($optionalAdmin.Contains('routingPublish') -and $Cfg.stage1.includeAdmin) { $params.adminGatewayResourceIds = @($Cfg.admin.gatewayResourceIds) }
+    if ($optionalAdmin.Contains('applyNow') -and $Cfg.stage1.includeAdmin) { $params.adminApplyNow = $true }
     $params = Add-StgStandbyParameters $Cfg 3 $params
     $out = Invoke-StgBicep -Cfg $Cfg -Template 'stage3-grants.bicep' -Name (Get-StgDeploymentName $Cfg 'stage3-grants') -Apply:$Apply -Parameters $params
     if (-not $Apply) { return $null }
@@ -578,8 +581,22 @@ function Invoke-Stage3 {
     $roleNames = @{ 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' = 'Storage Blob Data Owner'; '3913510d-42f4-4e42-8a64-420c390055eb' = 'Monitoring Metrics Publisher'; '73c42c96-874c-492b-b04d-ab87d138a893' = 'Log Analytics Reader' }
     # The workspace is in the list for the primary; a standby region (infra/dr) shares the primary's.
     $ownedResourceIds = @(Get-StgStage1TargetIds $Cfg) + @($s1.workspaceId | Where-Object { $_ })
-    $rgAssignments = Select-StgOwnAssignments -Principals $s1.principals -Assignments @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId })
+    $rgAssignments = @(Select-StgOwnAssignments -Principals $s1.principals -Assignments @((Get-StgArm "/subscriptions/$($Cfg.subscriptionId)/resourceGroups/$($Cfg.resourceGroup)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object { (Test-StgExactResourceScope $_.properties.scope $ownedResourceIds) -and $_.properties.principalId -ine $apim.principalId }))
     $expectedAzure = @($out.storageOwnerDetails) + @($out.metricsPublisherDetails) + @($out.workspaceReaderDetails)
+    if ($optionalAdmin.Contains('routingPublish')) {
+        $v.routing = @()
+        $routingDetails = @($out.adminRoutingDetails | Where-Object { $_.principalId })
+        $expectedAzure += @($routingDetails | Where-Object { Test-StgExactResourceScope $_.scope $ownedResourceIds })
+        foreach ($expected in $routingDetails) {
+            $matches = @((Get-StgArm "$($expected.scope)/providers/Microsoft.Authorization/roleAssignments" '2022-04-01').value | Where-Object {
+                $_.properties.principalId -ieq $expected.principalId -and
+                $_.properties.roleDefinitionId -ieq $expected.roleDefinitionId -and
+                $_.properties.scope -ieq $expected.scope
+            })
+            Assert-Stg ($matches.Count -eq 1) "expected one optional admin routing grant on $($expected.scope); found $($matches.Count)"
+            $v.routing += $expected
+        }
+    }
     foreach ($expected in $expectedAzure) {
         $matches = @($rgAssignments | Where-Object {
             $_.properties.principalId -ieq $expected.principalId -and
@@ -594,7 +611,7 @@ function Invoke-Stage3 {
         $v.azure += [ordered]@{ principal = $k; assignments = @($ra | ForEach-Object { $id = ($_.properties.roleDefinitionId -split '/')[-1]; "$(if ($roleNames[$id]) { $roleNames[$id] } else { $id }) @ $(($_.properties.scope -split '/')[-1])" } | Sort-Object) }
     }
     $v.rgScopedAssignments = $rgAssignments.Count
-    $cosmos = Select-StgOwnAssignments -Principals $s1.principals -Assignments @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount))
+    $cosmos = @(Select-StgOwnAssignments -Principals $s1.principals -Assignments @(Invoke-StgAzJson @('cosmosdb', 'sql', 'role', 'assignment', 'list', '--subscription', $Cfg.subscriptionId, '--resource-group', $Cfg.resourceGroup, '--account-name', $s1.names.cosmosAccount)))
     Assert-Stg ($cosmos.Count -eq @($out.cosmosAssignmentDetails).Count) "Cosmos has $($cosmos.Count) data-role assignments, expected $(@($out.cosmosAssignmentDetails).Count)"
     foreach ($expected in $out.cosmosAssignmentDetails) {
         $matches = @($cosmos | Where-Object {

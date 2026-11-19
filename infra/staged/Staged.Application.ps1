@@ -61,6 +61,7 @@ function Invoke-Stage5 {
     $report = (Get-Content -LiteralPath $wb.parametersPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100).parameters
     $admin = @{ enabled = [bool]$Cfg.stage1.includeAdmin }
     if ($admin.enabled) {
+        $admin += Get-StgAdminSelfService $Cfg
         if ($entra.admin.appId -notmatch $script:Guid) { throw 'stage5_admin_identity_invalid: Stage 4 admin.appId must be a GUID; verify the Stage 4 record before continuing.' }
         $admin += @{ uiClientId = $entra.admin.appId; editorIds = @(); readerIds = @(); v3Enabled = ($Cfg.admin.v3Enabled -ne $false); extraAllowedClientIds = @($Cfg.admin.extraAllowedClientIds | Where-Object { $_ -match $script:Guid })
             clientId = $entra.registrations.developerSignIn.appId; gatewayUrl = $ctx.GatewayUrl; projectHeader = $Cfg.gateway.projectHeaderName }

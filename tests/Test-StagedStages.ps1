@@ -92,8 +92,8 @@ Assert-Contract ((($adminScopes | Sort-Object) -join ',') -ceq 'adminConfig,proj
 $adminOptional = @($grants.variables.cosmosAssignments | Where-Object { $_.principal -eq 'admin' -and $_.when })
 Assert-Contract ($adminOptional.Count -eq 1 -and $adminOptional[0].container -ceq 'backends' -and $adminOptional[0].role -ceq 'custom:onbProjectWriter' -and $adminOptional[0].when -ceq 'onboarding' -and $grants.parameters.adminBackendOnboarding.defaultValue -eq $false) 'Admin backends access must be the opt-in create-only writer.'
 # The sync reads the admin console's removal-limit override: read-only, adminConfig only, and only with the admin app.
-$syncConfig = @($grants.variables.cosmosAssignments | Where-Object { $_.principal -ceq 'sync' -and $_.container -ceq 'adminConfig' })
-Assert-Contract ($syncConfig.Count -eq 1 -and $syncConfig[0].role -ceq '00000000-0000-0000-0000-000000000001') 'Sync access to adminConfig must be the built-in Data Reader only.'
+$syncConfig = @($grants.variables.cosmosAssignments | Where-Object { $_.principal -ceq 'sync' -and $_.container -ceq 'adminConfig' -and -not $_.when })
+Assert-Contract ($syncConfig.Count -eq 1 -and $syncConfig[0].role -ceq '00000000-0000-0000-0000-000000000001') 'Default sync access to adminConfig must be the built-in Data Reader only.'
 Assert-Contract ($grants.variables.activeAssignments -match "not\(equals\(lambdaVariables\('a'\)\.container, 'adminConfig'\)\), not\(empty\(coalesce\(tryGet\(parameters\('principals'\), 'admin'\)") 'adminConfig assignments must require the admin principal.'
 $settingsArm = Build-Arm 'infra\quickstart\modules\app-settings.bicep'
 Assert-Contract (($settingsArm.parameters.syncLimitsContainer.defaultValue -ceq '') -and ((Get-Content -Raw 'infra\staged\stage5-config.bicep') -match "syncLimitsContainer: \(admin\.\?enabled \?\? false\) \? 'adminConfig' : ''")) 'Stage 5 must set SYNC_LIMITS_CONTAINER=adminConfig only with the admin app.'

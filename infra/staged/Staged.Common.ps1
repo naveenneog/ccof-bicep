@@ -190,6 +190,7 @@ function Read-StgConfig {
     }
     if ($c.sharedResourceGroup -and $c.sharedResourceGroup -isnot [bool]) { $problems.Add('sharedResourceGroup must be true or false') }
     foreach ($p in @(Get-StgClientAliasProblems $c)) { $problems.Add($p) }
+    try { $null = Get-StgAdminSelfService $c } catch { $problems.Add("$($_.Exception.Message)") }
     if ($c.stage1 -is [Collections.IDictionary] -and $c.stage1.Contains('apimZoneRedundant')) {
         # Standard v2 / Premium v2 only, chosen at creation; one unit is allowed but two are recommended (docs/UNKNOWNS.md APIM-ZR-01, APIM-ZR-03).
         $zoneRedundant = $c.stage1.apimZoneRedundant
@@ -284,6 +285,54 @@ function Test-StgAdminBackendOnboarding {
     param($Cfg)
     return ($Cfg.admin -is [Collections.IDictionary] -and $Cfg.admin.Contains('backendOnboarding') -and $Cfg.admin.backendOnboarding -is [bool] -and $Cfg.admin.backendOnboarding)
 }
+function Get-StgAdminSelfService {
+    param([Collections.IDictionary]$Cfg)
+    $result = @{}
+    if (-not $Cfg.Contains('admin') -or $null -eq $Cfg['admin']) { return $result }
+    $admin = $Cfg['admin']
+    if ($admin -isnot [Collections.IDictionary]) { throw 'admin must be an object.' }
+    foreach ($key in 'routingPublish', 'applyNow', 'configurationHistory') {
+        if ($admin.Contains($key)) {
+            if ($admin[$key] -isnot [bool]) { throw "admin.$key must be true or false." }
+            if ($admin[$key]) { $result[$key] = $true }
+        }
+    }
+    $guid = '[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}'
+    if ($result.Contains('routingPublish')) {
+        $ids = @($admin['gatewayResourceIds'])
+        if (-not $ids.Count -or @($ids | Where-Object { $_ -isnot [string] -or $_ -notmatch "^/subscriptions/$guid/resourceGroups/[^/\s]+/providers/Microsoft\.ApiManagement/service/[^/\s]+$" }).Count -or
+            @($ids | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique).Count -ne $ids.Count) {
+            throw 'admin.gatewayResourceIds must contain unique full approved APIM resource IDs when admin.routingPublish is true.'
+        }
+    }
+    if ($admin.Contains('workerResourceIds')) {
+        $pairs = $admin['workerResourceIds']
+        if ($pairs -isnot [Collections.IList] -or $pairs.Count -lt 1 -or $pairs.Count -gt 2) {
+            throw 'admin.workerResourceIds must be an array of approved A/B worker pairs.'
+        }
+        $regions = @(); $ids = @()
+        foreach ($pair in $pairs) {
+            if ($pair -isnot [Collections.IDictionary] -or $pair.Count -ne 3 -or $pair['region'] -cnotin 'A', 'B') {
+                throw 'admin.workerResourceIds entries contain only region (A or B), syncResourceId and reconcilerResourceId.'
+            }
+            $regions += $pair['region']
+            foreach ($key in 'syncResourceId', 'reconcilerResourceId') {
+                $id = $pair[$key]
+                if ($id -isnot [string] -or $id -notmatch "^/subscriptions/$guid/resourceGroups/[^/\s]+/providers/Microsoft\.Web/sites/[^/\s]+$") {
+                    throw "admin.workerResourceIds.$key must be a full approved Function App resource ID."
+                }
+                $ids += $id
+            }
+        }
+        if (@($regions | Select-Object -Unique).Count -ne $regions.Count -or @($ids | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique).Count -ne $ids.Count) {
+            throw 'admin.workerResourceIds must not repeat regions or worker resource IDs.'
+        }
+        if ($result.Contains('applyNow')) { $result.workerResourceIds = @($pairs) }
+    } elseif ($result.Contains('applyNow')) {
+        throw 'admin.workerResourceIds is required when admin.applyNow is true.'
+    }
+    return $result
+}
 function Get-StgStageInput {
     param($Cfg, [int]$Number)
     $input = [ordered]@{ tenantId = $Cfg.tenantId; subscriptionId = $Cfg.subscriptionId; resourceGroup = $Cfg.resourceGroup }
@@ -305,6 +354,11 @@ function Get-StgStageInput {
     }
     # Same for opted-in admin backend onboarding (ADR 0040) in the Stage 3 hash.
     if ($Number -eq 3 -and (Test-StgAdminBackendOnboarding $Cfg)) { $input.adminBackendOnboarding = $true }
+    if ($Number -eq 3) {
+        $optionalAdmin = Get-StgAdminSelfService $Cfg
+        if ($optionalAdmin.Contains('routingPublish')) { $input.adminGatewayResourceIds = @($Cfg.admin.gatewayResourceIds) }
+        if ($optionalAdmin.Contains('applyNow')) { $input.adminApplyNow = $true }
+    }
     $canonical = ConvertTo-StgCanonical $input | ConvertTo-Json -Depth 100 -Compress
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
 }

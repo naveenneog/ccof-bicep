@@ -376,6 +376,9 @@
   },
   "admin": {
     "v3Enabled": true,
+    "routingPublish": false,
+    "applyNow": false,
+    "configurationHistory": false,
     "extraAllowedClientIds": []
   },
   "acceptance": {

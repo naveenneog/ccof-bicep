@@ -37,6 +37,12 @@ param assignmentNameSalt string = ''
 @description('ADR 0040: grant the admin app create-only access to the backends container for console onboarding.')
 param adminBackendOnboarding bool = false
 
+@description('ADR 0041: approved APIM resource IDs; empty deploys no optional routing permissions.')
+param adminGatewayResourceIds array = []
+
+@description('ADR 0041: opt-in Cosmos request/receipt control access for the local sync and reconciler identities.')
+param adminApplyNow bool = false
+
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logReader = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -93,6 +99,15 @@ module foundryRoles '../quickstart/modules/foundry-role.bicep' = [for b in backe
   name: '${names.deploymentPrefix}-stage3-foundry-${b.id}'
   scope: resourceGroup(b.subscriptionId, b.resourceGroup)
   params: { accountName: b.accountName, principalId: apimPrincipalId, apimResourceId: apimResourceId }
+}]
+
+module adminRoutingRoles 'admin-routing-grant.bicep' = [for (id, i) in adminGatewayResourceIds: if (!empty(principals.?admin ?? '')) {
+  name: '${names.deploymentPrefix}-admin-routing-${i}'
+  scope: resourceGroup(split(id, '/')[2], split(id, '/')[4])
+  params: {
+    apimName: split(id, '/')[8]
+    principalId: principals.admin
+  }
 }]
 
 // Same definitions as infra/quickstart/modules/cosmos-data.bicep, plus adminProjectEditor.
@@ -165,8 +180,29 @@ var cosmosAssignments = [
   // ADR 0040: the console writes new backend descriptors (create-only), only when onboarding is enabled.
   { id: 'admin-backends-writer', principal: 'admin', role: 'custom:onbProjectWriter', container: 'backends', when: 'onboarding' }
   { id: 'sync-limits-reader', principal: 'sync', role: '00000000-0000-0000-0000-000000000001', container: 'adminConfig', when: '' }
+  { id: 'sync-apply-control', principal: 'sync', role: 'custom:applyControlWriter', container: 'adminConfig', when: 'apply-control' }
+  { id: 'reconciler-apply-control', principal: 'reconciler', role: 'custom:applyControlWriter', container: 'adminConfig', when: 'apply-control' }
 ]
-var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode || (a.when == 'onboarding' && adminBackendOnboarding)) && !empty(principals[?a.principal] ?? '') && (a.container != 'adminConfig' || !empty(principals.?admin ?? '')))
+var activeAssignments = filter(cosmosAssignments, a => (empty(a.when) || a.when == syncMode || (a.when == 'onboarding' && adminBackendOnboarding) || (a.when == 'apply-control' && adminApplyNow)) && !empty(principals[?a.principal] ?? '') && (a.container != 'adminConfig' || !empty(principals.?admin ?? '')))
+
+resource applyControlRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions@2024-11-15' = if (adminApplyNow && !empty(principals.?admin ?? '')) {
+  parent: account
+  name: guid(account.id, 'ccof-staged', 'applyControlWriter')
+  properties: {
+    roleName: '${roleNames.syncWriter}-apply-control'
+    type: 'CustomRole'
+    assignableScopes: [account.id]
+    permissions: [{
+      dataActions: [
+        'Microsoft.DocumentDB/databaseAccounts/readMetadata'
+        'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery'
+        'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read'
+        'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create'
+        'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace'
+      ]
+    }]
+  }
+}
 
 resource roleDefinitions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions@2024-11-15' = [for d in cosmosRoleDefinitions: {
   parent: account
@@ -191,7 +227,7 @@ resource assignments 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2
     principalId: principals[a.principal]
     scope: empty(a.container) ? '${account.id}/dbs/${databaseName}' : '${account.id}/dbs/${databaseName}/colls/${a.container}'
   }
-  dependsOn: [roleDefinitions]
+  dependsOn: [roleDefinitions, applyControlRole]
 }]
 
 output storageOwnerAssignmentIds array = [for (k, i) in appKeys: storageOwner[i].id]
@@ -210,3 +246,4 @@ output storageOwnerDetails array = [for (k, i) in appKeys: { principalId: princi
 output metricsPublisherDetails array = [for (k, i) in appKeys: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', metricsPublisher), scope: insights[i].id }]
 output workspaceReaderDetails array = [for k in workspaceReaders: { principalId: principals[k], roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', logReader), scope: workspace.id }]
 output foundryGrants array = [for b in backends: (!empty(apimPrincipalId) && (b.?assignCognitiveServicesUser ?? true)) ? b.id : '']
+output adminRoutingDetails array = [for (id, i) in adminGatewayResourceIds: !empty(principals.?admin ?? '') ? adminRoutingRoles[i].outputs.details : {}]

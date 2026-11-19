@@ -293,6 +293,8 @@ function New-DrStandbyStagedConfig {
     $b.location = [string]$sec.location
     $b.syncTimerEnabled = $false
     if ($b.reconciler) { $b.reconciler.timerEnabled = $false }
+    # Admin operations may coordinate across regions, but never opt the standby into timer writes.
+    # Keep the approved workerResourceIds snapshot unchanged; do not substitute the local B apps.
     $sn = $sec.subnets
     $b.network = [ordered]@{ mode = 'existing'; existing = [ordered]@{
             privateEndpointSubnetId = "$VnetId/subnets/$($sn.privateEndpoints.name)"

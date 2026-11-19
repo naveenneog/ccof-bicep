@@ -184,7 +184,15 @@ if ($exit -eq 0) {
     Assert-True 'app-settings.bicep: the reconciler has App Insights connection/auth and no APIM list by default' ($digest -eq '4c49814f0470bb81ef75f1c6548d2a03cab5a108278c1d160f6d788a828d17ad') $digest
     $site = @($arm.resources | Where-Object { $_.name -match 'apps\.reconciler\.functionApp' -and $_.name -match 'appsettings' })
     $properties = if ($site.Count) { [string]$site[0].properties } else { '' }
-    Assert-True 'app-settings.bicep: the reconciler''s settings union optional continuity and ledger settings' ($properties -ceq "[union(variables('reconcilerSettings'), variables('reconcilerPacing'), variables('reconcilerLedgerGateways'), variables('reconcilerContinuity'), variables('reconcilerCoverageStart'))]") $properties
+    $legacyUnionTerms = "variables('reconcilerSettings'), variables('reconcilerPacing'), variables('reconcilerLedgerGateways'), variables('reconcilerContinuity'), variables('reconcilerCoverageStart')"
+    $workerGate = "coalesce(tryGet(parameters('applyWorker'), 'enabled'), false())"
+    $workerIdentity = "createObject('CCOF_APPLY_WORKER_RESOURCE_ID', resourceId('Microsoft.Web/sites', parameters('names').apps.reconciler.functionApp), 'CCOF_APPLY_WORKER_IDENTITY_RESOURCE_ID', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('names').identities.reconciler))"
+    $expectedProperties = "[union($legacyUnionTerms, variables('applyWorkerSettings'), if($workerGate, $workerIdentity, createObject()))]"
+    Assert-True 'app-settings.bicep: reconciler keeps every continuity/ledger union term and gates its exact own worker identities' ($properties -ceq $expectedProperties) $properties
+    Assert-True 'app-settings.bicep: worker settings are absent by default for legacy callers' ($arm.parameters.applyWorker.defaultValue.Count -eq 0)
+    $workerSettings = [string]$arm.variables.applyWorkerSettings
+    $expectedWorkerSettings = "[if($workerGate, createObject('CCOF_APPLY_WORKER_ENABLED', 'true', 'CCOF_APPLY_WORKER_PAIRS', string(coalesce(tryGet(parameters('applyWorker'), 'workerResourceIds'), createArray())), 'ADMIN_CONFIG_CONTAINER', 'adminConfig'), createObject())]"
+    Assert-True 'app-settings.bicep: explicit opt-in adds only fixed worker protocol settings, otherwise none' ($workerSettings -ceq $expectedWorkerSettings) $workerSettings
     $ledger = [string]$arm.variables.reconcilerLedgerGateways
     Assert-True 'app-settings.bicep: absent reconciler.ledgerGatewayResourceIds adds no setting' ($ledger -ceq "[if(contains(parameters('reconciler'), 'ledgerGatewayResourceIds'), createObject('$listName', join(parameters('reconciler').ledgerGatewayResourceIds, ',')), createObject())]") $ledger
     $continuity = [string]$arm.variables.reconcilerContinuity
