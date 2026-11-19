@@ -9,6 +9,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $repo 'infra/admin/AdminVmUpdate.psm1') -Force
 $sub = '00000000-0000-4000-8000-000000000002'
 $commit = 'a' * 40
+$workerResourceId = "/subscriptions/$sub/resourceGroups/rg-lab/providers/Microsoft.Web/sites/lab-admin"
 $values = [ordered]@{ Subscription = $sub; ResourceGroup = 'rg-lab'; VmName = 'vm-admin'; App = 'lab-admin'; Commit = $commit; RepoUrl = 'https://github.com/example/ccof-bicep' }
 
 # ---- inputs and the generated script
@@ -21,6 +22,21 @@ $bad = [ordered]@{} + $values; $bad.RepoUrl = 'http://github.com/example/ccof-bi
 Check 'a non-HTTPS repository URL is refused' ((@(Get-AdminVmInputProblems $bad) -match '^RepoUrl').Count -eq 1)
 $bad = [ordered]@{} + $values; $bad.Commit = ''
 Check 'Update needs a commit; Check does not' ((@(Get-AdminVmInputProblems $bad -RequireCommit) -match '^Commit').Count -eq 1 -and @(Get-AdminVmInputProblems $bad).Count -eq 0)
+$safeValues = [ordered]@{} + $values; $safeValues.SafeUpgrade = $true
+Check 'safe upgrade refuses a missing approved rollback artifact' ((@(Get-AdminVmInputProblems $safeValues -RequireCommit) -match 'PreviousCommit|PreviousPackageSha256').Count -ge 1)
+$safeValues.PreviousCommit = 'b' * 40; $safeValues.PreviousPackageSha256 = 'f' * 64
+Check 'safe upgrade accepts immutable rollback commit and package hash' (@(Get-AdminVmInputProblems $safeValues -RequireCommit).Count -eq 0)
+$safeValues.PreviousPackageSha256 = 'latest'
+Check 'safe upgrade refuses mutable or malformed rollback hash' ((@(Get-AdminVmInputProblems $safeValues -RequireCommit) -match 'PreviousPackageSha256').Count -eq 1)
+$workerValues = [ordered]@{} + $values; $workerValues.PackageKind = 'sync'; $workerValues.ApprovedWorkerResourceIds = @($workerResourceId)
+Check 'worker update refuses an unhashed artifact or unsafe baseline' ((@(Get-AdminVmInputProblems $workerValues -RequireCommit) -match 'PackageSha256|SafeUpgrade').Count -eq 2)
+foreach ($approved in @(@(), @("$workerResourceId-other"), @($workerResourceId, $workerResourceId.ToUpperInvariant()), @('https://evil.invalid/script'))) {
+    $workerValues.ApprovedWorkerResourceIds = $approved
+    Check 'worker target must belong to a nonempty exact unique ARM resource ID allowlist' ((@(Get-AdminVmInputProblems $workerValues) -match 'ApprovedWorkerResourceIds').Count -ge 1)
+}
+$workerValues.ApprovedWorkerResourceIds = @($workerResourceId)
+$workerValues.PackageKind = 'sync;echo'
+Check 'worker package kind rejects arbitrary commands' ((@(Get-AdminVmInputProblems $workerValues) -match '^PackageKind').Count -eq 1)
 $text = New-AdminVmScript -Phase update -Values $values
 Check 'script: values line written once, marker gone, LF only' ($text.Contains("PHASE='update'; SUB='$sub'; RG='rg-lab'; APP='lab-admin'; COMMIT='$commit'; REPO_URL='https://github.com/example/ccof-bicep'") -and -not $text.Contains('# @@VALUES@@') -and -not $text.Contains("`r"))
 Check 'template is checked out with LF line endings (.gitattributes *.sh eol=lf)' (-not [IO.File]::ReadAllText((Join-Path $repo 'infra/admin/vm/admin-update.sh')).Contains("`r"))
@@ -34,6 +50,9 @@ Check 'run line parsed from a Run Command message' ((Read-AdminVmRunLine $msg).o
 $scratch = Join-Path $repo '.env.public-test-scratch/admin-vm'
 Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+$originalAzure = $env:AZURE_CONFIG_DIR
+$env:AZURE_CONFIG_DIR = Join-Path $scratch 'azure-logged-out'
+New-Item -ItemType Directory -Force -Path $env:AZURE_CONFIG_DIR | Out-Null
 $kind = try { "$(& bash -c 'uname -s' 2>$null | Select-Object -First 1)" } catch { '' }
 Check "bash is available to run the VM script (uname: '$kind')" ([bool]$kind)
 function ConvertTo-BashPath([string]$Path) {
@@ -49,6 +68,10 @@ az() { rec "az $*"
     "login --identity"*) return 0 ;;
     "account set"*) return 0 ;;
     "functionapp show"*) echo Disabled ;;
+    "functionapp config appsettings list"*)
+      if [[ "$*" == *CCOF_APP_ROLE* ]]; then echo "${STUB_ROLE:-$PACKAGE_KIND}"
+      elif [ -n "${STUB_SETTINGS_CHANGE:-}" ] && grep -q 'config-zip' "$CALLS"; then echo '[{"name":"keep","value":"changed"}]'; else echo '[{"name":"keep","value":"original"}]'; fi ;;
+    "rest --method post"*) echo '{"properties":{"platform":{"enabled":true}}}' ;;
     "functionapp deployment source config-zip"*) [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "deploy error" >&2; return 1; } ;;
     "functionapp function list"*) printf '%s\n' ${STUB_FUNCS-lab-admin/projects lab-admin/adminUi lab-admin/adminHealth} ;;
     *) return 0 ;;
@@ -63,7 +86,7 @@ pwsh() { rec "pwsh $*"
   local out=''; while [ $# -gt 0 ]; do [ "$1" = -OutFile ] && out="$2"; shift; done; echo package > "$out"
   [ -z "${STUB_BUILD_FAIL:-}" ] || { echo "npm ERR build"; return 1; }; }
 node() { echo "${STUB_NODE:-v22.11.0}"; }
-curl() { rec "curl $*"; case "$*" in *http_code*) echo "${STUB_HTTP:-200}" ;; *) echo 'echo installed' ;; esac; }
+curl() { rec "curl $*"; case "$*" in *https://lab-admin.azurewebsites.net/*) echo "${STUB_HOST_HTTP:-401}" ;; *http_code*) echo "${STUB_HTTP:-200}" ;; *) echo 'echo installed' ;; esac; }
 getent() { echo "${STUB_IP:-10.1.2.3} $2"; }
 apt-get() { rec "apt-get $*"; }
 npm() { rec "npm $* (in $(basename "$PWD"))"; [ -z "${STUB_NPM_FAIL:-}" ] || return 1; }
@@ -73,16 +96,22 @@ wget() { rec "wget $*"; }
 [IO.File]::WriteAllText((Join-Path $scratch 'stubs.sh'), $stubs.Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $scratch 'os-release'), "VERSION_ID=`"24.04`"`n", [Text.UTF8Encoding]::new($false))
 $script:runId = 0
-function Invoke-VmScript([string]$Phase, [hashtable]$Env = @{}, [string[]]$Without = @()) {
+function Invoke-VmScript([string]$Phase, [hashtable]$Env = @{}, [string[]]$Without = @(), [hashtable]$Options = @{}) {
     $script:runId++
     $d = Join-Path $scratch "run$script:runId"; New-Item -ItemType Directory -Force -Path (Join-Path $d 'work') | Out-Null
-    [IO.File]::WriteAllText((Join-Path $d 'script.sh'), (New-AdminVmScript -Phase $Phase -Values $values), [Text.UTF8Encoding]::new($false))
+    $runValues = [ordered]@{} + $values
+    foreach ($key in $Options.Keys) { if ($key -notin @('SeedBaseline', 'SeedArtifact')) { $runValues[$key] = $Options[$key] } }
+    $packageKind = if ($Options.ContainsKey('PackageKind')) { $Options.PackageKind } else { 'admin' }
+    if ($Options.ContainsKey('SeedBaseline') -and $Options.SeedBaseline) { [IO.File]::WriteAllText((Join-Path $d "work/$packageKind-$($Options.PreviousCommit).zip"), "previous-package`n", [Text.UTF8Encoding]::new($false)) }
+    if ($Options.ContainsKey('SeedArtifact') -and $Options.SeedArtifact) { [IO.File]::WriteAllText((Join-Path $d "work/$packageKind-$commit.zip"), "worker-package`n", [Text.UTF8Encoding]::new($false)) }
+    [IO.File]::WriteAllText((Join-Path $d 'script.sh'), (New-AdminVmScript -Phase $Phase -Values $runValues), [Text.UTF8Encoding]::new($false))
     $fns = @('az', 'git', 'pwsh', 'node', 'curl', 'getent', 'apt-get', 'dpkg', 'wget', 'npm', 'rec') | Where-Object { $Without -notcontains $_ }
     $exports = ($Env.GetEnumerator() | ForEach-Object { "export $($_.Key)='$($_.Value)'" }) -join "`n"
     $runner = @"
 if [ "`$(uname -s)" = Linux ]; then
-  BIN=`$(mktemp -d)
-  for t in mkdir date tr cut tail sed awk grep sha256sum seq sleep rm cat head bash basename; do ln -s "`$(command -v `$t)" "`$BIN/`$t"; done
+  BIN='$(ConvertTo-BashPath (Join-Path $d 'bin'))'
+  mkdir -p "`$BIN"
+  for t in mkdir date tr cut tail sed awk grep sha256sum seq sleep rm cat head bash basename cp chmod; do ln -s "`$(command -v `$t)" "`$BIN/`$t"; done
   export PATH="`$BIN"
 else
   export PATH=/usr/bin:/bin
@@ -143,6 +172,46 @@ Check 'update: a failed OneDeploy is reported at deploy, no history line' ($r.ru
 $r = Invoke-VmScript 'update' @{ STUB_FUNCS = 'lab-admin/projects' }
 Check 'update: functions missing after publish fail at verify' ($r.run.step -ceq 'verify' -and $r.run.detail -match 'adminUi' -and $r.run.detail -match 'adminHealth')
 
+$baselineHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("previous-package`n"))).ToLowerInvariant()
+$safe = @{ SafeUpgrade = $true; PreviousCommit = ('b' * 40); PreviousPackageSha256 = $baselineHash; SeedBaseline = $true }
+$r = Invoke-VmScript 'update' @{} @() $safe
+Check 'safe upgrade: verified previous artifact is backed up and settings/auth/access are read back' ($r.run.outcome -ceq 'succeeded' -and (Test-Path (Join-Path $r.work "backups/lab-admin/$baselineHash.zip")) -and $r.run.guardReadback -and $r.run.previousSha256 -ceq $baselineHash -and (Has $r '^az functionapp config appsettings list') -and (Has $r 'authsettingsV2/list'))
+$noBaseline = @{} + $safe; $noBaseline.SeedBaseline = $false
+$r = Invoke-VmScript 'update' @{} @() $noBaseline
+Check 'safe upgrade: absent baseline refuses before source build or deployment' ($r.run.step -ceq 'backup' -and -not (Has $r '^git clone|config-zip'))
+$badHash = @{} + $safe; $badHash.PreviousPackageSha256 = '0' * 64
+$r = Invoke-VmScript 'update' @{} @() $badHash
+Check 'safe upgrade: incorrect rollback hash refuses before deployment' ($r.run.step -ceq 'backup' -and -not (Has $r 'config-zip'))
+$r = Invoke-VmScript 'update' @{ STUB_FUNCS = 'lab-admin/projects' } @() $safe
+Check 'safe upgrade: failed deployment readback attempts retained-package rollback' ($r.run.outcome -ceq 'failed' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 2 -and $r.run.detail -match 'rollback')
+$r = Invoke-VmScript 'update' @{ STUB_SETTINGS_CHANGE = '1' } @() $safe
+Check 'safe upgrade: changed app settings fail closed without settings/public access writes' ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'guard|settings' -and -not (Has $r 'appsettings set|functionapp update|auth update|vm start'))
+$r = Invoke-VmScript 'rollback' @{} @() $safe
+Check 'explicit rollback: publishes only the approved retained artifact without rebuilding' ($r.run.outcome -ceq 'succeeded' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 1 -and -not (Has $r '^git clone|^npm ci|^pwsh -NoProfile -File'))
+$r = Invoke-VmScript 'rollback' @{ STUB_HTTP = '000' } @() $safe
+Check 'explicit rollback: source/npm outage does not block approved artifact recovery' ($r.run.outcome -ceq 'succeeded' -and -not (Has $r '^curl .*github|^curl .*registry'))
+$workerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("worker-package`n"))).ToLowerInvariant()
+foreach ($worker in @(@{ kind = 'sync'; function = 'syncEntitlement' }, @{ kind = 'reconciler'; function = 'reconcileBudgets' })) {
+    $workerOptions = @{} + $safe; $workerOptions.PackageKind = $worker.kind; $workerOptions.PackageSha256 = $workerHash; $workerOptions.SeedArtifact = $true; $workerOptions.ApprovedWorkerResourceIds = @($workerResourceId)
+    $r = Invoke-VmScript 'update' @{ STUB_FUNCS = "lab-admin/$($worker.function)"; STUB_HTTP = '000' } @('node', 'pwsh', 'git', 'npm') $workerOptions
+    Check "worker $($worker.kind): approved artifact publishes privately without rebuilding or repository access" ($r.run.outcome -ceq 'succeeded' -and $r.run.sha256 -ceq $workerHash -and $r.run.guardReadback -and (Has $r "--src \S+/$($worker.kind)-$commit.zip") -and -not (Has $r '^git |^npm |^pwsh |^curl .*github|^curl .*registry'))
+    Check "worker $($worker.kind): protected host response is recorded as host-only readiness, not business success" ($r.run.resourceId -ceq $workerResourceId -and $r.run.hostHttpStatus -ceq '401' -and -not $r.run.businessVerified)
+    $r = Invoke-VmScript 'update' @{ STUB_ROLE = 'resolver'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): wrong target role fails before deployment" ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'role mismatch' -and -not (Has $r 'config-zip'))
+    $r = Invoke-VmScript 'update' @{ STUB_HOST_HTTP = '503'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): unhealthy host triggers safe rollback, never an auth-setting change" ($r.run.outcome -ceq 'failed' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 2 -and -not (Has $r 'auth update|appsettings set|functionapp update'))
+    $workerOptions.SeedArtifact = $false
+    $r = Invoke-VmScript 'update' @{ STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): missing approved artifact prevents deployment" ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'worker artifact missing' -and -not (Has $r 'config-zip'))
+    $workerOptions.SeedArtifact = $true
+    $workerOptions.PackageSha256 = '0' * 64
+    $r = Invoke-VmScript 'update' @{ STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): artifact hash mismatch prevents deployment" ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'artifact hash mismatch' -and -not (Has $r 'config-zip'))
+    $workerOptions.PackageSha256 = $workerHash
+    $r = Invoke-VmScript 'rollback' @{ STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): rollback restores exact role-specific baseline without rebuilding" ($r.run.outcome -ceq 'succeeded' -and $r.run.sha256 -ceq $baselineHash -and -not (Has $r '^git clone|^npm |^pwsh -NoProfile -File'))
+}
+
 $r = Invoke-VmScript 'setup'
 Check 'setup: all tools present -> nothing installed, then check passes' ($r.run.outcome -ceq 'succeeded' -and "$($r.run.notes)" -match 'tools present' -and -not (Has $r '^apt-get'))
 $r = Invoke-VmScript 'setup' @{} @('pwsh')
@@ -187,6 +256,18 @@ $d = & $runDrv @('-Phase', 'Check') @{ FAKE_RUNLINE = 'no json here' }
 Check 'driver: no run line exits 3' ($d.code -eq 3 -and $d.out -match 'no_run_line')
 $d = & $runDrv @('-Phase', 'Update', '-Apply', '-Commit', 'HEAD') @{}
 Check 'driver: a commit that is not a 40-character SHA is refused (exit 2)' ($d.code -eq 2 -and $d.out -match 'input_refused' -and $d.log.Count -eq 0)
+$d = & $runDrv @('-Phase', 'Update', '-Apply', '-SafeUpgrade', '-PreviousCommit', ('b' * 40), '-PreviousPackageSha256', ('f' * 64)) @{}
+Check 'driver: safe upgrade requires an explicitly approved commit, never implicit HEAD' ($d.code -eq 2 -and $d.out -match 'explicit.*Commit' -and $d.log.Count -eq 0)
+$d = & $runDrv @('-Phase', 'Update', '-Apply', '-SafeUpgrade', '-Commit', ('c' * 40), '-PreviousCommit', ('b' * 40), '-PreviousPackageSha256', ('f' * 64)) @{}
+Check 'driver: explicit safe upgrade passes only validated immutable baseline values' ($d.code -eq 0 -and $d.sent.Contains("SAFE_UPGRADE='true'; PREVIOUS_COMMIT='$('b' * 40)'; PREVIOUS_SHA256='$('f' * 64)'"))
+$d = & $runDrv @('-Phase', 'Update', '-Apply', '-PackageKind', 'Sync', '-ApprovedWorkerResourceIds', $workerResourceId, '-Commit', ('c' * 40), '-PackageSha256', ('d' * 64), '-SafeUpgrade', '-PreviousCommit', ('b' * 40), '-PreviousPackageSha256', ('f' * 64)) @{}
+Check 'driver: worker artifact mode passes only fixed role and approved hash' ($d.code -eq 0 -and $d.sent.Contains("PACKAGE_KIND='sync'; PACKAGE_SHA256='$('d' * 64)'"))
+$d = & $runDrv @('-Phase', 'Update', '-Apply', '-PackageKind', 'Sync', '-Commit', ('c' * 40), '-PackageSha256', ('d' * 64)) @{}
+Check 'driver: worker artifact mode refuses unsafe upgrade before Azure calls' ($d.code -eq 2 -and $d.out -match 'SafeUpgrade' -and $d.log.Count -eq 0)
+$d = & $runDrv @('-Phase', 'Rollback', '-Apply', '-PackageKind', 'Reconciler', '-ApprovedWorkerResourceIds', $workerResourceId, '-PreviousCommit', ('b' * 40), '-PreviousPackageSha256', ('f' * 64)) @{}
+Check 'driver: worker rollback requires only its immutable previous artifact, never a new package hash' ($d.code -eq 0 -and $d.sent.Contains("PACKAGE_KIND='reconciler'; PACKAGE_SHA256=''"))
 
 Write-Host "Test-AdminVmUpdate: $script:pass passed, $script:fail failed"
+$env:AZURE_CONFIG_DIR = $originalAzure
+Remove-Item -LiteralPath $scratch -Recurse -Force
 if ($script:fail -gt 0 -or $script:pass -lt 36) { exit 1 }
