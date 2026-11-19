@@ -57,6 +57,7 @@ Details: [architecture](docs/ARCHITECTURE.md) ·
 | Configure resources that already exist, without Bicep | [Public access workbook](docs/runbooks/PUBLIC-ACCESS-WORKBOOK.md) |
 | Add projects, people, models, limits and budgets | [2. Admin console operations](docs/runbooks/ADMIN-OPERATIONS.md) |
 | Set up developers' machines | [3. User onboarding](docs/runbooks/USER-ONBOARDING.md) |
+| Follow text-only setup steps from a Windows VDI | [VDI guides](docs/runbooks/VDI-GUIDES.md) |
 | Understand the 80% budget warning and why spend can pass 100% | [Budgets and spend pacing](docs/BUDGETS.md) |
 | Let developers check their own spend | [Developer self-service usage](docs/USAGE-SELF-SERVICE.md) |
 | Set up the parts of disaster recovery that are deployable today, in Azure Cloud Shell | [DR in Cloud Shell](docs/runbooks/DR-CLOUD-SHELL.md) |
