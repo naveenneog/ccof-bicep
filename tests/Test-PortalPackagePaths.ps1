@@ -28,10 +28,25 @@ try {
         foreach ($path in 'host.json','package.json','config/rate-card.json','config/contract-schedule.json','analytics/ledger.kql','dist/reconciler/function-app.js') {
             Assert (Test-Path -LiteralPath (Join-Path $package.Directory $path)) "Missing staged $path"
         }
+        $dot=Join-Path $package.Directory 'node_modules/.package-lock.json'
+        New-Item -ItemType Directory -Path (Split-Path $dot) -Force | Out-Null
+        '{}' | Set-Content -LiteralPath $dot
+        if ($IsWindows) { (Get-Item -LiteralPath $dot).Attributes += 'Hidden' }
+        else {
+            $hostJson=Join-Path $package.Directory 'host.json'
+            & chmod 600 $hostJson
+            Assert ($LASTEXITCODE -eq 0 -and [IO.File]::GetUnixFileMode($hostJson) -eq [IO.UnixFileMode]'UserRead,UserWrite') 'Fixture host.json is not 0600; the umask regression is not exercised.'
+        }
         $zip=Join-Path $scratch 'reconciler.zip'
         New-CoreZip -Directory $package.Directory -ZipPath $zip
         $archive=[IO.Compression.ZipFile]::OpenRead($zip)
-        try { Assert ($null -ne $archive.GetEntry('config/rate-card.json')) 'ZIP lost relative config path.' }
+        try {
+            Assert ($null -ne $archive.GetEntry('config/rate-card.json')) 'ZIP lost relative config path.'
+            Assert ($null -ne $archive.GetEntry('node_modules/.package-lock.json')) 'ZIP skipped a hidden or dot file.'
+            # The Flex host must read every file whatever the build machine's umask (SS-08).
+            $modes=@($archive.Entries | ForEach-Object { '{0:x}' -f (($_.ExternalAttributes -shr 16) -band 0xFFFF) } | Sort-Object -Unique)
+            Assert (($modes -join ',') -eq '81a4') "ZIP entry modes not all 0100644: $($modes -join ',')"
+        }
         finally { $archive.Dispose() }
     }
     $bad=@{rateCard=@{path='';contractSchedulePath='config/contract-schedule.json'}}

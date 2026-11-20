@@ -1,5 +1,12 @@
 # Change log
 
+## Unreleased - Packaging: worker ZIPs no longer depend on the build machine's umask
+
+- fix(packaging): `New-CoreZip` writes every ZIP entry with mode 0644 and includes dot files
+  (`node_modules/.bin`, `node_modules/.package-lock.json`). A worker ZIP built on Linux under
+  `umask 077` had 0600 entries and no dot files, and the Flex host recycled after deployment
+  (SS-13). Packages built on Windows and Linux now have the same file list and modes.
+
 ## Unreleased - Private runner: worker upgrades no longer roll back on the CLI start-up health message
 
 - fix(runner): on Flex with managed-identity AzureWebJobsStorage, `config-zip` can report

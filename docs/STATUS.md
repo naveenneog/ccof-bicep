@@ -22,6 +22,13 @@ Flex deployment, not a deploy failure. `one_deploy()` defers those two exact mes
 worker packages only. `Test-AdminVmUpdate.ps1` 94/0 with mutations caught; packet gate exits 0. Code-review PASS-WITH-NOTES
 (host-key message, fixed in the same packet), Security PASS. Live worker upgrade evidence follows below.
 
+SS-13 (packaging): with SS-08 fixed, the B sync upgrade still failed `verify_host` and rolled back. The worker
+ZIP built on the updater VM under `umask 077` had 0600 entry modes and no dot files; the good ZIPs are all 0644.
+`New-CoreZip` now includes dot files and writes every entry as 0100644. `Test-PortalPackagePaths.ps1` passes, and
+fails with the mode line removed. Council: Architect PASS, Coder PASS, QA PASS-WITH-NOTES (the Linux fixture now
+asserts that chmod produced 0600), Security PASS-WITH-NOTES (`-Force` is not a secret filter; staging stays
+package-only), UX N/A. Packet gate exits 0. Next: rebuild the worker ZIPs on the VM and retry the B sync upgrade.
+
 Current correction: the Cosmos SDK resolves a missing point read as a 404 response with no
 resource. The job-store probe and first lease expected an exception instead. A faithful SDK
 fixture reproduces both failures; normalization at those two create-on-miss reads preserves the

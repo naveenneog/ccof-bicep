@@ -108,9 +108,12 @@ function New-CoreZip {
     $root = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
     $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Create')
     try {
-        foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File) {
+        # -Force: Linux treats dot files as hidden. Fixed 0100644 modes: CreateEntryFromFile copies the
+        # build machine's umask (0600 on the private runner), which the Flex host could not start (SS-08).
+        foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force) {
             $name = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
-            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
+            $entry = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
+            $entry.ExternalAttributes = 0x81A4 -shl 16
         }
     }
     finally { $zip.Dispose() }
