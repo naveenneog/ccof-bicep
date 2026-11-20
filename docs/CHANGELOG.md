@@ -1,5 +1,15 @@
 # Change log
 
+## Unreleased - Worker upgrade and Apply negative verified live
+
+- The worker ZIPs rebuilt on the updater VM at `3b45d66` (SS-13 fix) upgraded all four lab workers through
+  the private runner. Each host started, and the readback reported the expected package SHA-256 (Sync
+  `e4fb18c2...`, Reconciler `5fcd37a3...`). The six-app preservation audit passed afterwards. SS-13 resolved.
+- Apply negative: with `ADMIN_APPLY_ENABLED=true` and `ADMIN_WORKER_RESOURCE_IDS` on admin A and no enrolled
+  workers, Apply reported `unavailable` / `worker_fence_unverified`; an Apply POST returned 409
+  `feature_unavailable` and created no job; routing and history stayed available. The settings were then removed
+  and read back equal to the pre-test collection.
+
 ## Unreleased - Packaging: worker ZIPs no longer depend on the build machine's umask
 
 - fix(packaging): `New-CoreZip` writes every ZIP entry with mode 0644 and includes dot files

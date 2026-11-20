@@ -14,8 +14,8 @@ release. Focused implementation commits: `32f1f92` (durable API), `642734b` (his
 `1c0e314` (optional infrastructure) and `161d794` (host integration).
 Host integration is `161d7948c80c63c742226512650ac4f913150562`; the subsequent
 content-addressed rollback fix is `6cb2dc8` on `feat/admin-self-service-ops`.
-The feature is not merged or release-approved. Both lab admin apps are upgraded;
-worker deployment and opted-in acceptance remain incomplete.
+The feature is not merged or release-approved. Both lab admin apps and all four workers are upgraded;
+routing and history pass live; positive Apply acceptance remains incomplete (SS-03, SS-04).
 
 SS-08 resolved (runner): the standby sync rollback was the Azure CLI's post-deploy health message on a successful
 Flex deployment, not a deploy failure. `one_deploy()` defers those two exact messages to the polled readback for
@@ -27,7 +27,10 @@ ZIP built on the updater VM under `umask 077` had 0600 entry modes and no dot fi
 `New-CoreZip` now includes dot files and writes every entry as 0100644. `Test-PortalPackagePaths.ps1` passes, and
 fails with the mode line removed. Council: Architect PASS, Coder PASS, QA PASS-WITH-NOTES (the Linux fixture now
 asserts that chmod produced 0600), Security PASS-WITH-NOTES (`-Force` is not a secret filter; staging stays
-package-only), UX N/A. Packet gate exits 0. Next: rebuild the worker ZIPs on the VM and retry the B sync upgrade.
+package-only), UX N/A. Packet gate exits 0. Live (2026-11-20): the ZIPs rebuilt on the VM at `3b45d66` upgraded all four workers through the
+private runner (`ALL_FOUR_PRIVATE_WORKER_UPGRADES_VERIFIED`); the six-app preservation audit passes. Apply negative passes
+live: admin flag on without enrolled workers gives `worker_fence_unverified`, the POST returns 409, routing and history stay
+available, and the revert reads back exactly. Positive Apply stays blocked on the sync Graph GroupMember.Read.All grant.
 
 Current correction: the Cosmos SDK resolves a missing point read as a 404 response with no
 resource. The job-store probe and first lease expected an exception instead. A faithful SDK
