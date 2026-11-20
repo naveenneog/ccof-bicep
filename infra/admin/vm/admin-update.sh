@@ -172,9 +172,29 @@ verify_guard() {
   note "guard readback verified $after"
 }
 
+# OneDeploy. On Flex with a managed-identity AzureWebJobsStorage, the CLI's single post-deploy health
+# probe can run before the host has its token and report the app unhealthy after a successful
+# deployment, or fail to read the host key it probes with (azure-cli check_flex_app_after_deployment;
+# azure-functions-host #11782, #11636). Both are raised only after the deployment succeeded. For workers
+# only, those exact messages defer to the
+# polled readback (verify_functions, verify_host, verify_guard), which still rolls back on failure.
+one_deploy() {
+  local out="$WORK/onedeploy-$$.out" rc=0
+  az functionapp deployment source config-zip --subscription "$SUB" --resource-group "$RG" --name "$APP" --src "$1" >"$out" 2>&1 || rc=$?
+  cat "$out" >>"$LOG"
+  if [ "$rc" -ne 0 ] && [ "$PACKAGE_KIND" != admin ] \
+    && grep -qF -e 'Deployment was successful but the app appears to be unhealthy' \
+      -e 'Failed to fetch host key to check for function app status' "$out"; then
+    note "CLI health probe failed at start-up after a successful deployment; deciding by polled readback"
+    rc=0
+  fi
+  rm -f "$out"
+  return "$rc"
+}
+
 restore_backup() {
   [ "$(sha256sum "$BACKUP" | cut -c1-64)" = "$PREVIOUS_SHA256" ] || return 1
-  az functionapp deployment source config-zip --subscription "$SUB" --resource-group "$RG" --name "$APP" --src "$BACKUP" >>"$LOG" 2>&1 || return 1
+  one_deploy "$BACKUP" || return 1
   verify_functions && verify_host && verify_guard
 }
 
@@ -222,7 +242,7 @@ do_update() {
     [ "$SHA" = "$PACKAGE_SHA256" ] || fail artifact "worker artifact hash mismatch; no deployment attempted"
     note "verified $PACKAGE_KIND-$COMMIT.zip"
   fi
-  az functionapp deployment source config-zip --subscription "$SUB" --resource-group "$RG" --name "$APP" --src "$zip" >>"$LOG" 2>&1 \
+  one_deploy "$zip" \
     || upgrade_failed deploy "OneDeploy to $APP failed: check Website Contributor on the app and the private endpoint"
   verify_functions || upgrade_failed verify "$APP does not list required functions: $REQUIRED_FUNCTIONS"
   verify_host || upgrade_failed verify "worker host did not become reachable through its unchanged authentication"

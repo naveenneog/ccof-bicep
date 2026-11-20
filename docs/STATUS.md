@@ -17,6 +17,11 @@ content-addressed rollback fix is `6cb2dc8` on `feat/admin-self-service-ops`.
 The feature is not merged or release-approved. Both lab admin apps are upgraded;
 worker deployment and opted-in acceptance remain incomplete.
 
+SS-08 resolved (runner): the standby sync rollback was the Azure CLI's post-deploy health message on a successful
+Flex deployment, not a deploy failure. `one_deploy()` defers those two exact messages to the polled readback for
+worker packages only. `Test-AdminVmUpdate.ps1` 94/0 with mutations caught; packet gate exits 0. Code-review PASS-WITH-NOTES
+(host-key message, fixed in the same packet), Security PASS. Live worker upgrade evidence follows below.
+
 Current correction: the Cosmos SDK resolves a missing point read as a 404 response with no
 resource. The job-store probe and first lease expected an exception instead. A faithful SDK
 fixture reproduces both failures; normalization at those two create-on-miss reads preserves the

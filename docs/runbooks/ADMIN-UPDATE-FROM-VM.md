@@ -317,6 +317,7 @@ Command fails or returns no result line.
 | `failed at clone: commit ... is not in` | The commit is not on the repository the VM downloads | Push the commit; check `git remote get-url origin` |
 | `failed at build` | `npm ci`, the TypeScript build or an admin unit test failed | The VM log named in the message; fix the code and push a new commit |
 | `failed at deploy` | OneDeploy refused the package | Role (A6) and private endpoint (A4); the VM log |
+| Note `CLI health probe failed at start-up after a successful deployment` (Sync or Reconciler) | Expected on Flex with identity-based storage: the CLI probes once before the host is ready. The update continues and the readback decides | Nothing, if the result is `succeeded`. If it ends `failed at verify`, see the next row |
 | `failed at verify` | The app did not list its functions within 5 minutes | Function App > **Functions** in the Portal; rerun `Update` |
 | `no_run_line` | The VM could not return its result | Outbound HTTPS to Azure (`AzureCloud`); the evidence file holds the raw output |
 

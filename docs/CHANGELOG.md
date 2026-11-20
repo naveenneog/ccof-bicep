@@ -1,5 +1,13 @@
 # Change log
 
+## Unreleased - Private runner: worker upgrades no longer roll back on the CLI start-up health message
+
+- fix(runner): on Flex with managed-identity AzureWebJobsStorage, `config-zip` can report
+  `Deployment was successful but the app appears to be unhealthy` or `Failed to fetch host key to
+  check for function app status` after a successful deployment and exit non-zero (azure-cli
+  `check_flex_app_after_deployment`; azure-functions-host #11782, #11636). For Sync and Reconciler
+  packages, `admin-update.sh` now records the message and decides by the polled readback (functions,
+  host, guard), which still rolls back on a real failure. Admin packages are unchanged. Resolves SS-08.
 ## Unreleased - Routing permission isolation verified live
 
 - Removing the CCOF APIM Backend Writer assignment from admin A's identity on the standby APIM moved

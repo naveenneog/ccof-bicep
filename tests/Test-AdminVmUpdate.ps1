@@ -84,7 +84,10 @@ az() { rec "az $*"
         echo '{"properties":{"platform":{"enabled":true}}}'
       else return 1; fi ;;
     "rest --method post"*) echo 'MethodNotAllowed: authentication settings read requires GET' >&2; return 1 ;;
-    "functionapp deployment source config-zip"*) [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "deploy error" >&2; return 1; } ;;
+    "functionapp deployment source config-zip"*)
+      [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "deploy error" >&2; return 1; }
+      [ -z "${STUB_DEPLOY_UNHEALTHY:-}" ] || { echo 'ERROR: Deployment was successful but the app appears to be unhealthy. Please check the app logs.' >&2; return 1; }
+      [ -z "${STUB_DEPLOY_HOSTKEY:-}" ] || { echo 'ERROR: Failed to fetch host key to check for function app status' >&2; return 1; } ;;
     "functionapp function list"*) printf '%s\n' ${STUB_FUNCS-lab-admin/projects lab-admin/adminUi lab-admin/adminHealth} ;;
     *) return 0 ;;
   esac; }
@@ -185,6 +188,8 @@ $r = Invoke-VmScript 'update' @{ STUB_BUILD_FAIL = '1' }
 Check 'update: a failed build or unit test is not published' ($r.run.step -ceq 'build' -and -not (Has $r 'config-zip') -and $r.err -match 'npm ERR build')
 $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_FAIL = '1' }
 Check 'update: a failed OneDeploy is reported at deploy, no history line' ($r.run.step -ceq 'deploy' -and $r.run.outcome -ceq 'failed' -and -not (Test-Path (Join-Path $r.work 'history.log')))
+$r = Invoke-VmScript 'update' @{ STUB_DEPLOY_UNHEALTHY = '1' }
+Check 'update: admin has no host readback, so a CLI health warning stays a deploy failure' ($r.run.step -ceq 'deploy' -and $r.run.outcome -ceq 'failed')
 $r = Invoke-VmScript 'update' @{ STUB_FUNCS = 'lab-admin/projects' }
 Check 'update: functions missing after publish fail at verify' ($r.run.step -ceq 'verify' -and $r.run.detail -match 'adminUi' -and $r.run.detail -match 'adminHealth')
 
@@ -228,6 +233,16 @@ foreach ($worker in @(@{ kind = 'sync'; function = 'syncEntitlement' }, @{ kind 
     Check "worker $($worker.kind): wrong target role fails before deployment" ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'role mismatch' -and -not (Has $r 'config-zip'))
     $r = Invoke-VmScript 'update' @{ STUB_HOST_HTTP = '503'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
     Check "worker $($worker.kind): unhealthy host triggers safe rollback, never an auth-setting change" ($r.run.outcome -ceq 'failed' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 2 -and -not (Has $r 'auth update|appsettings set|functionapp update'))
+    # Flex start-up: the CLI's single health probe can see AzureWebJobsStorage unhealthy before the
+    # managed identity token is acquired (azure-functions-host #11782); our polled readback decides.
+    $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_UNHEALTHY = '1'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): CLI start-up health warning after a successful deployment defers to polled readback" ($r.run.outcome -ceq 'succeeded' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 1 -and $r.run.guardReadback -and "$($r.run.notes)" -match 'CLI health probe')
+    $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_HOSTKEY = '1'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): CLI host-key read failure after a successful deployment defers to polled readback" ($r.run.outcome -ceq 'succeeded' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 1 -and $r.run.guardReadback)
+    $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_UNHEALTHY = '1'; STUB_HOST_HTTP = '503'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): CLI health warning with a host that stays unhealthy still rolls back" ($r.run.outcome -ceq 'failed' -and $r.run.step -ceq 'verify' -and @($r.calls | Where-Object { $_ -match 'config-zip' }).Count -eq 2)
+    $r = Invoke-VmScript 'update' @{ STUB_DEPLOY_FAIL = '1'; STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
+    Check "worker $($worker.kind): a genuine deployment error still fails at deploy and rolls back" ($r.run.outcome -ceq 'failed' -and $r.run.step -ceq 'deploy' -and $r.run.detail -match 'rollback')
     $workerOptions.SeedArtifact = $false
     $r = Invoke-VmScript 'update' @{ STUB_FUNCS = "lab-admin/$($worker.function)" } @() $workerOptions
     Check "worker $($worker.kind): missing approved artifact prevents deployment" ($r.run.outcome -ceq 'failed' -and $r.run.detail -match 'worker artifact missing' -and -not (Has $r 'config-zip'))
