@@ -1,5 +1,13 @@
 # Change log
 
+## Unreleased - Apply now works on a single-region deployment
+
+- fix(apply): the worker heartbeat, the active-pair proof and the admin capability refused fewer than two
+  worker pairs, although Stage 5 accepts one. A single-region deployment with `admin.applyNow:true` therefore
+  never wrote a heartbeat and reported `worker_targets_invalid` permanently. One approved pair is now accepted;
+  the ADR 0041 rule is unchanged (exactly one enabled pair, every other pair fenced). See
+  [ADR 0042](adr/0042-apply-single-region-worker-pair.md).
+
 ## Unreleased - Worker upgrade and Apply negative verified live
 
 - The worker ZIPs rebuilt on the updater VM at `3b45d66` (SS-13 fix) upgraded all four lab workers through

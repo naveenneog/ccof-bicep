@@ -24,7 +24,7 @@ export function createCosmosApplyExecutor(dependencies: CosmosApplyDependencies)
   let settings = new Map<string, Record<string, string>>();
   const provider: ApplyProvider = {
     async capability(): Promise<FeatureCapability> {
-      if (!pairs || pairs.length < 2) return { state: "unavailable", reason: "worker_targets_invalid", requirements: [] };
+      if (!pairs) return { state: "unavailable", reason: "worker_targets_invalid", requirements: [] };
       try {
         const beats = await store.heartbeats(pairs);
         const active = activeHeartbeatPair(pairs, beats, now());

@@ -220,7 +220,9 @@ when decommissioning.
 
 The optional ten-second control timers run in both regions but must freshly prove **exactly one
 active sync/reconciler pair** and the standby pair's original business timers disabled before
-dispatch. Each worker checks its original Disabled fence before processing every request; active
+dispatch. A single-region deployment lists one pair (region `A`) and has no standby pair
+([ADR 0042](../adr/0042-apply-single-region-worker-pair.md)); its business timers must still be
+enabled, because Apply runs only on the pair that is already the active writer. Each worker checks its original Disabled fence before processing every request; active
 sync still requires its existing apply write mode. Requests are limited to the approved resource
 pairs, durable and correlated with the project/job. Completion requires receipts from actual
 `runSync` and `runReconciler` execution. HTTP 202, fresh budget documents, heartbeat/token readiness,

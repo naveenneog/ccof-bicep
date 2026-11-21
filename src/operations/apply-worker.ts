@@ -18,7 +18,7 @@ function localConfiguration(env: ApplyWorkerDependencies["env"]) {
   if (env.CCOF_APPLY_WORKER_ENABLED !== "true") return null;
   const phase: ApplyPhase | null = env.CCOF_APP_ROLE === "sync" ? "sync" : env.CCOF_APP_ROLE === "reconciler" ? "reconcile" : null;
   const pairs = readWorkerPairs(env.CCOF_APPLY_WORKER_PAIRS);
-  if (!phase || !pairs || pairs.length < 2) return null;
+  if (!phase || !pairs) return null;
   const resourceId = env.CCOF_APPLY_WORKER_RESOURCE_ID;
   const pair = pairs.find((p) => resourceId === (phase === "sync" ? p.syncResourceId : p.reconcilerResourceId));
   if (!pair || !resourceId) return null;

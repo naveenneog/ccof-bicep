@@ -80,7 +80,7 @@ export function readWorkerPairs(value: string | undefined): WorkerPair[] | null 
   } catch { return null; }
 }
 export function activeHeartbeatPair(pairs: WorkerPair[], beats: Array<ApplyHeartbeat | null>, now: Date): WorkerPair | null {
-  if (pairs.length < 2 || beats.length !== pairs.length * 2) return null;
+  if (!pairs.length || beats.length !== pairs.length * 2) return null;
   const active: WorkerPair[] = [], fingerprint = configurationId(pairs);
   for (let index = 0; index < pairs.length; index++) {
     const pair = pairs[index], sync = beats[index * 2], rec = beats[index * 2 + 1];

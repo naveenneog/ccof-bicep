@@ -16,10 +16,11 @@ import { guardSyncDependencies, guardReconcilerDependencies } from "../src/opera
 import { createMemoryJobStore, enqueueOperation, processOperations } from "../admin/src/self-service-jobs.ts";
 
 const root = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/test/providers/Microsoft.Web/sites/";
-const pairs: WorkerPair[] = [
+const regionPairs: WorkerPair[] = [
   { region: "A", syncResourceId: `${root}a-sync`, reconcilerResourceId: `${root}a-rec` },
   { region: "B", syncResourceId: `${root}b-sync`, reconcilerResourceId: `${root}b-rec` },
 ];
+const pairs = regionPairs;
 const NOW = "2026-11-19T12:00:00.000Z";
 const error = (code: number) => Object.assign(new Error("provider token and private contents"), { code });
 
@@ -50,7 +51,7 @@ function memoryContainer() {
   };
 }
 
-function harness() {
+function harness(pairs: WorkerPair[] = regionPairs) {
   let clock = new Date(NOW), etag = '"1"', status = "active";
   const container = memoryContainer();
   const store = createCosmosApplyStore(container as any);
@@ -112,6 +113,29 @@ test("Cosmos queue needs fresh heartbeats from both complete pairs; optional con
   const disabled = createApplyWorker({ env: {}, store: null as any, projects: null as any, run: async () => assert.fail() });
   await disabled.tick();
   assert.deepEqual(h.calls, []);
+});
+
+test("a single-region deployment with one approved pair applies without a standby pair (ADR 0042)", async () => {
+  const h = harness([regionPairs[0]]);
+  assert.equal(h.workers.length, 2);
+  assert.notEqual((await h.executor.capability()).state, "available");
+  await h.beat();
+  assert.equal((await h.executor.capability()).state, "available");
+  assert.equal((await h.advance()).phase, "sync-ready");
+  assert.equal((await h.advance()).phase, "sync-waiting");
+  await h.workers[0].tick();
+  assert.equal((await h.advance()).phase, "reconcile-ready");
+  await h.advance(); await h.workers[1].tick();
+  assert.equal((await h.advance()).state, "succeeded");
+  assert.deepEqual(h.calls, ["sync", "reconcile"]);
+
+  const fenced = harness([regionPairs[0]]);
+  fenced.envs[0]["AzureWebJobs.syncEntitlement.Disabled"] = "true";
+  fenced.envs[1]["AzureWebJobs.reconcileBudgets.Disabled"] = "true";
+  await fenced.beat();
+  assert.equal((await fenced.executor.capability()).reason, "worker_fence_unverified");
+  assert.equal((await fenced.advance()).state, "blocked");
+  assert.deepEqual(fenced.calls, []);
 });
 
 test("real worker results sequence correlated sync then reconcile; acceptance never completes", async () => {
